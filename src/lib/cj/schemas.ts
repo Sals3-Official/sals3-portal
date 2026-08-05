@@ -114,6 +114,7 @@ export const cjAccessTokenSchema = z.object({
 export const cjQuerySchema = z.object({
   cjPage: z.coerce.number().int().min(1).max(500).catch(1).default(1),
   cjSearch: z.string().trim().max(80).catch('').default(''),
+  cjPid: z.string().trim().max(200).catch('').default(''),
 });
 
 export type CjQuery = z.infer<typeof cjQuerySchema>;

@@ -33,9 +33,9 @@ describe('storefront CJ supplier feed cache', () => {
     mocks.fetchCjProducts.mockResolvedValue(cjPage());
 
     const [first, second, third] = await Promise.all([
-      getStorefrontCjProducts({ cjPage: 1, cjSearch: '' }),
-      getStorefrontCjProducts({ cjPage: 1, cjSearch: '' }),
-      getStorefrontCjProducts({ cjPage: 1, cjSearch: '' }),
+      getStorefrontCjProducts({ cjPage: 1, cjSearch: '', cjPid: '' }),
+      getStorefrontCjProducts({ cjPage: 1, cjSearch: '', cjPid: '' }),
+      getStorefrontCjProducts({ cjPage: 1, cjSearch: '', cjPid: '' }),
     ]);
 
     expect(first).toBe(second);
@@ -48,8 +48,19 @@ describe('storefront CJ supplier feed cache', () => {
       .mockResolvedValueOnce(cjPage(1))
       .mockResolvedValueOnce(cjPage(2));
 
-    await getStorefrontCjProducts({ cjPage: 1, cjSearch: '' });
-    await getStorefrontCjProducts({ cjPage: 2, cjSearch: '' });
+    await getStorefrontCjProducts({ cjPage: 1, cjSearch: '', cjPid: '' });
+    await getStorefrontCjProducts({ cjPage: 2, cjSearch: '', cjPid: '' });
+
+    expect(mocks.fetchCjProducts).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a separate cache entry for a product-id lookup', async () => {
+    mocks.fetchCjProducts
+      .mockResolvedValueOnce(cjPage(1))
+      .mockResolvedValueOnce(cjPage(1));
+
+    await getStorefrontCjProducts({ cjPage: 1, cjSearch: '', cjPid: '' });
+    await getStorefrontCjProducts({ cjPage: 1, cjSearch: '', cjPid: 'abc' });
 
     expect(mocks.fetchCjProducts).toHaveBeenCalledTimes(2);
   });
@@ -60,10 +71,10 @@ describe('storefront CJ supplier feed cache', () => {
       .mockResolvedValueOnce(cjPage());
 
     await expect(
-      getStorefrontCjProducts({ cjPage: 1, cjSearch: '' }),
+      getStorefrontCjProducts({ cjPage: 1, cjSearch: '', cjPid: '' }),
     ).rejects.toThrow('rate-limited');
     await expect(
-      getStorefrontCjProducts({ cjPage: 1, cjSearch: '' }),
+      getStorefrontCjProducts({ cjPage: 1, cjSearch: '', cjPid: '' }),
     ).resolves.toEqual(cjPage());
 
     expect(mocks.fetchCjProducts).toHaveBeenCalledTimes(2);

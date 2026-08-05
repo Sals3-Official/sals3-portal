@@ -25,6 +25,14 @@ describe('cjQuerySchema', () => {
       '',
     );
   });
+
+  it('defaults cjPid to empty and trims/caps it the same way as cjSearch', () => {
+    expect(cjQuerySchema.parse({}).cjPid).toBe('');
+    expect(cjQuerySchema.parse({ cjPid: '  cjyd3038814  ' }).cjPid).toBe(
+      'cjyd3038814',
+    );
+    expect(cjQuerySchema.parse({ cjPid: 'x'.repeat(500) }).cjPid).toBe('');
+  });
 });
 
 describe('cjProductListSchema', () => {

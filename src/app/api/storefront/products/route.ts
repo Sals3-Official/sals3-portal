@@ -30,6 +30,7 @@ export async function GET(request: Request) {
     const cjPage = await getStorefrontCjProducts({
       cjPage: query.page,
       cjSearch: '',
+      cjPid: '',
     });
 
     return Response.json(
