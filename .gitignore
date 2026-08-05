@@ -35,6 +35,10 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# ...except the template, which holds variable names and no values. Teammates
+# need it to know what to set, so it must be committable.
+!.env.example
+
 # vercel
 .vercel
 

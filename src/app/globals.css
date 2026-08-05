@@ -1,54 +1,185 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
 
-:root {
-  --background: #f6f7f8;
-  --foreground: #14181c;
-}
+@custom-variant dark (&:is(.dark *));
 
+/*
+ * Sals3 Portal design tokens.
+ *
+ * Brand primitives and the semantic ink/border/surface scale are copied
+ * from sals3-ecommerce (the storefront deployed at
+ * sals3-ecommerce.vercel.app) so both products read as one brand. The
+ * shadcn/ui semantic variables below are mapped onto those primitives -
+ * never onto shadcn's default neutral palette.
+ */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-jakarta);
   --font-display: var(--font-outfit);
+  --font-heading: var(--font-outfit);
 
-  /* Primitive */
+  /* Brand primitives - shared with the storefront */
   --color-brand-900: #0b2c4d;
+  --color-brand-700: #08466a;
   --color-brand-600: #0a5c8a;
+  --color-brand-100: #e7eef3;
   --color-teal-500: #157f7f;
   --color-red-600: #d92d20;
+  --color-amber-600: #9a6200;
+  --color-green-600: #1a7f4b;
 
-  /* Semantic */
+  /* Tinted status surfaces. Each is paired with a text token that clears
+     4.5:1, and every status also carries a written label. */
+  --color-success-surface: #e4f2ea;
+  --color-danger-surface: #fdeceb;
+  --color-warning-surface: #fbf1de;
+
+  /* Semantic ink and surfaces - shared with the storefront */
   --color-ink: #14181c;
   --color-ink-muted: #454e55;
   --color-ink-subtle: #5d666d;
   --color-ink-faint: #8a9196;
-  --color-border: #e3e7ea;
   --color-border-strong: #cfd6db;
   --color-surface: #f6f7f8;
   --color-surface-dark: #1e293b;
   --color-deal: var(--color-red-600);
 
-  /* On-dark (footer) */
-  --color-footer-ink: #e6edf3;
-  --color-footer-ink-muted: #a8bccb;
-  --color-footer-label: #7f97a8;
-  --color-footer-link: #cddbe5;
-  --color-footer-accent: #7fd4d4;
+  /* shadcn/ui semantic tokens */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+
+  /* Dense dashboard spacing scale */
+  --spacing-gutter: 1rem;
+  --spacing-section: 1.5rem;
 }
 
-body {
-  background: var(--color-surface);
-  color: var(--color-ink);
+:root {
+  --radius: 0.5rem;
+
+  --background: #f6f7f8;
+  --foreground: #14181c;
+  --card: #ffffff;
+  --card-foreground: #14181c;
+  --popover: #ffffff;
+  --popover-foreground: #14181c;
+  --primary: #0a5c8a;
+  --primary-foreground: #ffffff;
+  --secondary: #eef1f3;
+  --secondary-foreground: #0b2c4d;
+  --muted: #eef1f3;
+  --muted-foreground: #5d666d;
+  --accent: #e7eef3;
+  --accent-foreground: #0b2c4d;
+  --destructive: #d92d20;
+  --border: #e3e7ea;
+  --input: #cfd6db;
+  --ring: #0a5c8a;
+
+  /* Chart ramp derived from the brand family, not a generic palette.
+     Charts must also carry labels or patterns - never colour alone. */
+  --chart-1: #0a5c8a;
+  --chart-2: #157f7f;
+  --chart-3: #0b2c4d;
+  --chart-4: #6b93ad;
+  --chart-5: #8a9196;
+
+  /* Dark navy rail, matching the storefront footer surface */
+  --sidebar: #0b2c4d;
+  --sidebar-foreground: #e6edf3;
+  --sidebar-primary: #7fd4d4;
+  --sidebar-primary-foreground: #0b2c4d;
+  --sidebar-accent: #123a61;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #1d4670;
+  --sidebar-ring: #7fd4d4;
 }
 
-a {
-  color: var(--color-brand-600);
+.dark {
+  --background: #101820;
+  --foreground: #e6edf3;
+  --card: #1e293b;
+  --card-foreground: #e6edf3;
+  --popover: #1e293b;
+  --popover-foreground: #e6edf3;
+  --primary: #7fd4d4;
+  --primary-foreground: #0b2c4d;
+  --secondary: #24344a;
+  --secondary-foreground: #e6edf3;
+  --muted: #24344a;
+  --muted-foreground: #a8bccb;
+  --accent: #24344a;
+  --accent-foreground: #ffffff;
+  --destructive: #f4776b;
+  --border: #2c3e57;
+  --input: #3a4f6b;
+  --ring: #7fd4d4;
+  --chart-1: #7fd4d4;
+  --chart-2: #8bb8d6;
+  --chart-3: #cddbe5;
+  --chart-4: #6b93ad;
+  --chart-5: #a8bccb;
+  --sidebar: #0b2c4d;
+  --sidebar-foreground: #e6edf3;
+  --sidebar-primary: #7fd4d4;
+  --sidebar-primary-foreground: #0b2c4d;
+  --sidebar-accent: #123a61;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #1d4670;
+  --sidebar-ring: #7fd4d4;
 }
 
-:focus-visible {
-  outline: 2px solid var(--color-brand-600);
-  outline-offset: 2px;
-  border-radius: 4px;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply font-sans;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -58,13 +189,4 @@ a {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
-}
-
-.bg-brand-gradient {
-  background: linear-gradient(
-    150deg,
-    var(--color-brand-900),
-    var(--color-brand-600) 60%,
-    var(--color-teal-500)
-  );
 }
