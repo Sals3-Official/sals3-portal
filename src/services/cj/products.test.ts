@@ -62,7 +62,7 @@ describe('fetchCjProducts', () => {
       vi.fn().mockResolvedValue(jsonResponse(successBody())),
     );
 
-    const page = await fetchCjProducts({ cjPage: 1, cjSearch: '' });
+    const page = await fetchCjProducts({ cjPage: 1, cjSearch: '', cjPid: '' });
 
     expect(page.products).toHaveLength(1);
     expect(page.totalPages).toBe(50);
@@ -82,6 +82,7 @@ describe('fetchCjProducts', () => {
     const page = await fetchCjProducts({
       cjPage: 19,
       cjSearch: '',
+      cjPid: '',
     });
 
     expect(page.products).toEqual([]);
@@ -102,6 +103,7 @@ describe('fetchCjProducts', () => {
     const page = await fetchCjProducts({
       cjPage: 19,
       cjSearch: '',
+      cjPid: '',
     });
 
     expect(page.products).toEqual([]);
@@ -120,7 +122,7 @@ describe('fetchCjProducts', () => {
     );
 
     await expect(
-      fetchCjProducts({ cjPage: 1, cjSearch: '' }),
+      fetchCjProducts({ cjPage: 1, cjSearch: '', cjPid: '' }),
     ).rejects.toMatchObject({
       name: 'CjApiError',
       reason: 'unexpected-response',
@@ -135,7 +137,7 @@ describe('fetchCjProducts', () => {
     );
 
     await expect(
-      fetchCjProducts({ cjPage: 19, cjSearch: '' }),
+      fetchCjProducts({ cjPage: 19, cjSearch: '', cjPid: '' }),
     ).rejects.toMatchObject({
       name: 'CjApiError',
       reason: 'upstream-unavailable',
@@ -152,7 +154,7 @@ describe('fetchCjProducts', () => {
     );
 
     await expect(
-      fetchCjProducts({ cjPage: 19, cjSearch: '' }),
+      fetchCjProducts({ cjPage: 19, cjSearch: '', cjPid: '' }),
     ).rejects.toMatchObject({ name: 'CjApiError', reason: 'rate-limited' });
   });
 });
