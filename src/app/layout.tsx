@@ -6,18 +6,21 @@ import './globals.css';
 const jakarta = PlusJakartaSans({
   variable: '--font-jakarta',
   subsets: ['latin'],
-  weight: ['400', '700'],
+  weight: ['400', '500', '600', '700'],
 });
 
 const outfit = Outfit({
   variable: '--font-outfit',
   subsets: ['latin'],
-  weight: ['600'],
+  weight: ['500', '600'],
 });
 
 export const metadata: Metadata = {
   title: 'Sals3 Portal',
-  description: 'Sals3 portal application.',
+  description: 'Sals3 seller portal for product and catalogue management.',
+  // The portal is a private operations tool. Keep it out of search
+  // engines and AI answer surfaces on purpose.
+  robots: { index: false, follow: false },
 };
 
 type RootLayoutProps = Readonly<{
@@ -30,7 +33,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
       lang="en"
       className={`${jakarta.variable} ${outfit.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col font-sans">{children}</body>
+      <body className="min-h-full font-sans">{children}</body>
     </html>
   );
 }
