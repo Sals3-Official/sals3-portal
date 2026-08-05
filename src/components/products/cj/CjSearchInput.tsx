@@ -17,8 +17,7 @@ const DEBOUNCE_MS = 400;
  * Searches the supplier catalogue by English product name.
  *
  * CJ holds over a million products and allows one call per second, so the typed
- * value is debounced a little longer than the Sals3 search and the page resets
- * to 1 on every new search word.
+ * value is debounced and the page resets to 1 on every new search word.
  */
 export default function CjSearchInput({ value }: CjSearchInputProps) {
   const router = useRouter();
@@ -35,6 +34,8 @@ export default function CjSearchInput({ value }: CjSearchInputProps) {
       const href = buildHref('/products', searchParams, {
         cjSearch: term.trim() === '' ? null : term.trim(),
         cjPage: null,
+        // The old two-source URL carried ?source=cj; scrub it from stale links.
+        source: null,
       });
 
       startTransition(() => router.push(href));

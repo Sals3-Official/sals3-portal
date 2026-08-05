@@ -1,6 +1,7 @@
 # Sals3 Portal
 
-The Sals3 seller portal: catalogue and product management. Same tech stack as
+The Sals3 seller portal: a read-only view of the CJdropshipping supplier
+catalogue. Same tech stack as
 `sals3-ecommerce`, and the same brand tokens, so both products look like one
 system.
 
@@ -47,18 +48,12 @@ Set `SALS3_STOREFRONT_API_TOKEN` to a long random value if
 
 ## Routes
 
-| Route                        | What it does                                                           |
-| ---------------------------- | ---------------------------------------------------------------------- |
-| `/`                          | Placeholder home page ("Hello world")                                  |
-| `/products`                  | Product list: status tabs, search, filters, sort, paging, bulk actions |
-| `/products?source=cj`        | CJdropshipping supplier catalogue (read-only)                          |
-| `/products/new`              | Add product (eight-tab form)                                           |
-| `/products/[id]`             | Product detail: overview, variants, analytics, reviews, history        |
-| `/products/[id]/edit`        | Edit product                                                           |
-| `/products/import`           | CSV import preview                                                     |
-| `/products/export`           | CSV download of the current view                                       |
-| `/api/storefront/products`   | Protected product feed for `sals3-ecommerce`                           |
-| `/api/storefront/categories` | Protected category feed for `sals3-ecommerce`                          |
+| Route                        | What it does                                                  |
+| ---------------------------- | ------------------------------------------------------------- |
+| `/`                          | Placeholder home page ("Hello world")                         |
+| `/products`                  | CJdropshipping supplier catalogue (read-only): search, paging |
+| `/api/storefront/products`   | Protected product feed for `sals3-ecommerce`                  |
+| `/api/storefront/categories` | Protected category feed for `sals3-ecommerce`                 |
 
 ## Design system
 
@@ -72,8 +67,10 @@ in a component.
 
 `src/lib/auth/permissions.ts` holds a role-to-permission allow list: `admin`,
 `catalogue_reviewer`, `seller_manager`, `seller_staff`, `viewer`. Every server
-action and route handler calls `requirePermission` before it reads or writes, and
-writes also check that the product belongs to the signed-in seller.
+action and route handler calls `requirePermission` before it reads or writes.
+Only `product:read` is exercised today (by the supplier catalogue read); the
+rest of the allow list is kept as the authorization surface for a future
+writable catalogue.
 
 To try a different role locally, set a server-side variable before `npm run dev`:
 
@@ -86,16 +83,17 @@ Accepted values are the five role names above. Anything else falls back to
 
 ## CJdropshipping integration
 
-`/products` has two sources, switched with a tab: the Sals3 catalogue and the
-CJdropshipping supplier feed (`?source=cj`). The supplier feed is **read-only**
-and is labelled as supplier data, not Sals3 listings.
+`/products` shows the CJdropshipping supplier feed. It is the portal's only
+product source and it is **read-only**. The previous in-memory Sals3 fixture
+catalogue and its add/edit/import/export screens were removed. Old links with
+`?source=cj` still work: the parameter is accepted and ignored.
 
 ### Configuration
 
 Set `CJ_API_KEY` in `.env.local` (format `CJ<userNumber>@api@<32 characters>`,
 from the CJ dashboard). It is server-side only — no `NEXT_PUBLIC_` prefix — so
 the key and the access token it buys never reach the browser. With no key set,
-the tab shows a setup message instead of failing.
+the page shows a setup message instead of failing.
 
 ### How it works
 
@@ -127,9 +125,9 @@ the tab shows a setup message instead of failing.
 
 ### Not built yet
 
-Importing a supplier product into the Sals3 catalogue, variant and inventory
-detail per supplier product, and CJ order placement. The MCP token in
-`CJ_MCP_TOKEN` is stored but unused by this REST integration.
+Importing a supplier product for resale (there is no writable Sals3 catalogue),
+variant and inventory detail per supplier product, and CJ order placement. The
+MCP token in `CJ_MCP_TOKEN` is stored but unused by this REST integration.
 
 ## Storefront product feed
 
@@ -147,8 +145,8 @@ Each request must send:
 Authorization: Bearer <SALS3_STOREFRONT_API_TOKEN>
 ```
 
-The API reads the same CJdropshipping supplier feed shown at
-`/products?source=cj`. It skips supplier rows with no usable price, converts the
+The API reads the same CJdropshipping supplier feed shown at `/products`. It
+skips supplier rows with no usable price, converts the
 supplier USD price to a PHP shopper price with `CJ_USD_TO_PHP_RATE` and
 `CJ_PRICE_MARKUP_PERCENT`, and never exposes the supplier USD price to
 `sals3-ecommerce`. The `deals` section uses CJ `listedCount` as a temporary rank
@@ -162,16 +160,10 @@ These are real gaps, not oversights. Do not treat any screen as production ready
 - **No authentication.** `src/lib/auth/session.ts` returns one development
   identity. It is a placeholder shaped so a real session lookup can replace it
   without touching any caller. Do not expose this portal to untrusted users.
-- **No database.** The catalogue is a typed fixture held in memory
-  (`src/services/product-store.ts`). Writes and storefront feed edits work during
-  a session and are lost when the server restarts.
-- **No file storage.** The Media tab accepts image and video web addresses, not
-  uploads. An image only renders after its host is allow-listed in
-  `next.config.ts`.
-- **CSV import previews only.** A file is checked and parsed for review; no row
-  is written to the catalogue.
-- **Analytics and reviews are fixture data.** Review reply and report have no
-  server action yet, and the screen says so instead of pretending to work.
+- **Read-only catalogue.** The portal shows the CJdropshipping supplier feed
+  and nothing else. There is no Sals3 product catalogue, no add/edit form, no
+  import/export, and no database — the earlier in-memory fixture catalogue was
+  removed.
 - The portal is `robots: noindex` and publishes no structured data on purpose.
   It is an internal tool, so the SEO, GEO, and AEO work that applies to the
   storefront does not apply here.

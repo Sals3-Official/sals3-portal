@@ -21,7 +21,7 @@ export default function CjErrorPanel({ reason }: CjErrorPanelProps) {
       <p className="max-w-md text-sm text-muted-foreground">
         {CJ_ERROR_MESSAGES[reason]}
       </p>
-      <LinkButton href="/products?source=cj" variant="outline">
+      <LinkButton href="/products" variant="outline">
         Try again
       </LinkButton>
     </div>

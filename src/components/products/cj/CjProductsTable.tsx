@@ -24,7 +24,7 @@ const COLUMNS = [
 /**
  * Supplier catalogue table. A Server Component: the rows are read-only, so no
  * client JavaScript is needed to show them. Rows restack into cards below 768px
- * through CSS, the same pattern the Sals3 product table uses.
+ * through CSS.
  */
 export default function CjProductsTable({ products }: CjProductsTableProps) {
   return (

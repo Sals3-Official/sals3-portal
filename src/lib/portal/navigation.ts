@@ -27,29 +27,6 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: 'package',
         permission: 'product:read',
       },
-      {
-        href: '/products/new',
-        label: 'Add product',
-        icon: 'plus',
-        permission: 'product:create',
-      },
-      {
-        href: '/products/import',
-        label: 'Import and export',
-        icon: 'upload',
-        permission: 'product:export',
-      },
-    ],
-  },
-  {
-    label: 'Review',
-    items: [
-      {
-        href: '/products?status=pending_approval',
-        label: 'Pending approval',
-        icon: 'clipboard',
-        permission: 'product:read',
-      },
     ],
   },
 ];

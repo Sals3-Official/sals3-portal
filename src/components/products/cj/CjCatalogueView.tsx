@@ -35,7 +35,6 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
   }
 
   const currentParams = {
-    source: 'cj',
     cjPage: String(page.page),
     cjSearch: query.cjSearch,
   };
@@ -43,9 +42,9 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
   return (
     <div className="flex flex-col gap-3">
       <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-ink-muted">
-        These are supplier products from CJdropshipping, not Sals3 listings.
-        Prices are the supplier price in US dollars and are not converted to
-        pesos. Importing a product into the Sals3 catalogue is not built yet.
+        These are supplier products from CJdropshipping. Prices are the supplier
+        price in US dollars and are not converted to pesos. Importing a supplier
+        product for resale is not built yet.
       </p>
 
       <CjSearchInput value={query.cjSearch} />

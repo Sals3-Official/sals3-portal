@@ -12,8 +12,7 @@ type CjProductRowProps = {
  *
  * The thumbnail sits inside the product cell rather than in a column of its own:
  * with automatic table layout, a narrow image column is squeezed to a few pixels
- * by the long product names beside it. This is also how the Sals3 product row is
- * built, so the two tables read the same.
+ * by the long product names beside it.
  *
  * Images come from CJ through `next/image` with fixed dimensions and lazy
  * loading, so a row never shifts as pictures arrive. A product with no
