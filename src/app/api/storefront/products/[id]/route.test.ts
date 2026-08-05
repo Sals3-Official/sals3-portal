@@ -13,7 +13,7 @@ const { GET } = await import('./route');
 
 function request(token?: string) {
   return new Request(
-    'https://portal.test/api/storefront/products?section=deals&limit=2',
+    'https://portal.test/api/storefront/products/cjyd3038814',
     {
       headers:
         token === undefined ? undefined : { authorization: `Bearer ${token}` },
@@ -21,7 +21,11 @@ function request(token?: string) {
   );
 }
 
-function cjPage(): CjProductPage {
+function context(id: string) {
+  return { params: Promise.resolve({ id }) };
+}
+
+function cjPage(overrides: Partial<CjProductPage> = {}): CjProductPage {
   return {
     products: [
       {
@@ -44,10 +48,11 @@ function cjPage(): CjProductPage {
     pageSize: 20,
     total: 1,
     totalPages: 1,
+    ...overrides,
   };
 }
 
-describe('storefront products API', () => {
+describe('storefront single-product API', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     mocks.getStorefrontCjProducts.mockReset();
@@ -56,28 +61,59 @@ describe('storefront products API', () => {
   it('rejects requests without the storefront token', async () => {
     vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
 
-    const response = await GET(request());
+    const response = await GET(request(), context('cjyd3038814'));
 
     expect(response.status).toBe(401);
     expect(mocks.getStorefrontCjProducts).not.toHaveBeenCalled();
   });
 
-  it('returns the protected CJ supplier product feed', async () => {
+  it('returns the matching product, case-insensitively, in one CJ call', async () => {
     vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
     mocks.getStorefrontCjProducts.mockResolvedValue(cjPage());
 
-    const response = await GET(request('secret'));
+    const response = await GET(request('secret'), context('cjyd3038814'));
     const payload = await response.json();
 
     expect(response.status).toBe(200);
-    expect(payload.products[0].title).toBe(
+    expect(payload.product.title).toBe(
       'Insole For Flat-foot Correction Pure Blue',
     );
+    expect(payload.product.slug).toBe('cjyd3038814');
+    expect(mocks.getStorefrontCjProducts).toHaveBeenCalledTimes(1);
     expect(mocks.getStorefrontCjProducts).toHaveBeenCalledWith({
       cjPage: 1,
       cjSearch: '',
-      cjPid: '',
+      cjPid: 'cjyd3038814',
     });
-    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+  });
+
+  it('returns 404 when no product matches the id', async () => {
+    vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
+    mocks.getStorefrontCjProducts.mockResolvedValue(cjPage({ products: [] }));
+
+    const response = await GET(request('secret'), context('missing-id'));
+
+    expect(response.status).toBe(404);
+  });
+
+  it('returns 404 for an empty id without calling the CJ feed', async () => {
+    vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
+
+    const response = await GET(request('secret'), context('  '));
+
+    expect(response.status).toBe(404);
+    expect(mocks.getStorefrontCjProducts).not.toHaveBeenCalled();
+  });
+
+  it('reports a typed error when the CJ feed is unavailable', async () => {
+    vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
+    const { CjApiError } = await import('@/services/cj/config');
+    mocks.getStorefrontCjProducts.mockRejectedValue(
+      new CjApiError('rate-limited'),
+    );
+
+    const response = await GET(request('secret'), context('cjyd3038814'));
+
+    expect(response.status).toBe(502);
   });
 });

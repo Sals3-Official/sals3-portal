@@ -12,7 +12,7 @@ type CacheEntry = {
 const cache = new Map<string, CacheEntry>();
 
 function cacheKey(query: CjQuery): string {
-  return `${query.cjPage}:${query.cjSearch}`;
+  return `${query.cjPage}:${query.cjSearch}:${query.cjPid}`;
 }
 
 export async function getStorefrontCjProducts(

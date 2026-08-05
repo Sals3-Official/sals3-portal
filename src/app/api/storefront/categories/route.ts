@@ -18,7 +18,11 @@ export async function GET(request: Request) {
   }
 
   try {
-    const page = await getStorefrontCjProducts({ cjPage: 1, cjSearch: '' });
+    const page = await getStorefrontCjProducts({
+      cjPage: 1,
+      cjSearch: '',
+      cjPid: '',
+    });
 
     return Response.json(listStorefrontCategories(page.products), {
       headers: HEADERS,

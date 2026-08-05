@@ -48,12 +48,13 @@ Set `SALS3_STOREFRONT_API_TOKEN` to a long random value if
 
 ## Routes
 
-| Route                        | What it does                                                  |
-| ---------------------------- | ------------------------------------------------------------- |
-| `/`                          | Placeholder home page ("Hello world")                         |
-| `/products`                  | CJdropshipping supplier catalogue (read-only): search, paging |
-| `/api/storefront/products`   | Protected product feed for `sals3-ecommerce`                  |
-| `/api/storefront/categories` | Protected category feed for `sals3-ecommerce`                 |
+| Route                           | What it does                                                            |
+| ------------------------------- | ----------------------------------------------------------------------- |
+| `/`                             | Placeholder home page ("Hello world")                                   |
+| `/products`                     | CJdropshipping supplier catalogue (read-only): search, paging           |
+| `/api/storefront/products`      | Protected product feed for `sals3-ecommerce`                            |
+| `/api/storefront/products/[id]` | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP |
+| `/api/storefront/categories`    | Protected category feed for `sals3-ecommerce`                           |
 
 ## Design system
 
@@ -136,6 +137,7 @@ MCP token in `CJ_MCP_TOKEN` is stored but unused by this REST integration.
 ```text
 GET /api/storefront/products?section=for-you&page=1&limit=14
 GET /api/storefront/products?section=deals&limit=5
+GET /api/storefront/products/<id>
 GET /api/storefront/categories
 ```
 
@@ -152,6 +154,15 @@ supplier USD price to a PHP shopper price with `CJ_USD_TO_PHP_RATE` and
 `sals3-ecommerce`. The `deals` section uses CJ `listedCount` as a temporary rank
 when available. Responses use `Cache-Control: private, no-store` because the
 feed is protected and can change when CJ changes.
+
+`/api/storefront/products/<id>` fetches exactly one product by CJ's `pid` (via
+CJ's `product/list?pid=` filter — a single upstream call, one CJ rate-limit
+hit) instead of paging through a section, for `sals3-ecommerce`'s product
+detail page. Returns `404` when no product matches. Added after
+`sals3-ecommerce`'s PDP shipped a client-side workaround that paged through
+whole sections to find one product — safe at small scale, but capable of
+hammering CJ's one-request-per-second limit against the real catalogue; this
+endpoint replaces that workaround with one request.
 
 ## Important limitations
 

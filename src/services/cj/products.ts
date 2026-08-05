@@ -38,6 +38,10 @@ function buildUrl(query: CjQuery): string {
     params.set('productNameEn', query.cjSearch);
   }
 
+  if (query.cjPid !== '') {
+    params.set('pid', query.cjPid);
+  }
+
   return `${CJ_BASE_URL}/product/list?${params.toString()}`;
 }
 
