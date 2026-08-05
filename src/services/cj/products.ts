@@ -41,6 +41,19 @@ function buildUrl(query: CjQuery): string {
   return `${CJ_BASE_URL}/product/list?${params.toString()}`;
 }
 
+function emptyPastLastPage(
+  page: number,
+  pageSize = CJ_PAGE_SIZE,
+): CjProductPage {
+  return {
+    products: [],
+    page,
+    pageSize,
+    total: (page - 1) * pageSize,
+    totalPages: page - 1,
+  };
+}
+
 export async function fetchCjProducts(query: CjQuery): Promise<CjProductPage> {
   await requirePermission('product:read');
 
@@ -65,6 +78,17 @@ export async function fetchCjProducts(query: CjQuery): Promise<CjProductPage> {
   }
 
   if (parsed.data.code !== 200) {
+    // CJ's reported `total` is not a reliable bound on how many pages are
+    // actually reachable - a page past the real depth for this query can
+    // surface as a body-level error instead of an HTTP failure. Past page 1
+    // there is no way to tell that apart from a genuine upstream problem, so
+    // treat it as "this was the last page" rather than failing the whole
+    // storefront feed - self-corrects the next time this page is requested
+    // after the cache entry expires.
+    if (query.cjPage > 1) {
+      return emptyPastLastPage(query.cjPage);
+    }
+
     throw new CjApiError(
       parsed.data.code === 401
         ? 'authentication-failed'
@@ -75,9 +99,14 @@ export async function fetchCjProducts(query: CjQuery): Promise<CjProductPage> {
   const data = parsed.data.data ?? null;
   const total = data?.total ?? 0;
   const pageSize = data?.pageSize ?? CJ_PAGE_SIZE;
+  const products = data?.list ?? [];
+
+  if (products.length === 0 && query.cjPage > 1) {
+    return emptyPastLastPage(query.cjPage, pageSize);
+  }
 
   return {
-    products: (data?.list ?? []).map(normalizeCjProduct),
+    products: products.map(normalizeCjProduct),
     page: data?.pageNum ?? query.cjPage,
     pageSize,
     total,
