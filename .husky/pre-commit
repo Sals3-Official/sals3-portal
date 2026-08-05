@@ -1,0 +1,9 @@
+branch="$(git branch --show-current)"
+
+if [ "$branch" = "develop" ] || [ "$branch" = "main" ]; then
+  echo "Direct commits to $branch are blocked. Create a feature branch and open a pull request instead."
+  exit 1
+fi
+
+npx lint-staged
+npm run verify

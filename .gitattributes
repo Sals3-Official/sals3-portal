@@ -1,0 +1,7 @@
+# Normalize all text files to LF line endings in the repository,
+# regardless of each platform's local git config. Without this,
+# Windows's core.autocrlf converts files to CRLF on checkout, which
+# then conflicts with Prettier's default LF expectation - causing the
+# same files to flip-flop as "needs reformatting" every session. This
+# keeps Bogs (Windows) and AJ (Mac) on the same line endings.
+* text=auto eol=lf

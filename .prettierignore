@@ -1,0 +1,11 @@
+.next
+node_modules
+out
+build
+coverage
+playwright-report
+test-results
+package-lock.json
+
+# Obsidian vault (notes + vendored community plugin) - not project source
+docs
