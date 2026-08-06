@@ -1,13 +1,13 @@
 import { createHash } from 'crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// A transaction that just hands the caller a sentinel executor.
+// `getDb()` is lazy, so the mock is a function returning a client whose
+// transaction just hands the caller a sentinel executor.
 vi.mock('@/lib/db/client', () => ({
-  default: {
-    transaction: vi.fn(async (run: (tx: unknown) => Promise<unknown>) =>
-      run({ tx: true }),
-    ),
-  },
+  default: () => ({
+    transaction: (run: (tx: unknown) => Promise<unknown>) => run({ tx: true }),
+  }),
+  isDatabaseConfigured: () => true,
 }));
 
 vi.mock('./repository', () => ({

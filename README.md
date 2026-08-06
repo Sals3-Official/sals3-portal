@@ -169,6 +169,13 @@ the append-only `audit_events`.
 
 - **Server-only.** `DATABASE_URL` has no `NEXT_PUBLIC_` prefix, and
   `src/lib/db/client.ts` throws if it is ever imported from client code.
+- **Lazy, so a build never needs a database.** The connection is created on the
+  first query, never at module evaluation. Next.js imports every route module
+  during `next build`'s "Collecting page data" phase — including
+  `force-dynamic` routes — so connecting at import time fails the whole build
+  wherever `DATABASE_URL` is unset (a Vercel preview, CI, a fresh clone).
+  Pages that read the database check `isDatabaseConfigured()` and render an
+  honest "no database configured in this environment" state instead of a 500.
 - **Least privilege.** Connect as an app role, not `postgres`. Any non-local
   host is connected with `ssl: 'verify-full'`.
 - **Bounded.** One pooled connection set (`max: 10`) reused across dev

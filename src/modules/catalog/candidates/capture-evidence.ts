@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import db from '@/lib/db/client';
+import getDb from '@/lib/db/client';
 import type { CandidateEvidence } from '@/lib/cj/evidence';
 import fetchCandidateEvidence from '@/services/cj/enrichment';
 import { appendAuditEvent, upsertSnapshot } from './repository';
@@ -52,7 +52,7 @@ export default async function captureCandidateEvidence(input: {
   const capturedAt = new Date(evidence.capturedAt);
   const checksum = checksumOf(evidence);
 
-  await db.transaction(async (tx) => {
+  await getDb().transaction(async (tx) => {
     await upsertSnapshot(tx, {
       candidateId: input.candidateId,
       schemaVersion: EVIDENCE_SCHEMA_VERSION,

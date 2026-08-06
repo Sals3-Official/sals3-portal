@@ -10,9 +10,16 @@ import * as schema from './schema';
  * instead of a silent bundle leak. No `server-only` package is needed for
  * that, so this adds no dependency.
  *
- * The connection is cached on `globalThis` in development so Next.js's
- * module hot-reload reuses one bounded pool instead of opening a new one on
- * every edit.
+ * The connection is created **lazily, on first query** — never at module
+ * evaluation. Next.js imports every route module during `next build`'s
+ * "Collecting page data" phase, including `export const dynamic =
+ * 'force-dynamic'` routes, so connecting at import time made a build fail
+ * outright in any environment without `DATABASE_URL` (a Vercel preview, CI,
+ * a fresh clone). Importing this module must have no side effects; only
+ * running a query may require configuration.
+ *
+ * The client is cached on `globalThis` so Next.js's development hot-reload
+ * reuses one bounded pool instead of opening a new one on every edit.
  */
 
 if (typeof window !== 'undefined') {
@@ -25,12 +32,23 @@ const POOL_MAX = 10;
 const IDLE_TIMEOUT_SECONDS = 20;
 const CONNECT_TIMEOUT_SECONDS = 10;
 
-type DbClient = ReturnType<typeof drizzle<typeof schema>>;
+export type Database = ReturnType<typeof drizzle<typeof schema>>;
 
 const globalForDb = globalThis as unknown as {
   sals3Sql?: ReturnType<typeof postgres>;
-  sals3Db?: DbClient;
+  sals3Db?: Database;
 };
+
+/**
+ * Whether a connection string is present. Callers that render a page should
+ * check this and degrade honestly rather than letting a query throw a 500 —
+ * an environment with no database is a real, expected condition (preview
+ * deploys, CI), not a bug.
+ */
+export function isDatabaseConfigured(): boolean {
+  const connectionString = process.env.DATABASE_URL;
+  return connectionString !== undefined && connectionString !== '';
+}
 
 function requiresTls(connectionString: string): boolean {
   try {
@@ -60,13 +78,23 @@ function createSql(): ReturnType<typeof postgres> {
   });
 }
 
-const sql = globalForDb.sals3Sql ?? createSql();
-const db: DbClient = globalForDb.sals3Db ?? drizzle(sql, { schema });
+/**
+ * Returns the Drizzle client, connecting on first use. Throws only when a
+ * query is actually attempted without `DATABASE_URL`.
+ */
+export default function getDb(): Database {
+  if (globalForDb.sals3Db !== undefined) {
+    return globalForDb.sals3Db;
+  }
 
-if (process.env.NODE_ENV !== 'production') {
+  const sql = createSql();
+  const db = drizzle(sql, { schema });
+
+  // Cache in development so hot-reload does not leak pools. In production the
+  // module itself is evaluated once per instance, so a local const suffices —
+  // but caching is harmless and keeps one code path.
   globalForDb.sals3Sql = sql;
   globalForDb.sals3Db = db;
-}
 
-export { sql };
-export default db;
+  return db;
+}

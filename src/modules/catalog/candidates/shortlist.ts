@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from 'crypto';
-import db from '@/lib/db/client';
+import getDb from '@/lib/db/client';
 import {
   shortlistCandidateCommandSchema,
   type ShortlistCandidateCommand,
@@ -66,7 +66,7 @@ export default async function shortlistCandidate(
   const parsed = shortlistCandidateCommandSchema.parse(command);
   const requestHash = hashCommand(parsed);
 
-  return db.transaction(async (tx) => {
+  return getDb().transaction(async (tx) => {
     const existingKey = await findIdempotencyRecord(tx, idempotencyKey);
 
     if (existingKey !== null) {

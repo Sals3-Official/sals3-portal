@@ -1,5 +1,5 @@
 import { desc, eq } from 'drizzle-orm';
-import db from '@/lib/db/client';
+import getDb from '@/lib/db/client';
 import { supplierCandidates } from '@/lib/db/schema';
 
 /**
@@ -27,7 +27,7 @@ export default async function listShortlistedCandidates(
   sellerId: string,
   limit = 50,
 ): Promise<ShortlistedCandidate[]> {
-  const rows = await db
+  const rows = await getDb()
     .select({
       id: supplierCandidates.id,
       externalProductId: supplierCandidates.externalProductId,

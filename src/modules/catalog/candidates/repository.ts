@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import db from '@/lib/db/client';
+import type { Database } from '@/lib/db/client';
 import {
   auditEvents,
   idempotencyRecords,
@@ -19,8 +19,8 @@ import {
  * without this file knowing about transaction control.
  */
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
-export type Executor = typeof db | Transaction;
+type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
+export type Executor = Database | Transaction;
 
 /**
  * Atomic create-or-nothing on the `(supplier, external_product_id)` unique
