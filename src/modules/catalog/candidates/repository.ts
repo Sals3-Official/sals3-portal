@@ -4,8 +4,10 @@ import {
   auditEvents,
   idempotencyRecords,
   supplierCandidates,
+  supplierSnapshots,
   type IdempotencyRecordRow,
   type SupplierCandidateRow,
+  type SupplierSnapshotRow,
 } from '@/lib/db/schema';
 
 /**
@@ -90,6 +92,48 @@ export async function appendAuditEvent(
   },
 ): Promise<void> {
   await executor.insert(auditEvents).values(event);
+}
+
+/**
+ * One snapshot per candidate: a re-check replaces the previous evidence,
+ * because stale evidence has no consumer and unbounded history would grow for
+ * nothing. Uses an upsert so a re-check cannot race into a duplicate.
+ */
+export async function upsertSnapshot(
+  executor: Executor,
+  snapshot: {
+    candidateId: string;
+    schemaVersion: string;
+    checksum: string;
+    evidence: unknown;
+    capturedAt: Date;
+  },
+): Promise<void> {
+  await executor
+    .insert(supplierSnapshots)
+    .values(snapshot)
+    .onConflictDoUpdate({
+      target: supplierSnapshots.candidateId,
+      set: {
+        schemaVersion: snapshot.schemaVersion,
+        checksum: snapshot.checksum,
+        evidence: snapshot.evidence,
+        capturedAt: snapshot.capturedAt,
+      },
+    });
+}
+
+export async function findSnapshotByCandidateId(
+  executor: Executor,
+  candidateId: string,
+): Promise<SupplierSnapshotRow | null> {
+  const rows = await executor
+    .select()
+    .from(supplierSnapshots)
+    .where(eq(supplierSnapshots.candidateId, candidateId))
+    .limit(1);
+
+  return rows[0] ?? null;
 }
 
 export async function findIdempotencyRecord(

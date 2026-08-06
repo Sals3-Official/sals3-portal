@@ -145,21 +145,27 @@ The catalog tables live in this app, so a shortlist write is a Server Action
 against the local database — no cross-service HTTP call and no shared service
 credential to store or leak.
 
-| Piece                          | File                                           |
-| ------------------------------ | ---------------------------------------------- |
-| Table definitions              | `src/lib/db/schema/catalog.ts`                 |
-| Client (postgres.js singleton) | `src/lib/db/client.ts`                         |
-| Generated SQL migrations       | `drizzle/`                                     |
-| Drizzle Kit config             | `drizzle.config.ts`                            |
-| Zod contracts                  | `src/modules/catalog/candidates/contracts.ts`  |
-| Queries (write side)           | `src/modules/catalog/candidates/repository.ts` |
-| Shortlist use case             | `src/modules/catalog/candidates/shortlist.ts`  |
-| Queries (read side)            | `src/modules/catalog/candidates/queries.ts`    |
-| Server Action                  | `src/app/(portal)/products/actions.ts`         |
+| Piece                          | File                                                 |
+| ------------------------------ | ---------------------------------------------------- |
+| Table definitions              | `src/lib/db/schema/catalog.ts`                       |
+| Client (postgres.js singleton) | `src/lib/db/client.ts`                               |
+| Generated SQL migrations       | `drizzle/`                                           |
+| Drizzle Kit config             | `drizzle.config.ts`                                  |
+| Zod contracts                  | `src/modules/catalog/candidates/contracts.ts`        |
+| Queries (write side)           | `src/modules/catalog/candidates/repository.ts`       |
+| Shortlist use case             | `src/modules/catalog/candidates/shortlist.ts`        |
+| Queries (read side)            | `src/modules/catalog/candidates/queries.ts`          |
+| Server Action                  | `src/app/(portal)/products/actions.ts`               |
+| Shared CJ Zod primitives       | `src/lib/cj/primitives.ts`                           |
+| CJ enrichment schemas          | `src/lib/cj/enrichment-schemas.ts`                   |
+| CJ evidence normaliser         | `src/lib/cj/evidence.ts`                             |
+| CJ enrichment fetch            | `src/services/cj/enrichment.ts`                      |
+| Evidence capture use case      | `src/modules/catalog/candidates/capture-evidence.ts` |
 
-Three tables: `supplier_candidates` (the shortlist record, unique on
-`(supplier, external_product_id)`), `idempotency_records`, and the append-only
-`audit_events`.
+Four tables: `supplier_candidates` (the shortlist record, unique on
+`(supplier, external_product_id)`), `idempotency_records`,
+`supplier_snapshots` (one normalised CJ evidence record per candidate), and
+the append-only `audit_events`.
 
 - **Server-only.** `DATABASE_URL` has no `NEXT_PUBLIC_` prefix, and
   `src/lib/db/client.ts` throws if it is ever imported from client code.
@@ -179,14 +185,52 @@ Three tables: `supplier_candidates` (the shortlist record, unique on
   process — a deliberate choice over adding Redis for a handful of employees.
   Move to a shared store if the portal ever runs more than one instance.
 
+### CJ evidence capture
+
+Shortlisting also fetches fresh CJ evidence and stores it as one snapshot per
+candidate. Three calls per candidate, deliberately:
+
+| Call                                        | Why this one                                                                                                                  |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `GET /product/query?pid=`                   | Detail **and** variants — the payload already embeds `variants`, so the separate `/product/variant/query` call is unnecessary |
+| `GET /product/stock/getInventoryByPid?pid=` | Per-warehouse totals **and** per-variant stock in one response, instead of one call per `vid`                                 |
+| `GET /product/productComments?pid=`         | Supplier-platform review evidence                                                                                             |
+
+Two things verified against the live API on 2026-08-07 that are easy to get
+wrong, and are both covered by regression tests:
+
+- `variantInventories` comes back in a **different order** from the detail
+  response's `variants`. Join on `vid`, never on array index.
+- The two inventory levels use **different field names** for the same idea:
+  product-level warehouse entries use `totalInventoryNum`, per-variant entries
+  use `totalInventory`. Sharing one schema silently reports every variant as
+  having no stock while real stock exists.
+
+Calls run sequentially with a delay because CJ allows one request per second,
+and every response's `pointsInfo` is logged so remaining quota is observable
+rather than discovered through a 429.
+
+Freight (`/logistic/freightCalculate`) is **not** called: it needs an approved
+destination market, and ADR-003 has not approved one.
+
+If CJ is unreachable, the candidate is still shortlisted and the drawer says
+evidence could not be fetched — never that there is none.
+
 ### What "Check for Sals3" does and does not do
 
-It persists the **Shortlist** step only. It does **not** run preflight: there
-is no CJ detail/variant/inventory/media/freight enrichment fetch yet, so the
-app never produces a `PASS`, `PASS_WITH_ATTENTION`, `REVIEW`, `HOLD`, or
-`BLOCKED` decision, and no quality score. The Exception Queue is therefore
-empty by construction, not by missing data. The drawer says so explicitly
-rather than showing blank score sections.
+It persists the **Shortlist** step and captures CJ evidence. It does **not**
+run preflight: the hard gates, quality score, and compliance gate are not
+implemented, so the app never produces a `PASS`, `PASS_WITH_ATTENTION`,
+`REVIEW`, `HOLD`, or `BLOCKED` decision. The evidence panel shows facts only —
+no verdict is derived from them. The Exception Queue is therefore empty by
+construction, not by missing data, and the drawer says so explicitly rather
+than showing blank score sections.
+
+Two labelling rules are load-bearing in that panel: CJ review numbers are
+supplier-platform evidence and never Sals3 buyer ratings, and `listedNum` is a
+platform listing count and never units sold. The supplier `description` is
+fetched but deliberately not rendered — it is raw supplier HTML and nothing
+sanitises it yet.
 
 `src/lib/seller-center/market-config.ts` carries 3 illustrative sample
 markets (Philippines, Indonesia, Singapore) with their own currency, carrier,

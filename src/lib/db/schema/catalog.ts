@@ -111,6 +111,38 @@ export const idempotencyRecords = pgTable(
 );
 
 /**
+ * Spec section 5.2 `SupplierSnapshot`, phase-1 subset.
+ *
+ * Stores the normalised CJ evidence captured at shortlist time — never the raw
+ * supplier payload, so no unredacted third-party blob is retained. `checksum`
+ * is a SHA-256 of the normalised evidence, which is what lets a later fetch
+ * tell "unchanged" from "changed" without diffing the whole document.
+ *
+ * One row per candidate: a re-check replaces it, because stale evidence has no
+ * value and keeping every version would grow without bound for no current
+ * consumer. Version history becomes worth adding when preflight decisions
+ * start citing a specific snapshot.
+ */
+export const supplierSnapshots = pgTable(
+  'supplier_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    candidateId: uuid('candidate_id')
+      .notNull()
+      .references(() => supplierCandidates.id, { onDelete: 'cascade' }),
+    schemaVersion: text('schema_version').notNull(),
+    checksum: text('checksum').notNull(),
+    evidence: jsonb('evidence').notNull(),
+    capturedAt: timestamp('captured_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('supplier_snapshots_candidate_id_key').on(table.candidateId),
+  ],
+);
+
+/**
  * Spec section 5.3: "`AuditEvent` is append-only. Corrections create a new
  * event. They do not rewrite history." No application code exposes an update
  * or delete path for this table.
@@ -139,4 +171,5 @@ export const auditEvents = pgTable(
 export type SupplierCandidateRow = typeof supplierCandidates.$inferSelect;
 export type NewSupplierCandidateRow = typeof supplierCandidates.$inferInsert;
 export type IdempotencyRecordRow = typeof idempotencyRecords.$inferSelect;
+export type SupplierSnapshotRow = typeof supplierSnapshots.$inferSelect;
 export type AuditEventRow = typeof auditEvents.$inferSelect;

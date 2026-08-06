@@ -4,6 +4,8 @@ import { randomUUID } from 'crypto';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { checkRateLimit } from '@/lib/rate-limit';
+import type { CandidateEvidence } from '@/lib/cj/evidence';
+import captureCandidateEvidence from '@/modules/catalog/candidates/capture-evidence';
 import { shortlistCandidateInputSchema } from '@/modules/catalog/candidates/contracts';
 import shortlistCandidate from '@/modules/catalog/candidates/shortlist';
 
@@ -35,6 +37,12 @@ export type CheckForSals3Result =
       candidateId: string;
       shortlistState: 'SHORTLISTED' | 'PREFLIGHT_PENDING';
       reused: boolean;
+      /**
+       * Fresh CJ evidence, or null when the supplier API could not be reached.
+       * A null here means "we could not look", never "there is nothing" — the
+       * candidate is still shortlisted either way.
+       */
+      evidence: CandidateEvidence | null;
     }
   | {
       ok: false;
@@ -87,11 +95,22 @@ export async function checkForSals3Candidate(
       return { ok: false, reason: 'conflict' };
     }
 
+    // Separate step on purpose: the CJ calls take ~2.5s under CJ's one
+    // request per second limit, and the shortlist transaction must not stay
+    // open across them. A supplier outage leaves the candidate shortlisted
+    // with no evidence rather than failing the whole action.
+    const captured = await captureCandidateEvidence({
+      candidateId: outcome.result.candidateId,
+      externalProductId: parsedInput.data.externalProductId,
+      actorId: session.userId,
+    });
+
     return {
       ok: true,
       candidateId: outcome.result.candidateId,
       shortlistState: outcome.result.shortlistState,
       reused: outcome.result.reused,
+      evidence: captured.status === 'captured' ? captured.evidence : null,
     };
   } catch (error) {
     // Structured server-side log only; the client gets a reason code with no
