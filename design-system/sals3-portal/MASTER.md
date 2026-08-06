@@ -1,21 +1,22 @@
-# Sals3 Portal — Design System (MASTER)
+# Seller Center — Design System (MASTER)
 
-Global source of truth for portal UI. Page-specific files in `pages/` override
-this file. Storefront parity is mandatory: the palette and type scale come from
+Global source of truth for Seller Center UI (npm package `sals3-portal`).
+Page-specific files in `pages/` override this file. Storefront parity is
+mandatory: the palette and type scale come from
 `sals3-ecommerce/src/app/globals.css`, the code that deploys
 `sals3-ecommerce.vercel.app`.
 
 ## 1. Product type and posture
 
-| Dimension     | Decision                                                                                                        |
-| ------------- | --------------------------------------------------------------------------------------------------------------- |
-| Product type  | Internal operations tool (seller center / catalogue admin), not a landing page                                  |
-| Primary users | Seller staff, Sals3 catalogue reviewers, admins                                                                 |
-| Core job      | Scan many products fast, then edit one product precisely                                                        |
-| Density       | 8/10 — dense dashboard. Spacing scale 8–32px, table row height 48px                                             |
-| Variance      | 3/10 — calm, centred, predictable. No decorative asymmetry                                                      |
-| Motion        | 3/10 — subtle only: 150–200ms colour/opacity transitions, no scroll choreography                                |
-| Style         | Functional/utility dashboard (flat, bordered surfaces, no glass, no gradients except the shared brand gradient) |
+| Dimension     | Decision                                                                                                                                                                   |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Product type  | Seller Center — internal operations tool for order fulfillment, inventory, listings, finances, payouts, market rules, and the CJdropshipping catalogue. Not a landing page |
+| Primary users | Seller staff, Sals3 catalogue reviewers, admins                                                                                                                            |
+| Core job      | Scan many products fast, then edit one product precisely                                                                                                                   |
+| Density       | 8/10 — dense dashboard. Spacing scale 8–32px, table row height 48px                                                                                                        |
+| Variance      | 3/10 — calm, centred, predictable. No decorative asymmetry                                                                                                                 |
+| Motion        | 3/10 — subtle only: 150–200ms colour/opacity transitions, no scroll choreography                                                                                           |
+| Style         | Functional/utility dashboard (flat, bordered surfaces, no glass, no gradients except the shared brand gradient)                                                            |
 
 **Rejected recommendation, recorded on purpose:** the `ui-ux-pro-max`
 `--design-system` query returned _Exaggerated Minimalism_ with a generic
@@ -84,7 +85,8 @@ Never below 12px. Line-height 1.5 for prose, 1.35 for table cells.
 Installed set: `table`, `input`, `select`, `badge`, `card`, `dropdown-menu`,
 `dialog`, `alert-dialog`, `tabs`, `checkbox`, `label`, `textarea`, `separator`,
 `sidebar`, `sheet`, `tooltip`, `skeleton`, `switch`, `avatar`, `progress`,
-`breadcrumb`, `button`.
+`breadcrumb`, `button`, `sonner` (toast + undo pattern, added for Seller
+Center's Orders batch-print and Inventory stock-edit flows).
 
 Deliberately **not** installed: `form` + `react-hook-form` (Next.js server
 actions with `useActionState` plus the Zod schemas already in the repo cover

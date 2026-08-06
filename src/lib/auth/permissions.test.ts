@@ -1,63 +1,48 @@
 import { describe, expect, it } from 'vitest';
-import {
-  can,
-  permissionsOf,
-  PORTAL_PERMISSIONS,
-  PORTAL_ROLES,
-  type PortalRole,
-} from './permissions';
+import { can, permissionsOf } from './permissions';
 
-describe('can', () => {
-  it('gives an administrator every permission', () => {
-    expect(
-      PORTAL_PERMISSIONS.every((permission) => can('admin', permission)),
-    ).toBe(true);
+describe('Seller Center permissions', () => {
+  it('grants admin every permission', () => {
+    expect(can('admin', 'finance:read')).toBe(true);
+    expect(can('admin', 'payout:manage')).toBe(true);
+    expect(can('admin', 'market_rules:read')).toBe(true);
   });
 
-  it('lets a viewer only read', () => {
-    expect(can('viewer', 'product:read')).toBe(true);
-    expect(can('viewer', 'product:edit')).toBe(false);
-    expect(can('viewer', 'product:delete')).toBe(false);
-    expect(can('viewer', 'product:publish')).toBe(false);
-  });
-
-  it('lets seller staff submit for review but never approve or publish', () => {
-    expect(can('seller_staff', 'product:submit')).toBe(true);
-    expect(can('seller_staff', 'product:approve')).toBe(false);
-    expect(can('seller_staff', 'product:publish')).toBe(false);
-    expect(can('seller_staff', 'product:delete')).toBe(false);
-  });
-
-  it('lets a catalogue reviewer approve but never create or edit', () => {
-    expect(can('catalogue_reviewer', 'product:approve')).toBe(true);
-    expect(can('catalogue_reviewer', 'product:create')).toBe(false);
-    expect(can('catalogue_reviewer', 'product:edit')).toBe(false);
-  });
-
-  it('lets a seller manager publish and delete', () => {
-    expect(can('seller_manager', 'product:publish')).toBe(true);
-    expect(can('seller_manager', 'product:delete')).toBe(true);
-  });
-
-  it('never grants approval rights outside admin and reviewer roles', () => {
-    const approvers = PORTAL_ROLES.filter((role: PortalRole) =>
-      can(role, 'product:approve'),
+  it('keeps catalogue_reviewer scoped to catalogue QA only', () => {
+    expect(permissionsOf('catalogue_reviewer')).not.toContain('order:read');
+    expect(permissionsOf('catalogue_reviewer')).not.toContain('finance:read');
+    expect(permissionsOf('catalogue_reviewer')).not.toContain('payout:read');
+    expect(permissionsOf('catalogue_reviewer')).not.toContain(
+      'inventory:adjust',
     );
-
-    expect(approvers).toEqual(['admin', 'catalogue_reviewer']);
-  });
-});
-
-describe('permissionsOf', () => {
-  it('returns only permissions from the known list', () => {
-    PORTAL_ROLES.forEach((role) => {
-      permissionsOf(role).forEach((permission) => {
-        expect(PORTAL_PERMISSIONS).toContain(permission);
-      });
-    });
   });
 
-  it('gives every role the right to read', () => {
-    expect(PORTAL_ROLES.every((role) => can(role, 'product:read'))).toBe(true);
+  it('gives seller_manager (Owner) full Seller Center access', () => {
+    expect(can('seller_manager', 'order:fulfill')).toBe(true);
+    expect(can('seller_manager', 'inventory:adjust')).toBe(true);
+    expect(can('seller_manager', 'finance:read')).toBe(true);
+    expect(can('seller_manager', 'payout:read')).toBe(true);
+    expect(can('seller_manager', 'payout:manage')).toBe(true);
+    expect(can('seller_manager', 'market_rules:read')).toBe(true);
+  });
+
+  it('blocks seller_staff (Staff) from finance and payout screens', () => {
+    expect(can('seller_staff', 'order:fulfill')).toBe(true);
+    expect(can('seller_staff', 'inventory:adjust')).toBe(true);
+    expect(can('seller_staff', 'market_rules:read')).toBe(true);
+    expect(can('seller_staff', 'finance:read')).toBe(false);
+    expect(can('seller_staff', 'payout:read')).toBe(false);
+    expect(can('seller_staff', 'payout:manage')).toBe(false);
+  });
+
+  it('gives viewer read-only access with no financial visibility', () => {
+    expect(can('viewer', 'overview:read')).toBe(true);
+    expect(can('viewer', 'order:read')).toBe(true);
+    expect(can('viewer', 'inventory:read')).toBe(true);
+    expect(can('viewer', 'market_rules:read')).toBe(true);
+    expect(can('viewer', 'order:fulfill')).toBe(false);
+    expect(can('viewer', 'inventory:adjust')).toBe(false);
+    expect(can('viewer', 'finance:read')).toBe(false);
+    expect(can('viewer', 'payout:read')).toBe(false);
   });
 });

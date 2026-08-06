@@ -1,8 +1,12 @@
 import {
+  Banknote,
   BarChart3,
+  Boxes,
   ClipboardCheck,
+  LayoutDashboard,
   Package,
   Plus,
+  ScrollText,
   Star,
   Upload,
 } from 'lucide-react';
@@ -15,6 +19,10 @@ const ICONS = {
   clipboard: ClipboardCheck,
   chart: BarChart3,
   star: Star,
+  'layout-dashboard': LayoutDashboard,
+  boxes: Boxes,
+  banknote: Banknote,
+  'scroll-text': ScrollText,
 } as const;
 
 type NavIconProps = {

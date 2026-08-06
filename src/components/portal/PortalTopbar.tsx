@@ -1,6 +1,7 @@
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { Separator } from '@/components/ui/separator';
 import { PORTAL_ROLE_LABELS, type PortalRole } from '@/lib/auth/permissions';
+import PortalTopbarSection from './PortalTopbarSection';
 
 type PortalTopbarProps = {
   userName: string;
@@ -16,7 +17,7 @@ export default function PortalTopbar({ userName, role }: PortalTopbarProps) {
     <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-border bg-card px-4">
       <SidebarTrigger className="cursor-pointer" />
       <Separator orientation="vertical" className="h-6" />
-      <p className="text-sm font-medium">Catalogue management</p>
+      <PortalTopbarSection />
       <div className="ml-auto text-right">
         <p className="text-sm font-medium leading-tight">{userName}</p>
         <p className="text-xs text-muted-foreground leading-tight">

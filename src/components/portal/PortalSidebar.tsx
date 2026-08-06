@@ -45,10 +45,10 @@ export default function PortalSidebar({ groups }: PortalSidebarProps) {
     <Sidebar collapsible="icon">
       <SidebarHeader className="px-3 py-4">
         <Link
-          href="/products"
+          href="/overview"
           className="font-display text-base font-semibold tracking-tight text-sidebar-foreground"
         >
-          Sals3 Portal
+          Seller Center
         </Link>
       </SidebarHeader>
       <SidebarContent>

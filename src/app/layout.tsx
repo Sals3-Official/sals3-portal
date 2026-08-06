@@ -16,8 +16,9 @@ const outfit = Outfit({
 });
 
 export const metadata: Metadata = {
-  title: 'Sals3 Portal',
-  description: 'Sals3 seller portal for product and catalogue management.',
+  title: 'Seller Center',
+  description:
+    'Sals3 Seller Center — orders, inventory, listings, finances, payouts, market rules, and the CJdropshipping catalogue.',
   // The portal is a private operations tool. Keep it out of search
   // engines and AI answer surfaces on purpose.
   robots: { index: false, follow: false },
