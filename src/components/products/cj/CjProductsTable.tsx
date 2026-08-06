@@ -19,6 +19,7 @@ const COLUMNS = [
   { label: 'Ships from', className: 'hidden lg:table-cell' },
   { label: 'Listings', className: 'hidden text-right xl:table-cell' },
   { label: 'Added', className: 'whitespace-nowrap' },
+  { label: 'Sals3', className: 'whitespace-nowrap' },
 ];
 
 /**

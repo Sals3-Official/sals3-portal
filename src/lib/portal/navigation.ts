@@ -13,7 +13,8 @@ export type NavItem = {
     | 'layout-dashboard'
     | 'boxes'
     | 'banknote'
-    | 'scroll-text';
+    | 'scroll-text'
+    | 'alert-triangle';
   permission: PortalPermission;
 };
 
@@ -43,16 +44,33 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Catalogue',
     items: [
       {
-        href: '/products',
-        label: 'Products',
-        icon: 'package',
-        permission: 'product:read',
-      },
-      {
         href: '/listings/new',
         label: 'New listing',
         icon: 'plus',
         permission: 'product:create',
+      },
+    ],
+  },
+  {
+    label: 'Product Sourcing',
+    items: [
+      {
+        href: '/products',
+        label: 'CJ Candidate Explorer',
+        icon: 'package',
+        permission: 'product:read',
+      },
+      {
+        href: '/products/shortlisted',
+        label: 'Shortlisted',
+        icon: 'star',
+        permission: 'catalog.candidate.read',
+      },
+      {
+        href: '/products/exception-queue',
+        label: 'Exception Queue',
+        icon: 'alert-triangle',
+        permission: 'catalog.candidate.read',
       },
     ],
   },
