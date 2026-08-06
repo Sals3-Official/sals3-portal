@@ -5,7 +5,7 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Sals3 Portal design tokens.
+ * Seller Center design tokens.
  *
  * Brand primitives and the semantic ink/border/surface scale are copied
  * from sals3-ecommerce (the storefront deployed at

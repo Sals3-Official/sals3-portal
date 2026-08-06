@@ -1,13 +1,13 @@
-# Sals3 Portal
+# Seller Center
 
-The Sals3 seller portal: a read-only view of the CJdropshipping supplier
-catalogue. Same tech stack as
-`sals3-ecommerce`, and the same brand tokens, so both products look like one
-system.
+Sals3's seller operations app (npm package `sals3-portal`): Overview, Orders,
+Inventory, a new-listing wizard, Finances, Payouts, and Market rules, plus the
+CJdropshipping supplier catalogue. Same tech stack as `sals3-ecommerce`, and
+the same brand tokens, so both products look like one system.
 
 - Next.js 16 (App Router) + React 19 + TypeScript (strict)
 - Tailwind CSS 4 (via `@tailwindcss/postcss`)
-- shadcn/ui components on Base UI, with Lucide icons
+- shadcn/ui components on Base UI, with Lucide icons and `sonner` for toasts
 - Zod for validation
 - ESLint 9 (flat config: Airbnb + Next core-web-vitals + TypeScript + Prettier)
 - Prettier
@@ -48,13 +48,20 @@ Set `SALS3_STOREFRONT_API_TOKEN` to a long random value if
 
 ## Routes
 
-| Route                           | What it does                                                            |
-| ------------------------------- | ----------------------------------------------------------------------- |
-| `/`                             | Placeholder home page ("Hello world")                                   |
-| `/products`                     | CJdropshipping supplier catalogue (read-only): search, paging           |
-| `/api/storefront/products`      | Protected product feed for `sals3-ecommerce`                            |
-| `/api/storefront/products/[id]` | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP |
-| `/api/storefront/categories`    | Protected category feed for `sals3-ecommerce`                           |
+| Route                           | What it does                                                              |
+| ------------------------------- | ------------------------------------------------------------------------- |
+| `/`                             | Placeholder home page ("Hello world") — outside the Seller Center shell   |
+| `/overview`                     | Seller Center dashboard: needs-action tasks, money position, glance stats |
+| `/orders`                       | Batch fulfillment: filter, select, print (static), handoff                |
+| `/listings/new`                 | New-listing wizard preview (read-only fields, no save yet)                |
+| `/inventory`                    | Inline stock edits with undo and an audit record                          |
+| `/finances`                     | Itemized ledger and estimated proceeds for one example order              |
+| `/payouts`                      | Payout schedule, states, and destination                                  |
+| `/market-rules`                 | Every rule applied to the account, plus role access                       |
+| `/products`                     | CJdropshipping supplier catalogue (read-only): search, paging             |
+| `/api/storefront/products`      | Protected product feed for `sals3-ecommerce`                              |
+| `/api/storefront/products/[id]` | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP   |
+| `/api/storefront/categories`    | Protected category feed for `sals3-ecommerce`                             |
 
 ## Design system
 
@@ -69,9 +76,17 @@ in a component.
 `src/lib/auth/permissions.ts` holds a role-to-permission allow list: `admin`,
 `catalogue_reviewer`, `seller_manager`, `seller_staff`, `viewer`. Every server
 action and route handler calls `requirePermission` before it reads or writes.
-Only `product:read` is exercised today (by the supplier catalogue read); the
-rest of the allow list is kept as the authorization surface for a future
-writable catalogue.
+
+Every Seller Center screen calls `requirePermission` too, so this is real,
+server-enforced authorization, not a UI convenience: `overview:read`,
+`order:read`, `order:fulfill`, `inventory:read`, `inventory:adjust`,
+`finance:read`, `payout:read`, `payout:manage`, `market_rules:read`. The new
+listing wizard reuses the existing `product:create`/`product:submit`
+permissions rather than adding new ones. `seller_manager` (Owner) holds all of
+these; `seller_staff` (Staff) holds everything except `finance:read`,
+`payout:read`, and `payout:manage` — Staff cannot open Finances or Payouts,
+matching the Market rules page's own description of the two roles. See
+`src/lib/auth/permissions.test.ts` for the full asserted matrix.
 
 To try a different role locally, set a server-side variable before `npm run dev`:
 
@@ -81,6 +96,37 @@ PORTAL_DEV_ROLE=catalogue_reviewer npm run dev
 
 Accepted values are the five role names above. Anything else falls back to
 `seller_manager`.
+
+## Seller Center screens
+
+Overview, Orders, Inventory, the new-listing wizard, Finances, Payouts, and
+Market rules. All seven are real, permission-gated Next.js routes, but every
+number, order, SKU, and payout on them is static, illustrative placeholder
+data — there is no order, inventory, finance, or payout backend in this
+repository yet. Each screen's data lives in its own file under
+`src/lib/seller-center/mock-data/`, and each carries the same "data reality"
+statement in its design doc under `design-system/sals3-portal/pages/`.
+
+What is real: the permission gate on every route (see above), the on-screen
+interactions (row selection, the inventory quantity stepper, the listing
+wizard's stage toggling, the payout schedule chooser), and the toast +
+`Undo` pattern (`sonner`) used by Orders' batch print and Inventory's
+stepper — those genuinely change this browser tab's state and can genuinely
+be undone, they just do not persist past a reload or reach any backend.
+
+`src/lib/seller-center/market-config.ts` carries 3 illustrative sample
+markets (Philippines, Indonesia, Singapore) with their own currency, carrier,
+tax label, and payout rail — a placeholder for a future per-seller market
+configuration, in the same spirit as `PORTAL_DEV_ROLE`:
+
+```bash
+PORTAL_DEV_MARKET=SG npm run dev
+```
+
+Accepted values are `PH`, `ID`, `SG`. Anything else falls back to `PH`. None
+of the three markets' figures (fees, tax rates, thresholds) are confirmed
+Sals3 business rules — they were carried over from an imported design mockup
+for interface review only.
 
 ## CJdropshipping integration
 
@@ -178,6 +224,14 @@ These are real gaps, not oversights. Do not treat any screen as production ready
 - The portal is `robots: noindex` and publishes no structured data on purpose.
   It is an internal tool, so the SEO, GEO, and AEO work that applies to the
   storefront does not apply here.
+- **Seller Center is static data, real permissions.** All 7 Seller Center
+  screens are real routes with a real, server-enforced permission gate, but
+  every order, SKU, ledger line, and payout is illustrative placeholder data
+  — see [Seller Center screens](#seller-center-screens) above.
+- **No error boundary.** There is no `error.tsx` or `not-found.tsx` anywhere
+  in this app. A thrown `PermissionError` (e.g. visiting a route your role
+  cannot use) surfaces as Next.js's default dev error overlay, not a plain
+  in-product message. Pre-existing gap, not introduced by Seller Center.
 
 ## Running the E2E tests
 

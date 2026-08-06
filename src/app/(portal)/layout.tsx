@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import PortalSidebar from '@/components/portal/PortalSidebar';
 import PortalTopbar from '@/components/portal/PortalTopbar';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
+import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { can } from '@/lib/auth/permissions';
 import { getSession } from '@/lib/auth/session';
@@ -34,6 +35,7 @@ export default async function PortalLayout({ children }: PortalLayoutProps) {
           </div>
         </SidebarInset>
       </SidebarProvider>
+      <Toaster position="bottom-center" />
     </TooltipProvider>
   );
 }

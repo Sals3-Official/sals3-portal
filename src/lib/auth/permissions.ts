@@ -38,6 +38,15 @@ export const PORTAL_PERMISSIONS = [
   'product:export',
   'review:reply',
   'review:moderate',
+  'overview:read',
+  'order:read',
+  'order:fulfill',
+  'inventory:read',
+  'inventory:adjust',
+  'finance:read',
+  'payout:read',
+  'payout:manage',
+  'market_rules:read',
 ] as const;
 
 export type PortalPermission = (typeof PORTAL_PERMISSIONS)[number];
@@ -51,6 +60,8 @@ const ROLE_PERMISSIONS: Record<PortalRole, readonly PortalPermission[]> = {
     'product:export',
     'review:moderate',
   ],
+  // Seller Center "Owner" — full access, including payout destination,
+  // financial settings, and market rules (mirrors the mockup's Owner role).
   seller_manager: [
     'product:read',
     'product:create',
@@ -62,15 +73,41 @@ const ROLE_PERMISSIONS: Record<PortalRole, readonly PortalPermission[]> = {
     'product:import',
     'product:export',
     'review:reply',
+    'overview:read',
+    'order:read',
+    'order:fulfill',
+    'inventory:read',
+    'inventory:adjust',
+    'finance:read',
+    'payout:read',
+    'payout:manage',
+    'market_rules:read',
   ],
+  // Seller Center "Staff" — lists, packs, prints, edits stock, replies to
+  // buyers. No finance or payout visibility (mirrors the mockup's Staff role:
+  // "Cannot see payout destination or change financial settings").
   seller_staff: [
     'product:read',
     'product:create',
     'product:edit',
     'product:submit',
     'review:reply',
+    'overview:read',
+    'order:read',
+    'order:fulfill',
+    'inventory:read',
+    'inventory:adjust',
+    'market_rules:read',
   ],
-  viewer: ['product:read'],
+  // Read-only extension of this role's existing "look, don't touch"
+  // posture. No financial or payout visibility.
+  viewer: [
+    'product:read',
+    'overview:read',
+    'order:read',
+    'inventory:read',
+    'market_rules:read',
+  ],
 };
 
 export function can(role: PortalRole, permission: PortalPermission): boolean {
