@@ -2,6 +2,7 @@ import Image from 'next/image';
 import { Package } from 'lucide-react';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { formatUsdCents, type CjProduct } from '@/lib/cj/normalize';
+import CheckForSals3Action from './CheckForSals3Action';
 
 type CjProductRowProps = {
   product: CjProduct;
@@ -74,6 +75,12 @@ export default function CjProductRow({ product }: CjProductRowProps) {
       </TableCell>
       <TableCell className="block p-0 text-xs whitespace-nowrap text-muted-foreground md:table-cell md:p-2 md:text-sm">
         {product.createdAt ?? '—'}
+      </TableCell>
+      <TableCell className="block w-full p-0 md:table-cell md:w-auto md:p-2">
+        <CheckForSals3Action
+          externalProductId={product.id}
+          productName={product.name}
+        />
       </TableCell>
       {/* Mobile only: the columns hidden above are still useful on a phone, so
           they return as one muted line instead of disappearing. */}

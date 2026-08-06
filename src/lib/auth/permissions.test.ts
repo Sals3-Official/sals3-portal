@@ -6,6 +6,18 @@ describe('Seller Center permissions', () => {
     expect(can('admin', 'finance:read')).toBe(true);
     expect(can('admin', 'payout:manage')).toBe(true);
     expect(can('admin', 'market_rules:read')).toBe(true);
+    expect(can('admin', 'catalog.candidate.shortlist')).toBe(true);
+  });
+
+  it('lets every role read candidates but only acting roles shortlist one', () => {
+    expect(can('catalogue_reviewer', 'catalog.candidate.read')).toBe(true);
+    expect(can('catalogue_reviewer', 'catalog.candidate.shortlist')).toBe(
+      false,
+    );
+    expect(can('viewer', 'catalog.candidate.read')).toBe(true);
+    expect(can('viewer', 'catalog.candidate.shortlist')).toBe(false);
+    expect(can('seller_manager', 'catalog.candidate.shortlist')).toBe(true);
+    expect(can('seller_staff', 'catalog.candidate.shortlist')).toBe(true);
   });
 
   it('keeps catalogue_reviewer scoped to catalogue QA only', () => {

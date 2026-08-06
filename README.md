@@ -6,6 +6,7 @@ CJdropshipping supplier catalogue. Same tech stack as `sals3-ecommerce`, and
 the same brand tokens, so both products look like one system.
 
 - Next.js 16 (App Router) + React 19 + TypeScript (strict)
+- PostgreSQL with Drizzle ORM + Drizzle Kit, over `postgres.js`
 - Tailwind CSS 4 (via `@tailwindcss/postcss`)
 - shadcn/ui components on Base UI, with Lucide icons and `sonner` for toasts
 - Zod for validation
@@ -22,6 +23,21 @@ the same brand tokens, so both products look like one system.
 npm install
 npx playwright install chromium
 cp .env.example .env.local
+```
+
+Create the database and apply migrations (PostgreSQL must be installed and
+running). Use a dedicated least-privilege role, never the `postgres`
+superuser:
+
+```bash
+createuser sals3_app --pwprompt
+createdb sals3 --owner sals3_app
+```
+
+Put that role's connection string in `DATABASE_URL` in `.env.local`, then:
+
+```bash
+npm run db:migrate
 ```
 
 Then fill in `CJ_API_KEY` in `.env.local`. See
@@ -45,23 +61,28 @@ Set `SALS3_STOREFRONT_API_TOKEN` to a long random value if
 | `npm run test:run`        | Unit tests (Vitest)                                                           |
 | `npm run test:e2e`        | E2E tests (Playwright)                                                        |
 | `npm run verify`          | Full gate: lint + format + typecheck + build + unit + E2E                     |
+| `npm run db:generate`     | Generate a SQL migration from `src/lib/db/schema/`                            |
+| `npm run db:migrate`      | Apply pending migrations in `drizzle/`                                        |
+| `npm run db:studio`       | Drizzle Studio (browse the local database)                                    |
 
 ## Routes
 
-| Route                           | What it does                                                              |
-| ------------------------------- | ------------------------------------------------------------------------- |
-| `/`                             | Placeholder home page ("Hello world") — outside the Seller Center shell   |
-| `/overview`                     | Seller Center dashboard: needs-action tasks, money position, glance stats |
-| `/orders`                       | Batch fulfillment: filter, select, print (static), handoff                |
-| `/listings/new`                 | New-listing wizard preview (read-only fields, no save yet)                |
-| `/inventory`                    | Inline stock edits with undo and an audit record                          |
-| `/finances`                     | Itemized ledger and estimated proceeds for one example order              |
-| `/payouts`                      | Payout schedule, states, and destination                                  |
-| `/market-rules`                 | Every rule applied to the account, plus role access                       |
-| `/products`                     | CJdropshipping supplier catalogue (read-only): search, paging             |
-| `/api/storefront/products`      | Protected product feed for `sals3-ecommerce`                              |
-| `/api/storefront/products/[id]` | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP   |
-| `/api/storefront/categories`    | Protected category feed for `sals3-ecommerce`                             |
+| Route                           | What it does                                                                                 |
+| ------------------------------- | -------------------------------------------------------------------------------------------- |
+| `/`                             | Placeholder home page ("Hello world") — outside the Seller Center shell                      |
+| `/overview`                     | Seller Center dashboard: needs-action tasks, money position, glance stats                    |
+| `/orders`                       | Batch fulfillment: filter, select, print (static), handoff                                   |
+| `/listings/new`                 | New-listing wizard preview (read-only fields, no save yet)                                   |
+| `/inventory`                    | Inline stock edits with undo and an audit record                                             |
+| `/finances`                     | Itemized ledger and estimated proceeds for one example order                                 |
+| `/payouts`                      | Payout schedule, states, and destination                                                     |
+| `/market-rules`                 | Every rule applied to the account, plus role access                                          |
+| `/products`                     | CJ Candidate Explorer — CJdropshipping supplier catalogue: search, paging, "Check for Sals3" |
+| `/products/shortlisted`         | Shortlisted CJ candidates, read from Postgres                                                |
+| `/products/exception-queue`     | Review/hold/blocked candidates — empty until preflight exists                                |
+| `/api/storefront/products`      | Protected product feed for `sals3-ecommerce`                                                 |
+| `/api/storefront/products/[id]` | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                      |
+| `/api/storefront/categories`    | Protected category feed for `sals3-ecommerce`                                                |
 
 ## Design system
 
@@ -88,6 +109,10 @@ these; `seller_staff` (Staff) holds everything except `finance:read`,
 matching the Market rules page's own description of the two roles. See
 `src/lib/auth/permissions.test.ts` for the full asserted matrix.
 
+Two permissions gate CJ candidate work: `catalog.candidate.read` (all five
+roles) and `catalog.candidate.shortlist` (`admin`, `seller_manager`,
+`seller_staff` — the roles that act, not just look).
+
 To try a different role locally, set a server-side variable before `npm run dev`:
 
 ```bash
@@ -113,6 +138,55 @@ wizard's stage toggling, the payout schedule chooser), and the toast +
 `Undo` pattern (`sonner`) used by Orders' batch print and Inventory's
 stepper — those genuinely change this browser tab's state and can genuinely
 be undone, they just do not persist past a reload or reach any backend.
+
+## Catalog database (Drizzle + PostgreSQL)
+
+The catalog tables live in this app, so a shortlist write is a Server Action
+against the local database — no cross-service HTTP call and no shared service
+credential to store or leak.
+
+| Piece                          | File                                           |
+| ------------------------------ | ---------------------------------------------- |
+| Table definitions              | `src/lib/db/schema/catalog.ts`                 |
+| Client (postgres.js singleton) | `src/lib/db/client.ts`                         |
+| Generated SQL migrations       | `drizzle/`                                     |
+| Drizzle Kit config             | `drizzle.config.ts`                            |
+| Zod contracts                  | `src/modules/catalog/candidates/contracts.ts`  |
+| Queries (write side)           | `src/modules/catalog/candidates/repository.ts` |
+| Shortlist use case             | `src/modules/catalog/candidates/shortlist.ts`  |
+| Queries (read side)            | `src/modules/catalog/candidates/queries.ts`    |
+| Server Action                  | `src/app/(portal)/products/actions.ts`         |
+
+Three tables: `supplier_candidates` (the shortlist record, unique on
+`(supplier, external_product_id)`), `idempotency_records`, and the append-only
+`audit_events`.
+
+- **Server-only.** `DATABASE_URL` has no `NEXT_PUBLIC_` prefix, and
+  `src/lib/db/client.ts` throws if it is ever imported from client code.
+- **Least privilege.** Connect as an app role, not `postgres`. Any non-local
+  host is connected with `ssl: 'verify-full'`.
+- **Bounded.** One pooled connection set (`max: 10`) reused across dev
+  hot-reloads, so editing a file does not leak pools.
+- **Untrusted input.** The browser sends only a CJ `pid`, checked against an
+  allow-listed character set by Zod. Seller, actor, and market context come
+  from the server session — never the request.
+- **Idempotent.** Every shortlist carries a key; the same key with the same
+  payload replays the stored result, and with a different payload is rejected.
+  Only a SHA-256 of the payload is stored, never the payload.
+- **Race-safe.** Inserts use `ON CONFLICT DO NOTHING` rather than
+  check-then-insert, so two concurrent clicks cannot create a duplicate.
+- **Rate limited.** Per-actor token bucket (`src/lib/rate-limit.ts`), in
+  process — a deliberate choice over adding Redis for a handful of employees.
+  Move to a shared store if the portal ever runs more than one instance.
+
+### What "Check for Sals3" does and does not do
+
+It persists the **Shortlist** step only. It does **not** run preflight: there
+is no CJ detail/variant/inventory/media/freight enrichment fetch yet, so the
+app never produces a `PASS`, `PASS_WITH_ATTENTION`, `REVIEW`, `HOLD`, or
+`BLOCKED` decision, and no quality score. The Exception Queue is therefore
+empty by construction, not by missing data. The drawer says so explicitly
+rather than showing blank score sections.
 
 `src/lib/seller-center/market-config.ts` carries 3 illustrative sample
 markets (Philippines, Indonesia, Singapore) with their own currency, carrier,

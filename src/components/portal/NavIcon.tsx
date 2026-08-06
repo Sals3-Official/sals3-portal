@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   Banknote,
   BarChart3,
   Boxes,
@@ -23,6 +24,7 @@ const ICONS = {
   boxes: Boxes,
   banknote: Banknote,
   'scroll-text': ScrollText,
+  'alert-triangle': AlertTriangle,
 } as const;
 
 type NavIconProps = {

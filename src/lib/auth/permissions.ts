@@ -47,6 +47,8 @@ export const PORTAL_PERMISSIONS = [
   'payout:read',
   'payout:manage',
   'market_rules:read',
+  'catalog.candidate.read',
+  'catalog.candidate.shortlist',
 ] as const;
 
 export type PortalPermission = (typeof PORTAL_PERMISSIONS)[number];
@@ -59,6 +61,7 @@ const ROLE_PERMISSIONS: Record<PortalRole, readonly PortalPermission[]> = {
     'product:archive',
     'product:export',
     'review:moderate',
+    'catalog.candidate.read',
   ],
   // Seller Center "Owner" — full access, including payout destination,
   // financial settings, and market rules (mirrors the mockup's Owner role).
@@ -82,6 +85,8 @@ const ROLE_PERMISSIONS: Record<PortalRole, readonly PortalPermission[]> = {
     'payout:read',
     'payout:manage',
     'market_rules:read',
+    'catalog.candidate.read',
+    'catalog.candidate.shortlist',
   ],
   // Seller Center "Staff" — lists, packs, prints, edits stock, replies to
   // buyers. No finance or payout visibility (mirrors the mockup's Staff role:
@@ -98,6 +103,8 @@ const ROLE_PERMISSIONS: Record<PortalRole, readonly PortalPermission[]> = {
     'inventory:read',
     'inventory:adjust',
     'market_rules:read',
+    'catalog.candidate.read',
+    'catalog.candidate.shortlist',
   ],
   // Read-only extension of this role's existing "look, don't touch"
   // posture. No financial or payout visibility.
@@ -107,6 +114,7 @@ const ROLE_PERMISSIONS: Record<PortalRole, readonly PortalPermission[]> = {
     'order:read',
     'inventory:read',
     'market_rules:read',
+    'catalog.candidate.read',
   ],
 };
 
