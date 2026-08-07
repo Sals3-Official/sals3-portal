@@ -226,7 +226,7 @@ export default function SupplierSourceDrawer({
             />
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <dl className="m-0 px-3 pt-2 font-mono text-[11px] leading-relaxed text-ink-muted">
+            <dl className="m-0 px-3 pt-2 font-mono text-xs leading-relaxed text-ink-muted">
               {Object.entries(fixture.advancedIdentifiers).map(
                 ([key, value]) => (
                   <div key={key} className="break-all">
@@ -238,7 +238,7 @@ export default function SupplierSourceDrawer({
           </CollapsibleContent>
         </Collapsible>
 
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           No API key, token or credential is ever shown in this drawer.
         </p>
       </div>

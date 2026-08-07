@@ -199,7 +199,7 @@ export default function VariantPricingTable({
         >
           Disable unavailable variants
         </Button>
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           Bulk actions skip blocked and paused variants — they are never
           re-enabled silently.
         </span>
@@ -246,7 +246,7 @@ export default function VariantPricingTable({
                     {variant.hasImage ? (
                       <span
                         aria-hidden="true"
-                        className="flex size-9 items-center justify-center rounded-md border border-border bg-muted font-mono text-[9px] text-muted-foreground"
+                        className="flex size-9 items-center justify-center rounded-md border border-border bg-muted font-mono text-xs text-muted-foreground"
                       >
                         img
                       </span>

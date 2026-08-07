@@ -152,7 +152,12 @@ test.describe('Add Product on a phone', () => {
     const readiness = page.getByRole('dialog', { name: 'Listing Readiness' });
 
     await expect(readiness).toBeVisible();
-    await expect(readiness.getByText('Hard blockers')).toBeVisible();
+    // `attention` has no blockers, so the panel collapses the empty "Hard
+    // blockers" group into one positive line instead of an empty card.
+    await expect(readiness.getByText('No publication blockers')).toBeVisible();
+    await expect(
+      readiness.getByRole('heading', { name: 'Warnings' }),
+    ).toBeVisible();
 
     await page.keyboard.press('Escape');
     await expect(readiness).toBeHidden();

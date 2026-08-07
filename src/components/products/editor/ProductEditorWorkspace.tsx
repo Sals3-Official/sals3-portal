@@ -351,13 +351,25 @@ export default function ProductEditorWorkspace({
         onRetry={() => setLifecycle('IDLE')}
       />
 
-      {/* 76rem is the point at which 240px + 288px of side panels still
-          leave the centre editor a usable ~780px. Below it the panels move
-          into drawers instead of squeezing the column the seller is
-          actually typing in. */}
-      <div className="grid grid-cols-1 items-start gap-4 @min-[76rem]:grid-cols-[15rem_minmax(0,1fr)_18rem]">
-        <aside className="sticky top-20 hidden max-h-[calc(100vh-6rem)] overflow-y-auto @min-[76rem]:block">
-          {renderReadiness(true)}
+      {/* 86.5rem (1384px) is 272px Readiness + 760px main + 320px Preview +
+          two 16px gaps - the exact point at which the main editor still
+          gets its guaranteed 760px. `minmax(47.5rem,1fr)` enforces that
+          floor: below the breakpoint the grid does not squeeze three
+          columns together, it drops straight to one and moves Readiness
+          and Preview into sheets instead of shrinking the column the
+          seller is actually typing in. */}
+      <div className="grid grid-cols-1 items-start gap-4 @min-[86.5rem]:grid-cols-[17rem_minmax(47.5rem,1fr)_20rem]">
+        <aside className="sticky top-20 hidden max-h-[calc(100vh-6rem)] overflow-y-auto @min-[86.5rem]:block">
+          <ListingReadinessPanel
+            fixture={fixture}
+            blockerCount={decision.blockerCount}
+            warningCount={decision.warningCount}
+            suggestionCount={decision.suggestionCount}
+            onGoToSection={goToSection}
+            showHeading
+            compact
+            onViewAll={() => setReadinessOpen(true)}
+          />
         </aside>
 
         <div className="@container flex min-w-0 flex-col gap-4">

@@ -63,7 +63,7 @@ export default function MediaSection({
             >
               <span
                 aria-hidden="true"
-                className="flex aspect-square items-center justify-center rounded-md border border-border bg-muted font-mono text-[10px] text-muted-foreground"
+                className="flex aspect-square items-center justify-center rounded-md border border-border bg-muted font-mono text-xs text-muted-foreground"
               >
                 {item.label}
               </span>
@@ -72,19 +72,19 @@ export default function MediaSection({
                 <EditorStatusPill
                   presentation={MEDIA_RIGHTS_PRESENTATION[item.rightsCheck]}
                 />
-                <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-ink-muted">
+                <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-ink-muted">
                   {MEDIA_STORAGE_LABELS[item.storageState]}
                 </span>
               </div>
 
-              <p className="text-[11px] text-muted-foreground tabular-nums">
+              <p className="text-xs text-muted-foreground tabular-nums">
                 {formatPixels(item.pixelWidth, item.pixelHeight)}
               </p>
 
               {item.note === null ? null : (
                 <p
                   role={isRejected ? 'alert' : undefined}
-                  className={`text-[11px] leading-relaxed ${
+                  className={`text-xs leading-relaxed ${
                     isRejected ? 'text-red-600' : 'text-muted-foreground'
                   }`}
                 >
@@ -118,7 +118,7 @@ export default function MediaSection({
                 </Button>
 
                 {item.isCover ? (
-                  <span className="rounded-full bg-sidebar px-2 py-0.5 text-[11px] font-semibold text-sidebar-foreground">
+                  <span className="rounded-full bg-sidebar px-2 py-0.5 text-xs font-semibold text-sidebar-foreground">
                     Cover
                   </span>
                 ) : (
