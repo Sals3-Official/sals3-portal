@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { CjProduct } from '@/lib/cj/normalize';
+import { resolveUsdToPhpRate } from './fx';
 
 export const storefrontSectionSchema = z.enum(['for-you', 'deals']);
 
@@ -58,6 +59,24 @@ export function getStorefrontPricingConfig(): PricingConfig {
       'CJ_USD_TO_PHP_RATE',
       DEFAULT_USD_TO_PHP_RATE,
     ),
+    markupPercent: positiveEnvNumber(
+      'CJ_PRICE_MARKUP_PERCENT',
+      DEFAULT_MARKUP_PERCENT,
+    ),
+  };
+}
+
+/**
+ * The pricing config a request should actually use: a published USD/PHP rate
+ * plus the buffer, rather than the hand-typed `CJ_USD_TO_PHP_RATE`, which is
+ * now only the fallback. Resolve this once per request at the route boundary
+ * and pass it down, so the mapping functions below stay pure and synchronous.
+ */
+export async function resolveStorefrontPricingConfig(): Promise<PricingConfig> {
+  const rate = await resolveUsdToPhpRate();
+
+  return {
+    usdToPhpRate: rate.effective,
     markupPercent: positiveEnvNumber(
       'CJ_PRICE_MARKUP_PERCENT',
       DEFAULT_MARKUP_PERCENT,
@@ -149,6 +168,7 @@ export function toStorefrontProductFeed(
   query: StorefrontFeedQuery,
   supplierTotal: number,
   supplierTotalPages = Math.max(1, Math.ceil(supplierTotal / query.limit)),
+  config = getStorefrontPricingConfig(),
 ): StorefrontProductFeed {
   const source =
     query.section === 'deals'
@@ -160,7 +180,7 @@ export function toStorefrontProductFeed(
         })
       : products;
   const mapped = source
-    .map((product) => toStorefrontProduct(product))
+    .map((product) => toStorefrontProduct(product, config))
     .filter((product): product is StorefrontProduct => product !== null);
 
   return {
