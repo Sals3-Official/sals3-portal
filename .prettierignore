@@ -9,3 +9,6 @@ package-lock.json
 
 # Obsidian vault (notes + vendored community plugin) - not project source
 docs
+
+# Per-person Claude Code state - machine config, not project source
+.claude
