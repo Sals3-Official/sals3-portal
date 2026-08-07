@@ -1,4 +1,5 @@
 import {
+  resolveStorefrontPricingConfig,
   storefrontFeedQuerySchema,
   toStorefrontProductFeed,
 } from '@/lib/storefront/feed';
@@ -27,11 +28,14 @@ export async function GET(request: Request) {
       page: searchParams.get('page') ?? undefined,
       limit: searchParams.get('limit') ?? undefined,
     });
-    const cjPage = await getStorefrontCjProducts({
-      cjPage: query.page,
-      cjSearch: '',
-      cjPid: '',
-    });
+    const [cjPage, pricing] = await Promise.all([
+      getStorefrontCjProducts({
+        cjPage: query.page,
+        cjSearch: '',
+        cjPid: '',
+      }),
+      resolveStorefrontPricingConfig(),
+    ]);
 
     return Response.json(
       toStorefrontProductFeed(
@@ -39,6 +43,7 @@ export async function GET(request: Request) {
         query,
         cjPage.total,
         cjPage.totalPages,
+        pricing,
       ),
       { headers: HEADERS },
     );
