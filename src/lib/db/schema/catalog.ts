@@ -10,6 +10,8 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
+import { supplierConnections } from './supplier-connections';
+
 /**
  * Catalog persistence for the CJ candidate handoff.
  *
@@ -57,7 +59,23 @@ export const supplierCandidates = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     supplier: supplierEnum('supplier').notNull(),
     externalProductId: text('external_product_id').notNull(),
+    /**
+     * Legacy display field, superseded by `supplierConnectionId` (below) as
+     * the source of truth for tenant scoping — every real query resolves
+     * the owning seller by joining through the connection, per ADR-006/008.
+     * Kept only because no migration removes it yet.
+     */
     intendedSellerId: text('intended_seller_id').notNull(),
+    /**
+     * ADR-008: which seller's own supplier connection this candidate came
+     * from — the source of truth for uniqueness and tenant scoping.
+     * `NOT NULL` as of Migration B (0004), after
+     * `scripts/bootstrap-sals3-official-cj.mts` backfilled every
+     * pre-existing row and verified zero remaining nulls.
+     */
+    supplierConnectionId: uuid('supplier_connection_id')
+      .notNull()
+      .references(() => supplierConnections.id, { onDelete: 'restrict' }),
     intendedMarketCodes: text('intended_market_codes').array().notNull(),
     shortlistState: shortlistStateEnum('shortlist_state')
       .notNull()
@@ -71,9 +89,18 @@ export const supplierCandidates = pgTable(
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex('supplier_candidates_supplier_external_product_id_key').on(
-      table.supplier,
+    // Connection-scoped as of Migration B (0004) - replaces the old global
+    // (supplier, external_product_id) uniqueness. Two different sellers'
+    // connections can each shortlist the same CJ pid independently; only
+    // one seller re-shortlisting the same pid through the same connection
+    // is a duplicate.
+    uniqueIndex('supplier_candidates_connection_external_product_key').on(
+      table.supplierConnectionId,
       table.externalProductId,
+    ),
+    index('supplier_candidates_connection_state_idx').on(
+      table.supplierConnectionId,
+      table.shortlistState,
     ),
     index('supplier_candidates_intended_seller_id_idx').on(
       table.intendedSellerId,

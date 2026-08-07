@@ -2,7 +2,8 @@ import type { Metadata } from 'next';
 import PageHeader from '@/components/portal/PageHeader';
 import BlockedCandidatesTable from '@/components/products/cj/BlockedCandidatesTable';
 import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
-import { requirePermission } from '@/lib/auth/session';
+import SourcingInfoBanner from '@/components/products/cj/SourcingInfoBanner';
+import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { listCandidatesByStatus } from '@/modules/catalog/candidates/queries';
 
@@ -17,7 +18,7 @@ export const dynamic = 'force-dynamic';
  * together, distinguished per row - see `BlockedCandidatesTable`.
  */
 export default async function BlockedProductsPage() {
-  const session = await requirePermission('catalog.candidate.read');
+  const { sellerAccount } = await requireDropshipperAccount();
 
   if (!isDatabaseConfigured()) {
     return (
@@ -34,7 +35,7 @@ export default async function BlockedProductsPage() {
     );
   }
 
-  const candidates = await listCandidatesByStatus(session.sellerId, [
+  const candidates = await listCandidatesByStatus(sellerAccount.id, [
     'BLOCKED',
     'TEMPORARILY_INELIGIBLE',
   ]);
@@ -45,6 +46,12 @@ export default async function BlockedProductsPage() {
         title="Blocked / Rejected"
         description={`${candidates.length} ${candidates.length === 1 ? 'candidate' : 'candidates'} blocked - permanent or retryable`}
       />
+      <SourcingInfoBanner>
+        Products the automatic pipeline could not qualify - either permanently
+        (policy or pricing, no override) or temporarily (e.g. a supplier stock
+        or freight issue). Temporarily blocked items retry on their own;
+        permanently blocked ones do not.
+      </SourcingInfoBanner>
       {candidates.length === 0 ? (
         <SourcingEmptyState
           title="Nothing is blocked right now"

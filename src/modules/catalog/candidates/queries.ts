@@ -3,6 +3,7 @@ import getDb from '@/lib/db/client';
 import {
   candidateEvaluations,
   supplierCandidates,
+  supplierConnections,
   supplierSnapshots,
   type CandidateEvaluationRow,
 } from '@/lib/db/schema';
@@ -14,6 +15,13 @@ import { MAX_EVALUATION_ATTEMPTS } from './rules/policy';
  * Read side of the candidate pipeline. Kept separate from `repository.ts`
  * (which serves the write use cases) so a read path can never reach a
  * mutation helper by accident.
+ *
+ * Every seller-facing query filters by `sellerAccountId`, resolved by
+ * joining through `supplierCandidates.supplierConnectionId ->
+ * supplierConnections.sellerAccountId` (ADR-008) - never the legacy
+ * `intendedSellerId` text field, which nothing here treats as the source
+ * of truth for tenant scoping anymore. The filter lives in the same
+ * `WHERE` clause as the lookup, never a separate check-then-fetch.
  */
 
 const SELECTION = {
@@ -43,6 +51,10 @@ function baseQuery() {
       candidateEvaluations,
       eq(candidateEvaluations.candidateId, supplierCandidates.id),
     )
+    .innerJoin(
+      supplierConnections,
+      eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
+    )
     .leftJoin(
       supplierSnapshots,
       eq(supplierSnapshots.candidateId, supplierCandidates.id),
@@ -55,20 +67,20 @@ function asEvidence(value: unknown): CandidateEvidence | null {
 
 /**
  * Candidates joined with their evaluation (and evidence, when captured),
- * scoped to one seller and filtered to the given decision statuses - the
- * shared read behind every automated pipeline screen (Ready, Needs
+ * scoped to one seller account and filtered to the given decision statuses
+ * - the shared read behind every automated pipeline screen (Ready, Needs
  * Attention, Evaluating, Blocked/Rejected). `limit` is bounded, never an
- * unbounded scan (spec section 17: every read carries seller/tenant scope).
+ * unbounded scan.
  */
 export async function listCandidatesByStatus(
-  sellerId: string,
+  sellerAccountId: string,
   statuses: EvaluationStatus[],
   limit = 100,
 ): Promise<EvaluatedCandidateRow[]> {
   const rows = await baseQuery()
     .where(
       and(
-        eq(supplierCandidates.intendedSellerId, sellerId),
+        eq(supplierConnections.sellerAccountId, sellerAccountId),
         inArray(candidateEvaluations.status, statuses),
       ),
     )
@@ -84,13 +96,13 @@ export async function listCandidatesByStatus(
  * rejected products).
  */
 export async function listDeadLetteredEvaluations(
-  sellerId: string,
+  sellerAccountId: string,
   limit = 100,
 ): Promise<EvaluatedCandidateRow[]> {
   const rows = await baseQuery()
     .where(
       and(
-        eq(supplierCandidates.intendedSellerId, sellerId),
+        eq(supplierConnections.sellerAccountId, sellerAccountId),
         eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
       ),
     )
@@ -108,7 +120,7 @@ export async function listDeadLetteredEvaluations(
  * Exception Queue bullet), computed at read time rather than stored.
  */
 export async function oldestQueuedAgeMs(
-  sellerId: string,
+  sellerAccountId: string,
 ): Promise<number | null> {
   const rows = await getDb()
     .select({ createdAt: candidateEvaluations.createdAt })
@@ -117,9 +129,13 @@ export async function oldestQueuedAgeMs(
       supplierCandidates,
       eq(supplierCandidates.id, candidateEvaluations.candidateId),
     )
+    .innerJoin(
+      supplierConnections,
+      eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
+    )
     .where(
       and(
-        eq(supplierCandidates.intendedSellerId, sellerId),
+        eq(supplierConnections.sellerAccountId, sellerAccountId),
         eq(candidateEvaluations.status, 'QUEUED'),
       ),
     )
@@ -139,14 +155,14 @@ export async function oldestQueuedAgeMs(
  * never a fabricated status.
  */
 export async function findEvaluationsByExternalIds(
-  sellerId: string,
+  sellerAccountId: string,
   externalProductIds: string[],
 ): Promise<Map<string, EvaluatedCandidateRow>> {
   if (externalProductIds.length === 0) return new Map();
 
   const rows = await baseQuery().where(
     and(
-      eq(supplierCandidates.intendedSellerId, sellerId),
+      eq(supplierConnections.sellerAccountId, sellerAccountId),
       inArray(supplierCandidates.externalProductId, externalProductIds),
     ),
   );

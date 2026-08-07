@@ -2,7 +2,8 @@ import type { Metadata } from 'next';
 import PageHeader from '@/components/portal/PageHeader';
 import QualifiedCandidatesTable from '@/components/products/cj/QualifiedCandidatesTable';
 import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
-import { requirePermission } from '@/lib/auth/session';
+import SourcingInfoBanner from '@/components/products/cj/SourcingInfoBanner';
+import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { listCandidatesByStatus } from '@/modules/catalog/candidates/queries';
 
@@ -16,7 +17,7 @@ export const dynamic = 'force-dynamic';
  * produces them.
  */
 export default async function ReadyProductsPage() {
-  const session = await requirePermission('catalog.candidate.read');
+  const { sellerAccount } = await requireDropshipperAccount();
 
   if (!isDatabaseConfigured()) {
     return (
@@ -30,7 +31,7 @@ export default async function ReadyProductsPage() {
     );
   }
 
-  const candidates = await listCandidatesByStatus(session.sellerId, ['PASS']);
+  const candidates = await listCandidatesByStatus(sellerAccount.id, ['PASS']);
 
   return (
     <div className="flex flex-col gap-4">
@@ -38,6 +39,11 @@ export default async function ReadyProductsPage() {
         title="Ready"
         description={`${candidates.length} ${candidates.length === 1 ? 'candidate' : 'candidates'} passed automated evaluation with no open issue`}
       />
+      <SourcingInfoBanner>
+        Products that passed every automatic check land here, ready to customize
+        and list to customers. The pipeline checks new CJ products on its own -
+        nothing here needs a manual review before you decide whether to list it.
+      </SourcingInfoBanner>
       {candidates.length === 0 ? (
         <SourcingEmptyState
           title="No candidates are ready yet"

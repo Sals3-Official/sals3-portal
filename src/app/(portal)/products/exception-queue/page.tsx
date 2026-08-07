@@ -2,8 +2,9 @@ import type { Metadata } from 'next';
 import PageHeader from '@/components/portal/PageHeader';
 import ExceptionQueueTable from '@/components/products/cj/ExceptionQueueTable';
 import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
+import SourcingInfoBanner from '@/components/products/cj/SourcingInfoBanner';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
-import { requirePermission } from '@/lib/auth/session';
+import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import {
   listDeadLetteredEvaluations,
@@ -13,7 +14,7 @@ import {
 export const metadata: Metadata = { title: 'Exception Queue · Sals3 Portal' };
 export const dynamic = 'force-dynamic';
 
-/** ~6 cron ticks at the default 5-minute schedule (vercel.json). */
+/** ~6 ticks at the default 5-minute GitHub Actions schedule (evaluate-tick.yml). */
 const STALE_QUEUE_THRESHOLD_MS = 30 * 60 * 1000;
 
 /**
@@ -23,7 +24,7 @@ const STALE_QUEUE_THRESHOLD_MS = 30 * 60 * 1000;
  * not fill it with every low-quality CJ product").
  */
 export default async function ExceptionQueuePage() {
-  const session = await requirePermission('catalog.candidate.read');
+  const { sellerAccount } = await requireDropshipperAccount();
 
   if (!isDatabaseConfigured()) {
     return (
@@ -41,8 +42,8 @@ export default async function ExceptionQueuePage() {
   }
 
   const [candidates, queueAgeMs] = await Promise.all([
-    listDeadLetteredEvaluations(session.sellerId),
-    oldestQueuedAgeMs(session.sellerId),
+    listDeadLetteredEvaluations(sellerAccount.id),
+    oldestQueuedAgeMs(sellerAccount.id),
   ]);
   const isStale = queueAgeMs !== null && queueAgeMs > STALE_QUEUE_THRESHOLD_MS;
 
@@ -52,6 +53,12 @@ export default async function ExceptionQueuePage() {
         title="Exception Queue"
         description={`${candidates.length} ${candidates.length === 1 ? 'candidate' : 'candidates'} exhausted automatic retries`}
       />
+      <SourcingInfoBanner>
+        Products where the pipeline itself failed - e.g. it could not reach the
+        supplier - after every automatic retry. This needs a person to look at
+        the failure; ordinary rejected products live on Blocked / Rejected
+        instead.
+      </SourcingInfoBanner>
       {isStale ? (
         <StatusPill
           label={`Oldest queued candidate has waited ${Math.round((queueAgeMs ?? 0) / 60_000)} minutes - the evaluation processor may be stopped or stale`}

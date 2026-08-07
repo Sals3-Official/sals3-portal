@@ -2,7 +2,8 @@ import type { Metadata } from 'next';
 import PageHeader from '@/components/portal/PageHeader';
 import QualifiedCandidatesTable from '@/components/products/cj/QualifiedCandidatesTable';
 import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
-import { requirePermission } from '@/lib/auth/session';
+import SourcingInfoBanner from '@/components/products/cj/SourcingInfoBanner';
+import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { listCandidatesByStatus } from '@/modules/catalog/candidates/queries';
 
@@ -16,7 +17,7 @@ export const dynamic = 'force-dynamic';
  * the persistent screen itself.
  */
 export default async function NeedsAttentionProductsPage() {
-  const session = await requirePermission('catalog.candidate.read');
+  const { sellerAccount } = await requireDropshipperAccount();
 
   if (!isDatabaseConfigured()) {
     return (
@@ -33,7 +34,7 @@ export default async function NeedsAttentionProductsPage() {
     );
   }
 
-  const candidates = await listCandidatesByStatus(session.sellerId, [
+  const candidates = await listCandidatesByStatus(sellerAccount.id, [
     'PASS_WITH_ATTENTION',
   ]);
 
@@ -43,6 +44,11 @@ export default async function NeedsAttentionProductsPage() {
         title="Needs Attention"
         description={`${candidates.length} ${candidates.length === 1 ? 'candidate' : 'candidates'} passed with a warning`}
       />
+      <SourcingInfoBanner>
+        These passed automatic checks, but with a warning flagged - read the
+        reason before you decide whether to list. They are still eligible to
+        customize and list, unlike Blocked / Rejected.
+      </SourcingInfoBanner>
       {candidates.length === 0 ? (
         <SourcingEmptyState
           title="No candidates need attention"

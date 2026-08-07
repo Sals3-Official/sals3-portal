@@ -1,8 +1,11 @@
 import getDb from '@/lib/db/client';
 import { CjApiError } from '@/services/cj/config';
-import fetchCandidateEvidence from '@/services/cj/enrichment';
 import { checksumOfEvidence } from '@/lib/cj/evidence';
 import type { CandidateEvaluationRow } from '@/lib/db/schema';
+import PostgresSupplierSecretStore from '@/lib/secrets/postgres-supplier-secret-store';
+import { findConnectionById } from '@/modules/suppliers/repository';
+import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
+import CjSupplierAdapter from '@/modules/suppliers/providers/cj/cj-adapter';
 import { decide } from './rules/decide';
 import { feedSnapshotSchema } from './rules/contracts';
 import {
@@ -68,10 +71,55 @@ export default async function evaluateCandidate(
     return;
   }
 
+  if (candidate.supplierConnectionId === null) {
+    // Should not happen after the bootstrap backfill (spec's Migration
+    // A/B sequence) - a candidate with no connection has no credential to
+    // fetch evidence with. Fails safely rather than crashing the tick.
+    await getDb().transaction(async (tx) => {
+      await recordEvaluationFailure(tx, {
+        candidateId: row.candidateId,
+        attemptCount: row.attemptCount + 1,
+        lastErrorCode: 'no_supplier_connection',
+        nextRetryAt: null,
+      });
+    });
+    return;
+  }
+
+  const connection = await findConnectionById(
+    getDb(),
+    candidate.supplierConnectionId,
+  );
+
+  if (
+    connection === null ||
+    connection.status === 'REVOKED' ||
+    connection.status === 'DISCONNECTED'
+  ) {
+    await getDb().transaction(async (tx) => {
+      await recordEvaluationFailure(tx, {
+        candidateId: row.candidateId,
+        attemptCount: row.attemptCount + 1,
+        lastErrorCode: 'connection_unavailable',
+        nextRetryAt: null,
+      });
+    });
+    return;
+  }
+
+  const secretStore = new PostgresSupplierSecretStore();
+  const adapter = new CjSupplierAdapter(
+    secretStore,
+    new CjTokenManager(secretStore),
+  );
+
   let evidence;
 
   try {
-    evidence = await fetchCandidateEvidence(candidate.externalProductId);
+    evidence = await adapter.getCandidateEvidence(
+      connection.id,
+      candidate.externalProductId,
+    );
   } catch (error) {
     const reason =
       error instanceof CjApiError ? error.reason : 'unexpected-response';

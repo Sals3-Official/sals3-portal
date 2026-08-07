@@ -5,6 +5,7 @@ import {
   candidateEvaluations,
   idempotencyRecords,
   supplierCandidates,
+  supplierConnections,
   supplierSnapshots,
   type CandidateEvaluationRow,
   type IdempotencyRecordRow,
@@ -42,6 +43,8 @@ export async function insertCandidateIfAbsent(
     supplier: 'CJ_DROPSHIPPING';
     externalProductId: string;
     intendedSellerId: string;
+    /** ADR-008: which seller's own connection this candidate came from. */
+    supplierConnectionId: string;
     intendedMarketCodes: string[];
     actorId: string;
   },
@@ -52,12 +55,15 @@ export async function insertCandidateIfAbsent(
       supplier: input.supplier,
       externalProductId: input.externalProductId,
       intendedSellerId: input.intendedSellerId,
+      supplierConnectionId: input.supplierConnectionId,
       intendedMarketCodes: input.intendedMarketCodes,
       createdBy: input.actorId,
     })
+    // Connection-scoped as of Migration B (0004): two sellers' own
+    // connections can each shortlist the same CJ pid independently.
     .onConflictDoNothing({
       target: [
-        supplierCandidates.supplier,
+        supplierCandidates.supplierConnectionId,
         supplierCandidates.externalProductId,
       ],
     })
@@ -79,9 +85,45 @@ export async function findCandidateById(
   return rows[0] ?? null;
 }
 
-export async function findCandidateByExternalId(
+/**
+ * Tenant-scoped: confirms `candidateId` belongs to a connection owned by
+ * `sellerAccountId`, in the same query as the lookup - never a separate
+ * check-then-fetch. Used before any seller-triggered mutation on a specific
+ * candidate (e.g. "Recheck now"), so one seller can never act on another's
+ * row by guessing/passing an arbitrary id.
+ */
+export async function candidateBelongsToSeller(
   executor: Executor,
-  supplier: 'CJ_DROPSHIPPING',
+  candidateId: string,
+  sellerAccountId: string,
+): Promise<boolean> {
+  const rows = await executor
+    .select({ id: supplierCandidates.id })
+    .from(supplierCandidates)
+    .innerJoin(
+      supplierConnections,
+      eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
+    )
+    .where(
+      and(
+        eq(supplierCandidates.id, candidateId),
+        eq(supplierConnections.sellerAccountId, sellerAccountId),
+      ),
+    )
+    .limit(1);
+
+  return rows.length > 0;
+}
+
+/**
+ * Connection-scoped as of Migration B (0004): uniqueness is now
+ * `(supplier_connection_id, external_product_id)`, not the old global
+ * `(supplier, external_product_id)` - see `insertCandidateIfAbsent`'s
+ * conflict target.
+ */
+export async function findCandidateByConnectionAndExternalId(
+  executor: Executor,
+  supplierConnectionId: string,
   externalProductId: string,
 ): Promise<SupplierCandidateRow | null> {
   const rows = await executor
@@ -89,7 +131,7 @@ export async function findCandidateByExternalId(
     .from(supplierCandidates)
     .where(
       and(
-        eq(supplierCandidates.supplier, supplier),
+        eq(supplierCandidates.supplierConnectionId, supplierConnectionId),
         eq(supplierCandidates.externalProductId, externalProductId),
       ),
     )

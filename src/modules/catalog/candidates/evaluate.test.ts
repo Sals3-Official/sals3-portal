@@ -16,16 +16,47 @@ vi.mock('./repository', () => ({
   upsertSnapshot: vi.fn(),
 }));
 
-vi.mock('@/services/cj/enrichment', () => ({ default: vi.fn() }));
+vi.mock('@/modules/suppliers/repository', () => ({
+  findConnectionById: vi.fn(),
+}));
+
+vi.mock('@/lib/secrets/postgres-supplier-secret-store', () => ({
+  // A real `function` is required, not an arrow function - the code under
+  // test calls `new PostgresSupplierSecretStore()`, and arrow functions can
+  // never be constructors.
+  // eslint-disable-next-line prefer-arrow-callback
+  default: vi.fn().mockImplementation(function MockClass() {
+    return {};
+  }),
+}));
+
+vi.mock('@/modules/suppliers/providers/cj/cj-auth', () => ({
+  // eslint-disable-next-line prefer-arrow-callback
+  default: vi.fn().mockImplementation(function MockClass() {
+    return {};
+  }),
+}));
+
+const { getCandidateEvidenceMock } = vi.hoisted(() => ({
+  getCandidateEvidenceMock: vi.fn(),
+}));
+
+vi.mock('@/modules/suppliers/providers/cj/cj-adapter', () => ({
+  // eslint-disable-next-line prefer-arrow-callback
+  default: vi.fn().mockImplementation(function MockCjSupplierAdapter() {
+    return { getCandidateEvidence: getCandidateEvidenceMock };
+  }),
+}));
 
 // eslint-disable-next-line import/first
-import fetchCandidateEvidence from '@/services/cj/enrichment';
-// eslint-disable-next-line import/first
 import { CjApiError } from '@/services/cj/config';
+// eslint-disable-next-line import/first
+import { findConnectionById } from '@/modules/suppliers/repository';
 // eslint-disable-next-line import/first
 import type {
   CandidateEvaluationRow,
   SupplierCandidateRow,
+  SupplierConnectionRow,
 } from '@/lib/db/schema';
 // eslint-disable-next-line import/first
 import {
@@ -47,12 +78,30 @@ const CANDIDATE: SupplierCandidateRow = {
   id: 'candidate-1',
   supplier: 'CJ_DROPSHIPPING',
   externalProductId: 'CJLY1',
-  intendedSellerId: 'seller-001',
+  supplierConnectionId: 'connection-1',
+  intendedSellerId: 'seller-account-1',
   intendedMarketCodes: ['PH'],
   shortlistState: 'SHORTLISTED',
   createdAt: new Date(),
   createdBy: 'system:cj-ingestion',
   updatedAt: new Date(),
+};
+
+const CONNECTION: SupplierConnectionRow = {
+  id: 'connection-1',
+  sellerAccountId: 'seller-account-1',
+  providerId: 'provider-1',
+  displayName: 'CJ Dropshipping',
+  externalAccountLookupHash: 'hash',
+  externalAccountMasked: 'CJ...1234',
+  status: 'CONNECTED',
+  accessTokenExpiresAt: null,
+  refreshTokenExpiresAt: null,
+  lastVerifiedAt: null,
+  lastErrorCode: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  disconnectedAt: null,
 };
 
 function row(
@@ -120,7 +169,8 @@ const CLEAN_EVIDENCE = {
 describe('evaluateCandidate', () => {
   beforeEach(() => {
     asMock(findCandidateById).mockReset().mockResolvedValue(CANDIDATE);
-    asMock(fetchCandidateEvidence).mockReset();
+    asMock(findConnectionById).mockReset().mockResolvedValue(CONNECTION);
+    getCandidateEvidenceMock.mockReset();
     asMock(recordScreeningDecision).mockReset().mockResolvedValue(undefined);
     asMock(recordEvaluationDecision).mockReset().mockResolvedValue(undefined);
     asMock(recordEvaluationFailure).mockReset().mockResolvedValue(undefined);
@@ -141,7 +191,7 @@ describe('evaluateCandidate', () => {
       }),
     );
 
-    expect(fetchCandidateEvidence).not.toHaveBeenCalled();
+    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
     expect(recordScreeningDecision).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -151,8 +201,38 @@ describe('evaluateCandidate', () => {
     );
   });
 
+  it('fails safely when the candidate has no supplier connection', async () => {
+    asMock(findCandidateById).mockResolvedValue({
+      ...CANDIDATE,
+      supplierConnectionId: null,
+    });
+
+    await evaluateCandidate(row({}));
+
+    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
+    expect(recordEvaluationFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ lastErrorCode: 'no_supplier_connection' }),
+    );
+  });
+
+  it('fails safely when the connection is disconnected', async () => {
+    asMock(findConnectionById).mockResolvedValue({
+      ...CONNECTION,
+      status: 'DISCONNECTED',
+    });
+
+    await evaluateCandidate(row({}));
+
+    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
+    expect(recordEvaluationFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ lastErrorCode: 'connection_unavailable' }),
+    );
+  });
+
   it('schedules a retry on a CJ fetch failure, never fabricating a decision', async () => {
-    asMock(fetchCandidateEvidence).mockRejectedValue(
+    getCandidateEvidenceMock.mockRejectedValue(
       new CjApiError('upstream-unavailable'),
     );
 
@@ -171,7 +251,7 @@ describe('evaluateCandidate', () => {
   });
 
   it('dead-letters once the max attempt count is reached (nextRetryAt is null)', async () => {
-    asMock(fetchCandidateEvidence).mockRejectedValue(
+    getCandidateEvidenceMock.mockRejectedValue(
       new CjApiError('upstream-unavailable'),
     );
 
@@ -186,11 +266,15 @@ describe('evaluateCandidate', () => {
     );
   });
 
-  it('persists both the snapshot and the decision for a survivor', async () => {
-    asMock(fetchCandidateEvidence).mockResolvedValue(CLEAN_EVIDENCE);
+  it("persists both the snapshot and the decision for a survivor, fetched through the candidate's own connection", async () => {
+    getCandidateEvidenceMock.mockResolvedValue(CLEAN_EVIDENCE);
 
     await evaluateCandidate(row({}));
 
+    expect(getCandidateEvidenceMock).toHaveBeenCalledWith(
+      'connection-1',
+      'CJLY1',
+    );
     expect(upsertSnapshot).toHaveBeenCalled();
     expect(recordEvaluationDecision).toHaveBeenCalledWith(
       expect.anything(),
