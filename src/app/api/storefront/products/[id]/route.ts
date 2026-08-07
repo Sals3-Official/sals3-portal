@@ -1,6 +1,9 @@
 import isStorefrontRequestAuthorized from '@/lib/storefront/auth';
 import { getStorefrontCjProducts } from '@/lib/storefront/cj-feed';
-import { toStorefrontProduct } from '@/lib/storefront/feed';
+import {
+  resolveStorefrontPricingConfig,
+  toStorefrontProduct,
+} from '@/lib/storefront/feed';
 import { CjApiError } from '@/services/cj/config';
 
 export const dynamic = 'force-dynamic';
@@ -47,7 +50,10 @@ export async function GET(request: Request, { params }: RouteContext) {
     const match = page.products.find(
       (product) => product.id.toLowerCase() === id.toLowerCase(),
     );
-    const product = match === undefined ? null : toStorefrontProduct(match);
+    const product =
+      match === undefined
+        ? null
+        : toStorefrontProduct(match, await resolveStorefrontPricingConfig());
 
     if (product === null) {
       return notFound();
