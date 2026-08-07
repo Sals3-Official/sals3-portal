@@ -1,6 +1,7 @@
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { Separator } from '@/components/ui/separator';
 import { PORTAL_ROLE_LABELS, type PortalRole } from '@/lib/auth/permissions';
+import SignOutButton from '../auth/SignOutButton';
 import PortalTopbarSection from './PortalTopbarSection';
 
 type PortalTopbarProps = {
@@ -24,6 +25,7 @@ export default function PortalTopbar({ userName, role }: PortalTopbarProps) {
           {PORTAL_ROLE_LABELS[role]}
         </p>
       </div>
+      <SignOutButton />
     </header>
   );
 }

@@ -7,6 +7,9 @@ the same brand tokens, so both products look like one system.
 
 - Next.js 16 (App Router) + React 19 + TypeScript (strict)
 - PostgreSQL with Drizzle ORM + Drizzle Kit, over `postgres.js`
+- Better Auth email/password sessions, verification email, database rate
+  limits, and required TOTP
+- Resend for auth email
 - Tailwind CSS 4 (via `@tailwindcss/postcss`)
 - shadcn/ui components on Base UI, with Lucide icons and `sonner` for toasts
 - Zod for validation
@@ -40,6 +43,28 @@ Put that role's connection string in `DATABASE_URL` in `.env.local`, then:
 npm run db:migrate
 ```
 
+Set authentication secrets in `.env.local`:
+
+```bash
+BETTER_AUTH_SECRET="$(openssl rand -base64 32)"
+BETTER_AUTH_URL=http://localhost:3001
+RESEND_API_KEY=...
+RESEND_FROM_EMAIL="Sals3 Portal <auth@your-domain.example>"
+```
+
+For local development you can skip Resend: leave `RESEND_API_KEY` unset and
+set `AUTH_EMAIL_CONSOLE_FALLBACK=1`. Verification and password-reset links are
+then logged to the dev server console instead of being emailed. The fallback
+is ignored when `NODE_ENV=production`.
+
+Public signup creates a pending seller application. It does not grant Seller
+Center access. After the user verifies email and sets up TOTP, approve the
+seller from an owner shell:
+
+```bash
+npm run approve:portal-user -- --email seller@example.com --role seller_manager
+```
+
 Then fill in `CJ_API_KEY` in `.env.local` — used only by the one-time
 bootstrap below; nothing reads it at request time anymore. `.env.local`
 is ignored by git and must never be committed.
@@ -68,26 +93,33 @@ Cron - see below for why).
 
 ## Commands
 
-| Command                   | What it does                                                                  |
-| ------------------------- | ----------------------------------------------------------------------------- |
-| `npm run dev`             | Start dev server at http://localhost:3001 (3000 belongs to `sals3-ecommerce`) |
-| `npm run build`           | Production build                                                              |
-| `npm run start`           | Serve production build                                                        |
-| `npm run lint`            | ESLint                                                                        |
-| `npm run format:check`    | Prettier check                                                                |
-| `npm run typecheck:clean` | TypeScript check without `.next` artifacts                                    |
-| `npm run test:run`        | Unit tests (Vitest)                                                           |
-| `npm run test:e2e`        | E2E tests (Playwright)                                                        |
-| `npm run verify`          | Full gate: lint + format + typecheck + build + unit + E2E                     |
-| `npm run db:generate`     | Generate a SQL migration from `src/lib/db/schema/`                            |
-| `npm run db:migrate`      | Apply pending migrations in `drizzle/`                                        |
-| `npm run db:studio`       | Drizzle Studio (browse the local database)                                    |
+| Command                                                                           | What it does                                                                  |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `npm run dev`                                                                     | Start dev server at http://localhost:3001 (3000 belongs to `sals3-ecommerce`) |
+| `npm run build`                                                                   | Production build                                                              |
+| `npm run start`                                                                   | Serve production build                                                        |
+| `npm run lint`                                                                    | ESLint                                                                        |
+| `npm run format:check`                                                            | Prettier check                                                                |
+| `npm run typecheck:clean`                                                         | TypeScript check without `.next` artifacts                                    |
+| `npm run test:run`                                                                | Unit tests (Vitest)                                                           |
+| `npm run test:e2e`                                                                | E2E tests (Playwright)                                                        |
+| `npm run verify`                                                                  | Full gate: lint + format + typecheck + build + unit + E2E                     |
+| `npm run db:generate`                                                             | Generate a SQL migration from `src/lib/db/schema/`                            |
+| `npm run db:migrate`                                                              | Apply pending migrations in `drizzle/`                                        |
+| `npm run db:studio`                                                               | Drizzle Studio (browse the local database)                                    |
+| `npm run approve:portal-user -- --email seller@example.com --role seller_manager` | Approve/promote one verified portal user                                      |
 
 ## Routes
 
 | Route                                 | What it does                                                                                                                                                                                                                                                 |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/`                                   | Placeholder home page ("Hello world") — outside the Seller Center shell                                                                                                                                                                                      |
+| `/`                                   | Seller Center sign-in form                                                                                                                                                                                                                                   |
+| `/login`                              | Better Auth email/password sign-in                                                                                                                                                                                                                           |
+| `/signup`                             | Public seller application signup (`RETAILER` or `DROPSHIPPER`), always generic success copy                                                                                                                                                                  |
+| `/reset-password`                     | Password reset request and token completion                                                                                                                                                                                                                  |
+| `/setup-2fa`                          | Required TOTP enrolment before Seller Center entry                                                                                                                                                                                                           |
+| `/two-factor`                         | TOTP challenge after sign-in                                                                                                                                                                                                                                 |
+| `/auth/pending`                       | Verified, signed-in sellers whose application is not yet approved                                                                                                                                                                                            |
 | `/overview`                           | Seller Center dashboard: needs-action tasks, money position, glance stats                                                                                                                                                                                    |
 | `/orders`                             | Batch fulfillment: filter, select, print (static), handoff                                                                                                                                                                                                   |
 | `/listings/new`                       | New-listing wizard preview (read-only fields, no save yet)                                                                                                                                                                                                   |
@@ -116,7 +148,13 @@ page-level overrides. Colour and type tokens are defined once in
 `src/app/globals.css` and taken from the storefront. Do not write a raw hex value
 in a component.
 
-## Roles and permissions
+## Authentication, roles, and permissions
+
+Authentication is Better Auth backed by the portal Postgres database. Email
+verification is required before login, TOTP is required before Seller Center
+entry, and auth rate limits are stored in `auth_rate_limits`. Public signup
+can only choose the business model; `portalRole` is server-owned and changed
+only by owner scripts.
 
 `src/lib/auth/permissions.ts` holds a role-to-permission allow list: `admin`,
 `catalogue_reviewer`, `seller_manager`, `seller_staff`, `viewer`. Every server
@@ -137,14 +175,16 @@ Two permissions gate CJ candidate work: `catalog.candidate.read` (all five
 roles) and `catalog.candidate.shortlist` (`admin`, `seller_manager`,
 `seller_staff` — the roles that act, not just look).
 
-To try a different role locally, set a server-side variable before `npm run dev`:
+For Playwright and local smoke testing only, `PORTAL_TEST_AUTH_BYPASS=1` creates
+the old development identity outside production. To try a different bypass role,
+set:
 
 ```bash
-PORTAL_DEV_ROLE=catalogue_reviewer npm run dev
+PORTAL_TEST_AUTH_BYPASS=1 PORTAL_DEV_ROLE=catalogue_reviewer npm run dev
 ```
 
 Accepted values are the five role names above. Anything else falls back to
-`seller_manager`.
+`seller_manager`. Never set `PORTAL_TEST_AUTH_BYPASS` in production.
 
 ## Seller Center screens
 
@@ -189,7 +229,7 @@ credential to store or leak.
 | Provider connections (ADR-006/ADR-008)       | `src/modules/suppliers/repository.ts`               |
 | Encrypted credential store                   | `src/lib/secrets/postgres-supplier-secret-store.ts` |
 
-Nine tables: `supplier_candidates` (the shortlist record, unique on
+Fifteen tables: `supplier_candidates` (the shortlist record, unique on
 `(supplier_connection_id, external_product_id)`), `idempotency_records`,
 `supplier_snapshots` (one normalised CJ evidence record per candidate),
 `candidate_evaluations` (one automated-evaluation record per candidate - see
@@ -197,7 +237,9 @@ Nine tables: `supplier_candidates` (the shortlist record, unique on
 append-only `audit_events`, and four multi-tenant tables added for
 [Supplier Apps](#supplier-apps-multi-tenant-provider-connections):
 `seller_accounts`, `supplier_providers`, `supplier_connections`, and
-`supplier_connection_secrets`.
+`supplier_connection_secrets`. Authentication adds `auth_users`,
+`auth_sessions`, `auth_accounts`, `auth_verifications`, `auth_two_factors`,
+and `auth_rate_limits`.
 
 `src/modules/catalog/candidates/shortlist.ts` and `contracts.ts` are retired
 (stubbed to an empty export) - superseded by `ingestion.ts`'s automated feed
@@ -206,13 +248,9 @@ restriction encountered while building this; safe to delete outright.
 
 - **Server-only.** `DATABASE_URL` has no `NEXT_PUBLIC_` prefix, and
   `src/lib/db/client.ts` throws if it is ever imported from client code.
-- **Lazy, so a build never needs a database.** The connection is created on the
-  first query, never at module evaluation. Next.js imports every route module
-  during `next build`'s "Collecting page data" phase — including
-  `force-dynamic` routes — so connecting at import time fails the whole build
-  wherever `DATABASE_URL` is unset (a Vercel preview, CI, a fresh clone).
-  Pages that read the database check `isDatabaseConfigured()` and render an
-  honest "no database configured in this environment" state instead of a 500.
+- **Required in deployed/build environments.** Authentication is database
+  backed, so `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, and
+  Resend env vars must be configured anywhere the app is built or served.
 - **Least privilege.** Connect as an app role, not `postgres`. Any non-local
   host is connected with `ssl: 'verify-full'`.
 - **Bounded.** One pooled connection set (`max: 10`) reused across dev
@@ -342,11 +380,10 @@ Multi-tenant as of 2026-08-07: ingestion and evaluation loop over every
 seller's own `CONNECTED`/`DEGRADED` [Supplier Apps connection](#supplier-apps-multi-tenant-provider-connections)
 instead of one global `CJ_API_KEY` - see that section for the schema,
 encryption, and the CJ provider adapter. `dev-user` is still the one
-placeholder seller identity (no real seller sign-in exists yet - see
-[Important limitations](#important-limitations)), but the tables, the
-encrypted credential, and the adapter boundary are the real, tenant-scoped
-shape a second seller would use. AliExpress or any second provider is still
-a separate, later task - only `CJ_DROPSHIPPING` is seeded.
+test-only bypass identity when `PORTAL_TEST_AUTH_BYPASS=1`, but real seller
+sign-in now uses Better Auth user IDs as `seller_accounts.identity_id`.
+AliExpress or any second provider is still a separate, later task - only
+`CJ_DROPSHIPPING` is seeded.
 
 Two labelling rules are load-bearing in that panel: CJ review numbers are
 supplier-platform evidence and never Sals3 buyer ratings, and `listedNum` is a
@@ -357,7 +394,7 @@ sanitises it yet.
 `src/lib/seller-center/market-config.ts` carries 3 illustrative sample
 markets (Philippines, Indonesia, Singapore) with their own currency, carrier,
 tax label, and payout rail — a placeholder for a future per-seller market
-configuration, in the same spirit as `PORTAL_DEV_ROLE`:
+configuration:
 
 ```bash
 PORTAL_DEV_MARKET=SG npm run dev
@@ -544,11 +581,9 @@ endpoint replaces that workaround with one request.
 
 These are real gaps, not oversights. Do not treat any screen as production ready.
 
-- **No authentication.** `src/lib/auth/session.ts` returns one development
-  identity (`dev-user`). It is a placeholder shaped so a real session lookup
-  can replace it without touching any caller — including
-  `requireDropshipperAccount()`'s own `identityId` resolution. Do not expose
-  this portal to untrusted users.
+- **Application approval is script-only.** There is no public admin UI in v1.
+  Use `npm run approve:portal-user -- --email <email> --role <role>` from an
+  owner shell after reviewing the seller application.
 - **Read-only catalogue.** The portal shows the CJdropshipping supplier feed
   and nothing else — there is no writable Sals3 product catalogue, no add/edit
   form, and no import/export. A real Postgres database does exist now (see
@@ -570,10 +605,10 @@ These are real gaps, not oversights. Do not treat any screen as production ready
 
 ## Running the E2E tests
 
-Playwright reuses a dev server that is already listening on port 3001. If the
-tests fail in a way that looks like the client-side JavaScript never ran, a stale
-server from an earlier run is usually the cause. Stop it and run again:
+Playwright starts its own dev server on port 3101 with the explicit
+`PORTAL_TEST_AUTH_BYPASS=1` test bypass. If a previous test run left that port
+busy, stop it and run again:
 
 ```bash
-lsof -nP -iTCP:3001 -sTCP:LISTEN -t | xargs kill
+lsof -nP -iTCP:3101 -sTCP:LISTEN -t | xargs kill
 ```
