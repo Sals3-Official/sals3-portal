@@ -18,6 +18,7 @@ try {
 type Args = {
   email: string;
   role: PortalRole;
+  verifyEmail: boolean;
 };
 
 function isPortalRole(value: string | undefined): value is PortalRole {
@@ -27,6 +28,7 @@ function isPortalRole(value: string | undefined): value is PortalRole {
 function parseArgs(argv: string[]): Args {
   let email: string | undefined;
   let role: PortalRole = 'seller_manager';
+  let verifyEmail = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
@@ -42,18 +44,21 @@ function parseArgs(argv: string[]): Args {
       } else {
         throw new Error(`Unsupported role "${next}".`);
       }
+    } else if (value === '--verify-email') {
+      verifyEmail = true;
     }
   }
 
   if (email === undefined || email.trim() === '') {
     throw new Error(
-      'Usage: npm run approve:portal-user -- --email user@example.com [--role seller_manager]',
+      'Usage: npm run approve:portal-user -- --email user@example.com [--role seller_manager] [--verify-email]',
     );
   }
 
   return {
     email: email.trim().toLowerCase(),
     role,
+    verifyEmail,
   };
 }
 
@@ -83,7 +88,19 @@ async function main() {
 
     await db
       .update(authUsers)
-      .set({ portalRole: args.role, updatedAt: new Date() })
+      .set({
+        portalRole: args.role,
+        // `--verify-email` marks the address verified without the user ever
+        // clicking a link. It exists because email delivery is a separate
+        // system that can be down or unconfigured while the portal itself is
+        // fine, and `requireEmailVerification` otherwise locks out every
+        // account in that window. It is an owner-only override run from a
+        // shell that already holds DATABASE_URL, so it grants nothing the
+        // operator could not do with SQL - but it does skip a real check, so
+        // it stays opt-in and is never implied by approval alone.
+        ...(args.verifyEmail ? { emailVerified: true } : {}),
+        updatedAt: new Date(),
+      })
       .where(eq(authUsers.id, user.id));
 
     if (
@@ -108,7 +125,11 @@ async function main() {
       }
     }
 
-    console.log(`Approved ${args.email} as ${args.role}.`);
+    console.log(
+      `Approved ${args.email} as ${args.role}${
+        args.verifyEmail ? ' and marked the email verified' : ''
+      }.`,
+    );
   } finally {
     await sql.end();
   }
