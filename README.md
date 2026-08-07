@@ -40,9 +40,20 @@ Put that role's connection string in `DATABASE_URL` in `.env.local`, then:
 npm run db:migrate
 ```
 
-Then fill in `CJ_API_KEY` in `.env.local`. See
-[CJdropshipping integration](#cjdropshipping-integration) below. `.env.local` is
-ignored by git and must never be committed.
+Then fill in `CJ_API_KEY` in `.env.local` — used by
+[the storefront feed](#storefront-product-feed) and by the one-time bootstrap
+below, not by the portal's own Product Sourcing screens anymore. `.env.local`
+is ignored by git and must never be committed.
+
+Set `SUPPLIER_CREDENTIAL_MASTER_KEY_BASE64` (generate with
+`openssl rand -base64 32`) so supplier credentials in
+[Supplier Apps](#supplier-apps-multi-tenant-provider-connections) can be
+encrypted at rest, then seed the Sals3 Official Dropshipper's own CJ
+connection from `CJ_API_KEY` once:
+
+```bash
+npm run bootstrap:cj
+```
 
 Set `SALS3_STOREFRONT_API_TOKEN` to a long random value if
 `sals3-ecommerce` will read products from this portal. Use the same value in
@@ -51,8 +62,10 @@ Set `SALS3_STOREFRONT_API_TOKEN` to a long random value if
 Set `CRON_SECRET` to a long random value so the automated candidate-evaluation
 tick (see [Automated candidate evaluation](#automated-candidate-evaluation)
 below) can authenticate. Without it the tick endpoint always returns `401` -
-harmless locally, but Vercel Cron needs it set as a project env var in any
-deployed environment.
+harmless locally, but the same value must also be set as the Vercel project
+env var and as this repository's `CRON_SECRET` Actions secret in any deployed
+environment (the tick is invoked by a GitHub Actions schedule, not Vercel
+Cron - see below for why).
 
 ## Commands
 
@@ -73,27 +86,28 @@ deployed environment.
 
 ## Routes
 
-| Route                                 | What it does                                                                                                                  |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `/`                                   | Placeholder home page ("Hello world") — outside the Seller Center shell                                                       |
-| `/overview`                           | Seller Center dashboard: needs-action tasks, money position, glance stats                                                     |
-| `/orders`                             | Batch fulfillment: filter, select, print (static), handoff                                                                    |
-| `/listings/new`                       | New-listing wizard preview (read-only fields, no save yet)                                                                    |
-| `/inventory`                          | Inline stock edits with undo and an audit record                                                                              |
-| `/finances`                           | Itemized ledger and estimated proceeds for one example order                                                                  |
-| `/payouts`                            | Payout schedule, states, and destination                                                                                      |
-| `/market-rules`                       | Every rule applied to the account, plus role access                                                                           |
-| `/products`                           | All Supplier Products — the raw CJdropshipping feed browser (read-only status badges, no click-to-check action)               |
-| `/products/qualified/ready`           | Qualified Products · Ready — automated `PASS` candidates, default Product Sourcing screen                                     |
-| `/products/qualified/needs-attention` | Qualified Products · Needs Attention — automated `PASS_WITH_ATTENTION` candidates                                             |
-| `/products/evaluating`                | Candidates the pipeline has `QUEUED` or is actively `EVALUATING`                                                              |
-| `/products/blocked`                   | Blocked / Rejected — `BLOCKED` (permanent) and `TEMPORARILY_INELIGIBLE` (retryable) candidates                                |
-| `/products/exception-queue`           | Dead-lettered evaluation failures only (retries exhausted) — never ordinary rejections                                        |
-| `/products/shortlisted`               | Retired — redirects to `/products/qualified/ready`                                                                            |
-| `/api/internal/catalog/evaluate-tick` | Protected (`CRON_SECRET` bearer token) - runs one ingest+evaluate tick. Called by `vercel.json`'s cron entry, every 5 minutes |
-| `/api/storefront/products`            | Protected product feed for `sals3-ecommerce`                                                                                  |
-| `/api/storefront/products/[id]`       | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                                                       |
-| `/api/storefront/categories`          | Protected category feed for `sals3-ecommerce`                                                                                 |
+| Route                                 | What it does                                                                                                                                                                                                                                                 |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/`                                   | Placeholder home page ("Hello world") — outside the Seller Center shell                                                                                                                                                                                      |
+| `/overview`                           | Seller Center dashboard: needs-action tasks, money position, glance stats                                                                                                                                                                                    |
+| `/orders`                             | Batch fulfillment: filter, select, print (static), handoff                                                                                                                                                                                                   |
+| `/listings/new`                       | New-listing wizard preview (read-only fields, no save yet)                                                                                                                                                                                                   |
+| `/inventory`                          | Inline stock edits with undo and an audit record                                                                                                                                                                                                             |
+| `/finances`                           | Itemized ledger and estimated proceeds for one example order                                                                                                                                                                                                 |
+| `/payouts`                            | Payout schedule, states, and destination                                                                                                                                                                                                                     |
+| `/market-rules`                       | Every rule applied to the account, plus role access                                                                                                                                                                                                          |
+| `/supplier-apps`                      | Connect / disconnect / reconnect the seller's own CJ Dropshipping account (ADR-008)                                                                                                                                                                          |
+| `/products`                           | All Supplier Products — the raw CJdropshipping feed browser, through the seller's own connection (read-only status badges, no click-to-check action)                                                                                                         |
+| `/products/qualified/ready`           | Qualified Products · Ready — automated `PASS` candidates, default Product Sourcing screen                                                                                                                                                                    |
+| `/products/qualified/needs-attention` | Qualified Products · Needs Attention — automated `PASS_WITH_ATTENTION` candidates                                                                                                                                                                            |
+| `/products/evaluating`                | Candidates the pipeline has `QUEUED` or is actively `EVALUATING`                                                                                                                                                                                             |
+| `/products/blocked`                   | Blocked / Rejected — `BLOCKED` (permanent) and `TEMPORARILY_INELIGIBLE` (retryable) candidates                                                                                                                                                               |
+| `/products/exception-queue`           | Dead-lettered evaluation failures only (retries exhausted) — never ordinary rejections                                                                                                                                                                       |
+| `/products/shortlisted`               | Retired — redirects to `/products/qualified/ready`                                                                                                                                                                                                           |
+| `/api/internal/catalog/evaluate-tick` | Protected (`CRON_SECRET` bearer token) - runs one ingest+evaluate tick. Called every 5 minutes by a GitHub Actions schedule (`.github/workflows/evaluate-tick.yml`), not Vercel Cron - see [Automated candidate evaluation](#automated-candidate-evaluation) |
+| `/api/storefront/products`            | Protected product feed for `sals3-ecommerce`                                                                                                                                                                                                                 |
+| `/api/storefront/products/[id]`       | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                                                                                                                                                                                      |
+| `/api/storefront/categories`          | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                |
 
 ## Design system
 
@@ -156,29 +170,40 @@ The catalog tables live in this app, so a shortlist write is a Server Action
 against the local database — no cross-service HTTP call and no shared service
 credential to store or leak.
 
-| Piece                                        | File                                           |
-| -------------------------------------------- | ---------------------------------------------- |
-| Table definitions                            | `src/lib/db/schema/catalog.ts`                 |
-| Client (postgres.js singleton)               | `src/lib/db/client.ts`                         |
-| Generated SQL migrations                     | `drizzle/`                                     |
-| Drizzle Kit config                           | `drizzle.config.ts`                            |
-| Zod contracts                                | `src/modules/catalog/candidates/contracts.ts`  |
-| Queries (write side)                         | `src/modules/catalog/candidates/repository.ts` |
-| Shortlist use case                           | `src/modules/catalog/candidates/shortlist.ts`  |
-| Queries (read side)                          | `src/modules/catalog/candidates/queries.ts`    |
-| Server Action (manual recheck)               | `src/app/(portal)/products/actions.ts`         |
-| Shared CJ Zod primitives                     | `src/lib/cj/primitives.ts`                     |
-| CJ enrichment schemas                        | `src/lib/cj/enrichment-schemas.ts`             |
-| CJ evidence normaliser                       | `src/lib/cj/evidence.ts`                       |
-| CJ enrichment fetch                          | `src/services/cj/enrichment.ts`                |
-| Evidence fetch + decide (automated pipeline) | `src/modules/catalog/candidates/evaluate.ts`   |
+| Piece                                        | File                                                |
+| -------------------------------------------- | --------------------------------------------------- |
+| Table definitions                            | `src/lib/db/schema/catalog.ts`                      |
+| Client (postgres.js singleton)               | `src/lib/db/client.ts`                              |
+| Generated SQL migrations                     | `drizzle/`                                          |
+| Drizzle Kit config                           | `drizzle.config.ts`                                 |
+| Zod contracts                                | `src/modules/catalog/candidates/contracts.ts`       |
+| Queries (write side)                         | `src/modules/catalog/candidates/repository.ts`      |
+| Shortlist use case                           | `src/modules/catalog/candidates/shortlist.ts`       |
+| Queries (read side)                          | `src/modules/catalog/candidates/queries.ts`         |
+| Server Action (manual recheck)               | `src/app/(portal)/products/actions.ts`              |
+| Shared CJ Zod primitives                     | `src/lib/cj/primitives.ts`                          |
+| CJ enrichment schemas                        | `src/lib/cj/enrichment-schemas.ts`                  |
+| CJ evidence normaliser                       | `src/lib/cj/evidence.ts`                            |
+| CJ enrichment fetch                          | `src/services/cj/enrichment.ts`                     |
+| Evidence fetch + decide (automated pipeline) | `src/modules/catalog/candidates/evaluate.ts`        |
+| Feed ingestion (automated pipeline)          | `src/modules/catalog/candidates/ingestion.ts`       |
+| Provider connections (ADR-006/ADR-008)       | `src/modules/suppliers/repository.ts`               |
+| Encrypted credential store                   | `src/lib/secrets/postgres-supplier-secret-store.ts` |
 
-Five tables: `supplier_candidates` (the shortlist record, unique on
-`(supplier, external_product_id)`), `idempotency_records`,
+Nine tables: `supplier_candidates` (the shortlist record, unique on
+`(supplier_connection_id, external_product_id)`), `idempotency_records`,
 `supplier_snapshots` (one normalised CJ evidence record per candidate),
 `candidate_evaluations` (one automated-evaluation record per candidate - see
-[Automated candidate evaluation](#automated-candidate-evaluation)), and the
-append-only `audit_events`.
+[Automated candidate evaluation](#automated-candidate-evaluation)),
+append-only `audit_events`, and four multi-tenant tables added for
+[Supplier Apps](#supplier-apps-multi-tenant-provider-connections):
+`seller_accounts`, `supplier_providers`, `supplier_connections`, and
+`supplier_connection_secrets`.
+
+`src/modules/catalog/candidates/shortlist.ts` and `contracts.ts` are retired
+(stubbed to an empty export) - superseded by `ingestion.ts`'s automated feed
+pull. Kept as empty files rather than deleted because of a sandbox
+restriction encountered while building this; safe to delete outright.
 
 - **Server-only.** `DATABASE_URL` has no `NEXT_PUBLIC_` prefix, and
   `src/lib/db/client.ts` throws if it is ever imported from client code.
@@ -240,7 +265,16 @@ evidence could not be fetched — never that there is none.
 
 Candidates are no longer shortlisted by clicking a row. A protected internal
 route, `/api/internal/catalog/evaluate-tick`, runs the whole pipeline on a
-schedule (`vercel.json`, every 5 minutes via Vercel Cron):
+schedule - every 5 minutes, via `.github/workflows/evaluate-tick.yml`, not
+`vercel.json`/Vercel Cron. **Why:** Vercel's Hobby plan rejects any cron more
+frequent than once/day and fails the whole deployment when one is configured
+([usage & pricing](https://vercel.com/docs/cron-jobs/usage-and-pricing)); a
+GitHub Actions schedule calling the same bearer-token-protected route is free
+and keeps the 5-minute cadence, at the cost of GitHub's own best-effort
+timing (schedules can lag under load, and auto-disable after 60 days with no
+repository activity - see the workflow file). Move the tick back to
+`vercel.json`/Vercel Cron if the project ever upgrades to Pro, which allows
+per-minute schedules.
 
 ```text
 CJ /product/list (paginated)
@@ -305,10 +339,15 @@ wired up first (separate task).
 decision, so a real ADR-002/ADR-003 rule pack can replace these placeholders
 later without a schema change.
 
-Still single-seller: ingestion and evaluation run for the same
-`dev-user`/`seller-001` context and the same global `CJ_API_KEY` as the rest
-of this app. No Shopify-style Supplier Apps, per-seller CJ connections, or
-AliExpress integration exist - that is a separate, later task.
+Multi-tenant as of 2026-08-07: ingestion and evaluation loop over every
+seller's own `CONNECTED`/`DEGRADED` [Supplier Apps connection](#supplier-apps-multi-tenant-provider-connections)
+instead of one global `CJ_API_KEY` - see that section for the schema,
+encryption, and the CJ provider adapter. `dev-user` is still the one
+placeholder seller identity (no real seller sign-in exists yet - see
+[Important limitations](#important-limitations)), but the tables, the
+encrypted credential, and the adapter boundary are the real, tenant-scoped
+shape a second seller would use. AliExpress or any second provider is still
+a separate, later task - only `CJ_DROPSHIPPING` is seeded.
 
 Two labelling rules are load-bearing in that panel: CJ review numbers are
 supplier-platform evidence and never Sals3 buyer ratings, and `listedNum` is a
@@ -330,36 +369,81 @@ of the three markets' figures (fees, tax rates, thresholds) are confirmed
 Sals3 business rules — they were carried over from an imported design mockup
 for interface review only.
 
+## Supplier Apps (multi-tenant provider connections)
+
+ADR-006/ADR-008: a Dropshipper connects and owns their own supplier
+credential instead of the whole app sharing one global `CJ_API_KEY`. `/supplier-apps`
+is the seller-facing screen; `src/modules/suppliers/` is the provider-agnostic
+boundary every screen goes through.
+
+| Piece                                   | File                                                                                              |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Schema (4 tables)                       | `src/lib/db/schema/{seller-accounts,supplier-providers,supplier-connections,supplier-secrets}.ts` |
+| Provider-agnostic interface             | `src/modules/suppliers/contracts.ts`                                                              |
+| Tenant-scoped connection CRUD           | `src/modules/suppliers/repository.ts`                                                             |
+| CJ adapter (implements the interface)   | `src/modules/suppliers/providers/cj/cj-adapter.ts`                                                |
+| Per-connection CJ token cache           | `src/modules/suppliers/providers/cj/cj-auth.ts`                                                   |
+| AES-256-GCM credential encryption       | `src/lib/secrets/crypto-core.ts` (+ guarded `crypto.ts`)                                          |
+| Encrypted credential store              | `src/lib/secrets/postgres-supplier-secret-store.ts`                                               |
+| Seller/role guard                       | `src/lib/auth/seller-guard.ts`                                                                    |
+| Connect / Disconnect / Reconnect action | `src/app/(portal)/supplier-apps/actions.ts`                                                       |
+| One-time bootstrap (Sals3 Official)     | `scripts/bootstrap-sals3-official-cj.mts` (`npm run bootstrap:cj`)                                |
+
+- **Credentials are encrypted at rest.** AES-256-GCM, with the connection id,
+  provider code, and key version bound in as AAD, so a copied ciphertext row
+  cannot be decrypted against a different connection. The master key is
+  `SUPPLIER_CREDENTIAL_MASTER_KEY_BASE64` in `.env.local` (generate with
+  `openssl rand -base64 32`) — never committed, never logged, never returned
+  to the browser.
+- **Tenant-scoped everywhere.** `supplier_candidates.supplier_connection_id`
+  is `NOT NULL` and every Product Sourcing query joins through
+  `supplier_connections.seller_account_id` — never the legacy
+  `intended_seller_id` text column, which is now unused display-only data.
+- **Connect / Disconnect / Reconnect.** Disconnecting
+  (`disconnectCjSupplier`) is soft: the row and its encrypted secret stay, only
+  `status` flips to `DISCONNECTED`, which is what the automation pipeline's
+  `listWorkableConnections` filters on to stop sourcing from it. Reconnecting
+  re-uses the same "Connect CJ" form and server action — `connectCjSupplier`
+  updates the existing row in place (the `(seller_account_id, provider_id)`
+  unique index allows only one connection per seller per provider) rather than
+  blocking it as already-connected.
+- **`CJ_API_KEY` is no longer read at portal request time.** It is only used
+  by `npm run bootstrap:cj` to seed the one Sals3 Official Dropshipper
+  connection from it once, and still by the separate
+  [storefront product feed](#storefront-product-feed) (`src/services/cj/{token,products}.ts`),
+  which is a different, customer-facing read path that ADR-008 has not yet
+  reached.
+- **Not implemented:** `subscribeProducts` on the adapter interface throws
+  deliberately — no CJ webhook/subscription endpoint has been verified
+  against the live API. A second provider (AliExpress or otherwise) is not
+  built; only `CJ_DROPSHIPPING` is seeded.
+
 ## CJdropshipping integration
 
-`/products` shows the CJdropshipping supplier feed. It is the portal's only
-product source and it is **read-only**. The previous in-memory Sals3 fixture
-catalogue and its add/edit/import/export screens were removed. Old links with
-`?source=cj` still work: the parameter is accepted and ignored.
-
-### Configuration
-
-Set `CJ_API_KEY` in `.env.local` (format `CJ<userNumber>@api@<32 characters>`,
-from the CJ dashboard). It is server-side only — no `NEXT_PUBLIC_` prefix — so
-the key and the access token it buys never reach the browser. With no key set,
-the page shows a setup message instead of failing.
+`/products` (and the rest of Product Sourcing) shows the CJdropshipping feed
+through the current seller's own [Supplier Apps connection](#supplier-apps-multi-tenant-provider-connections) -
+it is the portal's only product source and it is **read-only**. A seller with
+no connection sees a "connect a supplier" empty state instead of the feed.
+The previous in-memory Sals3 fixture catalogue and its add/edit/import/export
+screens were removed. Old links with `?source=cj` still work: the parameter
+is accepted and ignored.
 
 ### How it works
 
-| Piece                        | File                          |
-| ---------------------------- | ----------------------------- |
-| Response schemas (Zod)       | `src/lib/cj/schemas.ts`       |
-| Mapping to the display shape | `src/lib/cj/normalize.ts`     |
-| Access-token cache           | `src/services/cj/token.ts`    |
-| Authorized product read      | `src/services/cj/products.ts` |
+| Piece                          | File                                               |
+| ------------------------------ | -------------------------------------------------- |
+| Response schemas (Zod)         | `src/lib/cj/schemas.ts`                            |
+| Mapping to the display shape   | `src/lib/cj/normalize.ts`                          |
+| Per-connection token cache     | `src/modules/suppliers/providers/cj/cj-auth.ts`    |
+| Connection-scoped product read | `src/modules/suppliers/providers/cj/cj-adapter.ts` |
 
-- **Rate limit.** CJ allows one call per second per account. The access token is
-  cached in memory until an hour before it expires, concurrent callers share one
-  in-flight token request, and list responses are cached for five minutes, so a
-  page refresh does not spend an upstream call.
-- **Permission.** `fetchCjProducts` calls `requirePermission('product:read')`
-  before any upstream request, so the integration is not a way around the portal
-  roles.
+- **Rate limit.** CJ allows one call per second per account/connection. Each
+  connection gets its own in-memory token cache entry (cached until an hour
+  before expiry) and its own request spacing, so one seller's CJ traffic never
+  throttles another's.
+- **Authorization.** `CjCatalogueView` calls `requireDropshipperAccount()`
+  before resolving the seller's own connection, so the integration is not a
+  way around the portal roles.
 - **Untrusted upstream data.** The API's real responses differ from its own
   documentation (`sellPrice` is a string, `productWeight` a range, `createTime`
   epoch milliseconds). Every field is parsed with a fallback, so a changed value
@@ -395,7 +479,11 @@ Each request must send:
 Authorization: Bearer <SALS3_STOREFRONT_API_TOKEN>
 ```
 
-The API reads the same CJdropshipping supplier feed shown at `/products`. It
+The API reads the CJdropshipping supplier feed through the legacy global
+`CJ_API_KEY` path (`src/services/cj/{token,products}.ts`) — a separate fetch
+path from `/products`'s own per-connection adapter, since this customer-facing
+feed has not been moved to a per-seller connection (a later ADR-008 task; see
+[Supplier Apps](#supplier-apps-multi-tenant-provider-connections)). It
 skips supplier rows with no usable price, converts the
 supplier USD price to a PHP shopper price with `CJ_USD_TO_PHP_RATE` and
 `CJ_PRICE_MARKUP_PERCENT`, and never exposes the supplier USD price to
@@ -417,12 +505,17 @@ endpoint replaces that workaround with one request.
 These are real gaps, not oversights. Do not treat any screen as production ready.
 
 - **No authentication.** `src/lib/auth/session.ts` returns one development
-  identity. It is a placeholder shaped so a real session lookup can replace it
-  without touching any caller. Do not expose this portal to untrusted users.
+  identity (`dev-user`). It is a placeholder shaped so a real session lookup
+  can replace it without touching any caller — including
+  `requireDropshipperAccount()`'s own `identityId` resolution. Do not expose
+  this portal to untrusted users.
 - **Read-only catalogue.** The portal shows the CJdropshipping supplier feed
-  and nothing else. There is no Sals3 product catalogue, no add/edit form, no
-  import/export, and no database — the earlier in-memory fixture catalogue was
-  removed.
+  and nothing else — there is no writable Sals3 product catalogue, no add/edit
+  form, and no import/export. A real Postgres database does exist now (see
+  [Catalog database](#catalog-database-drizzle--postgresql) and
+  [Supplier Apps](#supplier-apps-multi-tenant-provider-connections)) for the
+  shortlist/evaluation pipeline and provider connections - the earlier
+  in-memory fixture catalogue was removed, not replaced with "no database".
 - The portal is `robots: noindex` and publishes no structured data on purpose.
   It is an internal tool, so the SEO, GEO, and AEO work that applies to the
   storefront does not apply here.
