@@ -31,7 +31,7 @@ describe('CJ storefront feed', () => {
     vi.stubEnv('CJ_USD_TO_PHP_RATE', '58');
     vi.stubEnv('CJ_PRICE_MARKUP_PERCENT', '30');
 
-    expect(toStorefrontProduct(cjProduct(), 'for-you')).toMatchObject({
+    expect(toStorefrontProduct(cjProduct())).toMatchObject({
       id: 'CJYD3038814',
       slug: 'cjyd3038814',
       title: 'Insole For Flat-foot Correction Pure Blue',
@@ -47,15 +47,21 @@ describe('CJ storefront feed', () => {
   });
 
   it('skips CJ products without a usable supplier price', () => {
-    expect(
-      toStorefrontProduct(cjProduct({ priceCentsUsd: null }), 'for-you'),
-    ).toBeNull();
+    expect(toStorefrontProduct(cjProduct({ priceCentsUsd: null }))).toBeNull();
   });
 
-  it('adds a compare price for deals', () => {
-    const product = toStorefrontProduct(cjProduct(), 'deals');
+  it('never invents a comparison price, including in the deals section', () => {
+    // ADR-003 prohibits a was/now pair that is not backed by real price
+    // history. No price history exists, so the compare price must always equal
+    // the current price - which is what stops the storefront card from
+    // rendering a strikethrough and a percent-off badge.
+    const feed = toStorefrontProductFeed(
+      [cjProduct()],
+      { section: 'deals', page: 1, limit: 1 },
+      1,
+    );
 
-    expect(product?.oldPriceMinor).toBeGreaterThan(product?.priceMinor ?? 0);
+    expect(feed.products[0]?.oldPriceMinor).toBe(feed.products[0]?.priceMinor);
   });
 
   it('sorts deals by listed count when available', () => {

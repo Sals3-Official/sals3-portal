@@ -45,7 +45,6 @@ type PricingConfig = {
 
 const DEFAULT_USD_TO_PHP_RATE = 58;
 const DEFAULT_MARKUP_PERCENT = 30;
-const DEAL_COMPARE_UPLIFT_PERCENT = 15;
 
 function positiveEnvNumber(name: string, fallback: number): number {
   const parsed = Number(process.env[name]);
@@ -101,26 +100,28 @@ function priceMinor(
   );
 }
 
-function comparePriceMinor(
-  price: number,
-  section: StorefrontFeedQuery['section'],
-) {
-  if (section !== 'deals') {
-    return price;
-  }
-
-  return Math.round(price * (1 + DEAL_COMPARE_UPLIFT_PERCENT / 100));
-}
-
 function shipLine(product: CjProduct): string {
   return product.shipsFrom.length === 0
     ? 'CJdropshipping'
     : `Ships from ${product.shipsFrom.join(', ')}`;
 }
 
+/**
+ * Sals3 publishes no comparison ("was") price.
+ *
+ * `oldPriceMinor` deliberately equals `priceMinor`: every `sals3-ecommerce`
+ * card renders the strikethrough and the percent-off badge only when the old
+ * price is strictly greater, so an equal value shows one honest price and no
+ * discount claim. The field stays in the contract because the consumer's
+ * schema requires it, and so a genuine value can fill it once real price
+ * history exists.
+ *
+ * Never derive this from the current price. A was/now pair produced by marking
+ * the live price up is not evidence that anything ever sold for the higher
+ * number, and ADR-003 prohibits it.
+ */
 export function toStorefrontProduct(
   product: CjProduct,
-  section: StorefrontFeedQuery['section'],
   config = getStorefrontPricingConfig(),
 ): StorefrontProduct | null {
   const currentPrice = priceMinor(product.priceCentsUsd, config);
@@ -134,7 +135,7 @@ export function toStorefrontProduct(
     slug: slugify(product.id || product.sku, 'cj-product'),
     title: product.name,
     priceMinor: currentPrice,
-    oldPriceMinor: comparePriceMinor(currentPrice, section),
+    oldPriceMinor: currentPrice,
     imageUrl: product.imageUrl,
     imageAlt: product.name,
     ratingLine: 'Supplier item',
@@ -159,7 +160,7 @@ export function toStorefrontProductFeed(
         })
       : products;
   const mapped = source
-    .map((product) => toStorefrontProduct(product, query.section))
+    .map((product) => toStorefrontProduct(product))
     .filter((product): product is StorefrontProduct => product !== null);
 
   return {
