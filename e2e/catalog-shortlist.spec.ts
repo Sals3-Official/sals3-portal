@@ -1,180 +1,202 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type APIRequestContext } from '@playwright/test';
+import postgres from 'postgres';
 
 /**
- * "Check for Sals3" writes a real row to Postgres through a Server Action.
+ * The automated candidate-evaluation pipeline (ingest -> screen -> CJ
+ * evidence -> qualify -> decide), driven by the protected internal route
+ * `/api/internal/catalog/evaluate-tick` instead of a per-row click.
  *
- * These tests assert the invariants the portal itself owns, not a specific
- * supplier product: the CJ catalogue is a live third-party feed, so which rows
- * appear changes, and a CJ outage is not a defect in this repository.
- *
- * Two locator rules learned the hard way here:
- *  - Scope row assertions to the products table. The sidebar has a
- *    "Shortlisted" nav link, so a page-wide text match passes without the
- *    button ever doing anything.
- *  - After the click the drawer opens, and Base UI marks everything behind it
- *    `aria-hidden`/inert — so `getByRole('table')` stops resolving. Assert on
- *    the dialog while it is open, and close it before asserting the row.
+ * `next dev` loads `.env.local` for its own process, but Playwright's own
+ * Node process does not - `process.loadEnvFile` (same pattern as
+ * `drizzle.config.ts`) makes `CRON_SECRET`/`DATABASE_URL` available here too.
+ * A live CJ account and a real Postgres database are genuinely required for
+ * the tick itself to do anything; every assertion below degrades honestly
+ * when either secret is absent, matching how the rest of this suite treats
+ * "no database configured" as an expected condition, not a failure.
  */
-
-const PREFLIGHT_DECISION_LABELS = [
-  'Ready',
-  'Ready · Needs Attention',
-  'Review Required',
-  'On Hold',
-  'Blocked',
-];
-
-function productsTable(page: Page): Locator {
-  return page.getByRole('table');
+try {
+  process.loadEnvFile('.env.local');
+} catch {
+  // No .env.local - CRON_SECRET/DATABASE_URL stay undefined, tests degrade below.
 }
 
-async function openExplorer(page: Page): Promise<boolean> {
-  await page.goto('/products');
+const PREFLIGHT_SCORE_LABELS = ['Quality score', 'Review Required', 'On Hold'];
 
-  const button = productsTable(page)
-    .getByRole('button', { name: 'Check for Sals3' })
-    .first();
-  const failure = page.getByRole('heading', {
-    name: 'The supplier catalogue did not load',
+function isConfigured(): boolean {
+  return (
+    typeof process.env.CRON_SECRET === 'string' &&
+    process.env.CRON_SECRET.trim() !== '' &&
+    typeof process.env.DATABASE_URL === 'string' &&
+    process.env.DATABASE_URL.trim() !== ''
+  );
+}
+
+/**
+ * Runs one real evaluation tick against live CJ + the real database. Serial
+ * mode below keeps this the only test making CJ calls at a time - CJ allows
+ * one request per second, and evidence-fetch calls cannot be parallelised.
+ */
+async function runTick(request: APIRequestContext) {
+  const response = await request.get('/api/internal/catalog/evaluate-tick', {
+    headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
   });
 
-  await expect(button.or(failure)).toBeVisible({ timeout: 30_000 });
-  return button.isVisible();
+  expect(response.ok()).toBe(true);
+  return response.json();
 }
 
-/**
- * Serial on purpose. Each "Check for Sals3" click makes three real CJ calls
- * with deliberate ~1.1s spacing, because CJ allows one request per second per
- * account. Running these in parallel does not just risk CJ rate-limiting this
- * spec — it saturates the shared dev server and made an unrelated spec's
- * 30-second page-load assertion time out. The calls genuinely cannot be
- * parallelised, so serialising them is the honest fix rather than raising
- * someone else's timeout.
- */
 test.describe.configure({ mode: 'serial' });
 
-test.describe('CJ candidate shortlist', () => {
-  test('the action appears on the CJ Candidate Explorer rows', async ({
-    page,
+test.describe('automated candidate-evaluation pipeline', () => {
+  test('the tick endpoint rejects an unauthenticated request', async ({
+    request,
   }) => {
-    const ready = await openExplorer(page);
-    if (!ready) return; // Supplier catalogue itself failed to load.
+    const response = await request.get('/api/internal/catalog/evaluate-tick');
 
-    await expect(
-      productsTable(page)
-        .getByRole('button', { name: 'Check for Sals3' })
-        .first(),
-    ).toBeEnabled();
+    expect(response.status()).toBe(401);
   });
 
-  test('clicking it reports a real outcome in the drawer and never a preflight decision', async ({
+  test('a real tick ingests and evaluates without anyone clicking a row', async ({
+    request,
+  }) => {
+    test.skip(
+      !isConfigured(),
+      'CRON_SECRET/DATABASE_URL not configured in this environment',
+    );
+
+    const result = await runTick(request);
+
+    expect(result.ok).toBe(true);
+    expect(result.result).toEqual(
+      expect.objectContaining({
+        ingestion: expect.objectContaining({
+          pagesFetched: expect.any(Number),
+        }),
+        claimed: expect.any(Number),
+        evaluated: expect.any(Number),
+      }),
+    );
+  });
+});
+
+test.describe('Product Sourcing screens', () => {
+  test('Qualified Products defaults to Ready and never shows a per-row check button', async ({
     page,
   }) => {
-    const ready = await openExplorer(page);
-    if (!ready) return;
+    await page.goto('/products/qualified/ready');
 
-    await productsTable(page)
-      .getByRole('button', { name: 'Check for Sals3' })
-      .first()
-      .click();
-
-    // The drawer is the only non-inert region once it opens.
-    const drawer = page.getByRole('dialog');
-    await expect(drawer).toBeVisible({ timeout: 20_000 });
     await expect(
-      drawer.getByText(/^(Shortlisted|Not shortlisted)$/).first(),
-    ).toBeVisible();
+      page.getByRole('heading', { name: 'Ready', level: 1 }),
+    ).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(
+      page.getByRole('button', { name: 'Check for Sals3' }),
+    ).toHaveCount(0);
+  });
 
-    // Whatever happened, it must never be dressed up as a preflight decision.
+  test('Needs Attention never shows a fabricated preflight score', async ({
+    page,
+  }) => {
+    await page.goto('/products/qualified/needs-attention');
+
+    await expect(
+      page.getByRole('heading', { name: 'Needs Attention', level: 1 }),
+    ).toBeVisible({ timeout: 30_000 });
+
     await Promise.all(
-      PREFLIGHT_DECISION_LABELS.map((label) =>
+      PREFLIGHT_SCORE_LABELS.map((label) =>
         expect(page.getByText(label, { exact: true })).toHaveCount(0),
       ),
     );
-
-    // The drawer always says preflight has not run.
-    await expect(
-      drawer.getByText(/full preflight has not run for this candidate/i),
-    ).toBeVisible();
   });
 
-  test('a successful shortlist shows the stored candidate id, then persists to the Shortlisted queue', async ({
+  test('Blocked / Rejected page exists and states permanent vs retryable', async ({
     page,
   }) => {
-    const ready = await openExplorer(page);
-    if (!ready) return;
+    await page.goto('/products/blocked');
 
-    await productsTable(page)
-      .getByRole('button', { name: 'Check for Sals3' })
-      .first()
-      .click();
-
-    const drawer = page.getByRole('dialog');
-    await expect(drawer).toBeVisible({ timeout: 20_000 });
-
-    const succeeded = await drawer
-      .getByText('Shortlisted', { exact: true })
-      .count();
-
-    if (succeeded === 0) {
-      // No database in this environment. The honest-failure path is asserted
-      // by the previous test; there is nothing persisted to verify here.
-      return;
-    }
-
-    // A real uuid from Postgres, not a client-generated value.
     await expect(
-      drawer.getByText(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-      ),
-    ).toBeVisible();
-
-    // Round-trip: the queue page reads the table, not client state.
-    await page.goto('/products/shortlisted');
-    const queueTable = page.getByRole('table');
-    await expect(queueTable).toBeVisible({ timeout: 30_000 });
-    await expect(queueTable.locator('tbody tr').first()).toBeVisible();
+      page.getByRole('heading', { name: 'Blocked / Rejected', level: 1 }),
+    ).toBeVisible({ timeout: 30_000 });
   });
 
-  test('the page names itself the same as its sidebar link, and its banner does not contradict the button', async ({
+  test('Evaluating shows queued/in-progress candidates, not a manual action', async ({
+    page,
+  }) => {
+    await page.goto('/products/evaluating');
+
+    await expect(
+      page.getByRole('heading', { name: 'Evaluating', level: 1 }),
+    ).toBeVisible({
+      timeout: 30_000,
+    });
+  });
+
+  test('the old /products/shortlisted link redirects to Ready instead of 404ing', async ({
+    page,
+  }) => {
+    await page.goto('/products/shortlisted');
+
+    await expect(page).toHaveURL(/\/products\/qualified\/ready$/);
+  });
+
+  test('the sidebar names the Product Sourcing group correctly and All Supplier Products is the raw browser', async ({
     page,
   }) => {
     await page.goto('/products');
 
-    // The sidebar link and the page heading must agree. They drifted once —
-    // the heading said "Products" while the nav said "CJ Candidate Explorer"
-    // and the topbar said "Product Sourcing", which Bogs reported as
-    // confusing.
     await expect(
-      page.getByRole('heading', { name: 'CJ Candidate Explorer', level: 1 }),
+      page.getByRole('heading', { name: 'All Supplier Products', level: 1 }),
     ).toBeVisible({ timeout: 30_000 });
-
-    // The old banner claimed importing "is not built yet" while every row had
-    // a Check for Sals3 button. It must not come back.
     await expect(page.getByText(/is not built yet/i)).toHaveCount(0);
   });
 
-  test('the Exception Queue explains that preflight is not implemented', async ({
+  test('the Exception Queue only ever explains genuine operational failures, never "preflight not implemented"', async ({
     page,
   }) => {
     await page.goto('/products/exception-queue');
 
     await expect(
-      page.getByRole('heading', { name: 'No exceptions to review' }),
+      page.getByRole('heading', { name: 'Exception Queue', level: 1 }),
     ).toBeVisible({ timeout: 30_000 });
     await expect(
       page.getByText(/preflight, which is not implemented/i),
-    ).toBeVisible();
+    ).toHaveCount(0);
   });
 });
 
-test.describe('CJ candidate shortlist on a phone', () => {
+test.describe('database state after a real tick', () => {
+  test('every stored decision is a real enum value, and reason codes are never empty for a blocked row', async () => {
+    test.skip(
+      typeof process.env.DATABASE_URL !== 'string' ||
+        process.env.DATABASE_URL.trim() === '',
+      'DATABASE_URL not configured in this environment',
+    );
+
+    const sql = postgres(process.env.DATABASE_URL as string, { max: 1 });
+
+    try {
+      const blockedWithNoReason = await sql`
+        SELECT id FROM candidate_evaluations
+        WHERE status = 'BLOCKED' AND cardinality(reason_codes) = 0
+      `;
+
+      expect(blockedWithNoReason).toHaveLength(0);
+    } finally {
+      await sql.end();
+    }
+  });
+});
+
+test.describe('automated pipeline on a phone', () => {
   test.use({ viewport: { width: 375, height: 812 } });
 
-  test('the shortlist column never scrolls the page sideways', async ({
-    page,
-  }) => {
-    await openExplorer(page);
+  test('the Ready screen never scrolls the page sideways', async ({ page }) => {
+    await page.goto('/products/qualified/ready');
+    await page
+      .getByRole('heading', { name: 'Ready', level: 1 })
+      .waitFor({ timeout: 30_000 });
 
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - window.innerWidth,

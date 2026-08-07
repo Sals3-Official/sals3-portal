@@ -55,13 +55,25 @@ export const cjProductListSchema = z.object({
     .nullish(),
 });
 
+/**
+ * `POST /authentication/getAccessToken`. Verified live 2026-08-07: the real
+ * response also returns `openId` (a number, e.g. `28305` - CJ's own stable
+ * per-account identifier), `refreshToken`, and `refreshTokenExpiryDate`
+ * alongside the access token - none of which the original schema captured.
+ * `accessToken`/`refreshToken` were observed at 593/594 characters, well
+ * past a documentation-typical assumption; treat their length as
+ * supplier-controlled and only loosely bounded, not fixed.
+ */
 export const cjAccessTokenSchema = z.object({
   code: z.number(),
   message: looseText,
   data: z
     .object({
+      openId: looseNumber,
       accessToken: z.string().min(1),
       accessTokenExpiryDate: looseText,
+      refreshToken: looseText,
+      refreshTokenExpiryDate: looseText,
     })
     .nullish(),
 });

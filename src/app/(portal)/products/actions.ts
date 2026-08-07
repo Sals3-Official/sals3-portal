@@ -1,123 +1,100 @@
 'use server';
 
-import { randomUUID } from 'crypto';
+import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
-import { requirePermission } from '@/lib/auth/session';
+import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { checkRateLimit } from '@/lib/rate-limit';
-import type { CandidateEvidence } from '@/lib/cj/evidence';
-import captureCandidateEvidence from '@/modules/catalog/candidates/capture-evidence';
-import { shortlistCandidateInputSchema } from '@/modules/catalog/candidates/contracts';
-import shortlistCandidate from '@/modules/catalog/candidates/shortlist';
+import getDb from '@/lib/db/client';
+import {
+  appendAuditEvent,
+  candidateBelongsToSeller,
+  requeueForManualRecheck,
+} from '@/modules/catalog/candidates/repository';
 
 /**
- * "Check for Sals3" (spec section 8.11).
+ * "Recheck now" (spec: retryable Blocked/Rejected and Evaluating rows only,
+ * "for debugging/admin use only").
  *
- * Because the catalog tables now live in this app, this is a Server Action
- * rather than a cross-service HTTP call: one less network hop, and no shared
- * service credential to store or leak. Next.js verifies the request origin
- * for Server Actions, which covers the CSRF requirement for this mutation.
- *
- * The client passes only a CJ `pid`. Seller, actor, and market context come
- * from the verified server session.
+ * The seller-facing per-row "Check for Sals3" action from the manual-only
+ * flow is gone: candidates are now shortlisted and evaluated automatically
+ * by the CJ feed ingestion + evaluation pipeline
+ * (`src/modules/catalog/candidates/run-tick.ts`, invoked by a GitHub Actions
+ * schedule - see `.github/workflows/evaluate-tick.yml`). This action only nudges an already-queued pipeline to
+ * retry a specific candidate sooner than its scheduled backoff; it never
+ * creates a candidate or fetches CJ evidence itself.
  */
 
 const RATE_LIMIT = { capacity: 20, refillIntervalMs: 60_000 };
 
-/**
- * ADR-003 has not approved a launch market yet. This is a labelled
- * placeholder needed to satisfy the "at least one market" contract, not a
- * business fact — it must become a real seller-selected market before
- * anything is published.
- */
-const PLACEHOLDER_MARKET_CODE = 'PH';
-
-export type CheckForSals3Result =
-  | {
-      ok: true;
-      candidateId: string;
-      shortlistState: 'SHORTLISTED' | 'PREFLIGHT_PENDING';
-      reused: boolean;
-      /**
-       * Fresh CJ evidence, or null when the supplier API could not be reached.
-       * A null here means "we could not look", never "there is nothing" — the
-       * candidate is still shortlisted either way.
-       */
-      evidence: CandidateEvidence | null;
-    }
+export type RecheckCandidateResult =
+  | { ok: true }
   | {
       ok: false;
       reason:
-        'invalid_input' | 'denied' | 'rate_limited' | 'conflict' | 'failed';
+        'invalid_input' | 'denied' | 'rate_limited' | 'not_eligible' | 'failed';
     };
 
-export async function checkForSals3Candidate(
-  externalProductId: string,
-): Promise<CheckForSals3Result> {
-  const parsedInput = shortlistCandidateInputSchema.safeParse({
-    externalProductId,
-  });
+export async function recheckCandidateNow(
+  candidateId: string,
+): Promise<RecheckCandidateResult> {
+  const parsedInput = z.string().uuid().safeParse(candidateId);
 
   if (!parsedInput.success) {
     return { ok: false, reason: 'invalid_input' };
   }
 
   let session;
+  let sellerAccount;
   try {
-    session = await requirePermission('catalog.candidate.shortlist');
+    ({ session, sellerAccount } = await requireDropshipperAccount());
   } catch (error) {
     if (error instanceof PermissionError)
       return { ok: false, reason: 'denied' };
     throw error;
   }
 
-  // Per-actor budget so one employee cannot exhaust everyone else's.
   const limit = checkRateLimit(
-    `candidate:shortlist:${session.userId}`,
+    `candidate:recheck:${session.userId}`,
     RATE_LIMIT,
   );
   if (!limit.allowed) {
     return { ok: false, reason: 'rate_limited' };
   }
 
+  // Tenant check before any mutation - a seller can only recheck their own
+  // candidate, never one reachable by guessing/passing another seller's id.
+  const owned = await candidateBelongsToSeller(
+    getDb(),
+    parsedInput.data,
+    sellerAccount.id,
+  );
+
+  if (!owned) {
+    return { ok: false, reason: 'not_eligible' };
+  }
+
   try {
-    const outcome = await shortlistCandidate(
-      {
-        supplier: 'CJ_DROPSHIPPING',
-        externalProductId: parsedInput.data.externalProductId,
-        intendedSellerId: session.sellerId,
-        intendedMarketCodes: [PLACEHOLDER_MARKET_CODE],
-        actorId: session.userId,
-      },
-      randomUUID(),
-    );
+    const requeued = await getDb().transaction(async (tx) => {
+      const eligible = await requeueForManualRecheck(tx, parsedInput.data);
 
-    if (outcome.status === 'idempotency_conflict') {
-      return { ok: false, reason: 'conflict' };
-    }
+      if (eligible) {
+        await appendAuditEvent(tx, {
+          actorId: session.userId,
+          action: 'CANDIDATE_RECHECK_REQUESTED',
+          entityType: 'supplier_candidate',
+          entityId: parsedInput.data,
+          payload: {},
+        });
+      }
 
-    // Separate step on purpose: the CJ calls take ~2.5s under CJ's one
-    // request per second limit, and the shortlist transaction must not stay
-    // open across them. A supplier outage leaves the candidate shortlisted
-    // with no evidence rather than failing the whole action.
-    const captured = await captureCandidateEvidence({
-      candidateId: outcome.result.candidateId,
-      externalProductId: parsedInput.data.externalProductId,
-      actorId: session.userId,
+      return eligible;
     });
 
-    return {
-      ok: true,
-      candidateId: outcome.result.candidateId,
-      shortlistState: outcome.result.shortlistState,
-      reused: outcome.result.reused,
-      evidence: captured.status === 'captured' ? captured.evidence : null,
-    };
+    return requeued ? { ok: true } : { ok: false, reason: 'not_eligible' };
   } catch (error) {
-    // Structured server-side log only; the client gets a reason code with no
-    // database detail, stack, or connection string.
     // eslint-disable-next-line no-console
-    console.error('[portal] candidate shortlist failed', {
-      externalProductId: parsedInput.data.externalProductId,
+    console.error('[portal] candidate recheck failed', {
+      candidateId: parsedInput.data,
       error: error instanceof Error ? error.message : 'unknown',
     });
     return { ok: false, reason: 'failed' };

@@ -9,7 +9,11 @@ import { expect, test, type Page } from '@playwright/test';
  * left blank.
  */
 
-/** Either the catalogue loaded, or the failure was reported. Never neither. */
+/**
+ * Either the catalogue loaded, the failure was reported, or the environment
+ * honestly has no database configured (expected in CI/preview - see
+ * `isDatabaseConfigured()`). Never neither, and never a silent crash.
+ */
 async function expectLoadedOrReported(page: Page): Promise<void> {
   const notice = page.getByText(
     'These are supplier products from CJdropshipping',
@@ -17,8 +21,13 @@ async function expectLoadedOrReported(page: Page): Promise<void> {
   const failure = page.getByRole('heading', {
     name: 'The supplier catalogue did not load',
   });
+  const noDatabase = page.getByRole('heading', {
+    name: 'No database configured in this environment',
+  });
 
-  await expect(notice.or(failure)).toBeVisible({ timeout: 30_000 });
+  await expect(notice.or(failure).or(noDatabase)).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 test.describe('supplier catalogue', () => {
@@ -49,8 +58,13 @@ test.describe('supplier catalogue', () => {
     const failure = page.getByRole('heading', {
       name: 'The supplier catalogue did not load',
     });
+    const noDatabase = page.getByRole('heading', {
+      name: 'No database configured in this environment',
+    });
 
-    await expect(notice.or(failure)).toBeVisible({ timeout: 30_000 });
+    await expect(notice.or(failure).or(noDatabase)).toBeVisible({
+      timeout: 30_000,
+    });
 
     if (await notice.isVisible()) {
       await expect(notice).toContainText('not converted to pesos');

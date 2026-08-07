@@ -1,0 +1,45 @@
+name: Evaluate Tick
+
+# Vercel's Hobby plan rejects any cron more frequent than once/day, so the
+# catalog-evaluation tick runs here instead of `vercel.json` (see the
+# "Automated candidate evaluation" section of README.md). GitHub does not
+# guarantee this exact cadence - scheduled runs can lag under GitHub's own
+# load, and a schedule auto-disables after 60 days with no repository
+# activity (re-enable it from the Actions tab, or push a commit).
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin, e.g.
+#                                https://sals3-portal.example.com
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the evaluation tick endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          status=$(curl -sS -o /tmp/tick-response.json -w '%{http_code}' \
+            -X GET "$PORTAL_BASE_URL/api/internal/catalog/evaluate-tick" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/tick-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "evaluate-tick returned HTTP $status" >&2
+            exit 1
+          fi
