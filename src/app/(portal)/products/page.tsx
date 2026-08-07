@@ -6,7 +6,7 @@ import CjTableSkeleton from '@/components/products/cj/CjTableSkeleton';
 import { cjQuerySchema } from '@/lib/cj/schemas';
 
 export const metadata: Metadata = {
-  title: 'CJ Candidate Explorer · Sals3 Portal',
+  title: 'All Supplier Products · Sals3 Portal',
 };
 
 type ProductsPageProps = {
@@ -14,14 +14,17 @@ type ProductsPageProps = {
 };
 
 /**
- * CJ Candidate Explorer (spec section 8.13's product-facing name for this
- * screen). A Server Component that parses the URL and composes the
- * CJdropshipping supplier feed - the portal's only product source. No list
- * logic lives here. Unknown query keys (like the old ?source=cj) are
- * stripped by the schema, so old links keep working.
+ * All Supplier Products - the optional raw CJ browser (nav label; formerly
+ * "CJ Candidate Explorer"). A Server Component that parses the URL and
+ * composes the CJdropshipping supplier feed - the portal's only product
+ * source. No list logic lives here. Unknown query keys (like the old
+ * ?source=cj) are stripped by the schema, so old links keep working.
  *
  * The route stays `/products` on purpose: renaming it would break existing
- * links and the storefront feed's own references for a cosmetic gain.
+ * links and the storefront feed's own references for a cosmetic gain. The
+ * automated pipeline (`src/modules/catalog/candidates/run-tick.ts`) ingests
+ * from this same feed on its own; this page is for browsing, not driving
+ * that pipeline.
  */
 export default async function ProductsPage({
   searchParams,
@@ -32,8 +35,8 @@ export default async function ProductsPage({
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="CJ Candidate Explorer"
-        description="Discover CJdropshipping products and shortlist candidates for Sals3"
+        title="All Supplier Products"
+        description="Browse the raw CJdropshipping feed. Automated evaluation runs on its own."
       />
       <Suspense
         key={`${cjQuery.cjPage}-${cjQuery.cjSearch}`}

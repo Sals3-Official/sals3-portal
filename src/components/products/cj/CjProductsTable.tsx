@@ -6,10 +6,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import type { CjProduct } from '@/lib/cj/normalize';
+import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
 import CjProductRow from './CjProductRow';
 
 type CjProductsTableProps = {
   products: CjProduct[];
+  evaluations: Map<string, EvaluatedCandidateRow>;
 };
 
 const COLUMNS = [
@@ -19,7 +21,7 @@ const COLUMNS = [
   { label: 'Ships from', className: 'hidden lg:table-cell' },
   { label: 'Listings', className: 'hidden text-right xl:table-cell' },
   { label: 'Added', className: 'whitespace-nowrap' },
-  { label: 'Sals3', className: 'whitespace-nowrap' },
+  { label: 'Status', className: 'whitespace-nowrap' },
 ];
 
 /**
@@ -27,7 +29,10 @@ const COLUMNS = [
  * client JavaScript is needed to show them. Rows restack into cards below 768px
  * through CSS.
  */
-export default function CjProductsTable({ products }: CjProductsTableProps) {
+export default function CjProductsTable({
+  products,
+  evaluations,
+}: CjProductsTableProps) {
   return (
     <div className="rounded-lg border border-border bg-card">
       <Table className="block md:table">
@@ -42,7 +47,11 @@ export default function CjProductsTable({ products }: CjProductsTableProps) {
         </TableHeader>
         <TableBody className="block md:table-row-group">
           {products.map((product) => (
-            <CjProductRow key={product.id} product={product} />
+            <CjProductRow
+              key={product.id}
+              product={product}
+              evaluated={evaluations.get(product.id)}
+            />
           ))}
         </TableBody>
       </Table>

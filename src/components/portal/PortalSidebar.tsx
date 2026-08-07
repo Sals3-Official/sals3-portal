@@ -12,8 +12,11 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
 } from '@/components/ui/sidebar';
-import type { NavGroup } from '@/lib/portal/navigation';
+import type { NavGroup, NavItem } from '@/lib/portal/navigation';
 import NavIcon from './NavIcon';
 
 type PortalSidebarProps = {
@@ -31,6 +34,13 @@ type PortalSidebarProps = {
  */
 function isCurrent(href: string, pathname: string): boolean {
   return !href.includes('?') && href === pathname;
+}
+
+/** A parent with sub-items (e.g. "Qualified Products") reads active when any child does. */
+function isCurrentOrChild(item: NavItem, pathname: string): boolean {
+  if (isCurrent(item.href, pathname)) return true;
+
+  return (item.items ?? []).some((child) => isCurrent(child.href, pathname));
 }
 
 /**
@@ -60,7 +70,7 @@ export default function PortalSidebar({ groups }: PortalSidebarProps) {
                 {group.items.map((item) => (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton
-                      isActive={isCurrent(item.href, pathname)}
+                      isActive={isCurrentOrChild(item, pathname)}
                       tooltip={item.label}
                       render={
                         <Link href={item.href}>
@@ -69,6 +79,22 @@ export default function PortalSidebar({ groups }: PortalSidebarProps) {
                         </Link>
                       }
                     />
+                    {item.items !== undefined && item.items.length > 0 ? (
+                      <SidebarMenuSub>
+                        {item.items.map((child) => (
+                          <SidebarMenuSubItem key={child.href}>
+                            <SidebarMenuSubButton
+                              isActive={isCurrent(child.href, pathname)}
+                              render={
+                                <Link href={child.href}>
+                                  <span>{child.label}</span>
+                                </Link>
+                              }
+                            />
+                          </SidebarMenuSubItem>
+                        ))}
+                      </SidebarMenuSub>
+                    ) : null}
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>

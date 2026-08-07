@@ -48,6 +48,12 @@ Set `SALS3_STOREFRONT_API_TOKEN` to a long random value if
 `sals3-ecommerce` will read products from this portal. Use the same value in
 `sals3-ecommerce/.env.local`.
 
+Set `CRON_SECRET` to a long random value so the automated candidate-evaluation
+tick (see [Automated candidate evaluation](#automated-candidate-evaluation)
+below) can authenticate. Without it the tick endpoint always returns `401` -
+harmless locally, but Vercel Cron needs it set as a project env var in any
+deployed environment.
+
 ## Commands
 
 | Command                   | What it does                                                                  |
@@ -67,22 +73,27 @@ Set `SALS3_STOREFRONT_API_TOKEN` to a long random value if
 
 ## Routes
 
-| Route                           | What it does                                                                                 |
-| ------------------------------- | -------------------------------------------------------------------------------------------- |
-| `/`                             | Placeholder home page ("Hello world") — outside the Seller Center shell                      |
-| `/overview`                     | Seller Center dashboard: needs-action tasks, money position, glance stats                    |
-| `/orders`                       | Batch fulfillment: filter, select, print (static), handoff                                   |
-| `/listings/new`                 | New-listing wizard preview (read-only fields, no save yet)                                   |
-| `/inventory`                    | Inline stock edits with undo and an audit record                                             |
-| `/finances`                     | Itemized ledger and estimated proceeds for one example order                                 |
-| `/payouts`                      | Payout schedule, states, and destination                                                     |
-| `/market-rules`                 | Every rule applied to the account, plus role access                                          |
-| `/products`                     | CJ Candidate Explorer — CJdropshipping supplier catalogue: search, paging, "Check for Sals3" |
-| `/products/shortlisted`         | Shortlisted CJ candidates, read from Postgres                                                |
-| `/products/exception-queue`     | Review/hold/blocked candidates — empty until preflight exists                                |
-| `/api/storefront/products`      | Protected product feed for `sals3-ecommerce`                                                 |
-| `/api/storefront/products/[id]` | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                      |
-| `/api/storefront/categories`    | Protected category feed for `sals3-ecommerce`                                                |
+| Route                                 | What it does                                                                                                                  |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `/`                                   | Placeholder home page ("Hello world") — outside the Seller Center shell                                                       |
+| `/overview`                           | Seller Center dashboard: needs-action tasks, money position, glance stats                                                     |
+| `/orders`                             | Batch fulfillment: filter, select, print (static), handoff                                                                    |
+| `/listings/new`                       | New-listing wizard preview (read-only fields, no save yet)                                                                    |
+| `/inventory`                          | Inline stock edits with undo and an audit record                                                                              |
+| `/finances`                           | Itemized ledger and estimated proceeds for one example order                                                                  |
+| `/payouts`                            | Payout schedule, states, and destination                                                                                      |
+| `/market-rules`                       | Every rule applied to the account, plus role access                                                                           |
+| `/products`                           | All Supplier Products — the raw CJdropshipping feed browser (read-only status badges, no click-to-check action)               |
+| `/products/qualified/ready`           | Qualified Products · Ready — automated `PASS` candidates, default Product Sourcing screen                                     |
+| `/products/qualified/needs-attention` | Qualified Products · Needs Attention — automated `PASS_WITH_ATTENTION` candidates                                             |
+| `/products/evaluating`                | Candidates the pipeline has `QUEUED` or is actively `EVALUATING`                                                              |
+| `/products/blocked`                   | Blocked / Rejected — `BLOCKED` (permanent) and `TEMPORARILY_INELIGIBLE` (retryable) candidates                                |
+| `/products/exception-queue`           | Dead-lettered evaluation failures only (retries exhausted) — never ordinary rejections                                        |
+| `/products/shortlisted`               | Retired — redirects to `/products/qualified/ready`                                                                            |
+| `/api/internal/catalog/evaluate-tick` | Protected (`CRON_SECRET` bearer token) - runs one ingest+evaluate tick. Called by `vercel.json`'s cron entry, every 5 minutes |
+| `/api/storefront/products`            | Protected product feed for `sals3-ecommerce`                                                                                  |
+| `/api/storefront/products/[id]`       | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                                                       |
+| `/api/storefront/categories`          | Protected category feed for `sals3-ecommerce`                                                                                 |
 
 ## Design system
 
@@ -145,27 +156,29 @@ The catalog tables live in this app, so a shortlist write is a Server Action
 against the local database — no cross-service HTTP call and no shared service
 credential to store or leak.
 
-| Piece                          | File                                                 |
-| ------------------------------ | ---------------------------------------------------- |
-| Table definitions              | `src/lib/db/schema/catalog.ts`                       |
-| Client (postgres.js singleton) | `src/lib/db/client.ts`                               |
-| Generated SQL migrations       | `drizzle/`                                           |
-| Drizzle Kit config             | `drizzle.config.ts`                                  |
-| Zod contracts                  | `src/modules/catalog/candidates/contracts.ts`        |
-| Queries (write side)           | `src/modules/catalog/candidates/repository.ts`       |
-| Shortlist use case             | `src/modules/catalog/candidates/shortlist.ts`        |
-| Queries (read side)            | `src/modules/catalog/candidates/queries.ts`          |
-| Server Action                  | `src/app/(portal)/products/actions.ts`               |
-| Shared CJ Zod primitives       | `src/lib/cj/primitives.ts`                           |
-| CJ enrichment schemas          | `src/lib/cj/enrichment-schemas.ts`                   |
-| CJ evidence normaliser         | `src/lib/cj/evidence.ts`                             |
-| CJ enrichment fetch            | `src/services/cj/enrichment.ts`                      |
-| Evidence capture use case      | `src/modules/catalog/candidates/capture-evidence.ts` |
+| Piece                                        | File                                           |
+| -------------------------------------------- | ---------------------------------------------- |
+| Table definitions                            | `src/lib/db/schema/catalog.ts`                 |
+| Client (postgres.js singleton)               | `src/lib/db/client.ts`                         |
+| Generated SQL migrations                     | `drizzle/`                                     |
+| Drizzle Kit config                           | `drizzle.config.ts`                            |
+| Zod contracts                                | `src/modules/catalog/candidates/contracts.ts`  |
+| Queries (write side)                         | `src/modules/catalog/candidates/repository.ts` |
+| Shortlist use case                           | `src/modules/catalog/candidates/shortlist.ts`  |
+| Queries (read side)                          | `src/modules/catalog/candidates/queries.ts`    |
+| Server Action (manual recheck)               | `src/app/(portal)/products/actions.ts`         |
+| Shared CJ Zod primitives                     | `src/lib/cj/primitives.ts`                     |
+| CJ enrichment schemas                        | `src/lib/cj/enrichment-schemas.ts`             |
+| CJ evidence normaliser                       | `src/lib/cj/evidence.ts`                       |
+| CJ enrichment fetch                          | `src/services/cj/enrichment.ts`                |
+| Evidence fetch + decide (automated pipeline) | `src/modules/catalog/candidates/evaluate.ts`   |
 
-Four tables: `supplier_candidates` (the shortlist record, unique on
+Five tables: `supplier_candidates` (the shortlist record, unique on
 `(supplier, external_product_id)`), `idempotency_records`,
-`supplier_snapshots` (one normalised CJ evidence record per candidate), and
-the append-only `audit_events`.
+`supplier_snapshots` (one normalised CJ evidence record per candidate),
+`candidate_evaluations` (one automated-evaluation record per candidate - see
+[Automated candidate evaluation](#automated-candidate-evaluation)), and the
+append-only `audit_events`.
 
 - **Server-only.** `DATABASE_URL` has no `NEXT_PUBLIC_` prefix, and
   `src/lib/db/client.ts` throws if it is ever imported from client code.
@@ -223,15 +236,79 @@ destination market, and ADR-003 has not approved one.
 If CJ is unreachable, the candidate is still shortlisted and the drawer says
 evidence could not be fetched — never that there is none.
 
-### What "Check for Sals3" does and does not do
+### Automated candidate evaluation
 
-It persists the **Shortlist** step and captures CJ evidence. It does **not**
-run preflight: the hard gates, quality score, and compliance gate are not
-implemented, so the app never produces a `PASS`, `PASS_WITH_ATTENTION`,
-`REVIEW`, `HOLD`, or `BLOCKED` decision. The evidence panel shows facts only —
-no verdict is derived from them. The Exception Queue is therefore empty by
-construction, not by missing data, and the drawer says so explicitly rather
-than showing blank score sections.
+Candidates are no longer shortlisted by clicking a row. A protected internal
+route, `/api/internal/catalog/evaluate-tick`, runs the whole pipeline on a
+schedule (`vercel.json`, every 5 minutes via Vercel Cron):
+
+```text
+CJ /product/list (paginated)
+  -> ingest: upsert supplier_candidates + a QUEUED candidate_evaluations row
+     for every unseen or feed-changed CJ pid
+  -> lease: a short transaction claims a bounded batch (Postgres
+     `FOR UPDATE SKIP LOCKED` - no Redis/queue service, per the cost-efficiency
+     rules)
+  -> screen: cheap rules against feed-level data only (category/brand
+     keywords, price sanity) - a hit blocks WITHOUT spending a CJ evidence call
+  -> evidence: survivors call the existing CJ evidence fetch (unchanged,
+     outside any transaction, ~30 points/candidate)
+  -> qualify: the full rule set runs against real evidence
+  -> decide + persist: one short transaction stores the snapshot, the
+     decision, and an audit event
+```
+
+| Piece                       | File                                                                            |
+| --------------------------- | ------------------------------------------------------------------------------- |
+| Decision model (schema)     | `src/lib/db/schema/catalog.ts` (`candidateEvaluations`, `evaluationStatusEnum`) |
+| Screening rules             | `src/modules/catalog/candidates/rules/screening.ts`                             |
+| Qualification rules         | `src/modules/catalog/candidates/rules/qualification.ts`                         |
+| Decision combinator         | `src/modules/catalog/candidates/rules/decide.ts`                                |
+| Placeholder policy values   | `src/modules/catalog/candidates/rules/policy.ts`                                |
+| Ingestion                   | `src/modules/catalog/candidates/ingestion.ts`                                   |
+| Lease/claim                 | `src/modules/catalog/candidates/lease.ts`                                       |
+| Per-candidate orchestration | `src/modules/catalog/candidates/evaluate.ts`                                    |
+| Cron tick entry point       | `src/modules/catalog/candidates/run-tick.ts`                                    |
+| Route handler               | `src/app/api/internal/catalog/evaluate-tick/route.ts`                           |
+
+Seven decision states: `QUEUED`, `EVALUATING`, `PASS`, `PASS_WITH_ATTENTION`,
+`TEMPORARILY_INELIGIBLE`, `BLOCKED`, `EVALUATION_FAILED`. `BLOCKED` is
+permanent (no override, e.g. a policy/counterfeit match); `TEMPORARILY_INELIGIBLE`
+is retryable (e.g. no stock right now) and shares the Blocked/Rejected screen,
+distinguished per row. `EVALUATION_FAILED` retries with exponential backoff and
+jitter up to 5 attempts, then dead-letters into the Exception Queue - which
+therefore only ever holds genuine operational failures, never ordinary
+rejected products.
+
+**No real scoring or category-required-attribute validation exists.** The
+`score` column is reserved and always `null`. Image-dimension checks and
+category-required-attribute checks are not implemented — CJ's modelled
+endpoints return neither, and the latter needs the ADR-002 taxonomy mapping
+wired up first (separate task).
+
+**Three checks use labelled placeholders, not an approved policy:**
+
+- The prohibited-category/counterfeit denylist reuses spec section 14.1's own
+  "recommended initial exclusions" wording - not invented here - but no
+  ADR-002 pilot category/market has actually been approved.
+- The destination market stays the same placeholder `'PH'` already used by the
+  rest of this app - not an ADR-003 approval.
+- Price bounds and the margin-floor estimate are env-configured placeholder
+  numbers (`CATALOG_MIN_PRICE_USD_CENTS`, `CATALOG_MAX_PRICE_USD_CENTS`,
+  `CATALOG_ESTIMATED_OVERHEAD_PERCENT`, `CATALOG_MIN_MARGIN_PERCENT`,
+  `CATALOG_ABNORMAL_PRICE_CHANGE_PERCENT` in `.env.example`) — the margin
+  estimate reuses the existing prototype `CJ_PRICE_MARKUP_PERCENT` minus a
+  placeholder overhead percentage, and is the same for every candidate today
+  (not product-differentiated), never a real per-product margin calculation.
+
+`candidate_evaluations.policy_version` records which policy produced a stored
+decision, so a real ADR-002/ADR-003 rule pack can replace these placeholders
+later without a schema change.
+
+Still single-seller: ingestion and evaluation run for the same
+`dev-user`/`seller-001` context and the same global `CJ_API_KEY` as the rest
+of this app. No Shopify-style Supplier Apps, per-seller CJ connections, or
+AliExpress integration exist - that is a separate, later task.
 
 Two labelling rules are load-bearing in that panel: CJ review numbers are
 supplier-platform evidence and never Sals3 buyer ratings, and `listedNum` is a

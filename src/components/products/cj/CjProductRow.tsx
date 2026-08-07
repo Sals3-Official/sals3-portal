@@ -2,10 +2,12 @@ import Image from 'next/image';
 import { Package } from 'lucide-react';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { formatUsdCents, type CjProduct } from '@/lib/cj/normalize';
-import CheckForSals3Action from './CheckForSals3Action';
+import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
+import EvaluationStatusBadge from './EvaluationStatusBadge';
 
 type CjProductRowProps = {
   product: CjProduct;
+  evaluated: EvaluatedCandidateRow | undefined;
 };
 
 /**
@@ -19,7 +21,10 @@ type CjProductRowProps = {
  * loading, so a row never shifts as pictures arrive. A product with no
  * allow-listed image gets a neutral placeholder instead of a broken picture.
  */
-export default function CjProductRow({ product }: CjProductRowProps) {
+export default function CjProductRow({
+  product,
+  evaluated,
+}: CjProductRowProps) {
   return (
     <TableRow className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-3 md:table-row md:px-0 md:py-0">
       {/* `md:w-full md:max-w-0` is the table-truncation idiom: it makes this the
@@ -77,9 +82,10 @@ export default function CjProductRow({ product }: CjProductRowProps) {
         {product.createdAt ?? '—'}
       </TableCell>
       <TableCell className="block w-full p-0 md:table-cell md:w-auto md:p-2">
-        <CheckForSals3Action
-          externalProductId={product.id}
+        <EvaluationStatusBadge
           productName={product.name}
+          evaluation={evaluated?.evaluation ?? null}
+          evidence={evaluated?.evidence ?? null}
         />
       </TableCell>
       {/* Mobile only: the columns hidden above are still useful on a phone, so

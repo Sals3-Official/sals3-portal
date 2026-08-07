@@ -14,8 +14,13 @@ export type NavItem = {
     | 'boxes'
     | 'banknote'
     | 'scroll-text'
-    | 'alert-triangle';
+    | 'alert-triangle'
+    | 'circle-check'
+    | 'loader'
+    | 'ban';
   permission: PortalPermission;
+  /** One extra nesting level - e.g. "Qualified Products" -> Ready / Needs Attention. */
+  items?: NavItem[];
 };
 
 export type NavGroup = {
@@ -55,15 +60,35 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Product Sourcing',
     items: [
       {
-        href: '/products',
-        label: 'CJ Candidate Explorer',
-        icon: 'package',
-        permission: 'product:read',
+        href: '/products/qualified/ready',
+        label: 'Qualified Products',
+        icon: 'circle-check',
+        permission: 'catalog.candidate.read',
+        items: [
+          {
+            href: '/products/qualified/ready',
+            label: 'Ready',
+            icon: 'circle-check',
+            permission: 'catalog.candidate.read',
+          },
+          {
+            href: '/products/qualified/needs-attention',
+            label: 'Needs Attention',
+            icon: 'star',
+            permission: 'catalog.candidate.read',
+          },
+        ],
       },
       {
-        href: '/products/shortlisted',
-        label: 'Shortlisted',
-        icon: 'star',
+        href: '/products/evaluating',
+        label: 'Evaluating',
+        icon: 'loader',
+        permission: 'catalog.candidate.read',
+      },
+      {
+        href: '/products/blocked',
+        label: 'Blocked / Rejected',
+        icon: 'ban',
         permission: 'catalog.candidate.read',
       },
       {
@@ -71,6 +96,12 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Exception Queue',
         icon: 'alert-triangle',
         permission: 'catalog.candidate.read',
+      },
+      {
+        href: '/products',
+        label: 'All Supplier Products',
+        icon: 'package',
+        permission: 'product:read',
       },
     ],
   },

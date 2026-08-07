@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import type {
   CjComment,
   CjProductDetail,
@@ -65,6 +66,11 @@ export type CandidateEvidence = {
   reviews: ReviewEvidence;
   capturedAt: string;
 };
+
+/** SHA-256 over the normalised evidence - shared by every caller that snapshots it. */
+export function checksumOfEvidence(evidence: CandidateEvidence): string {
+  return createHash('sha256').update(JSON.stringify(evidence)).digest('hex');
+}
 
 function isAllowedImage(url: string): boolean {
   try {

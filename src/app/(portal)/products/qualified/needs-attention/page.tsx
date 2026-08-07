@@ -1,0 +1,56 @@
+import type { Metadata } from 'next';
+import PageHeader from '@/components/portal/PageHeader';
+import QualifiedCandidatesTable from '@/components/products/cj/QualifiedCandidatesTable';
+import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
+import { requirePermission } from '@/lib/auth/session';
+import { isDatabaseConfigured } from '@/lib/db/client';
+import { listCandidatesByStatus } from '@/modules/catalog/candidates/queries';
+
+export const metadata: Metadata = { title: 'Needs Attention · Sals3 Portal' };
+export const dynamic = 'force-dynamic';
+
+/**
+ * Qualified Products - Needs Attention. `PASS_WITH_ATTENTION` candidates:
+ * still eligible for "Customize & List", shown with their warning reasons.
+ * No push/email notification fires for these (spec's UI corrections) - only
+ * the persistent screen itself.
+ */
+export default async function NeedsAttentionProductsPage() {
+  const session = await requirePermission('catalog.candidate.read');
+
+  if (!isDatabaseConfigured()) {
+    return (
+      <div className="flex flex-col gap-4">
+        <PageHeader
+          title="Needs Attention"
+          description="Qualified Products · Needs Attention"
+        />
+        <SourcingEmptyState
+          title="No database configured in this environment"
+          description="DATABASE_URL is not set here, so evaluated candidates cannot be read. This page works against a configured Postgres database - see the README."
+        />
+      </div>
+    );
+  }
+
+  const candidates = await listCandidatesByStatus(session.sellerId, [
+    'PASS_WITH_ATTENTION',
+  ]);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <PageHeader
+        title="Needs Attention"
+        description={`${candidates.length} ${candidates.length === 1 ? 'candidate' : 'candidates'} passed with a warning`}
+      />
+      {candidates.length === 0 ? (
+        <SourcingEmptyState
+          title="No candidates need attention"
+          description="Candidates with a warning - but still eligible to customize and list - appear here automatically."
+        />
+      ) : (
+        <QualifiedCandidatesTable candidates={candidates} showReasons />
+      )}
+    </div>
+  );
+}

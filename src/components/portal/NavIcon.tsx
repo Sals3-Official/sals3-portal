@@ -1,10 +1,13 @@
 import {
   AlertTriangle,
+  Ban,
   Banknote,
   BarChart3,
   Boxes,
+  CircleCheck,
   ClipboardCheck,
   LayoutDashboard,
+  Loader,
   Package,
   Plus,
   ScrollText,
@@ -25,6 +28,9 @@ const ICONS = {
   banknote: Banknote,
   'scroll-text': ScrollText,
   'alert-triangle': AlertTriangle,
+  'circle-check': CircleCheck,
+  loader: Loader,
+  ban: Ban,
 } as const;
 
 type NavIconProps = {

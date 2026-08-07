@@ -15,6 +15,13 @@
       "when": 1786046606030,
       "tag": "0001_stale_slapstick",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786088294607,
+      "tag": "0002_workable_human_robot",
+      "breakpoints": true
     }
   ]
 }

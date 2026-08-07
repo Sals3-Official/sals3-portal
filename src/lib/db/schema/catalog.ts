@@ -1,5 +1,6 @@
 import {
   index,
+  integer,
   jsonb,
   pgEnum,
   pgTable,
@@ -168,8 +169,82 @@ export const auditEvents = pgTable(
   ],
 );
 
+/**
+ * Automated evaluation state for one candidate (spec sections 8.4-8.6, 14 -
+ * the "judgement" the spec explicitly left unbuilt as of section 26).
+ *
+ * `QUEUED`/`EVALUATING` are job-queue states; the rest are decisions. This is
+ * deliberately a separate table from `supplierCandidates` rather than new
+ * columns there: lease/retry fields (`leasedBy`, `attemptCount`, ...) are job
+ * mechanics, not candidate identity, and keeping them apart means a candidate
+ * row's meaning never changes shape depending on where it is in the pipeline.
+ *
+ * IMPORTANT: as of this migration, several fields are labelled placeholders,
+ * not approved business/legal policy - see `rules/policy.ts`. `policyVersion`
+ * exists precisely so those can be swapped for a real ADR-002/ADR-003 pilot
+ * rule pack later without a schema change.
+ */
+export const evaluationStatusEnum = pgEnum('evaluation_status', [
+  'QUEUED',
+  'EVALUATING',
+  'PASS',
+  'PASS_WITH_ATTENTION',
+  'TEMPORARILY_INELIGIBLE',
+  'BLOCKED',
+  'EVALUATION_FAILED',
+]);
+
+export const candidateEvaluations = pgTable(
+  'candidate_evaluations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    candidateId: uuid('candidate_id')
+      .notNull()
+      .references(() => supplierCandidates.id, { onDelete: 'cascade' }),
+    status: evaluationStatusEnum('status').notNull().default('QUEUED'),
+    /** Validated against a Zod enum at the write boundary; see rules/contracts.ts. */
+    reasonCodes: text('reason_codes').array().notNull().default([]),
+    /** Short derived facts for display - never the raw CJ payload. */
+    evidenceSummary: jsonb('evidence_summary'),
+    sourceSnapshotChecksum: text('source_snapshot_checksum'),
+    policyVersion: text('policy_version').notNull(),
+    /** Reserved for real weighted scoring. No code path writes this yet. */
+    score: integer('score'),
+    lastKnownPriceUsdCents: integer('last_known_price_usd_cents'),
+    /** Cheap hash of feed-level fields; detects "changed" without a CJ evidence call. */
+    lastSeenFingerprint: text('last_seen_fingerprint').notNull(),
+    /**
+     * Small denormalized copy of the CJ `/product/list` feed row (category,
+     * price, listed count, name) captured at ingestion time. Lets the
+     * screening stage reject a candidate BEFORE spending CJ evidence-fetch
+     * points, without a second network call.
+     */
+    feedSnapshot: jsonb('feed_snapshot').notNull(),
+    leasedBy: text('leased_by'),
+    leasedUntil: timestamp('leased_until', { withTimezone: true }),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    lastErrorCode: text('last_error_code'),
+    nextRetryAt: timestamp('next_retry_at', { withTimezone: true }),
+    evaluatedAt: timestamp('evaluated_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('candidate_evaluations_candidate_id_key').on(table.candidateId),
+    index('candidate_evaluations_status_idx').on(table.status),
+    index('candidate_evaluations_next_retry_at_idx').on(table.nextRetryAt),
+  ],
+);
+
 export type SupplierCandidateRow = typeof supplierCandidates.$inferSelect;
 export type NewSupplierCandidateRow = typeof supplierCandidates.$inferInsert;
 export type IdempotencyRecordRow = typeof idempotencyRecords.$inferSelect;
 export type SupplierSnapshotRow = typeof supplierSnapshots.$inferSelect;
 export type AuditEventRow = typeof auditEvents.$inferSelect;
+export type CandidateEvaluationRow = typeof candidateEvaluations.$inferSelect;
+export type NewCandidateEvaluationRow =
+  typeof candidateEvaluations.$inferInsert;

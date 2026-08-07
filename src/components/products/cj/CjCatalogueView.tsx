@@ -1,3 +1,6 @@
+import { requirePermission } from '@/lib/auth/session';
+import { isDatabaseConfigured } from '@/lib/db/client';
+import { findEvaluationsByExternalIds } from '@/modules/catalog/candidates/queries';
 import { CjApiError } from '@/services/cj/config';
 import { fetchCjProducts } from '@/services/cj/products';
 import type { CjQuery } from '@/lib/cj/schemas';
@@ -39,15 +42,22 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
     cjSearch: query.cjSearch,
   };
 
+  const session = await requirePermission('product:read');
+  const evaluations = isDatabaseConfigured()
+    ? await findEvaluationsByExternalIds(
+        session.sellerId,
+        page.products.map((product) => product.id),
+      )
+    : new Map();
+
   return (
     <div className="flex flex-col gap-3">
       <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-ink-muted">
-        These are supplier products from CJdropshipping. Prices are the supplier
-        price in US dollars and are not converted to pesos. Use{' '}
-        <strong className="font-medium">Check for Sals3</strong> to save one as
-        a Sals3 candidate and read its current CJ variants, stock, and review
-        counts. Nothing is imported, priced, published, or screened yet — a
-        candidate carries no pass or fail decision.
+        These are supplier products from CJdropshipping - this is the optional
+        raw browser. Prices are the supplier price in US dollars and are not
+        converted to pesos. The automated evaluation pipeline picks up new and
+        changed products on its own; the status column reflects that
+        pipeline&apos;s current decision, not a manual check.
       </p>
 
       <CjSearchInput value={query.cjSearch} />
@@ -63,7 +73,7 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
         </div>
       ) : (
         <>
-          <CjProductsTable products={page.products} />
+          <CjProductsTable products={page.products} evaluations={evaluations} />
           <CjPagination
             page={page.page}
             totalPages={page.totalPages}
