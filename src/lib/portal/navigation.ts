@@ -17,8 +17,11 @@ export type NavItem = {
     | 'alert-triangle'
     | 'circle-check'
     | 'loader'
-    | 'ban';
+    | 'ban'
+    | 'plug';
   permission: PortalPermission;
+  /** Shown on hover (expanded rail) or as the tooltip (collapsed rail) - what this screen is for, for staff who did not build it. */
+  description?: string;
   /** One extra nesting level - e.g. "Qualified Products" -> Ready / Needs Attention. */
   items?: NavItem[];
 };
@@ -57,6 +60,19 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: 'Supplier Apps',
+    items: [
+      {
+        href: '/supplier-apps',
+        label: 'Supplier Apps',
+        icon: 'plug',
+        permission: 'catalog.candidate.shortlist',
+        description:
+          'Connect your own supplier account (CJ Dropshipping). Product Sourcing only pulls from whatever you connect here.',
+      },
+    ],
+  },
+  {
     label: 'Product Sourcing',
     items: [
       {
@@ -64,18 +80,24 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Qualified Products',
         icon: 'circle-check',
         permission: 'catalog.candidate.read',
+        description:
+          'Products the automatic checks have already decided on: split into Ready (no issue) and Needs Attention (passed with a warning).',
         items: [
           {
             href: '/products/qualified/ready',
             label: 'Ready',
             icon: 'circle-check',
             permission: 'catalog.candidate.read',
+            description:
+              'Passed every automatic check with no open issue. Safe to customize and list as-is.',
           },
           {
             href: '/products/qualified/needs-attention',
             label: 'Needs Attention',
             icon: 'star',
             permission: 'catalog.candidate.read',
+            description:
+              'Passed, but with a warning flagged - read the reason before you customize and list it.',
           },
         ],
       },
@@ -84,24 +106,32 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Evaluating',
         icon: 'loader',
         permission: 'catalog.candidate.read',
+        description:
+          'Being checked right now (pricing, stock, policy). Moves on its own to Ready, Needs Attention, or Blocked - nothing to do here.',
       },
       {
         href: '/products/blocked',
         label: 'Blocked / Rejected',
         icon: 'ban',
         permission: 'catalog.candidate.read',
+        description:
+          'Could not qualify - permanently (policy/pricing) or temporarily (e.g. supplier out of stock). Temporary ones retry on their own.',
       },
       {
         href: '/products/exception-queue',
         label: 'Exception Queue',
         icon: 'alert-triangle',
         permission: 'catalog.candidate.read',
+        description:
+          'The pipeline itself failed here (e.g. could not reach the supplier) after every retry. This needs a person, not a product judgment call.',
       },
       {
         href: '/products',
         label: 'All Supplier Products',
         icon: 'package',
         permission: 'product:read',
+        description:
+          'The raw, unfiltered supplier feed - every product before automatic evaluation. Browse only; evaluation still happens on its own.',
       },
     ],
   },

@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   Loader,
   Package,
+  Plug,
   Plus,
   ScrollText,
   Star,
@@ -31,6 +32,7 @@ const ICONS = {
   'circle-check': CircleCheck,
   loader: Loader,
   ban: Ban,
+  plug: Plug,
 } as const;
 
 type NavIconProps = {
