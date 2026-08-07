@@ -9,6 +9,11 @@ on:
     branches:
       - develop
       - main
+  # Lets a run be re-triggered by hand. On 2026-08-06 a run failed with "the
+  # job was not acquired by Runner of type hosted" after 15 minutes, and the
+  # two pushes after it produced no run at all — leaving a PR with no CI result
+  # and no way to ask for one short of an empty commit.
+  workflow_dispatch:
 
 jobs:
   verify:
