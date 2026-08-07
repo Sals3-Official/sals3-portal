@@ -53,9 +53,29 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       {
         href: '/listings/new',
-        label: 'New listing',
+        label: 'Add Product',
         icon: 'plus',
         permission: 'product:create',
+        description:
+          'Create a Sals3 listing - blank, or prefilled from a qualified supplier product. Product Sourcing only supplies the candidate; the listing itself belongs here in Catalogue.',
+        items: [
+          {
+            href: '/listings/new',
+            label: 'Blank product',
+            icon: 'plus',
+            permission: 'product:create',
+            description:
+              'Start from an empty form for a product you are adding yourself.',
+          },
+          {
+            href: '/listings/new?fixture=attention',
+            label: 'From a supplier product',
+            icon: 'package',
+            permission: 'product:create',
+            description:
+              'The Product Editor: a qualified supplier product, prefilled from its validated evidence. Currently a design preview on fictional data - nothing is saved.',
+          },
+        ],
       },
     ],
   },

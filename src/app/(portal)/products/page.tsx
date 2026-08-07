@@ -3,7 +3,7 @@ import { Suspense } from 'react';
 import PageHeader from '@/components/portal/PageHeader';
 import CjCatalogueView from '@/components/products/cj/CjCatalogueView';
 import CjTableSkeleton from '@/components/products/cj/CjTableSkeleton';
-import { cjQuerySchema } from '@/lib/cj/schemas';
+import { productsPageQuerySchema } from '@/lib/cj/schemas';
 
 export const metadata: Metadata = {
   title: 'All Supplier Products · Sals3 Portal',
@@ -30,13 +30,13 @@ export default async function ProductsPage({
   searchParams,
 }: ProductsPageProps) {
   const params = await searchParams;
-  const cjQuery = cjQuerySchema.parse(params);
+  const cjQuery = productsPageQuerySchema.parse(params);
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="All Supplier Products"
-        description="Browse the raw CJdropshipping feed. Automated evaluation runs on its own."
+        description="Browse products from your connected supplier apps. Automated evaluation runs in the background."
       />
       <Suspense
         key={`${cjQuery.cjPage}-${cjQuery.cjSearch}`}

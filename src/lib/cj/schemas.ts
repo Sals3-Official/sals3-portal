@@ -89,4 +89,17 @@ export const cjQuerySchema = z.object({
   cjPid: z.string().trim().max(200).catch('').default(''),
 });
 
+/**
+ * `/products` page's own URL contract: everything `cjQuerySchema` sends
+ * upstream to CJ, plus `view` - a display-only choice the portal page reads
+ * for itself. Kept separate from `cjQuerySchema` because that type is also
+ * used by the unrelated storefront CJ feed (`services/cj/products.ts`,
+ * `lib/storefront/cj-feed.ts`), which has no "view" concept at all.
+ */
+export const productsPageQuerySchema = cjQuerySchema.extend({
+  view: z.enum(['table', 'grid']).catch('table').default('table'),
+});
+
+export type ProductsPageQuery = z.infer<typeof productsPageQuerySchema>;
+
 export type CjQuery = z.infer<typeof cjQuerySchema>;

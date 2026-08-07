@@ -1,3 +1,4 @@
+import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export type StatusPillTone =
@@ -6,6 +7,12 @@ export type StatusPillTone =
 type StatusPillProps = {
   label: string;
   tone: StatusPillTone;
+  /**
+   * Optional second non-colour cue. The label already makes the status
+   * readable; an icon helps when one screen repeats the same tone many
+   * times. Decorative, so it is hidden from assistive technology.
+   */
+  icon?: LucideIcon;
   className?: string;
 };
 
@@ -26,16 +33,20 @@ const TONE_STYLES: Record<StatusPillTone, string> = {
 export default function StatusPill({
   label,
   tone,
+  icon: Icon,
   className,
 }: StatusPillProps) {
   return (
     <span
       className={cn(
-        'inline-flex w-fit items-center rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap',
+        'inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap',
         TONE_STYLES[tone],
         className,
       )}
     >
+      {Icon === undefined ? null : (
+        <Icon aria-hidden="true" className="size-3.5 shrink-0" />
+      )}
       {label}
     </span>
   );

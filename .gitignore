@@ -53,3 +53,7 @@ docs/.obsidian/workspace-mobile.json
 # safety net: scripts/typecheck-clean-next.mjs's temp swap dir, in case
 # it's ever left behind after an interrupted run
 .next-typecheck-tmp-*
+
+# Per-person Claude Code state (local permissions, session scratch). Machine
+# config, not project source - the shared rules live in CLAUDE.md/AGENTS.md.
+.claude/

@@ -1,59 +1,126 @@
 import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
+import { z } from 'zod';
+import LinkButton from '@/components/portal/LinkButton';
 import PageHeader from '@/components/portal/PageHeader';
-import ListingCompletenessRail from '@/components/seller-center/listings/ListingCompletenessRail';
-import ListingProceedsEstimate from '@/components/seller-center/listings/ListingProceedsEstimate';
-import ListingWizard from '@/components/seller-center/listings/ListingWizard';
+import ProductEditor from '@/components/products/editor/ProductEditor';
+import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
+import AddProductModeChooser from '@/components/seller-center/listings/AddProductModeChooser';
+import BlankListingWorkspace from '@/components/seller-center/listings/BlankListingWorkspace';
 import { requirePermission } from '@/lib/auth/session';
-import { getActiveMarket } from '@/lib/seller-center/market-config';
+import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
 import {
-  LISTING_COMPLETE_FIELDS,
-  LISTING_TOTAL_FIELDS,
-  buildListingStages,
-  buildProceedsEstimate,
-  buildRemainingRequirements,
-} from '@/lib/seller-center/mock-data/listings';
-
-export const metadata: Metadata = { title: 'New listing · Seller Center' };
+  editorLifecycleParamSchema,
+  lifecycleFromParam,
+} from '@/lib/seller-center/product-editor/query';
 
 /**
- * New-listing wizard. Shows what a filled-in listing looks like -
- * essentials first, with market-specific requirements surfaced only when
- * they apply. No product-creation backend exists yet, so fields are
- * read-only and the bottom actions are disabled.
+ * Add Product. One route, two entry modes:
+ *
+ * - no query    - the blank essentials-first wizard.
+ * - `?fixture=` - the Product Editor design preview, prefilled from a
+ *                 fictional qualified supplier product. Development only.
+ * - `?supplierCandidateId=` - reserved for the real integration. It is
+ *                 parsed and acknowledged, never answered with fixture
+ *                 data, because a real candidate id must not resolve to a
+ *                 fictional product.
+ *
+ * Kept to composition and authorization: every branch below is its own
+ * component, and the interactive state lives inside `ProductEditor`.
  */
-export default async function NewListingPage() {
+
+const querySchema = z.object({
+  fixture: z.string().max(64).optional().catch(undefined),
+  supplierCandidateId: z.string().max(128).optional().catch(undefined),
+  state: editorLifecycleParamSchema,
+});
+
+type PageProps = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+/**
+ * The fixture and reserved-integration modes are explicitly de-indexed.
+ * They render fictional or placeholder content on a real production route,
+ * and a crawler that indexed either would put an invented product - or a
+ * "not wired up yet" page carrying a candidate id - into search results.
+ */
+export async function generateMetadata({
+  searchParams,
+}: PageProps): Promise<Metadata> {
+  const query = querySchema.parse(await searchParams);
+  const isPreview =
+    query.fixture !== undefined || query.supplierCandidateId !== undefined;
+
+  return {
+    title: 'Add Product · Sals3 Portal',
+    robots: isPreview ? { index: false, follow: false } : undefined,
+  };
+}
+
+/*
+ * There is deliberately no `loading.tsx` on this route.
+ *
+ * Adding one puts the segment behind a Suspense boundary, so Next streams
+ * the shell and commits a `200` before the page body runs. `notFound()`
+ * then renders the 404 *page* under a `200` *status* - measured, not
+ * assumed - which would let an unknown fixture key, or a real candidate id
+ * passed as one, answer as if it existed. A skeleton is not worth a route
+ * that lies about whether its content is there. Revisit if the editor ever
+ * gains slow real data worth streaming: validate the key in a parent
+ * segment first, then stream below it.
+ */
+
+export default async function AddProductPage({ searchParams }: PageProps) {
+  // Authorization runs on the server before anything is read or rendered.
+  // Hiding a nav link is never the check - see `src/lib/auth/permissions.ts`.
   await requirePermission('product:create');
 
-  const market = getActiveMarket();
-  const stages = buildListingStages(market);
-  const remaining = buildRemainingRequirements(market);
-  const proceeds = buildProceedsEstimate(market);
-  const completePct = Math.round(
-    (LISTING_COMPLETE_FIELDS / LISTING_TOTAL_FIELDS) * 100,
-  );
+  const query = querySchema.parse(await searchParams);
+
+  if (query.supplierCandidateId !== undefined) {
+    return (
+      <div className="flex flex-col gap-4">
+        <PageHeader
+          title="Add Product"
+          description="Prefilled from a qualified supplier product"
+        />
+        <SourcingEmptyState
+          title="Listing a real supplier candidate is not wired up yet"
+          description="This screen exists as a design preview only. It will not open a real candidate against fictional data, because that would misrepresent your product. Use Qualified Products to review candidates in the meantime."
+        />
+        <div>
+          <LinkButton href="/products/qualified/ready" variant="outline">
+            Go to Qualified Products
+          </LinkButton>
+        </div>
+      </div>
+    );
+  }
+
+  if (query.fixture !== undefined) {
+    const fixture = resolveProductEditorFixture(query.fixture);
+
+    // An unknown key - including a real candidate id - is a 404, never a
+    // silent fallback to a default fictional product.
+    if (fixture === null) notFound();
+
+    return (
+      <ProductEditor
+        fixture={fixture}
+        initialLifecycle={lifecycleFromParam(query.state)}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="New listing"
+        title="Add Product"
         description="Essentials first. Requirements appear when they apply to you."
       />
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_320px]">
-        <ListingWizard stages={stages} />
-        <div className="flex flex-col gap-4">
-          <ListingCompletenessRail
-            completePct={completePct}
-            completeFields={LISTING_COMPLETE_FIELDS}
-            totalFields={LISTING_TOTAL_FIELDS}
-            remaining={remaining}
-          />
-          <ListingProceedsEstimate
-            market={market}
-            lines={proceeds.lines}
-            totalMinor={proceeds.totalMinor}
-          />
-        </div>
-      </div>
+      <AddProductModeChooser />
+      <BlankListingWorkspace />
     </div>
   );
 }

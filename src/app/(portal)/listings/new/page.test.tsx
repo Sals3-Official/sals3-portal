@@ -1,0 +1,141 @@
+import { render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The page awaits the gate but does not read its return value, so the mock
+// only has to record which permission was demanded.
+const requirePermission = vi.fn<(permission: string) => Promise<void>>(
+  async () => {},
+);
+
+class NotFoundError extends Error {}
+
+const notFound = vi.fn(() => {
+  throw new NotFoundError('NEXT_NOT_FOUND');
+});
+
+vi.mock('@/lib/auth/session', () => ({
+  requirePermission: (permission: string) => requirePermission(permission),
+}));
+
+vi.mock('next/navigation', () => ({
+  notFound: () => notFound(),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+}));
+
+// eslint-disable-next-line import/first
+import AddProductPage, { generateMetadata } from './page';
+
+function searchParams(params: Record<string, string> = {}) {
+  return Promise.resolve(params);
+}
+
+beforeEach(() => {
+  requirePermission.mockClear();
+  notFound.mockClear();
+});
+
+describe('Add Product route', () => {
+  it('authorizes on the server before rendering anything', async () => {
+    await AddProductPage({ searchParams: searchParams() });
+
+    expect(requirePermission).toHaveBeenCalledWith('product:create');
+  });
+
+  it('renders the blank wizard when no mode is requested', async () => {
+    render(await AddProductPage({ searchParams: searchParams() }));
+
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Add Product' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Completeness')).toBeInTheDocument();
+  });
+
+  it('renders the editor for an allow-listed fixture', async () => {
+    render(
+      await AddProductPage({ searchParams: searchParams({ fixture: 'pass' }) }),
+    );
+
+    expect(
+      screen.getAllByText(/UI preview using fictional product data/i).length,
+    ).toBeGreaterThan(0);
+    expect(notFound).not.toHaveBeenCalled();
+  });
+
+  it('404s on an unknown fixture instead of showing a default product', async () => {
+    await expect(
+      AddProductPage({ searchParams: searchParams({ fixture: 'nope' }) }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    expect(notFound).toHaveBeenCalled();
+  });
+
+  it('404s on a real-looking candidate id passed as a fixture', async () => {
+    await expect(
+      AddProductPage({
+        searchParams: searchParams({
+          fixture: '8f2c1a7e-6f0b-4a1d-9d3e-77e2c0b41a55',
+        }),
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('never answers a real supplier candidate id with fixture data', async () => {
+    render(
+      await AddProductPage({
+        searchParams: searchParams({
+          supplierCandidateId: '8f2c1a7e-6f0b-4a1d-9d3e-77e2c0b41a55',
+        }),
+      }),
+    );
+
+    expect(screen.getByText(/is not wired up yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Aurelis/)).toBeNull();
+  });
+
+  /**
+   * Fictional and placeholder content sits on a real production route, so
+   * both preview modes have to be de-indexed. The blank form is the real
+   * screen and stays indexable.
+   */
+  it('keeps the fixture and reserved-integration modes out of search', async () => {
+    const preview = await generateMetadata({
+      searchParams: searchParams({ fixture: 'pass' }),
+    });
+    const reserved = await generateMetadata({
+      searchParams: searchParams({ supplierCandidateId: 'abc' }),
+    });
+    const blank = await generateMetadata({ searchParams: searchParams() });
+
+    expect(preview.robots).toEqual({ index: false, follow: false });
+    expect(reserved.robots).toEqual({ index: false, follow: false });
+    expect(blank.robots).toBeUndefined();
+  });
+
+  it('enters a save/validation state from the development state parameter', async () => {
+    render(
+      await AddProductPage({
+        searchParams: searchParams({
+          fixture: 'pass',
+          state: 'connection-unavailable',
+        }),
+      }),
+    );
+
+    expect(
+      screen.getByText('Supplier connection unavailable'),
+    ).toBeInTheDocument();
+  });
+
+  it('ignores an unrecognised state instead of failing the page', async () => {
+    render(
+      await AddProductPage({
+        searchParams: searchParams({ fixture: 'pass', state: 'nonsense' }),
+      }),
+    );
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
+      'Aurelis',
+    );
+    expect(screen.queryByText(/session expired/i)).toBeNull();
+  });
+});

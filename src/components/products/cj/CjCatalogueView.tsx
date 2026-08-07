@@ -1,5 +1,8 @@
 import getDb, { isDatabaseConfigured } from '@/lib/db/client';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
+import { resolveUsdToPhpRate } from '@/lib/storefront/fx';
+import { resolveUsdToAudMidRate } from '@/lib/products/catalog-fx';
+import type { CatalogFxRates } from '@/lib/products/catalog-types';
 import { findEvaluationsByExternalIds } from '@/modules/catalog/candidates/queries';
 import {
   findConnectionBySellerAndProvider,
@@ -9,15 +12,18 @@ import PostgresSupplierSecretStore from '@/lib/secrets/postgres-supplier-secret-
 import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
 import CjSupplierAdapter from '@/modules/suppliers/providers/cj/cj-adapter';
 import { CjApiError } from '@/services/cj/config';
-import type { CjQuery } from '@/lib/cj/schemas';
+import type { ProductsPageQuery } from '@/lib/cj/schemas';
 import CjErrorPanel from './CjErrorPanel';
 import CjPagination from './CjPagination';
+import CjProductGrid from './CjProductGrid';
 import CjProductsTable from './CjProductsTable';
 import CjSearchInput from './CjSearchInput';
+import CjStatHeader from './CjStatHeader';
+import CjViewToggle from './CjViewToggle';
 import SourcingEmptyState from './SourcingEmptyState';
 
 type CjCatalogueViewProps = {
-  query: CjQuery;
+  query: ProductsPageQuery;
 };
 
 /**
@@ -54,6 +60,7 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
         );
 
   if (
+    provider === null ||
     connection === null ||
     connection.status === 'REVOKED' ||
     connection.status === 'DISCONNECTED'
@@ -72,14 +79,33 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
     new CjTokenManager(secretStore),
   );
 
+  // Every provider's connection identity, permanent wherever a product from
+  // it appears later (spec section 8) - built once here rather than passed
+  // around as raw `SupplierConnectionRow` + `SupplierProviderRow` fields.
+  const connectionIdentity = {
+    id: connection.id,
+    providerCode: provider.code,
+    providerDisplayName: provider.displayName,
+    providerLogoInitial: provider.code.slice(0, 2).toUpperCase(),
+    connectedAccountLabel: connection.displayName,
+    status: connection.status,
+    lastVerifiedAt: connection.lastVerifiedAt?.toISOString() ?? null,
+  };
+
   let page;
+  let usdToPhpRate;
+  let usdToAudMidRate;
 
   try {
-    page = await adapter.listCandidates(connection.id, {
-      page: query.cjPage,
-      search: query.cjSearch,
-      pid: query.cjPid,
-    });
+    [page, usdToPhpRate, usdToAudMidRate] = await Promise.all([
+      adapter.listCandidates(connection.id, {
+        page: query.cjPage,
+        search: query.cjSearch,
+        pid: query.cjPid,
+      }),
+      resolveUsdToPhpRate(),
+      resolveUsdToAudMidRate(),
+    ]);
   } catch (error) {
     if (error instanceof CjApiError) {
       // Structured server-side log; the response carries only the reason code.
@@ -95,6 +121,7 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
   const currentParams = {
     cjPage: String(page.page),
     cjSearch: query.cjSearch,
+    view: query.view,
   };
 
   const evaluations = await findEvaluationsByExternalIds(
@@ -102,18 +129,48 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
     page.products.map((product) => product.id),
   );
 
+  const rates: CatalogFxRates = {
+    USD: {
+      effectiveRate: usdToPhpRate.effective,
+      fetchedAt: usdToPhpRate.fetchedAt.toISOString(),
+      stale: usdToPhpRate.stale,
+    },
+  };
+
+  const fxAgeMinutes = Math.max(
+    0,
+    Math.round((Date.now() - usdToPhpRate.fetchedAt.getTime()) / 60_000),
+  );
+  const fxUpdatedLabel =
+    fxAgeMinutes < 60
+      ? `${fxAgeMinutes}m ago`
+      : `${Math.round(fxAgeMinutes / 60)}h ago`;
+
   return (
     <div className="flex flex-col gap-3">
+      <CjStatHeader
+        totalProducts={page.total}
+        productsOnPage={page.products.length}
+        activeConnections={1}
+        fxUpdatedLabel={fxUpdatedLabel}
+      />
+
       <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-ink-muted">
-        These are supplier products from CJdropshipping, read through your own
-        connection ({connection.displayName}) - this is the optional raw
-        browser. Prices are the supplier price in US dollars and are not
-        converted to pesos. The automated evaluation pipeline picks up new and
-        changed products on its own; the status column reflects that
-        pipeline&apos;s current decision, not a manual check.
+        Products shown here come from your active supplier connections -
+        currently {connection.displayName} ({provider.displayName}). This is the
+        optional raw browser; the automated evaluation pipeline picks up new and
+        changed products on its own, and the status column reflects that
+        pipeline&apos;s current decision, not a manual check. Prices are the
+        supplier price; the peso amount is an estimate, never the final landed
+        cost.
       </p>
 
-      <CjSearchInput value={query.cjSearch} />
+      <div className="flex flex-wrap items-center gap-2">
+        <CjSearchInput value={query.cjSearch} />
+        <div className="ml-auto">
+          <CjViewToggle value={query.view} />
+        </div>
+      </div>
 
       {page.products.length === 0 ? (
         <div className="rounded-lg border border-border bg-card px-6 py-16 text-center">
@@ -126,7 +183,23 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
         </div>
       ) : (
         <>
-          <CjProductsTable products={page.products} evaluations={evaluations} />
+          {query.view === 'grid' ? (
+            <CjProductGrid
+              products={page.products}
+              evaluations={evaluations}
+              connection={connectionIdentity}
+              rates={rates}
+              usdToAudRate={usdToAudMidRate?.rate ?? null}
+            />
+          ) : (
+            <CjProductsTable
+              products={page.products}
+              evaluations={evaluations}
+              connection={connectionIdentity}
+              rates={rates}
+              usdToAudRate={usdToAudMidRate?.rate ?? null}
+            />
+          )}
           <CjPagination
             page={page.page}
             totalPages={page.totalPages}

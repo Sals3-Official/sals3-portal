@@ -16,7 +16,7 @@ import { expect, test, type Page } from '@playwright/test';
  */
 async function expectLoadedOrReported(page: Page): Promise<void> {
   const notice = page.getByText(
-    'These are supplier products from CJdropshipping',
+    'Products shown here come from your active supplier connections',
   );
   const failure = page.getByRole('heading', {
     name: 'The supplier catalogue did not load',
@@ -49,11 +49,13 @@ test.describe('supplier catalogue', () => {
     await expectLoadedOrReported(page);
   });
 
-  test('says the prices are supplier prices in dollars', async ({ page }) => {
+  test('labels the peso amount as an estimate, never a final cost', async ({
+    page,
+  }) => {
     await page.goto('/products');
 
     const notice = page.getByText(
-      'These are supplier products from CJdropshipping',
+      'Products shown here come from your active supplier connections',
     );
     const failure = page.getByRole('heading', {
       name: 'The supplier catalogue did not load',
@@ -67,7 +69,7 @@ test.describe('supplier catalogue', () => {
     });
 
     if (await notice.isVisible()) {
-      await expect(notice).toContainText('not converted to pesos');
+      await expect(notice).toContainText('never the final landed cost');
     }
   });
 

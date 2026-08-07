@@ -17,7 +17,8 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   webServer: {
-    command: `PORTAL_TEST_AUTH_BYPASS=1 npm run dev -- --hostname 127.0.0.1 --port ${port}`,
+    command: `npm run dev -- --hostname 127.0.0.1 --port ${port}`,
+    env: { PORTAL_TEST_AUTH_BYPASS: '1' },
     reuseExistingServer: false,
     timeout: 120000,
     url: baseURL,
