@@ -495,11 +495,18 @@ feed is protected and can change when CJ changes.
 from a hand-typed exchange rate. `src/lib/storefront/fx.ts` fetches the
 European Central Bank's published reference rate (via Frankfurter, falling back
 to `open.er-api.com`), caches it for 12 hours, and adds
-`CJ_FX_BUFFER_PERCENT` on top — money-changer logic, because a mid-market rate
+`CJ_FX_BUFFER_PERCENT` (2.5%) on top — money-changer logic, because a mid-market rate
 is not one anyone can actually transact at: paying CJ in dollars costs more
-than mid once the card or wallet takes its own spread. ECB publishes once per
-business day on purpose, so shopper prices change at most daily rather than
-drifting all afternoon.
+than mid once the card or wallet takes its own spread. The 2.5% is sized from
+real published rail costs — a PH credit card runs about 1.85% (1% card-network
+assessment plus ~0.85% issuer FX) and PayPal 3–4% — not guessed. ECB publishes
+once per business day on purpose, so shopper prices change at most daily rather
+than drifting all afternoon.
+
+Lower it if the CJ wallet is topped up by wire transfer or Payoneer: CJ pays a
+2–3% top-up bonus that offsets most of the FX cost, and those are the only two
+methods that can top the wallet up. Paying per order by card or PayPal instead
+spends that spread every time.
 
 It fails safe and never blocks a page: each source gets a 4-second timeout, an
 implausible rate (outside 30–120, or more than 10% from the last known good) is

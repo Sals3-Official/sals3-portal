@@ -29,11 +29,17 @@ const MAX_PLAUSIBLE_RATE = 120;
 const MAX_DRIFT_PERCENT = 10;
 
 /**
- * Money changers commonly quote 2-3% away from mid. This is deliberately
- * narrower, per the owner's direction, and is a placeholder until a real
- * figure is confirmed against what the payment rail actually charges.
+ * Sized from what the payment rails actually charge above mid, not guessed:
+ * a PH credit card runs about 1.85% (1% Visa/Mastercard assessment plus
+ * ~0.85% issuer FX conversion), and PayPal is 3-4%. 2.5% covers the card case
+ * with room for the rate moving between daily ECB publications, and is still
+ * under the 2-3% a money changer quotes.
+ *
+ * Revisit once the real CJ payment route is confirmed. Topping the CJ wallet
+ * up by wire transfer or Payoneer earns a 2-3% CJ bonus that offsets most of
+ * this, and a thinner buffer would then be the correct answer.
  */
-const DEFAULT_BUFFER_PERCENT = 1.5;
+const DEFAULT_BUFFER_PERCENT = 2.5;
 
 const FALLBACK_RATE = 58;
 
