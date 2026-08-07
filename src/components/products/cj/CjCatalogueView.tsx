@@ -43,8 +43,11 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
     <div className="flex flex-col gap-3">
       <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-ink-muted">
         These are supplier products from CJdropshipping. Prices are the supplier
-        price in US dollars and are not converted to pesos. Importing a supplier
-        product for resale is not built yet.
+        price in US dollars and are not converted to pesos. Use{' '}
+        <strong className="font-medium">Check for Sals3</strong> to save one as
+        a Sals3 candidate and read its current CJ variants, stock, and review
+        counts. Nothing is imported, priced, published, or screened yet — a
+        candidate carries no pass or fail decision.
       </p>
 
       <CjSearchInput value={query.cjSearch} />
