@@ -2,11 +2,12 @@
 
 import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
-import { requirePermission } from '@/lib/auth/session';
+import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { checkRateLimit } from '@/lib/rate-limit';
 import getDb from '@/lib/db/client';
 import {
   appendAuditEvent,
+  candidateBelongsToSeller,
   requeueForManualRecheck,
 } from '@/modules/catalog/candidates/repository';
 
@@ -17,8 +18,8 @@ import {
  * The seller-facing per-row "Check for Sals3" action from the manual-only
  * flow is gone: candidates are now shortlisted and evaluated automatically
  * by the CJ feed ingestion + evaluation pipeline
- * (`src/modules/catalog/candidates/run-tick.ts`, invoked by Vercel Cron -
- * see `vercel.json`). This action only nudges an already-queued pipeline to
+ * (`src/modules/catalog/candidates/run-tick.ts`, invoked by a GitHub Actions
+ * schedule - see `.github/workflows/evaluate-tick.yml`). This action only nudges an already-queued pipeline to
  * retry a specific candidate sooner than its scheduled backoff; it never
  * creates a candidate or fetches CJ evidence itself.
  */
@@ -43,8 +44,9 @@ export async function recheckCandidateNow(
   }
 
   let session;
+  let sellerAccount;
   try {
-    session = await requirePermission('catalog.candidate.shortlist');
+    ({ session, sellerAccount } = await requireDropshipperAccount());
   } catch (error) {
     if (error instanceof PermissionError)
       return { ok: false, reason: 'denied' };
@@ -57,6 +59,18 @@ export async function recheckCandidateNow(
   );
   if (!limit.allowed) {
     return { ok: false, reason: 'rate_limited' };
+  }
+
+  // Tenant check before any mutation - a seller can only recheck their own
+  // candidate, never one reachable by guessing/passing another seller's id.
+  const owned = await candidateBelongsToSeller(
+    getDb(),
+    parsedInput.data,
+    sellerAccount.id,
+  );
+
+  if (!owned) {
+    return { ok: false, reason: 'not_eligible' };
   }
 
   try {

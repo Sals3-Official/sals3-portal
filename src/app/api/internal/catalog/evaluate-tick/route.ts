@@ -4,12 +4,13 @@ import runEvaluationTick from '@/modules/catalog/candidates/run-tick';
 
 /**
  * Protected internal endpoint that runs one automated-evaluation tick
- * (ingest -> requeue due retries -> evaluate one batch). Invoked by Vercel
- * Cron (see `vercel.json`) - Vercel Cron issues a `GET` request and, when
- * `CRON_SECRET` is set on the project, automatically adds an
- * `Authorization: Bearer <CRON_SECRET>` header, which is this route's entire
- * authorization. There is no portal session on a cron invocation, so
- * `requirePermission` does not apply here.
+ * (ingest -> requeue due retries -> evaluate one batch). Invoked every 5
+ * minutes by the `.github/workflows/evaluate-tick.yml` schedule with a `GET`
+ * request and an `Authorization: Bearer <CRON_SECRET>` header - not Vercel
+ * Cron, because the Hobby plan rejects any cron more frequent than once/day
+ * (see the "Automated candidate evaluation" section of README.md). There is
+ * no portal session on a scheduled invocation, so `requirePermission` does
+ * not apply here.
  *
  * Must always run fresh against the database - never a cached response.
  */
@@ -38,7 +39,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   if (!isDatabaseConfigured()) {
     // An environment with no database is expected (preview/CI) - a no-op
-    // 200 keeps Vercel Cron's health view green instead of alerting on it.
+    // 200 keeps the scheduled workflow run green instead of alerting on it.
     return NextResponse.json({ ok: true, skipped: 'no-database-configured' });
   }
 
