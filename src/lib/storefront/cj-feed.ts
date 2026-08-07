@@ -1,5 +1,10 @@
 import type { CjQuery } from '@/lib/cj/schemas';
-import { fetchCjProducts, type CjProductPage } from '@/services/cj/products';
+import {
+  fetchStorefrontCjProducts,
+  type CjProductPage,
+} from './supplier-source';
+
+export type { CjProductPage } from './supplier-source';
 
 const STOREFRONT_CJ_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -30,7 +35,7 @@ export async function getStorefrontCjProducts(
     return cached.inFlight;
   }
 
-  const inFlight = fetchCjProducts(query)
+  const inFlight = fetchStorefrontCjProducts(query)
     .then((page) => {
       cache.set(key, {
         expiresAt: Date.now() + STOREFRONT_CJ_CACHE_TTL_MS,

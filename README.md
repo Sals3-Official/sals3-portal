@@ -40,9 +40,8 @@ Put that role's connection string in `DATABASE_URL` in `.env.local`, then:
 npm run db:migrate
 ```
 
-Then fill in `CJ_API_KEY` in `.env.local` — used by
-[the storefront feed](#storefront-product-feed) and by the one-time bootstrap
-below, not by the portal's own Product Sourcing screens anymore. `.env.local`
+Then fill in `CJ_API_KEY` in `.env.local` — used only by the one-time
+bootstrap below; nothing reads it at request time anymore. `.env.local`
 is ignored by git and must never be committed.
 
 Set `SUPPLIER_CREDENTIAL_MASTER_KEY_BASE64` (generate with
@@ -184,7 +183,7 @@ credential to store or leak.
 | Shared CJ Zod primitives                     | `src/lib/cj/primitives.ts`                          |
 | CJ enrichment schemas                        | `src/lib/cj/enrichment-schemas.ts`                  |
 | CJ evidence normaliser                       | `src/lib/cj/evidence.ts`                            |
-| CJ enrichment fetch                          | `src/services/cj/enrichment.ts`                     |
+| CJ evidence fetch (per-connection adapter)   | `src/modules/suppliers/providers/cj/cj-adapter.ts`  |
 | Evidence fetch + decide (automated pipeline) | `src/modules/catalog/candidates/evaluate.ts`        |
 | Feed ingestion (automated pipeline)          | `src/modules/catalog/candidates/ingestion.ts`       |
 | Provider connections (ADR-006/ADR-008)       | `src/modules/suppliers/repository.ts`               |
@@ -407,12 +406,13 @@ boundary every screen goes through.
   updates the existing row in place (the `(seller_account_id, provider_id)`
   unique index allows only one connection per seller per provider) rather than
   blocking it as already-connected.
-- **`CJ_API_KEY` is no longer read at portal request time.** It is only used
-  by `npm run bootstrap:cj` to seed the one Sals3 Official Dropshipper
-  connection from it once, and still by the separate
-  [storefront product feed](#storefront-product-feed) (`src/services/cj/{token,products}.ts`),
-  which is a different, customer-facing read path that ADR-008 has not yet
-  reached.
+- **`CJ_API_KEY` is not read at request time at all.** It is only used by
+  `npm run bootstrap:cj` to seed the one Sals3 Official Dropshipper
+  connection from it once. The
+  [storefront product feed](#storefront-product-feed) — the last runtime
+  consumer of the legacy global-key path — now also reads through that
+  seller's own connection (`src/lib/storefront/supplier-source.ts`); the
+  legacy `src/services/cj/{token,products}.ts` modules are deleted.
 - **Not implemented:** `subscribeProducts` on the adapter interface throws
   deliberately — no CJ webhook/subscription endpoint has been verified
   against the live API. A second provider (AliExpress or otherwise) is not
@@ -479,11 +479,19 @@ Each request must send:
 Authorization: Bearer <SALS3_STOREFRONT_API_TOKEN>
 ```
 
-The API reads the CJdropshipping supplier feed through the legacy global
-`CJ_API_KEY` path (`src/services/cj/{token,products}.ts`) — a separate fetch
-path from `/products`'s own per-connection adapter, since this customer-facing
-feed has not been moved to a per-seller connection (a later ADR-008 task; see
-[Supplier Apps](#supplier-apps-multi-tenant-provider-connections)). It
+The API reads the CJdropshipping supplier feed through the **Sals3 Official
+Dropshipper's own supplier connection** (`src/lib/storefront/supplier-source.ts`
+resolves it headlessly by the shared `SALS3_OFFICIAL_IDENTITY_ID` constant and
+fetches through the same per-connection adapter `/products` uses — see
+[Supplier Apps](#supplier-apps-multi-tenant-provider-connections)). The feed
+therefore needs `DATABASE_URL`, `SUPPLIER_CREDENTIAL_MASTER_KEY_BASE64`, and a
+one-time `npm run bootstrap:cj`; without them every feed request returns `502`
+(same envelope the consumer already tolerates). The routes' own auth stays the
+`SALS3_STOREFRONT_API_TOKEN` bearer check — the legacy dev-session
+`requirePermission('product:read')` call was dropped from this
+machine-to-machine path because it only ever read the synthetic placeholder
+session. A 5-minute in-process response cache still fronts the adapter, so a
+page refresh does not spend a CJ call. It
 skips supplier rows with no usable price, converts the
 supplier USD price to a PHP shopper price with `CJ_USD_TO_PHP_RATE` and
 `CJ_PRICE_MARKUP_PERCENT`, and never exposes the supplier USD price to

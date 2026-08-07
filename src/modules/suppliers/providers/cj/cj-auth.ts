@@ -7,14 +7,14 @@ import {
 } from './cj-schemas';
 
 /**
- * Per-connection CJ token cache - the multi-tenant replacement for
- * `src/services/cj/token.ts`'s single global cache. Each seller's own
+ * Per-connection CJ token cache - the multi-tenant replacement for the
+ * retired `src/services/cj/token.ts` single global cache. Each seller's own
  * connection gets its own in-memory cache entry and its own credential
  * bundle, decrypted on demand; one seller's token traffic never touches
  * another's.
  *
  * Re-authenticates via the same verified `/authentication/getAccessToken`
- * call `services/cj/token.ts` already uses (apiKey in). Verified live
+ * call the retired global path already used (apiKey in). Verified live
  * 2026-08-07 that this single call actually returns `openId`, `accessToken`,
  * `refreshToken`, and both expiry dates together - the real credential
  * bundle is refreshed from one call, not assembled from a separate CJ

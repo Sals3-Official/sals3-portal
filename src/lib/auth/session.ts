@@ -1,3 +1,4 @@
+import { SALS3_OFFICIAL_IDENTITY_ID } from './identity';
 import {
   can,
   PermissionError,
@@ -38,7 +39,7 @@ function readDevRole(): PortalRole {
 
 export async function getSession(): Promise<PortalSession> {
   return {
-    userId: 'dev-user',
+    userId: SALS3_OFFICIAL_IDENTITY_ID,
     displayName: 'Development user',
     role: readDevRole(),
     sellerId: 'seller-001',

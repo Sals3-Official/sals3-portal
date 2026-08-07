@@ -161,6 +161,23 @@ export async function insertConnection(
 }
 
 /**
+ * The statuses a connection may hold while system code sources through it.
+ * `DEGRADED` stays workable on purpose: a transient upstream wobble should
+ * not stop ingestion or the storefront feed; only an explicit disconnect,
+ * revocation, or required re-auth does.
+ */
+export const WORKABLE_CONNECTION_STATUSES = [
+  'CONNECTED',
+  'DEGRADED',
+] as const satisfies readonly SupplierConnectionRow['status'][];
+
+export function isWorkableConnectionStatus(
+  status: SupplierConnectionRow['status'],
+): boolean {
+  return (WORKABLE_CONNECTION_STATUSES as readonly string[]).includes(status);
+}
+
+/**
  * System-internal (not seller-scoped): the automation pipeline needs every
  * connection in a workable state, across every seller, to know what to
  * ingest/evaluate. Never used by a seller-facing page or Server Action.
@@ -171,7 +188,9 @@ export async function listWorkableConnections(
   return executor
     .select()
     .from(supplierConnections)
-    .where(inArray(supplierConnections.status, ['CONNECTED', 'DEGRADED']));
+    .where(
+      inArray(supplierConnections.status, [...WORKABLE_CONNECTION_STATUSES]),
+    );
 }
 
 export async function findConnectionById(
