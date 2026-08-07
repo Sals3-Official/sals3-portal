@@ -7,7 +7,7 @@ export const metadata = {
   title: 'Sign in | Sals3 Seller Center',
 };
 
-export default function HomePage() {
+export default function LoginPage() {
   return (
     <AuthShell
       title="Sign in"

@@ -1,8 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// 3001 by default: sals3-ecommerce owns 3000, and reuseExistingServer
-// would otherwise run the E2E tests against the wrong app.
-const port = Number(process.env.PORT ?? 3001);
+// Keep Playwright on its own port so it never reuses a manually started dev
+// server that lacks the explicit auth-test bypass.
+const port = Number(process.env.PLAYWRIGHT_PORT ?? 3101);
 const baseURL = `http://127.0.0.1:${port}`;
 
 export default defineConfig({
@@ -17,8 +17,8 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   webServer: {
-    command: `npm run dev -- --hostname 127.0.0.1 --port ${port}`,
-    reuseExistingServer: !process.env.CI,
+    command: `PORTAL_TEST_AUTH_BYPASS=1 npm run dev -- --hostname 127.0.0.1 --port ${port}`,
+    reuseExistingServer: false,
     timeout: 120000,
     url: baseURL,
   },
