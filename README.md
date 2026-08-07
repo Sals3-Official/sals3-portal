@@ -499,6 +499,15 @@ supplier USD price to a PHP shopper price with `CJ_USD_TO_PHP_RATE` and
 when available. Responses use `Cache-Control: private, no-store` because the
 feed is protected and can change when CJ changes.
 
+**No comparison price is published.** `oldPriceMinor` always equals
+`priceMinor`, so the storefront renders one price with no strikethrough and no
+percent-off badge. The field remains in the contract because the consumer's
+schema requires it and because a genuine value can fill it once real price
+history exists. It must never be derived from the current price — a was/now
+pair invented by marking the live price up is not evidence of a prior price,
+and ADR-003 prohibits it. The `deals` section is therefore a ranked selection,
+not a discount claim.
+
 `/api/storefront/products/<id>` fetches exactly one product by CJ's `pid` (via
 CJ's `product/list?pid=` filter — a single upstream call, one CJ rate-limit
 hit) instead of paging through a section, for `sals3-ecommerce`'s product

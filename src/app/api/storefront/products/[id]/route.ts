@@ -47,8 +47,7 @@ export async function GET(request: Request, { params }: RouteContext) {
     const match = page.products.find(
       (product) => product.id.toLowerCase() === id.toLowerCase(),
     );
-    const product =
-      match === undefined ? null : toStorefrontProduct(match, 'for-you');
+    const product = match === undefined ? null : toStorefrontProduct(match);
 
     if (product === null) {
       return notFound();
