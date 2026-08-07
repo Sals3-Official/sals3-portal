@@ -68,7 +68,7 @@ export function checkRateLimit(
   return { allowed: true, retryAfterMs: 0 };
 }
 
-/** Test-only reset, mirroring `resetCjToken()` in `src/services/cj/token.ts`. */
+/** Test-only reset. */
 export function resetRateLimiter(): void {
   buckets.clear();
 }

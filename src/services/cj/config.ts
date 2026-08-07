@@ -1,8 +1,5 @@
 export const CJ_BASE_URL = 'https://developers.cjdropshipping.com/api2.0/v1';
 
-/** How long a product-list response is reused before CJ is called again. */
-export const CJ_LIST_REVALIDATE_SECONDS = 300;
-
 export const CJ_PAGE_SIZE = 20;
 
 export type CjErrorReason =
@@ -31,7 +28,7 @@ export class CjApiError extends Error {
 
 export const CJ_ERROR_MESSAGES: Record<CjErrorReason, string> = {
   'missing-credentials':
-    'The CJdropshipping API key is not set on the server. Add CJ_API_KEY to .env.local and start the server again.',
+    'No usable CJdropshipping supplier connection exists. Connect one from Supplier Apps (or run npm run bootstrap:cj for the Sals3 Official account).',
   'authentication-failed':
     'CJdropshipping refused the API key. Check that the key is correct and still active.',
   'rate-limited':
