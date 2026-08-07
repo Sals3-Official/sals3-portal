@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test';
 
+// The blank wizard is what `/listings/new` still renders with no query.
+// The supplier-prefilled Product Editor is the same route's `?fixture=`
+// mode and is covered by `product-editor.spec.ts`.
 test.describe('Seller Center new-listing wizard', () => {
   test('opens the market-requirements stage by default with the HS code help text', async ({
     page,

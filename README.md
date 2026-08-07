@@ -86,28 +86,29 @@ Cron - see below for why).
 
 ## Routes
 
-| Route                                 | What it does                                                                                                                                                                                                                                                 |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/`                                   | Placeholder home page ("Hello world") — outside the Seller Center shell                                                                                                                                                                                      |
-| `/overview`                           | Seller Center dashboard: needs-action tasks, money position, glance stats                                                                                                                                                                                    |
-| `/orders`                             | Batch fulfillment: filter, select, print (static), handoff                                                                                                                                                                                                   |
-| `/listings/new`                       | New-listing wizard preview (read-only fields, no save yet)                                                                                                                                                                                                   |
-| `/inventory`                          | Inline stock edits with undo and an audit record                                                                                                                                                                                                             |
-| `/finances`                           | Itemized ledger and estimated proceeds for one example order                                                                                                                                                                                                 |
-| `/payouts`                            | Payout schedule, states, and destination                                                                                                                                                                                                                     |
-| `/market-rules`                       | Every rule applied to the account, plus role access                                                                                                                                                                                                          |
-| `/supplier-apps`                      | Connect / disconnect / reconnect the seller's own CJ Dropshipping account (ADR-008)                                                                                                                                                                          |
-| `/products`                           | All Supplier Products — the raw CJdropshipping feed browser, through the seller's own connection (read-only status badges, no click-to-check action)                                                                                                         |
-| `/products/qualified/ready`           | Qualified Products · Ready — automated `PASS` candidates, default Product Sourcing screen                                                                                                                                                                    |
-| `/products/qualified/needs-attention` | Qualified Products · Needs Attention — automated `PASS_WITH_ATTENTION` candidates                                                                                                                                                                            |
-| `/products/evaluating`                | Candidates the pipeline has `QUEUED` or is actively `EVALUATING`                                                                                                                                                                                             |
-| `/products/blocked`                   | Blocked / Rejected — `BLOCKED` (permanent) and `TEMPORARILY_INELIGIBLE` (retryable) candidates                                                                                                                                                               |
-| `/products/exception-queue`           | Dead-lettered evaluation failures only (retries exhausted) — never ordinary rejections                                                                                                                                                                       |
-| `/products/shortlisted`               | Retired — redirects to `/products/qualified/ready`                                                                                                                                                                                                           |
-| `/api/internal/catalog/evaluate-tick` | Protected (`CRON_SECRET` bearer token) - runs one ingest+evaluate tick. Called every 5 minutes by a GitHub Actions schedule (`.github/workflows/evaluate-tick.yml`), not Vercel Cron - see [Automated candidate evaluation](#automated-candidate-evaluation) |
-| `/api/storefront/products`            | Protected product feed for `sals3-ecommerce`                                                                                                                                                                                                                 |
-| `/api/storefront/products/[id]`       | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                                                                                                                                                                                      |
-| `/api/storefront/categories`          | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                |
+| Route                                   | What it does                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/`                                     | Placeholder home page ("Hello world") — outside the Seller Center shell                                                                                                                                                                                                                                                                      |
+| `/overview`                             | Seller Center dashboard: needs-action tasks, money position, glance stats                                                                                                                                                                                                                                                                    |
+| `/orders`                               | Batch fulfillment: filter, select, print (static), handoff                                                                                                                                                                                                                                                                                   |
+| `/listings/new`                         | Add Product. No query: the blank essentials-first wizard (read-only fields, no save yet). `?fixture=<key>`: the supplier-prefilled Product Editor design preview — see [Product Editor](#product-editor-add-product-from-a-supplier-product). `?supplierCandidateId=`: reserved for the real integration, states that it is not wired up yet |
+| `/inventory`                            | Inline stock edits with undo and an audit record                                                                                                                                                                                                                                                                                             |
+| `/finances`                             | Itemized ledger and estimated proceeds for one example order                                                                                                                                                                                                                                                                                 |
+| `/payouts`                              | Payout schedule, states, and destination                                                                                                                                                                                                                                                                                                     |
+| `/market-rules`                         | Every rule applied to the account, plus role access                                                                                                                                                                                                                                                                                          |
+| `/supplier-apps`                        | Connect / disconnect / reconnect the seller's own CJ Dropshipping account (ADR-008)                                                                                                                                                                                                                                                          |
+| `/products`                             | All Supplier Products — the raw supplier feed browser (today: CJdropshipping), through the seller's own connection, with a live PHP estimate alongside each USD price (read-only status badges, no click-to-check action)                                                                                                                    |
+| `/design-preview/all-supplier-products` | Design preview of the full multi-supplier layout against isolated fixtures (dynamic supplier/evaluation filters, duplicate detection) - `robots: noindex`, not linked from the sidebar, for review before a second real Supplier App exists                                                                                                  |
+| `/products/qualified/ready`             | Qualified Products · Ready — automated `PASS` candidates, default Product Sourcing screen                                                                                                                                                                                                                                                    |
+| `/products/qualified/needs-attention`   | Qualified Products · Needs Attention — automated `PASS_WITH_ATTENTION` candidates                                                                                                                                                                                                                                                            |
+| `/products/evaluating`                  | Candidates the pipeline has `QUEUED` or is actively `EVALUATING`                                                                                                                                                                                                                                                                             |
+| `/products/blocked`                     | Blocked / Rejected — `BLOCKED` (permanent) and `TEMPORARILY_INELIGIBLE` (retryable) candidates                                                                                                                                                                                                                                               |
+| `/products/exception-queue`             | Dead-lettered evaluation failures only (retries exhausted) — never ordinary rejections                                                                                                                                                                                                                                                       |
+| `/products/shortlisted`                 | Retired — redirects to `/products/qualified/ready`                                                                                                                                                                                                                                                                                           |
+| `/api/internal/catalog/evaluate-tick`   | Protected (`CRON_SECRET` bearer token) - runs one ingest+evaluate tick. Called every 5 minutes by a GitHub Actions schedule (`.github/workflows/evaluate-tick.yml`), not Vercel Cron - see [Automated candidate evaluation](#automated-candidate-evaluation)                                                                                 |
+| `/api/storefront/products`              | Protected product feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                 |
+| `/api/storefront/products/[id]`         | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                                                                                                                                                                                                                                                                      |
+| `/api/storefront/categories`            | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                |
 
 ## Design system
 
@@ -149,7 +150,7 @@ Accepted values are the five role names above. Anything else falls back to
 
 ## Seller Center screens
 
-Overview, Orders, Inventory, the new-listing wizard, Finances, Payouts, and
+Overview, Orders, Inventory, Add Product, Finances, Payouts, and
 Market rules. All seven are real, permission-gated Next.js routes, but every
 number, order, SKU, and payout on them is static, illustrative placeholder
 data — there is no order, inventory, finance, or payout backend in this
@@ -163,6 +164,91 @@ wizard's stage toggling, the payout schedule chooser), and the toast +
 `Undo` pattern (`sonner`) used by Orders' batch print and Inventory's
 stepper — those genuinely change this browser tab's state and can genuinely
 be undone, they just do not persist past a reload or reach any backend.
+
+## Product Editor (Add Product from a supplier product)
+
+`Add Product` in the Catalogue nav group (`/listings/new`) has two entry
+modes. With no query it renders the blank essentials-first wizard. With
+`?fixture=<key>` it renders the **Product Editor** — the screen a
+dropshipper uses to customize an already-qualified supplier product before
+publishing it, prefilled from the supplier evidence the sourcing pipeline
+captured.
+
+The editor is currently a **design preview backed by fictional fixtures**.
+It reads no database, calls no supplier API, uses no server action, and
+publishes nothing; every change lives in the browser tab and is lost on
+reload. The screen says so in a notice at the top.
+
+Open a state directly:
+
+```text
+/listings/new?fixture=pass            ready to publish
+/listings/new?fixture=attention       publishable, with warnings
+/listings/new?fixture=blocked         publishing disabled, three blockers
+/listings/new?fixture=mixed-stock     3 of 6 variants out of stock
+/listings/new?fixture=market-route    one market lost its route evidence
+/listings/new?fixture=price-spike     supplier cost up 34%
+/listings/new?fixture=delisted        published listing auto-paused
+/listings/new?fixture=stale-evidence  5-day-old evidence, degraded connection
+```
+
+Both entry modes are reachable from the navigation — `Add Product` has
+`Blank product` and `From a supplier product` sub-items, and the Add
+Product page itself offers the same choice — so neither mode depends on
+anyone typing a query string.
+
+A second development-only parameter, `?state=`, enters the save and
+validation states that a fixture-backed screen cannot otherwise reach
+(there is no save to fail and no connection to drop). Combine it with a
+fixture:
+
+```text
+/listings/new?fixture=pass&state=saving
+/listings/new?fixture=pass&state=saved
+/listings/new?fixture=pass&state=save-failed
+/listings/new?fixture=pass&state=validating
+/listings/new?fixture=pass&state=validation-failed
+/listings/new?fixture=pass&state=connection-unavailable
+/listings/new?fixture=pass&state=session-expired
+```
+
+An unrecognised `?state=` value falls back to the normal idle state rather
+than erroring. Both preview modes set `robots: noindex` so fictional
+content on a real route never reaches a search index.
+
+Any other `?fixture=` value is a 404 — including a real candidate id. That
+is deliberate: the editor must never render fictional data under an
+identifier a seller could mistake for their own product. For the same
+reason `?supplierCandidateId=` is parsed and acknowledged but never
+answered with a fixture, and the live `Customize & List` button on
+Qualified Products is **not** wired to this route.
+
+Where things live:
+
+- `src/lib/seller-center/mock-data/product-editor.ts` — the eight fixtures.
+- `src/lib/seller-center/product-editor/` — types, derived figures
+  (`derive.ts`), and `Intl` formatting (`format.ts`).
+- `src/components/products/editor/` — the screen itself.
+
+Three rules the code enforces rather than documents:
+
+- **A missing figure is never a zero.** Freight with no route evidence
+  reads "Needs route check"; landed cost and margin read "Not available".
+  `derive.ts` propagates `null` instead of substituting `0`, and refuses to
+  add two different currencies — there is no approved FX source for this
+  screen.
+- **Required is not the same as recommended.** A missing _required_
+  attribute is a hard blocker, a missing _recommended_ one is a warning
+  that still publishes, and a missing _optional_ one is a suggestion. The
+  readiness panel, the section badge, the field error and the publish
+  button all read the same rule.
+- **Blocked never looks publishable.** The publish button stays visible and
+  prints why it cannot be used; it is never quietly greyed out.
+
+Layout responds to the editor's own **container** width, not the viewport,
+so the readiness and preview panels fold into drawers when the portal rail
+is expanded and there is no longer room for three columns. This route never
+collapses or overrides the seller's sidebar.
 
 ## Catalog database (Drizzle + PostgreSQL)
 
@@ -452,9 +538,20 @@ is accepted and ignored.
 - **Images.** Only `cf.cjdropshipping.com` and `oss-cf.cjdropshipping.com` are
   accepted, both in `src/lib/cj/schemas.ts` and in `next.config.ts`. Keep the two
   lists in step. Any other host is dropped and the row shows a placeholder.
-- **Currency.** Supplier prices show in US dollars and are never converted to
-  pesos: no approved exchange-rate source exists yet, and a guessed rate on a
-  price someone could act on would be a made-up number.
+- **Currency.** Supplier prices show in US dollars. Each row also shows an
+  estimated peso amount, resolved through the same live `resolveUsdToPhpRate()`
+  the storefront feed uses (`src/lib/storefront/fx.ts` - ECB reference rate
+  plus buffer, see [Storefront product feed](#storefront-product-feed)) -
+  never a guessed rate. It is always labelled an estimate, never the final
+  landed cost, and is never used to sort or compare products.
+- **Provider-neutral display.** `/products`' rows and header use the same
+  provider-neutral components (`src/components/products/catalog/`,
+  `src/lib/products/catalog-*.ts`) a future second Supplier App would use -
+  today they render one real connection (CJ Dropshipping). A design preview
+  of the full multi-supplier layout (dynamic supplier filter, evaluation
+  status filter, duplicate detection) against isolated fixtures lives at
+  `/design-preview/all-supplier-products` for review before a second
+  provider is actually integrated.
 
 ### Not built yet
 

@@ -97,6 +97,19 @@ export function formatWeight(weight: string): string {
   return weight === '' ? '—' : `${weight} g`;
 }
 
+/**
+ * Best-effort public CJdropshipping product page URL, built from `pid` alone
+ * - CJ's `/product/list` response carries no URL field at all, so this is
+ * inferred from CJ's publicly known page-URL shape, not returned by the API
+ * and not independently verified against a live page (CJ's own site sits
+ * behind a bot-check that blocked confirming one). Treat this as "probably
+ * right", not "guaranteed" - if a link 404s, that is this function being
+ * wrong, not the product being gone.
+ */
+export function cjProductPageUrl(pid: string): string {
+  return `https://cjdropshipping.com/product/-p-${encodeURIComponent(pid)}.html`;
+}
+
 export function normalizeCjProduct(raw: RawCjProduct): CjProduct {
   const name =
     raw.productNameEn !== ''

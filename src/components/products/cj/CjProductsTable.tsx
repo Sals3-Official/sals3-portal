@@ -6,16 +6,24 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import type { CjProduct } from '@/lib/cj/normalize';
+import type {
+  CatalogFxRates,
+  SupplierConnectionFixture,
+} from '@/lib/products/catalog-types';
 import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
 import CjProductRow from './CjProductRow';
 
 type CjProductsTableProps = {
   products: CjProduct[];
   evaluations: Map<string, EvaluatedCandidateRow>;
+  connection: SupplierConnectionFixture;
+  rates: CatalogFxRates;
+  usdToAudRate: number | null;
 };
 
 const COLUMNS = [
   { label: 'Product', className: '' },
+  { label: 'Supplier', className: 'hidden md:table-cell' },
   { label: 'Supplier price', className: 'text-right whitespace-nowrap' },
   { label: 'Weight', className: 'hidden md:table-cell' },
   { label: 'Ships from', className: 'hidden lg:table-cell' },
@@ -32,6 +40,9 @@ const COLUMNS = [
 export default function CjProductsTable({
   products,
   evaluations,
+  connection,
+  rates,
+  usdToAudRate,
 }: CjProductsTableProps) {
   return (
     <div className="rounded-lg border border-border bg-card">
@@ -46,11 +57,15 @@ export default function CjProductsTable({
           </TableRow>
         </TableHeader>
         <TableBody className="block md:table-row-group">
-          {products.map((product) => (
+          {products.map((product, index) => (
             <CjProductRow
               key={product.id}
               product={product}
               evaluated={evaluations.get(product.id)}
+              connection={connection}
+              rates={rates}
+              usdToAudRate={usdToAudRate}
+              index={index}
             />
           ))}
         </TableBody>
