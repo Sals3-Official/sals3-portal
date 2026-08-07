@@ -25,101 +25,123 @@ const authSchema = {
   rateLimit: authRateLimits,
 };
 
-const auth = betterAuth({
-  appName: 'Sals3 Seller Center',
-  baseURL: process.env.BETTER_AUTH_URL,
-  secret: process.env.BETTER_AUTH_SECRET,
-  database: drizzleAdapter(getDb(), {
-    provider: 'pg',
-    schema: authSchema,
-  }),
-  user: {
-    additionalFields: {
-      portalRole: {
-        type: 'string',
-        required: false,
-        defaultValue: 'seller_manager',
-        input: false,
-      },
-      registrationBusinessModel: {
-        type: 'string',
-        required: false,
-        returned: false,
-      },
-    },
-  },
-  emailAndPassword: {
-    enabled: true,
-    autoSignIn: false,
-    requireEmailVerification: true,
-    minPasswordLength: 12,
-    maxPasswordLength: 128,
-    revokeSessionsOnPasswordReset: true,
-    sendResetPassword: async ({ user, url }) => {
-      await sendAuthEmail({ to: user.email, url, kind: 'reset' });
-    },
-  },
-  emailVerification: {
-    sendOnSignUp: true,
-    expiresIn: 60 * 60,
-    sendVerificationEmail: async ({ user, url }) => {
-      await sendAuthEmail({ to: user.email, url, kind: 'verify' });
-    },
-  },
-  rateLimit: {
-    enabled: true,
-    storage: 'database',
-    window: 60,
-    max: 60,
-    customRules: {
-      '/sign-in/email': { window: 60, max: 5 },
-      '/sign-up/email': { window: 300, max: 5 },
-      '/request-password-reset': { window: 300, max: 3 },
-      '/send-verification-email': { window: 300, max: 3 },
-      '/two-factor/*': { window: 60, max: 5 },
-    },
-  },
-  databaseHooks: {
+/**
+ * Builds the Better Auth instance. Kept behind {@link getAuth} because
+ * `drizzleAdapter` needs a live `getDb()`, and `getDb()` throws without
+ * `DATABASE_URL`. Next.js imports every route module during `next build`'s
+ * "Collecting page data" phase, so building this at module evaluation made
+ * the whole build fail in any environment without a database — CI, a Vercel
+ * preview, a fresh clone. Importing this module must stay side-effect free;
+ * only serving a request may require configuration.
+ */
+function createAuth() {
+  return betterAuth({
+    appName: 'Sals3 Seller Center',
+    baseURL: process.env.BETTER_AUTH_URL,
+    secret: process.env.BETTER_AUTH_SECRET,
+    database: drizzleAdapter(getDb(), {
+      provider: 'pg',
+      schema: authSchema,
+    }),
     user: {
-      create: {
-        after: async (user) => {
-          if (
-            user.registrationBusinessModel !== 'RETAILER' &&
-            user.registrationBusinessModel !== 'DROPSHIPPER'
-          ) {
-            return;
-          }
-
-          await insertSellerAccountIfAbsent(getDb(), {
-            identityId: user.id,
-            businessModel: user.registrationBusinessModel,
-            verificationState: 'PENDING',
-            accountState: 'PENDING',
-          });
+      additionalFields: {
+        portalRole: {
+          type: 'string',
+          required: false,
+          defaultValue: 'seller_manager',
+          input: false,
+        },
+        registrationBusinessModel: {
+          type: 'string',
+          required: false,
+          returned: false,
         },
       },
     },
-  },
-  plugins: [
-    twoFactor({
-      issuer: 'Sals3 Seller Center',
-      twoFactorTable: 'twoFactor',
-      totpOptions: {
-        digits: 6,
-        period: 30,
+    emailAndPassword: {
+      enabled: true,
+      autoSignIn: false,
+      requireEmailVerification: true,
+      minPasswordLength: 12,
+      maxPasswordLength: 128,
+      revokeSessionsOnPasswordReset: true,
+      sendResetPassword: async ({ user, url }) => {
+        await sendAuthEmail({ to: user.email, url, kind: 'reset' });
       },
-      backupCodeOptions: {
-        amount: 10,
-        length: 10,
+    },
+    emailVerification: {
+      sendOnSignUp: true,
+      expiresIn: 60 * 60,
+      sendVerificationEmail: async ({ user, url }) => {
+        await sendAuthEmail({ to: user.email, url, kind: 'verify' });
       },
-      accountLockout: {
-        enabled: true,
-        maxFailedAttempts: 5,
-        durationSeconds: 15 * 60,
+    },
+    rateLimit: {
+      enabled: true,
+      storage: 'database',
+      window: 60,
+      max: 60,
+      customRules: {
+        '/sign-in/email': { window: 60, max: 5 },
+        '/sign-up/email': { window: 300, max: 5 },
+        '/request-password-reset': { window: 300, max: 3 },
+        '/send-verification-email': { window: 300, max: 3 },
+        '/two-factor/*': { window: 60, max: 5 },
       },
-    }),
-    nextCookies(),
-  ],
-});
+    },
+    databaseHooks: {
+      user: {
+        create: {
+          after: async (user) => {
+            if (
+              user.registrationBusinessModel !== 'RETAILER' &&
+              user.registrationBusinessModel !== 'DROPSHIPPER'
+            ) {
+              return;
+            }
 
-export default auth;
+            await insertSellerAccountIfAbsent(getDb(), {
+              identityId: user.id,
+              businessModel: user.registrationBusinessModel,
+              verificationState: 'PENDING',
+              accountState: 'PENDING',
+            });
+          },
+        },
+      },
+    },
+    plugins: [
+      twoFactor({
+        issuer: 'Sals3 Seller Center',
+        twoFactorTable: 'twoFactor',
+        totpOptions: {
+          digits: 6,
+          period: 30,
+        },
+        backupCodeOptions: {
+          amount: 10,
+          length: 10,
+        },
+        accountLockout: {
+          enabled: true,
+          maxFailedAttempts: 5,
+          durationSeconds: 15 * 60,
+        },
+      }),
+      nextCookies(),
+    ],
+  });
+}
+
+let authInstance: ReturnType<typeof createAuth> | undefined;
+
+/**
+ * Returns the Better Auth instance, building it on first use. Every caller
+ * must go through this rather than holding a module-level instance, so that
+ * importing an auth route never touches the database.
+ */
+export default function getAuth(): ReturnType<typeof createAuth> {
+  authInstance ??= createAuth();
+
+  return authInstance;
+}

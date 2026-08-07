@@ -67,11 +67,14 @@ type BetterAuthUser = {
 };
 
 export async function getRawAuthSession() {
-  const { default: auth } = await import('./server');
+  // `headers()` first, on purpose. It is the dynamic signal that makes Next
+  // abandon a prerender, and it must land before anything touches the
+  // database — otherwise `next build` fails collecting page data for every
+  // portal route in an environment with no DATABASE_URL.
+  const requestHeaders = await headers();
+  const { default: getAuth } = await import('./server');
 
-  return auth.api.getSession({
-    headers: await headers(),
-  });
+  return getAuth().api.getSession({ headers: requestHeaders });
 }
 
 function coercePortalRole(role: unknown): PortalRole {

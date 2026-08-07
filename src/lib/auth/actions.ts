@@ -1,7 +1,7 @@
 'use server';
 
 import { signupSchema } from './schemas';
-import auth from './server';
+import getAuth from './server';
 
 export type SignupActionState = {
   status: 'idle' | 'success' | 'error';
@@ -39,7 +39,7 @@ export async function signupSellerAction(
   }
 
   try {
-    await auth.api.signUpEmail({
+    await getAuth().api.signUpEmail({
       body: {
         name: parsed.data.name,
         email: parsed.data.email,
