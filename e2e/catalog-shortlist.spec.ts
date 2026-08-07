@@ -42,6 +42,17 @@ async function openExplorer(page: Page): Promise<boolean> {
   return button.isVisible();
 }
 
+/**
+ * Serial on purpose. Each "Check for Sals3" click makes three real CJ calls
+ * with deliberate ~1.1s spacing, because CJ allows one request per second per
+ * account. Running these in parallel does not just risk CJ rate-limiting this
+ * spec — it saturates the shared dev server and made an unrelated spec's
+ * 30-second page-load assertion time out. The calls genuinely cannot be
+ * parallelised, so serialising them is the honest fix rather than raising
+ * someone else's timeout.
+ */
+test.describe.configure({ mode: 'serial' });
+
 test.describe('CJ candidate shortlist', () => {
   test('the action appears on the CJ Candidate Explorer rows', async ({
     page,
@@ -123,6 +134,24 @@ test.describe('CJ candidate shortlist', () => {
     const queueTable = page.getByRole('table');
     await expect(queueTable).toBeVisible({ timeout: 30_000 });
     await expect(queueTable.locator('tbody tr').first()).toBeVisible();
+  });
+
+  test('the page names itself the same as its sidebar link, and its banner does not contradict the button', async ({
+    page,
+  }) => {
+    await page.goto('/products');
+
+    // The sidebar link and the page heading must agree. They drifted once —
+    // the heading said "Products" while the nav said "CJ Candidate Explorer"
+    // and the topbar said "Product Sourcing", which Bogs reported as
+    // confusing.
+    await expect(
+      page.getByRole('heading', { name: 'CJ Candidate Explorer', level: 1 }),
+    ).toBeVisible({ timeout: 30_000 });
+
+    // The old banner claimed importing "is not built yet" while every row had
+    // a Check for Sals3 button. It must not come back.
+    await expect(page.getByText(/is not built yet/i)).toHaveCount(0);
   });
 
   test('the Exception Queue explains that preflight is not implemented', async ({
