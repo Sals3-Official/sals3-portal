@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
+import { dash } from '@better-auth/infra';
 import { betterAuth } from 'better-auth';
 import { nextCookies } from 'better-auth/next-js';
 import { twoFactor } from 'better-auth/plugins';
@@ -128,6 +129,15 @@ function createAuth() {
           durationSeconds: 15 * 60,
         },
       }),
+      // Better Auth's hosted dashboard. Reads BETTER_AUTH_API_KEY from the
+      // environment; without it the plugin logs a warning and stays inert, so
+      // an environment with no key still boots. `activityTracking` is left off
+      // deliberately: enabling it makes the plugin write `user.lastActiveAt`,
+      // a column auth_users does not have, and the Drizzle adapter rejects an
+      // unknown field outright.
+      dash(),
+      // Must stay last - Better Auth warns when the cookie plugin is not the
+      // final entry, because later plugins would not see its cookie handling.
       nextCookies(),
     ],
   });
