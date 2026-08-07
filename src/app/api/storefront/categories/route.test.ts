@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CjProductPage } from '@/services/cj/products';
+import type { CjProductPage } from '@/lib/storefront/cj-feed';
 
 const mocks = vi.hoisted(() => ({
   getStorefrontCjProducts: vi.fn(),

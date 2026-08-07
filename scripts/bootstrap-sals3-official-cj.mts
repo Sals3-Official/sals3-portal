@@ -38,6 +38,7 @@ import type { Database } from '../src/lib/db/client';
    for one script), and tsx/esbuild resolves extensionless relative imports
    correctly, matching this codebase's own convention. Imported directly
    from their own files, not the `schema` barrel - see the file header. */
+import { SALS3_OFFICIAL_IDENTITY_ID } from '../src/lib/auth/identity';
 import { auditEvents, supplierCandidates } from '../src/lib/db/schema/catalog';
 import { supplierConnectionSecrets } from '../src/lib/db/schema/supplier-secrets';
 import { encryptSupplierCredential } from '../src/lib/secrets/crypto-core';
@@ -83,12 +84,6 @@ function createScriptDb() {
   };
 }
 
-/**
- * Matches `src/lib/auth/seller-guard.ts`'s placeholder `identityId` (the
- * dev session's `userId`) - so `requireDropshipperAccount()` resolves to
- * exactly this bootstrapped account when running against the dev session.
- */
-const SALS3_OFFICIAL_IDENTITY_ID = 'dev-user';
 const CJ_PROVIDER_CODE = 'CJ_DROPSHIPPING';
 const KEY_VERSION = 1;
 

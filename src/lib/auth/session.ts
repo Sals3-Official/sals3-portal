@@ -1,3 +1,6 @@
+import { headers } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { SALS3_OFFICIAL_IDENTITY_ID } from './identity';
 import {
   can,
   PermissionError,
@@ -7,18 +10,9 @@ import {
 } from './permissions';
 
 /**
- * Session gate — placeholder, and deliberately visible as one.
- *
- * This repository has no authentication system yet, so there is no verified
- * user to read. `getSession` returns a single development identity whose role
- * comes from the server-side `PORTAL_DEV_ROLE` variable, checked against the
- * role allow list. The variable has no `NEXT_PUBLIC_` prefix, so it never
- * reaches the browser.
- *
- * Do not treat this as authentication. When real sign-in lands, replace the
- * body of `getSession` with the verified session lookup; every caller of
- * `requirePermission` then becomes a real authorization check with no other
- * change. Until then the portal must not be exposed to untrusted users.
+ * Session gate. The production path always reads Better Auth on the server and
+ * then applies portal-specific account state before any Seller Center page or
+ * action can proceed.
  */
 
 export type PortalSession = {
@@ -29,6 +23,11 @@ export type PortalSession = {
 };
 
 const DEV_FALLBACK_ROLE: PortalRole = 'seller_manager';
+const SELLER_ROLES = new Set<PortalRole>([
+  'seller_manager',
+  'seller_staff',
+  'viewer',
+]);
 
 function readDevRole(): PortalRole {
   const raw = process.env.PORTAL_DEV_ROLE;
@@ -36,13 +35,148 @@ function readDevRole(): PortalRole {
   return PORTAL_ROLES.find((role) => role === raw) ?? DEV_FALLBACK_ROLE;
 }
 
-export async function getSession(): Promise<PortalSession> {
+function readTestBypassSession(): PortalSession | null {
+  if (
+    process.env.NODE_ENV === 'production' ||
+    process.env.PORTAL_TEST_AUTH_BYPASS !== '1'
+  ) {
+    return null;
+  }
+
   return {
-    userId: 'dev-user',
+    userId: SALS3_OFFICIAL_IDENTITY_ID,
     displayName: 'Development user',
     role: readDevRole(),
     sellerId: 'seller-001',
   };
+}
+
+export type PortalAccessState = {
+  hasSession: boolean;
+  emailVerified: boolean;
+  twoFactorEnabled: boolean;
+  sellerApproved: boolean;
+};
+
+type BetterAuthUser = {
+  id: string;
+  name: string;
+  emailVerified: boolean;
+  portalRole?: PortalRole;
+  twoFactorEnabled?: boolean;
+};
+
+export async function getRawAuthSession() {
+  // `headers()` first, on purpose. It is the dynamic signal that makes Next
+  // abandon a prerender, and it must land before anything touches the
+  // database — otherwise `next build` fails collecting page data for every
+  // portal route in an environment with no DATABASE_URL.
+  const requestHeaders = await headers();
+  const { default: getAuth } = await import('./server');
+
+  return getAuth().api.getSession({ headers: requestHeaders });
+}
+
+function coercePortalRole(role: unknown): PortalRole {
+  return PORTAL_ROLES.find((allowedRole) => allowedRole === role) ?? 'viewer';
+}
+
+async function resolvePortalSession(
+  user: BetterAuthUser,
+): Promise<PortalSession> {
+  const [{ default: getDb }, { findSellerAccountByIdentityId }] =
+    await Promise.all([
+      import('@/lib/db/client'),
+      import('@/modules/suppliers/repository'),
+    ]);
+  const role = coercePortalRole(user.portalRole);
+  const sellerAccount = await findSellerAccountByIdentityId(getDb(), user.id);
+
+  if (SELLER_ROLES.has(role)) {
+    if (
+      sellerAccount === null ||
+      sellerAccount.accountState !== 'ACTIVE' ||
+      sellerAccount.verificationState !== 'VERIFIED'
+    ) {
+      redirect('/auth/pending');
+    }
+  }
+
+  return {
+    userId: user.id,
+    displayName: user.name,
+    role,
+    sellerId: sellerAccount?.id ?? 'system',
+  };
+}
+
+export async function getPortalAccessState(): Promise<PortalAccessState> {
+  const testSession = readTestBypassSession();
+
+  if (testSession !== null) {
+    return {
+      hasSession: true,
+      emailVerified: true,
+      twoFactorEnabled: true,
+      sellerApproved: true,
+    };
+  }
+
+  const data = await getRawAuthSession();
+
+  if (data === null) {
+    return {
+      hasSession: false,
+      emailVerified: false,
+      twoFactorEnabled: false,
+      sellerApproved: false,
+    };
+  }
+
+  const user = data.user as BetterAuthUser;
+  const role = coercePortalRole(user.portalRole);
+  const [{ default: getDb }, { findSellerAccountByIdentityId }] =
+    await Promise.all([
+      import('@/lib/db/client'),
+      import('@/modules/suppliers/repository'),
+    ]);
+  const sellerAccount = await findSellerAccountByIdentityId(getDb(), user.id);
+  const sellerApproved =
+    !SELLER_ROLES.has(role) ||
+    (sellerAccount !== null &&
+      sellerAccount.accountState === 'ACTIVE' &&
+      sellerAccount.verificationState === 'VERIFIED');
+
+  return {
+    hasSession: true,
+    emailVerified: user.emailVerified,
+    twoFactorEnabled: user.twoFactorEnabled === true,
+    sellerApproved,
+  };
+}
+
+export async function getSession(): Promise<PortalSession> {
+  const testSession = readTestBypassSession();
+
+  if (testSession !== null) return testSession;
+
+  const data = await getRawAuthSession();
+
+  if (data === null) {
+    redirect('/login');
+  }
+
+  const user = data.user as BetterAuthUser;
+
+  if (!user.emailVerified) {
+    redirect('/login');
+  }
+
+  if (user.twoFactorEnabled !== true) {
+    redirect('/setup-2fa');
+  }
+
+  return resolvePortalSession(user);
 }
 
 /**

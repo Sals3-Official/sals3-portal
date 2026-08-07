@@ -4,6 +4,7 @@
  * to `drizzle()` so query results are fully typed.
  */
 export * from './catalog';
+export * from './auth';
 export * from './seller-accounts';
 export * from './supplier-providers';
 export * from './supplier-connections';
