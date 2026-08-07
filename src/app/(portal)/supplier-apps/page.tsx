@@ -54,8 +54,8 @@ const RECONNECT_COPY: Record<string, string> = {
  * dialog (`ConnectCjDialog`) instead of a bare API-key input.
  */
 export default async function SupplierAppsPage() {
-  const { sellerAccount } = await requireDropshipperAccount();
-
+  // See Product Sourcing pages' identical comment: this must run before
+  // `requireDropshipperAccount()`, which reaches the database immediately.
   if (!isDatabaseConfigured()) {
     return (
       <div className="flex flex-col gap-4">
@@ -71,6 +71,7 @@ export default async function SupplierAppsPage() {
     );
   }
 
+  const { sellerAccount } = await requireDropshipperAccount();
   const provider = await findProviderByCode(getDb(), 'CJ_DROPSHIPPING');
   const connection =
     provider === null

@@ -29,8 +29,10 @@ type CjCatalogueViewProps = {
  * into one plain message here instead of taking the page down.
  */
 export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
-  const { sellerAccount } = await requireDropshipperAccount();
-
+  // Checked before `requireDropshipperAccount()` on purpose - that call
+  // reaches the database immediately, and an environment with no
+  // `DATABASE_URL` (a Vercel preview, CI) must degrade honestly here rather
+  // than let an uncaught "DATABASE_URL is not set" crash the page.
   if (!isDatabaseConfigured()) {
     return (
       <SourcingEmptyState
@@ -40,6 +42,7 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
     );
   }
 
+  const { sellerAccount } = await requireDropshipperAccount();
   const provider = await findProviderByCode(getDb(), 'CJ_DROPSHIPPING');
   const connection =
     provider === null

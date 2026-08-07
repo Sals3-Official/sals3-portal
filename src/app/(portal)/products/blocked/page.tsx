@@ -18,8 +18,8 @@ export const dynamic = 'force-dynamic';
  * together, distinguished per row - see `BlockedCandidatesTable`.
  */
 export default async function BlockedProductsPage() {
-  const { sellerAccount } = await requireDropshipperAccount();
-
+  // See qualified/ready/page.tsx's identical comment: this must run before
+  // `requireDropshipperAccount()`, which reaches the database immediately.
   if (!isDatabaseConfigured()) {
     return (
       <div className="flex flex-col gap-4">
@@ -35,6 +35,7 @@ export default async function BlockedProductsPage() {
     );
   }
 
+  const { sellerAccount } = await requireDropshipperAccount();
   const candidates = await listCandidatesByStatus(sellerAccount.id, [
     'BLOCKED',
     'TEMPORARILY_INELIGIBLE',

@@ -17,8 +17,12 @@ export const dynamic = 'force-dynamic';
  * produces them.
  */
 export default async function ReadyProductsPage() {
-  const { sellerAccount } = await requireDropshipperAccount();
-
+  // Checked before `requireDropshipperAccount()` on purpose: that call
+  // reaches the database immediately (to look up the seller account), so an
+  // environment with no `DATABASE_URL` (a Vercel preview, CI) must degrade
+  // honestly here rather than let an uncaught "DATABASE_URL is not set"
+  // crash the page - verified live in CI after getting this order backwards
+  // the first time.
   if (!isDatabaseConfigured()) {
     return (
       <div className="flex flex-col gap-4">
@@ -31,6 +35,7 @@ export default async function ReadyProductsPage() {
     );
   }
 
+  const { sellerAccount } = await requireDropshipperAccount();
   const candidates = await listCandidatesByStatus(sellerAccount.id, ['PASS']);
 
   return (

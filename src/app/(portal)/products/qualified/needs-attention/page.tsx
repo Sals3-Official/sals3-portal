@@ -17,8 +17,8 @@ export const dynamic = 'force-dynamic';
  * the persistent screen itself.
  */
 export default async function NeedsAttentionProductsPage() {
-  const { sellerAccount } = await requireDropshipperAccount();
-
+  // See ready/page.tsx's identical comment: this must run before
+  // `requireDropshipperAccount()`, which reaches the database immediately.
   if (!isDatabaseConfigured()) {
     return (
       <div className="flex flex-col gap-4">
@@ -34,6 +34,7 @@ export default async function NeedsAttentionProductsPage() {
     );
   }
 
+  const { sellerAccount } = await requireDropshipperAccount();
   const candidates = await listCandidatesByStatus(sellerAccount.id, [
     'PASS_WITH_ATTENTION',
   ]);
