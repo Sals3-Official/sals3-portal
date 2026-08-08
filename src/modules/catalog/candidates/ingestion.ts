@@ -29,7 +29,15 @@ import { POLICY_VERSION } from './rules/policy';
 
 const INGESTION_ACTOR_ID = 'system:cj-ingestion';
 const INGESTION_MARKET_CODES = ['PH'];
-const MAX_PAGES_PER_TICK_PER_CONNECTION = 5;
+/**
+ * Lowered from 5 on 2026-08-08: combined with `EVALUATION_BATCH_SIZE`,
+ * the tick was consistently exceeding the evaluate-tick route's 60s
+ * `maxDuration` (Vercel `FUNCTION_INVOCATION_TIMEOUT`, seen twice in a
+ * row against production). Fewer pages per connection per tick lowers
+ * this tick's own worst-case duration; total ingestion throughput is
+ * unaffected since the schedule ticks every 5 minutes regardless.
+ */
+const MAX_PAGES_PER_TICK_PER_CONNECTION = 2;
 
 export type IngestionResult = {
   connectionsProcessed: number;
