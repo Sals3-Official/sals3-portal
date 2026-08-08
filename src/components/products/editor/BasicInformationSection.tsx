@@ -11,14 +11,10 @@ import {
 } from '@/components/ui/select';
 import { formatDateTime } from '@/lib/seller-center/product-editor/format';
 import type { ProductEditorFixture } from '@/lib/seller-center/product-editor/types';
-import EditorStatusPill from './EditorStatusPill';
 import SupplierEvidenceBlock, {
   SupplierEvidenceField,
 } from './SupplierEvidenceBlock';
-import {
-  MEDIA_RIGHTS_PRESENTATION,
-  SOURCE_PRODUCT_STATUS_PRESENTATION,
-} from './presentation';
+import SupplierSourceBadge from './SupplierSourceBadge';
 
 const PRODUCT_NAME_MAX = 120;
 
@@ -71,6 +67,10 @@ export default function BasicInformationSection({
     (issue) => issue.reasonCode === 'COUNTERFEIT_HIGH_CONFIDENCE',
   );
 
+  const rejectedMediaCount = fixture.media.filter(
+    (item) => item.rightsCheck === 'REJECTED',
+  ).length;
+
   return (
     <div className="flex flex-col gap-5">
       <div>
@@ -80,29 +80,38 @@ export default function BasicInformationSection({
             {fixture.media.length} images · minimum 3 · recommended 5
           </span>
         </div>
-        <ul className="mt-2.5 grid list-none grid-cols-[repeat(auto-fill,minmax(6rem,1fr))] gap-2.5 p-0">
+
+        {/* A summary only - each image's rights check and storage state are
+            full detail that belongs in the Media section, not repeated here
+            as a second copy that could drift from it. */}
+        <ul className="mt-2.5 flex list-none flex-wrap gap-1.5 p-0">
           {fixture.media.map((item) => (
-            <li key={item.id} className="flex flex-col gap-1.5">
-              <span
-                aria-hidden="true"
-                className={`flex aspect-square items-center justify-center rounded-md border text-center font-mono text-[10px] text-muted-foreground ${
-                  item.rightsCheck === 'REJECTED'
-                    ? 'border-2 border-red-600'
-                    : 'border-border'
-                } bg-muted`}
-              >
-                {item.isCover ? 'cover' : 'image'}
-              </span>
-              <EditorStatusPill
-                presentation={MEDIA_RIGHTS_PRESENTATION[item.rightsCheck]}
-              />
+            <li
+              key={item.id}
+              aria-hidden="true"
+              className={`flex size-11 items-center justify-center rounded-md border text-center text-xs font-medium text-muted-foreground ${
+                item.rightsCheck === 'REJECTED'
+                  ? 'border-2 border-red-600 bg-danger-surface/40'
+                  : 'border-border bg-muted'
+              }`}
+            >
+              {item.isCover ? 'Cover' : ''}
             </li>
           ))}
         </ul>
-        <p className="mt-2 text-xs text-muted-foreground">
-          The first image is the storefront cover. Full media management,
-          including video, is in the Media section below.
-        </p>
+
+        {rejectedMediaCount > 0 ? (
+          <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-red-600">
+            <OctagonAlert aria-hidden="true" className="size-3.5 shrink-0" />
+            {rejectedMediaCount} image{rejectedMediaCount === 1 ? '' : 's'} need
+            attention — see Media section.
+          </p>
+        ) : (
+          <p className="mt-2 text-xs text-muted-foreground">
+            The first image is the storefront cover. Full media management,
+            including video, is in the Media section below.
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 @2xl:grid-cols-2">
@@ -207,57 +216,44 @@ export default function BasicInformationSection({
         </div>
       </div>
 
+      {/* Compact by design: this is a source summary, not the evidence
+          itself. Supplier status, source currency and the original
+          supplier product name still exist - they are one click away in
+          the drawer - rather than competing here with the fields the
+          seller actually edits above. */}
       <SupplierEvidenceBlock>
-        <div className="grid grid-cols-1 gap-3 @2xl:grid-cols-2">
-          <SupplierEvidenceField
-            label="Supplier product ID"
-            value={fixture.source.externalProductId}
-            mono
-          />
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-semibold text-ink-muted">
-              Supplier status
-            </span>
-            <span className="min-h-9 rounded-lg border border-dashed border-border-strong bg-background px-2.5 py-2">
-              <EditorStatusPill
-                presentation={
-                  SOURCE_PRODUCT_STATUS_PRESENTATION[
-                    fixture.sourceProductStatus
-                  ]
-                }
-              />
-            </span>
+        <div className="flex flex-col gap-3">
+          <SupplierSourceBadge source={fixture.source} />
+
+          <div className="grid grid-cols-1 gap-3 @lg:grid-cols-3">
+            <SupplierEvidenceField
+              label="Supplier product ID"
+              value={fixture.source.externalProductId}
+              mono
+            />
+            <SupplierEvidenceField
+              label="Original category"
+              value={fixture.supplierCategoryPath}
+            />
+            <SupplierEvidenceField
+              label="Last updated"
+              value={
+                fixture.source.lastSuccessfulSyncAt === null
+                  ? 'Never synced successfully'
+                  : formatDateTime(fixture.source.lastSuccessfulSyncAt)
+              }
+            />
           </div>
-          <SupplierEvidenceField
-            label="Source currency"
-            value={fixture.source.sourceCurrency}
-          />
-          <SupplierEvidenceField
-            label="Original supplier product name"
-            value={fixture.supplierProductName}
-          />
-          <SupplierEvidenceField
-            label="Original supplier category"
-            value={fixture.supplierCategoryPath}
-          />
-          <SupplierEvidenceField
-            label="Source updated"
-            value={
-              fixture.source.lastSuccessfulSyncAt === null
-                ? 'Never synced successfully'
-                : formatDateTime(fixture.source.lastSuccessfulSyncAt)
-            }
-          />
-          <div className="flex items-end">
-            <Button
-              type="button"
-              variant="outline"
-              size="lg"
-              onClick={onOpenSourceDrawer}
-            >
-              Open Supplier Source Details
-            </Button>
-          </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="self-start"
+            onClick={onOpenSourceDrawer}
+          >
+            View Supplier Source Details
+          </Button>
         </div>
       </SupplierEvidenceBlock>
     </div>

@@ -108,8 +108,12 @@ describe('Product Editor - money that is not known', () => {
     expect(container.textContent).not.toContain('$0.00');
   });
 
-  it('shows the supplier source currency', () => {
+  it('shows the supplier source currency in the source drawer', () => {
     renderEditor('pass');
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Supplier Source Details' }),
+    );
 
     expect(screen.getByText('Source currency')).toBeInTheDocument();
     expect(screen.getByText('USD')).toBeInTheDocument();

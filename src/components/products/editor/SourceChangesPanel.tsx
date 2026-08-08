@@ -47,7 +47,7 @@ export default function SourceChangesPanel({
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <h5 className="text-[13px] font-semibold">{change.title}</h5>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   {formatDateTime(change.occurredAt)}
                 </span>
               </div>

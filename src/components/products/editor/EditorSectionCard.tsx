@@ -49,7 +49,7 @@ export default function EditorSectionCard({
           <EditorStatusPill presentation={sectionBadge(severity)} />
         </div>
       </div>
-      <div className="p-4">{children}</div>
+      <div className="p-4 @min-[48rem]:p-5">{children}</div>
     </section>
   );
 }

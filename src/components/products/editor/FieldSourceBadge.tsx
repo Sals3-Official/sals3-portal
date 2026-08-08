@@ -27,7 +27,7 @@ export default function FieldSourceBadge({
   return (
     <span
       className={cn(
-        'inline-flex w-fit shrink-0 items-center rounded-[4px] px-1.5 py-px text-[11px] font-semibold whitespace-nowrap',
+        'inline-flex w-fit shrink-0 items-center rounded-[4px] px-1.5 py-px text-xs font-semibold whitespace-nowrap',
         SOURCE_STYLES[source],
         className,
       )}

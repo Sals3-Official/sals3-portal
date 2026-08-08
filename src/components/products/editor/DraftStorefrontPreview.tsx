@@ -59,7 +59,7 @@ export default function DraftStorefrontPreview({
   const summary = description.split('\n')[0] ?? '';
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3 @min-[48rem]:p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         {showHeading ? (
           <h2 className="font-display text-[15px] font-semibold">
@@ -110,7 +110,7 @@ export default function DraftStorefrontPreview({
       <div className="overflow-hidden rounded-lg border border-border">
         <span
           aria-hidden="true"
-          className="flex aspect-square items-center justify-center bg-muted font-mono text-[10px] text-muted-foreground"
+          className="flex aspect-square items-center justify-center bg-muted font-mono text-xs text-muted-foreground"
         >
           product image
         </span>
@@ -124,7 +124,7 @@ export default function DraftStorefrontPreview({
             </p>
           )}
 
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Display currency follows the market at publish time. No converted
             price is shown here.
           </p>
@@ -154,7 +154,7 @@ export default function DraftStorefrontPreview({
 
           <div className="border-t border-border pt-2">
             <p className="mb-1 text-xs font-semibold">Key specifications</p>
-            <ul className="m-0 list-disc pl-4 text-[11px] leading-relaxed text-ink-muted">
+            <ul className="m-0 list-disc pl-4 text-xs leading-relaxed text-ink-muted">
               {specifications.slice(0, 3).map((specification) => (
                 <li key={specification.key}>
                   {specification.label}:{' '}
@@ -164,7 +164,7 @@ export default function DraftStorefrontPreview({
             </ul>
           </div>
 
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             {summary === ''
               ? 'No description yet — this area stays empty on the storefront.'
               : summary}
@@ -172,7 +172,7 @@ export default function DraftStorefrontPreview({
         </div>
       </div>
 
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
+      <p className="text-xs leading-relaxed text-muted-foreground">
         Approximate. Price, delivery and stock shown here come from unvalidated
         draft data and are confirmed at checkout.
       </p>

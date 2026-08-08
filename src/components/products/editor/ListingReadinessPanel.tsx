@@ -15,6 +15,15 @@ type ListingReadinessPanelProps = {
   onGoToSection: (section: EditorSectionId) => void;
   /** Off inside a sheet, whose own title already names the panel. */
   showHeading?: boolean;
+  /**
+   * Caps the visible issue list to the most important few and offers
+   * "View all issues" instead. Used for the sticky rail, where a verbose
+   * warning list would need its own nested scrollbar; the sheet opened by
+   * "View all issues" reads the full list uncapped.
+   */
+  compact?: boolean;
+  /** Required when `compact` is set. Opens the full Listing Readiness sheet. */
+  onViewAll?: () => void;
 };
 
 /**
@@ -31,11 +40,13 @@ export default function ListingReadinessPanel({
   suggestionCount,
   onGoToSection,
   showHeading = true,
+  compact = false,
+  onViewAll,
 }: ListingReadinessPanelProps) {
   const issueCount = blockerCount + warningCount + suggestionCount;
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3 @min-[48rem]:p-4">
       {showHeading ? (
         <h2 className="font-display text-[15px] font-semibold">
           Listing Readiness
@@ -64,6 +75,8 @@ export default function ListingReadinessPanel({
           <ReadinessIssueList
             issues={fixture.issues}
             onGoToSection={onGoToSection}
+            maxVisible={compact ? 4 : null}
+            onViewAll={onViewAll}
           />
         </TabsContent>
 

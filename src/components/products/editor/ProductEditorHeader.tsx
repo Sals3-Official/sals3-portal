@@ -67,17 +67,17 @@ export default function ProductEditorHeader({
       <div className="flex flex-wrap items-start gap-3.5">
         <span
           aria-hidden="true"
-          className="flex size-14 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[10px] text-muted-foreground"
+          className="flex size-14 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-xs text-muted-foreground"
         >
           No image
         </span>
 
         <div className="min-w-0 flex-1">
-          <h1 className="font-display text-xl leading-tight font-semibold tracking-tight break-words sm:text-2xl">
+          <h1 className="font-display text-[22px] leading-tight font-semibold tracking-tight break-words sm:text-2xl">
             {productName}
           </h1>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <SupplierSourceBadge source={fixture.source} variant="compact" />
             <span className="font-mono text-xs break-all text-muted-foreground">
               {fixture.source.externalProductId}
@@ -98,11 +98,18 @@ export default function ProductEditorHeader({
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        {/* Readiness/Preview stay in the DOM at every width - keyboard and
+            screen-reader users always have a way in - but visually step
+            back once @min-[86.5rem] puts the same panels on screen beside
+            the editor, so the header does not ask the seller to open what
+            is already open. That breakpoint matches the workspace grid's
+            own three-column threshold; see ProductEditorWorkspace. */}
+        <div className="flex flex-wrap items-center gap-1.5">
           <Button
             type="button"
-            variant="outline"
-            size="lg"
+            variant="ghost"
+            size="sm"
+            className="@min-[86.5rem]:hidden"
             onClick={onOpenReadiness}
           >
             <ListChecks aria-hidden="true" />
@@ -110,8 +117,9 @@ export default function ProductEditorHeader({
           </Button>
           <Button
             type="button"
-            variant="outline"
-            size="lg"
+            variant="ghost"
+            size="sm"
+            className="@min-[86.5rem]:hidden"
             onClick={onOpenPreview}
           >
             <Eye aria-hidden="true" />
@@ -120,7 +128,7 @@ export default function ProductEditorHeader({
           <Button
             type="button"
             variant="outline"
-            size="lg"
+            size="sm"
             onClick={onOpenSourceDrawer}
           >
             <FileSearch aria-hidden="true" />

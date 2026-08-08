@@ -73,7 +73,7 @@ export default function ReadinessSummary({
         <CountRow label="Suggestions" value={suggestionCount} />
       </dl>
 
-      <p className="mt-2 text-[11px] text-muted-foreground">
+      <p className="mt-2 text-xs text-muted-foreground">
         Last automated check {formatDateTime(lastValidatedAt)}
       </p>
     </div>
