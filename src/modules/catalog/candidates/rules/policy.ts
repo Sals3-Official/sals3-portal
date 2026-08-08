@@ -136,7 +136,18 @@ export const ABNORMAL_PRICE_CHANGE_PERCENT = envInt(
 );
 
 export const MAX_EVALUATION_ATTEMPTS = 5;
-export const EVALUATION_BATCH_SIZE = 8;
+/**
+ * Lowered from 8 on 2026-08-08: paired with `MAX_PAGES_PER_TICK_PER_CONNECTION`,
+ * the tick was consistently exceeding the evaluate-tick route's 60s
+ * `maxDuration` and getting killed mid-batch by Vercel
+ * (`FUNCTION_INVOCATION_TIMEOUT`, seen twice in a row against
+ * production) - at ~3.5s of sequential, rate-limited CJ evidence
+ * fetching per candidate, 8 alone accounted for ~28s before ingestion's
+ * own CJ calls. A smaller batch finishes reliably inside the limit;
+ * total evaluation throughput is unaffected since the schedule ticks
+ * every 5 minutes regardless.
+ */
+export const EVALUATION_BATCH_SIZE = 4;
 export const LEASE_DURATION_MS = 5 * 60 * 1000;
 export const RETRY_BACKOFF_BASE_MS = 30_000;
 export const RETRY_BACKOFF_MAX_MS = 60 * 60 * 1000;
