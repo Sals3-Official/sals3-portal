@@ -1,30 +1,43 @@
 import type { ReactNode } from 'react';
+import PortalShellProvider from '@/components/portal/PortalShellProvider';
 import PortalSidebar from '@/components/portal/PortalSidebar';
 import PortalTopbar from '@/components/portal/PortalTopbar';
-import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
+import { SidebarInset } from '@/components/ui/sidebar';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { can } from '@/lib/auth/permissions';
 import { getSession } from '@/lib/auth/session';
-import { NAV_GROUPS } from '@/lib/portal/navigation';
+import { NAV_GROUPS, withSourcingBadges } from '@/lib/portal/navigation';
+import { resolvePortalShellData } from '@/lib/portal/shell-data';
 
 type PortalLayoutProps = Readonly<{ children: ReactNode }>;
 
 /**
  * Portal shell. A Server Component: it reads the session on the server and
- * passes only the navigation the role may use into the client rail.
+ * passes only the navigation the role may use into the client rail, along
+ * with the real per-seller counts and connection health `PortalSidebar`
+ * needs for its badges and footer.
  */
 export default async function PortalLayout({ children }: PortalLayoutProps) {
-  const session = await getSession();
-  const groups = NAV_GROUPS.map((group) => ({
-    ...group,
-    items: group.items.filter((item) => can(session.role, item.permission)),
-  })).filter((group) => group.items.length > 0);
+  const [session, shellData] = await Promise.all([
+    getSession(),
+    resolvePortalShellData(),
+  ]);
+  const groups = withSourcingBadges(
+    NAV_GROUPS.map((group) => ({
+      ...group,
+      items: group.items.filter((item) => can(session.role, item.permission)),
+    })).filter((group) => group.items.length > 0),
+    shellData.sourcingCounts,
+  );
 
   return (
     <TooltipProvider>
-      <SidebarProvider>
-        <PortalSidebar groups={groups} />
+      <PortalShellProvider>
+        <PortalSidebar
+          groups={groups}
+          connectionSummary={shellData.connectionSummary}
+        />
         {/* `min-w-0` matters: a flex child defaults to `min-width: auto`, so a
             wide table would push this column past the viewport and scroll the
             whole page sideways instead of scrolling inside its own container. */}
@@ -34,7 +47,7 @@ export default async function PortalLayout({ children }: PortalLayoutProps) {
             {children}
           </div>
         </SidebarInset>
-      </SidebarProvider>
+      </PortalShellProvider>
       <Toaster position="bottom-center" />
     </TooltipProvider>
   );

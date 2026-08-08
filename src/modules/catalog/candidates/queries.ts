@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, max } from 'drizzle-orm';
 import getDb from '@/lib/db/client';
 import {
   candidateEvaluations,
@@ -145,6 +145,172 @@ export async function oldestQueuedAgeMs(
   return rows[0] === undefined
     ? null
     : Date.now() - rows[0].createdAt.getTime();
+}
+
+/**
+ * Age of the row that has sat longest in any of the given statuses, in
+ * milliseconds - null when none are in that status. Used for a queue's
+ * "oldest waiting" column on Overview: `updatedAt` (when a row last entered
+ * its current status), not `createdAt`, since a candidate can sit in Ready
+ * for months after being created weeks before that.
+ */
+export async function oldestInStatusAgeMs(
+  sellerAccountId: string,
+  statuses: EvaluationStatus[],
+): Promise<number | null> {
+  const rows = await getDb()
+    .select({ updatedAt: candidateEvaluations.updatedAt })
+    .from(candidateEvaluations)
+    .innerJoin(
+      supplierCandidates,
+      eq(supplierCandidates.id, candidateEvaluations.candidateId),
+    )
+    .innerJoin(
+      supplierConnections,
+      eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
+    )
+    .where(
+      and(
+        eq(supplierConnections.sellerAccountId, sellerAccountId),
+        inArray(candidateEvaluations.status, statuses),
+      ),
+    )
+    .orderBy(asc(candidateEvaluations.updatedAt))
+    .limit(1);
+
+  return rows[0] === undefined
+    ? null
+    : Date.now() - rows[0].updatedAt.getTime();
+}
+
+/**
+ * Same "oldest waiting" shape as `oldestInStatusAgeMs`, scoped to the exact
+ * Exception Queue definition (`listDeadLetteredEvaluations`'s own rule):
+ * `EVALUATION_FAILED` past every automatic retry, never an ordinary
+ * rejection.
+ */
+export async function oldestExceptionAgeMs(
+  sellerAccountId: string,
+): Promise<number | null> {
+  const rows = await getDb()
+    .select({ updatedAt: candidateEvaluations.updatedAt })
+    .from(candidateEvaluations)
+    .innerJoin(
+      supplierCandidates,
+      eq(supplierCandidates.id, candidateEvaluations.candidateId),
+    )
+    .innerJoin(
+      supplierConnections,
+      eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
+    )
+    .where(
+      and(
+        eq(supplierConnections.sellerAccountId, sellerAccountId),
+        eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
+        gte(candidateEvaluations.attemptCount, MAX_EVALUATION_ATTEMPTS),
+      ),
+    )
+    .orderBy(asc(candidateEvaluations.updatedAt))
+    .limit(1);
+
+  return rows[0] === undefined
+    ? null
+    : Date.now() - rows[0].updatedAt.getTime();
+}
+
+/**
+ * Most recent evidence capture for one connection - the real "last
+ * successful sync" the Supplier Apps card shows. No connection-level column
+ * stores this; it is derived from the same `supplier_snapshots` the
+ * evaluation pipeline already writes. `null` means no evidence has ever
+ * been captured through this connection - render "Not available", never a
+ * fabricated or zero timestamp.
+ */
+export async function mostRecentSnapshotAt(
+  connectionId: string,
+): Promise<Date | null> {
+  const rows = await getDb()
+    .select({ latest: max(supplierSnapshots.capturedAt) })
+    .from(supplierSnapshots)
+    .innerJoin(
+      supplierCandidates,
+      eq(supplierCandidates.id, supplierSnapshots.candidateId),
+    )
+    .where(eq(supplierCandidates.supplierConnectionId, connectionId));
+
+  return rows[0]?.latest ?? null;
+}
+
+export type CandidateStatusCounts = {
+  ready: number;
+  needsAttention: number;
+  evaluating: number;
+  blockedRejected: number;
+  exceptionQueue: number;
+};
+
+/**
+ * Lightweight per-seller counts for the nav rail's badges - grouped `COUNT`s,
+ * never a full row fetch, since this runs on every portal page render (the
+ * shell layout), not a single sourcing screen. Status groupings mirror each
+ * status page's own query exactly (`evaluating/page.tsx`, `blocked/page.tsx`,
+ * `exception-queue/page.tsx`) so the badge and the page it links to can never
+ * disagree.
+ */
+export async function countCandidateStatusSummary(
+  sellerAccountId: string,
+): Promise<CandidateStatusCounts> {
+  const db = getDb();
+  const scopedByStatus = db
+    .select({ status: candidateEvaluations.status, total: count() })
+    .from(candidateEvaluations)
+    .innerJoin(
+      supplierCandidates,
+      eq(supplierCandidates.id, candidateEvaluations.candidateId),
+    )
+    .innerJoin(
+      supplierConnections,
+      eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
+    )
+    .where(eq(supplierConnections.sellerAccountId, sellerAccountId))
+    .groupBy(candidateEvaluations.status);
+
+  const exceptionQueue = db
+    .select({ total: count() })
+    .from(candidateEvaluations)
+    .innerJoin(
+      supplierCandidates,
+      eq(supplierCandidates.id, candidateEvaluations.candidateId),
+    )
+    .innerJoin(
+      supplierConnections,
+      eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
+    )
+    .where(
+      and(
+        eq(supplierConnections.sellerAccountId, sellerAccountId),
+        eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
+        gte(candidateEvaluations.attemptCount, MAX_EVALUATION_ATTEMPTS),
+      ),
+    );
+
+  const [statusRows, exceptionRows] = await Promise.all([
+    scopedByStatus,
+    exceptionQueue,
+  ]);
+
+  const totalByStatus = new Map(
+    statusRows.map((row) => [row.status, Number(row.total)]),
+  );
+  const of = (status: EvaluationStatus) => totalByStatus.get(status) ?? 0;
+
+  return {
+    ready: of('PASS'),
+    needsAttention: of('PASS_WITH_ATTENTION'),
+    evaluating: of('QUEUED') + of('EVALUATING'),
+    blockedRejected: of('BLOCKED') + of('TEMPORARILY_INELIGIBLE'),
+    exceptionQueue: Number(exceptionRows[0]?.total ?? 0),
+  };
 }
 
 /**

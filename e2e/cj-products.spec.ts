@@ -35,11 +35,15 @@ test.describe('supplier catalogue', () => {
     await page.goto('/products');
 
     await expectLoadedOrReported(page);
+    // Scoped to the page's own content: the rail's connection-health footer
+    // legitimately names the connected provider ("CJdropshipping") in its
+    // own unrelated summary, which would otherwise substring-match here too.
+    const content = page.getByRole('main');
     await expect(
-      page.getByRole('link', { name: 'Sals3 catalogue' }),
+      content.getByRole('link', { name: 'Sals3 catalogue' }),
     ).toHaveCount(0);
     await expect(
-      page.getByRole('link', { name: 'CJdropshipping' }),
+      content.getByRole('link', { name: 'CJdropshipping' }),
     ).toHaveCount(0);
   });
 

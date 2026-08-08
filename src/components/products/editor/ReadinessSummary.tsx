@@ -19,19 +19,25 @@ type CountRowProps = {
   emphasis?: 'danger' | 'warning';
 };
 
+/**
+ * Sharing one grid across all three rows (rather than each row running its
+ * own `justify-between`) is what actually guarantees the value column lines
+ * up - three independent flex rows only look aligned by coincidence, the
+ * moment any of them changes width.
+ */
 function CountRow({ label, value, emphasis }: CountRowProps) {
   const emphasised = value > 0 && emphasis !== undefined;
   const toneClass = emphasis === 'danger' ? 'text-red-600' : 'text-amber-600';
 
   return (
-    <div className="flex items-baseline justify-between gap-2">
+    <>
       <dt className="text-ink-muted">{label}</dt>
       <dd
-        className={`font-semibold tabular-nums ${emphasised ? toneClass : 'text-ink-muted'}`}
+        className={`text-right font-semibold tabular-nums ${emphasised ? toneClass : 'text-ink-muted'}`}
       >
         {value}
       </dd>
-    </div>
+    </>
   );
 }
 
@@ -53,7 +59,7 @@ export default function ReadinessSummary({
   const presentation = presentEvaluationStatus(status);
 
   return (
-    <div className="rounded-lg border border-border bg-background p-2.5">
+    <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <StatusPill label={presentation.label} tone={presentation.tone} />
         <span className="text-xs text-muted-foreground tabular-nums">
@@ -61,19 +67,15 @@ export default function ReadinessSummary({
         </span>
       </div>
 
-      <Progress
-        value={completionPercent}
-        aria-label="Listing completeness"
-        className="mt-2.5"
-      />
+      <Progress value={completionPercent} aria-label="Listing completeness" />
 
-      <dl className="mt-2.5 flex flex-col gap-0.5 text-xs">
+      <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1.5 border-t border-border pt-3 text-xs">
         <CountRow label="Blockers" value={blockerCount} emphasis="danger" />
         <CountRow label="Warnings" value={warningCount} emphasis="warning" />
         <CountRow label="Suggestions" value={suggestionCount} />
       </dl>
 
-      <p className="mt-2 text-xs text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         Last automated check {formatDateTime(lastValidatedAt)}
       </p>
     </div>

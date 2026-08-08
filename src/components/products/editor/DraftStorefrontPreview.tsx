@@ -1,3 +1,5 @@
+import { Monitor, Smartphone } from 'lucide-react';
+import { useState } from 'react';
 import { Label } from '@/components/ui/label';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
 import {
@@ -7,12 +9,57 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { cn } from '@/lib/utils';
 import { formatMoney } from '@/lib/seller-center/product-editor/format';
 import type {
   MarketEvidenceFixture,
   SpecificationFixture,
   VariantFixture,
 } from '@/lib/seller-center/product-editor/types';
+
+type PreviewDevice = 'browser' | 'phone';
+
+/** Frame width only - the preview's own content never reflows between the two, since this panel already lives in a narrow sidebar with no room for a real two-column desktop layout. */
+function DeviceToggle({
+  device,
+  onChange,
+}: {
+  device: PreviewDevice;
+  onChange: (device: PreviewDevice) => void;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Preview device"
+      className="inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5"
+    >
+      {(
+        [
+          { value: 'browser', label: 'Browser', icon: Monitor },
+          { value: 'phone', label: 'Phone', icon: Smartphone },
+        ] as const
+      ).map(({ value, label, icon: Icon }) => (
+        <button
+          key={value}
+          type="button"
+          role="radio"
+          aria-checked={device === value}
+          aria-label={`${label} preview`}
+          title={`${label} preview`}
+          onClick={() => onChange(value)}
+          className={cn(
+            'flex size-7 items-center justify-center rounded-[5px] transition-colors',
+            device === value
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          <Icon aria-hidden="true" className="size-3.5" />
+        </button>
+      ))}
+    </div>
+  );
+}
 
 type DraftStorefrontPreviewProps = {
   productName: string;
@@ -52,6 +99,7 @@ export default function DraftStorefrontPreview({
   onPreviewVariantChange,
   showHeading = true,
 }: DraftStorefrontPreviewProps) {
+  const [device, setDevice] = useState<PreviewDevice>('browser');
   const variant =
     variants.find((item) => item.id === previewVariantId) ?? variants[0];
   const market =
@@ -66,7 +114,10 @@ export default function DraftStorefrontPreview({
             Draft Storefront Preview
           </h2>
         ) : null}
-        <StatusPill label="Draft preview" tone="info" />
+        <div className="ml-auto flex items-center gap-2">
+          <DeviceToggle device={device} onChange={setDevice} />
+          <StatusPill label="Draft preview" tone="info" />
+        </div>
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -107,7 +158,29 @@ export default function DraftStorefrontPreview({
         </Select>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-border">
+      <div
+        className={cn(
+          'mx-auto overflow-hidden rounded-lg border border-border transition-[max-width] duration-200',
+          device === 'phone' ? 'max-w-[220px]' : 'w-full',
+        )}
+      >
+        {device === 'browser' ? (
+          <div
+            aria-hidden="true"
+            className="flex items-center gap-1.5 border-b border-border bg-muted px-2.5 py-1.5"
+          >
+            <span className="size-2 rounded-full bg-red-600/60" />
+            <span className="size-2 rounded-full bg-amber-600/60" />
+            <span className="size-2 rounded-full bg-green-600/60" />
+          </div>
+        ) : (
+          <div
+            aria-hidden="true"
+            className="flex justify-center border-b border-border bg-muted py-1.5"
+          >
+            <span className="h-1 w-10 rounded-full bg-border" />
+          </div>
+        )}
         <span
           aria-hidden="true"
           className="flex aspect-square items-center justify-center bg-muted font-mono text-xs text-muted-foreground"
