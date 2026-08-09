@@ -41,8 +41,12 @@ test.describe('Add Product - supplier-prefilled editor', () => {
   });
 
   test('is reachable from the sidebar under Add Product', async ({ page }) => {
-    await page.goto('/listings/new');
-    await page.getByRole('link', { name: 'From a supplier product' }).click();
+    // Not /overview: that page has its own "Add Product" action button in
+    // its header, which would collide with the sidebar link of the same
+    // name. Any page without a competing button proves the sidebar link
+    // itself works.
+    await page.goto('/supplier-apps');
+    await page.getByRole('link', { name: 'Add Product' }).click();
 
     await expect(
       page.getByText('UI preview using fictional product data'),

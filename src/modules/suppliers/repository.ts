@@ -75,6 +75,22 @@ export async function findProviderByCode(
   return rows[0] ?? null;
 }
 
+/**
+ * Every provider a seller could connect to today - the real source for the
+ * Supplier Apps "Available" section. Never hardcode a provider list here;
+ * `supplier_providers` seeds only real, owner-approved adapters (see that
+ * table's own header comment), so an empty result is a real "nothing else
+ * is approved yet", not a gap to fill with an illustrative name.
+ */
+export async function listActiveProviders(
+  executor: Executor,
+): Promise<SupplierProviderRow[]> {
+  return executor
+    .select()
+    .from(supplierProviders)
+    .where(eq(supplierProviders.status, 'ACTIVE'));
+}
+
 /** Bootstrap-only: seeds a provider row once, idempotent on `code`. */
 export async function insertProviderIfAbsent(
   executor: Executor,
@@ -120,6 +136,22 @@ export async function findConnectionBySellerAndProvider(
     .limit(1);
 
   return rows[0] ?? null;
+}
+
+/**
+ * Every connection this seller has, across every provider and status - the
+ * real source for the Supplier Apps "Installed" section. A reauth-required
+ * or disconnected connection still belongs here (Reconnect, not a fresh
+ * Connect) - only a provider with no row at all is "Available".
+ */
+export async function listConnectionsBySeller(
+  executor: Executor,
+  sellerAccountId: string,
+): Promise<SupplierConnectionRow[]> {
+  return executor
+    .select()
+    .from(supplierConnections)
+    .where(eq(supplierConnections.sellerAccountId, sellerAccountId));
 }
 
 export async function findConnectionByProviderAndHash(

@@ -3,6 +3,14 @@
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -43,19 +51,28 @@ type Step = 'idle' | 'confirming' | 'code-sent';
  * Disconnecting only stops the automated pipeline from sourcing new
  * products through this connection - it does not delete the connection, its
  * encrypted credential, or any product/evaluation already stored (those are
- * tenant-scoped by seller, not by live connection status). Still gated
- * behind a one-time verification code before it fires, since a single
- * accidental click would otherwise silently stop sourcing with no undo
- * prompt. See `requestCjDisconnectVerification` for why the code shows up
- * directly in this UI today (no email/SMS provider is wired yet).
+ * tenant-scoped by seller, not by live connection status).
+ *
+ * The confirmation dialog's chrome and copy match the approved design
+ * (`Sals3 Portal Screens.dc.html:1010-1026`), but the actual gate stays the
+ * real one-time verification code, not the design's typed "DISCONNECT" text
+ * match - a client-side word match is not a real barrier, and this app
+ * already has a server-enforced one. See `requestCjDisconnectVerification`
+ * for why the code shows up directly in this UI today (no email/SMS
+ * provider is wired yet).
  */
 export default function DisconnectCjButton() {
   const [isPending, startTransition] = useTransition();
   const [step, setStep] = useState<Step>('idle');
   const [code, setCode] = useState('');
 
-  if (step === 'idle') {
-    return (
+  const close = () => {
+    setStep('idle');
+    setCode('');
+  };
+
+  return (
+    <>
       <Button
         type="button"
         variant="outline"
@@ -63,109 +80,118 @@ export default function DisconnectCjButton() {
       >
         Disconnect
       </Button>
-    );
-  }
+      <Dialog
+        open={step !== 'idle'}
+        onOpenChange={(open) => {
+          if (!open) close();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Disconnect CJ Dropshipping?</DialogTitle>
+            <DialogDescription>
+              Sourcing, evaluation and evidence refresh stop for this account
+              immediately. Live listings stay published and every accepted order
+              keeps its purchased item exactly as it was - but supplier stock
+              and price stop updating, so those listings will drift out of date.
+            </DialogDescription>
+          </DialogHeader>
 
-  if (step === 'confirming') {
-    return (
-      <div className="flex flex-col gap-2">
-        <p className="text-sm text-ink-muted">
-          Stop sourcing from this connection? Already-sourced products and past
-          decisions stay exactly as they are - only new sourcing through this
-          connection stops. Confirming a verification code first.
-        </p>
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={isPending}
-            onClick={() => {
-              startTransition(async () => {
-                const result = await requestCjDisconnectVerification();
+          {step === 'confirming' ? (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm text-ink-muted">
+                Confirming sends a one-time verification code first.
+              </p>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isPending}
+                  onClick={close}
+                >
+                  Keep connected
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={isPending}
+                  onClick={() => {
+                    startTransition(async () => {
+                      const result = await requestCjDisconnectVerification();
 
-                if (!result.ok) {
-                  toast(REQUEST_FAILURE_MESSAGES[result.reason]);
-                  setStep('idle');
-                  return;
-                }
+                      if (!result.ok) {
+                        toast(REQUEST_FAILURE_MESSAGES[result.reason]);
+                        close();
+                        return;
+                      }
 
-                if (result.devCode !== undefined) {
-                  toast(
-                    `Verification code: ${result.devCode} (shown here because no email/SMS provider is wired yet)`,
-                  );
-                } else {
-                  toast('Verification code sent.');
-                }
-                setStep('code-sent');
-              });
-            }}
-          >
-            {isPending ? 'Sending code…' : 'Send verification code'}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={isPending}
-            onClick={() => setStep('idle')}
-          >
-            Cancel
-          </Button>
-        </div>
-      </div>
-    );
-  }
+                      if (result.devCode !== undefined) {
+                        toast(
+                          `Verification code: ${result.devCode} (shown here because no email/SMS provider is wired yet)`,
+                        );
+                      } else {
+                        toast('Verification code sent.');
+                      }
+                      setStep('code-sent');
+                    });
+                  }}
+                >
+                  {isPending ? 'Sending code…' : 'Send verification code'}
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <form
+              className="flex flex-col gap-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                startTransition(async () => {
+                  const result = await disconnectCjSupplier(code);
 
-  return (
-    <form
-      className="flex flex-col gap-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        startTransition(async () => {
-          const result = await disconnectCjSupplier(code);
-
-          if (result.ok) {
-            toast('Disconnected. You can reconnect any time.');
-            setStep('idle');
-            setCode('');
-          } else {
-            toast(DISCONNECT_FAILURE_MESSAGES[result.reason]);
-          }
-        });
-      }}
-    >
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="disconnect-code">Verification code</Label>
-        <Input
-          id="disconnect-code"
-          inputMode="numeric"
-          autoComplete="off"
-          placeholder="6-digit code"
-          maxLength={6}
-          value={code}
-          onChange={(event) => setCode(event.target.value)}
-          required
-        />
-      </div>
-      <div className="flex items-center gap-2">
-        <Button
-          type="submit"
-          variant="destructive"
-          disabled={isPending || code.trim() === ''}
-        >
-          {isPending ? 'Disconnecting…' : 'Confirm disconnect'}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={isPending}
-          onClick={() => {
-            setStep('idle');
-            setCode('');
-          }}
-        >
-          Cancel
-        </Button>
-      </div>
-    </form>
+                  if (result.ok) {
+                    toast('Disconnected. You can reconnect any time.');
+                    close();
+                  } else {
+                    toast(DISCONNECT_FAILURE_MESSAGES[result.reason]);
+                  }
+                });
+              }}
+            >
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="disconnect-code">Verification code</Label>
+                <Input
+                  id="disconnect-code"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="6-digit code"
+                  maxLength={6}
+                  value={code}
+                  onChange={(event) => setCode(event.target.value)}
+                  required
+                  autoFocus
+                />
+              </div>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isPending}
+                  onClick={close}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="destructive"
+                  disabled={isPending || code.trim() === ''}
+                >
+                  {isPending ? 'Disconnecting…' : 'Confirm disconnect'}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

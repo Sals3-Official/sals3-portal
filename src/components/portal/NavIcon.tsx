@@ -12,10 +12,11 @@ import {
   Plug,
   Plus,
   ScrollText,
+  Settings,
   Star,
   Upload,
 } from 'lucide-react';
-import type { NavItem } from '@/lib/portal/navigation';
+import type { NavIconName } from '@/lib/portal/navigation';
 
 const ICONS = {
   package: Package,
@@ -33,10 +34,11 @@ const ICONS = {
   loader: Loader,
   ban: Ban,
   plug: Plug,
+  settings: Settings,
 } as const;
 
 type NavIconProps = {
-  name: NavItem['icon'];
+  name: NavIconName;
 };
 
 /** Lucide SVG icons only. Icons are decorative; the label carries the name. */

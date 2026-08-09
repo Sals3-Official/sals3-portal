@@ -1,11 +1,12 @@
-import { OctagonAlert, TriangleAlert } from 'lucide-react';
 import { Label } from '@/components/ui/label';
+import StatusPill from '@/components/seller-center/shared/StatusPill';
 import { sectionSeverity } from '@/lib/seller-center/product-editor/derive';
 import {
   EDITOR_SECTIONS,
   type EditorSectionId,
   type ReadinessIssue,
 } from '@/lib/seller-center/product-editor/types';
+import { SEVERITY_PRESENTATION } from './presentation';
 
 type EditorSectionNavigationProps = {
   issues: ReadinessIssue[];
@@ -28,26 +29,26 @@ const NAV_LABELS: Record<EditorSectionId, string> = {
   review: 'Review & Publish',
 };
 
+/**
+ * The same bounded pill used everywhere else a severity needs a word plus an
+ * icon (`EditorStatusPill`, the readiness issue groups) - loose coloured
+ * text floating next to a variable-length label is what made a wrapped row
+ * of seven tabs read as ragged/misaligned. A pill has a fixed height and a
+ * visible edge, so the row stays tidy regardless of which labels wrap.
+ */
 function SectionFlag({ severity }: SectionFlagProps) {
-  if (severity === 'BLOCKER') {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-600">
-        <OctagonAlert aria-hidden="true" className="size-3.5" />
-        Blocker
-      </span>
-    );
-  }
+  if (severity === null) return null;
 
-  if (severity === 'WARNING') {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600">
-        <TriangleAlert aria-hidden="true" className="size-3.5" />
-        Warning
-      </span>
-    );
-  }
+  const presentation = SEVERITY_PRESENTATION[severity];
 
-  return null;
+  return (
+    <StatusPill
+      label={presentation.label}
+      tone={presentation.tone}
+      icon={presentation.icon}
+      className="pointer-events-none"
+    />
+  );
 }
 
 /**
