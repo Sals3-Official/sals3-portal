@@ -1,9 +1,27 @@
 import { expect, test } from '@playwright/test';
 
+/**
+ * Matches the skip condition already established in catalog-shortlist.spec.ts
+ * for real-database-dependent assertions - CI's `verify` workflow sets no
+ * `DATABASE_URL`, so `/overview` correctly falls into its own "No database
+ * configured" branch there, which has none of this page's normal sections.
+ */
+function isDatabaseConfigured(): boolean {
+  return (
+    typeof process.env.DATABASE_URL === 'string' &&
+    process.env.DATABASE_URL.trim() !== ''
+  );
+}
+
 test.describe('Seller Center overview', () => {
   test('shows the real section shell and honest not-built-yet notices', async ({
     page,
   }) => {
+    test.skip(
+      !isDatabaseConfigured(),
+      'DATABASE_URL not configured in this environment',
+    );
+
     await page.goto('/overview');
 
     await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
@@ -32,6 +50,11 @@ test.describe('Seller Center overview', () => {
   test('Product Sourcing queues links to the real sourcing pages', async ({
     page,
   }) => {
+    test.skip(
+      !isDatabaseConfigured(),
+      'DATABASE_URL not configured in this environment',
+    );
+
     await page.goto('/overview');
 
     // Scoped to the table - the sidebar has its own "Exception Queue" link
