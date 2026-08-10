@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { cjImageUrl, looseNumber, looseText } from './primitives';
+import {
+  cjImageUrl,
+  cjPointsInfoSchema,
+  looseNumber,
+  looseText,
+} from './primitives';
 
 /**
  * CJdropshipping `/product/list` response schemas.
@@ -45,6 +50,8 @@ export const cjProductSchema = z.object({
 export const cjProductListSchema = z.object({
   code: z.number(),
   message: looseText,
+  /** Points quota state CJ returns on every response - persisted by the discovery budget, never invented. */
+  pointsInfo: cjPointsInfoSchema,
   data: z
     .object({
       pageNum: looseNumber,

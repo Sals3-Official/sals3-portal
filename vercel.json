@@ -1,4 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["syd1"]
+  "regions": ["syd1"],
+  "functions": {
+    "src/app/api/queues/catalog-discovery/route.ts": {
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "catalog-discovery",
+          "retryAfterSeconds": 60
+        }
+      ]
+    }
+  }
 }

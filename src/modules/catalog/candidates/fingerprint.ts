@@ -3,17 +3,20 @@ import type { CjProduct } from '@/lib/cj/normalize';
 import type { FeedSnapshot } from './rules/contracts';
 
 /**
- * Cheap hash of the CJ feed fields that matter for "has this changed since
- * we last looked" (spec's ingestion step). Comparing this avoids re-queueing
- * - and re-spending CJ evidence points on - a candidate whose feed data is
- * unchanged since its last evaluation.
+ * MATERIAL-change fingerprint (ADR-010 §12.5): includes every feed field
+ * that can change a rule outcome - normalized name, provider category
+ * identity, price, and shipping-origin hints - and deliberately EXCLUDES
+ * popularity-only `listedCount`, which is a ranking signal no versioned
+ * rule reads. A popularity-only change must not spend qualification calls;
+ * a name/category/price/origin change must trigger re-evaluation.
  */
 export function computeFingerprint(product: CjProduct): string {
   const canonical = JSON.stringify([
     product.id,
+    product.name,
     product.category,
     product.priceCentsUsd,
-    product.listedCount,
+    [...product.shipsFrom].sort(),
   ]);
 
   return createHash('sha256').update(canonical).digest('hex');

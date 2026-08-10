@@ -3,14 +3,15 @@ import { isDatabaseConfigured } from '@/lib/db/client';
 import runEvaluationTick from '@/modules/catalog/candidates/run-tick';
 
 /**
- * Protected internal endpoint that runs one automated-evaluation tick
- * (ingest -> requeue due retries -> evaluate one batch). Invoked every 5
- * minutes by the `.github/workflows/evaluate-tick.yml` schedule with a `GET`
- * request and an `Authorization: Bearer <CRON_SECRET>` header - not Vercel
- * Cron, because the Hobby plan rejects any cron more frequent than once/day
- * (see the "Automated candidate evaluation" section of README.md). There is
- * no portal session on a scheduled invocation, so `requirePermission` does
- * not apply here.
+ * BREAK-GLASS RECOVERY ONLY. The normal execution model is the durable
+ * Vercel Queues chain (started once via POST /api/internal/catalog/
+ * discovery/start); this route is an authenticated manual recovery action
+ * for a stalled chain - it drains the transactional outbox, requeues due
+ * retries, and evaluates one bounded batch. It is NOT scheduled anywhere
+ * (ADR-013 §12 forbids cron/scheduled ticks in the target runtime); only
+ * the manual `workflow_dispatch` in `.github/workflows/evaluate-tick.yml`
+ * or a direct authenticated call invokes it. There is no portal session on
+ * such an invocation, so `requirePermission` does not apply here.
  *
  * Must always run fresh against the database - never a cached response.
  */

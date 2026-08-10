@@ -153,6 +153,58 @@ export const ABNORMAL_PRICE_CHANGE_PERCENT = envInt(
   30,
 );
 
+/**
+ * Freshness tiers (ADR-010 §12.2): when a decision's evidence must be
+ * reconciled again. Selected/imported/live/order-linked products get
+ * webhook-driven updates plus daily reconciliation once that linkage
+ * exists; qualified-but-unselected products refresh within 72 hours; other
+ * operational nonterminal products within 30 days. Permanent policy blocks
+ * return `null` - they re-evaluate only when supplier data or the relevant
+ * policy/evidence version changes, never on a clock.
+ */
+export function nextRefreshAtFor(
+  status:
+    | 'QUEUED'
+    | 'EVALUATING'
+    | 'PASS'
+    | 'PASS_WITH_ATTENTION'
+    | 'TEMPORARILY_INELIGIBLE'
+    | 'BLOCKED'
+    | 'EVALUATION_FAILED',
+  now: Date = new Date(),
+): Date | null {
+  const hours = (n: number) => new Date(now.getTime() + n * 60 * 60 * 1000);
+
+  switch (status) {
+    case 'PASS':
+    case 'PASS_WITH_ATTENTION':
+      // Qualified but unselected: reconcile at least every 72 hours. (No
+      // selected/imported/live linkage exists yet; once it does, those rows
+      // move to the daily tier.)
+      return hours(72);
+    case 'TEMPORARILY_INELIGIBLE':
+    case 'EVALUATION_FAILED':
+      // Operational nonterminal: retries handle the near term; the 30-day
+      // freshness floor guarantees even an exhausted row is reconciled and
+      // can reopen (ADR-010 §12.7 - a dead letter is not a blind spot).
+      return hours(30 * 24);
+    case 'BLOCKED':
+      return null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Deferral delay when an evidence fetch hits rate/points pressure (a real
+ * provider 429, or the shared limiter refusing a slot under concurrency).
+ * ADR-013 §5: that is recoverable connection health, never a technical
+ * attempt against the product - the row waits out roughly one documented
+ * per-minute replenishment window and retries with its attempt budget
+ * intact.
+ */
+export const RATE_LIMIT_DEFER_MS = 15 * 60 * 1000;
+
 export const MAX_EVALUATION_ATTEMPTS = 5;
 /**
  * Lowered from 8 on 2026-08-08: paired with `MAX_PAGES_PER_TICK_PER_CONNECTION`,

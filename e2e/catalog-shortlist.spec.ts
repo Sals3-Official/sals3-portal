@@ -2,9 +2,11 @@ import { expect, test, type APIRequestContext } from '@playwright/test';
 import postgres from 'postgres';
 
 /**
- * The automated candidate-evaluation pipeline (ingest -> screen -> CJ
- * evidence -> qualify -> decide), driven by the protected internal route
- * `/api/internal/catalog/evaluate-tick` instead of a per-row click.
+ * The automated candidate-evaluation pipeline (screen -> CJ evidence ->
+ * qualify -> decide). Normal execution is the durable queue chain; the
+ * protected internal route `/api/internal/catalog/evaluate-tick` exercised
+ * here is the BREAK-GLASS recovery action (outbox drain + requeue due
+ * retries + one bounded evaluation batch) - never a schedule.
  *
  * `next dev` loads `.env.local` for its own process, but Playwright's own
  * Node process does not - `process.loadEnvFile` (same pattern as
@@ -70,7 +72,7 @@ test.describe('automated candidate-evaluation pipeline', () => {
     expect(response.status()).toBe(401);
   });
 
-  test('a real tick ingests and evaluates without anyone clicking a row', async ({
+  test('a real break-glass tick drains the outbox and evaluates without anyone clicking a row', async ({
     request,
   }) => {
     test.skip(
@@ -83,9 +85,11 @@ test.describe('automated candidate-evaluation pipeline', () => {
     expect(result.ok).toBe(true);
     expect(result.result).toEqual(
       expect.objectContaining({
-        ingestion: expect.objectContaining({
-          pagesFetched: expect.any(Number),
+        outbox: expect.objectContaining({
+          dispatched: expect.any(Number),
+          failed: expect.any(Number),
         }),
+        requeuedForRetry: expect.any(Number),
         claimed: expect.any(Number),
         evaluated: expect.any(Number),
       }),

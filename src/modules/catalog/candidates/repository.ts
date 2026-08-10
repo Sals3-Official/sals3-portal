@@ -15,7 +15,11 @@ import {
 import { CONNECTION_PAUSE_ERROR_CODE_VALUES } from './connection-pause';
 import type { Decision } from './rules/decide';
 import type { EvidenceSummary, FeedSnapshot } from './rules/contracts';
-import { MAX_EVALUATION_ATTEMPTS, nextRetryDelayMs } from './rules/policy';
+import {
+  MAX_EVALUATION_ATTEMPTS,
+  nextRefreshAtFor,
+  nextRetryDelayMs,
+} from './rules/policy';
 
 /**
  * Data access for the candidate shortlist. Every statement is parameterized
@@ -537,6 +541,9 @@ export async function recordEvaluationDecision(
         isTemporarilyIneligible && !exhausted
           ? new Date(Date.now() + nextRetryDelayMs(nextAttemptCount))
           : null,
+      // Freshness deadline (ADR-010 §12.2): every decided row gets its
+      // tier's reconciliation deadline; permanent BLOCKED stays null.
+      nextRefreshAt: nextRefreshAtFor(input.decision.status),
       evaluatedAt: new Date(),
       updatedAt: new Date(),
     })
@@ -559,6 +566,7 @@ export async function recordScreeningDecision(
       attemptCount: 0,
       lastErrorCode: null,
       nextRetryAt: null,
+      nextRefreshAt: nextRefreshAtFor(input.decision.status),
       evaluatedAt: new Date(),
       updatedAt: new Date(),
     })
@@ -582,11 +590,303 @@ export async function recordEvaluationFailure(
       attemptCount: input.attemptCount,
       lastErrorCode: input.lastErrorCode,
       nextRetryAt: input.nextRetryAt,
+      // Even an exhausted failure keeps a freshness floor, so it reconciles
+      // and can reopen instead of becoming a permanent blind spot.
+      nextRefreshAt: nextRefreshAtFor('EVALUATION_FAILED'),
       leasedBy: null,
       leasedUntil: null,
       updatedAt: new Date(),
     })
     .where(eq(candidateEvaluations.candidateId, input.candidateId));
+}
+
+/**
+ * Queue-consumer claim for ONE candidate's evaluation (the EVALUATE_CANDIDATE
+ * handler's admission gate). Claimable states, all under `FOR UPDATE` so two
+ * concurrent deliveries can never both win:
+ *
+ * - `QUEUED` - normal admission;
+ * - `EVALUATING` with an expired lease - crashed-worker recovery;
+ * - `TEMPORARILY_INELIGIBLE`/`EVALUATION_FAILED` whose `nextRetryAt` has
+ *   passed, under the attempt cap - the queue-delayed retry admission
+ *   (`RETRY_DUE`), replacing the old cron-tick `requeueDueRetries` scan.
+ *
+ * Anything else (in-flight with a live lease, decided fresh rows, exhausted
+ * dead letters) returns null and the duplicate delivery acknowledges as a
+ * no-op - at-least-once delivery can never create a duplicate logical
+ * evidence decision.
+ */
+export async function claimEvaluationByCandidateId(
+  tx: DbTransaction,
+  input: { candidateId: string; workerId: string; leaseDurationMs: number },
+): Promise<CandidateEvaluationRow | null> {
+  const now = new Date();
+  const rows = await tx
+    .select()
+    .from(candidateEvaluations)
+    .where(eq(candidateEvaluations.candidateId, input.candidateId))
+    .limit(1)
+    .for('update');
+
+  const row = rows[0];
+
+  if (row === undefined) return null;
+
+  const isQueued = row.status === 'QUEUED';
+  const isExpiredEvaluating =
+    row.status === 'EVALUATING' &&
+    (row.leasedUntil === null || row.leasedUntil <= now);
+  const isDueRetry =
+    (row.status === 'TEMPORARILY_INELIGIBLE' ||
+      row.status === 'EVALUATION_FAILED') &&
+    row.nextRetryAt !== null &&
+    row.nextRetryAt <= now &&
+    row.attemptCount < MAX_EVALUATION_ATTEMPTS;
+
+  if (!isQueued && !isExpiredEvaluating && !isDueRetry) return null;
+
+  const claimed = await tx
+    .update(candidateEvaluations)
+    .set({
+      status: 'EVALUATING',
+      ...(isDueRetry ? { admissionReason: 'RETRY_DUE' as const } : {}),
+      leasedBy: input.workerId,
+      leasedUntil: new Date(now.getTime() + input.leaseDurationMs),
+      updatedAt: now,
+    })
+    .where(eq(candidateEvaluations.id, row.id))
+    .returning();
+
+  return claimed[0] ?? null;
+}
+
+/**
+ * Releases a claim WITHOUT consuming an attempt - used when the points/rate
+ * budget refuses the work before any supplier call was made. The row goes
+ * back to `QUEUED` and the caller schedules a delayed queue continuation.
+ */
+export async function releaseEvaluationClaim(
+  executor: Executor,
+  input: { candidateId: string; workerId: string; lastErrorCode: string },
+): Promise<void> {
+  await executor
+    .update(candidateEvaluations)
+    .set({
+      status: 'QUEUED',
+      leasedBy: null,
+      leasedUntil: null,
+      lastErrorCode: input.lastErrorCode,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(candidateEvaluations.candidateId, input.candidateId),
+        eq(candidateEvaluations.leasedBy, input.workerId),
+        eq(candidateEvaluations.status, 'EVALUATING'),
+      ),
+    );
+}
+
+/**
+ * Freshness sweep (ADR-010 §12.2): decided rows whose `nextRefreshAt` has
+ * passed go back to `QUEUED` with admission `EVIDENCE_EXPIRED`, bounded per
+ * call. Returns the requeued candidate ids so the caller can enqueue their
+ * evaluation messages in the same transaction.
+ */
+export async function requeueDueRefreshes(
+  executor: Executor,
+  supplierConnectionId: string,
+  limit: number,
+): Promise<string[]> {
+  const due = await executor
+    .select({
+      id: candidateEvaluations.id,
+      candidateId: candidateEvaluations.candidateId,
+    })
+    .from(candidateEvaluations)
+    .innerJoin(
+      supplierCandidates,
+      eq(supplierCandidates.id, candidateEvaluations.candidateId),
+    )
+    .where(
+      and(
+        eq(supplierCandidates.supplierConnectionId, supplierConnectionId),
+        lt(candidateEvaluations.nextRefreshAt, new Date()),
+        or(
+          eq(candidateEvaluations.status, 'PASS'),
+          eq(candidateEvaluations.status, 'PASS_WITH_ATTENTION'),
+          eq(candidateEvaluations.status, 'TEMPORARILY_INELIGIBLE'),
+          eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
+        ),
+      ),
+    )
+    .limit(limit);
+
+  if (due.length === 0) return [];
+
+  await executor
+    .update(candidateEvaluations)
+    .set({
+      status: 'QUEUED',
+      admissionReason: 'EVIDENCE_EXPIRED',
+      attemptCount: 0,
+      lastErrorCode: null,
+      nextRetryAt: null,
+      nextRefreshAt: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      inArray(
+        candidateEvaluations.id,
+        due.map((row) => row.id),
+      ),
+    );
+
+  return due.map((row) => row.candidateId);
+}
+
+/**
+ * Stranded-work recovery (turnover: "Products cannot remain indefinitely in
+ * DISCOVERED, QUEUED, or EVALUATING without a visible due-retry, lease
+ * recovery, or terminal failure state"). A row can strand when its
+ * EVALUATE_CANDIDATE message is lost or parked by the delivery cap: `QUEUED`
+ * with nothing in flight, or `EVALUATING` whose lease expired with no
+ * successor. This sweep returns their candidate ids so the caller re-enqueues
+ * evaluation messages - state itself needs no change (`QUEUED` is already
+ * claimable; expired `EVALUATING` is claimed by the crashed-worker path).
+ * Bounded, idempotent: a duplicate message for an already-claimed row no-ops
+ * at the claim.
+ */
+export async function listStrandedEvaluations(
+  executor: Executor,
+  supplierConnectionId: string,
+  input: { stalledSince: Date; limit: number },
+): Promise<string[]> {
+  const rows = await executor
+    .select({ candidateId: candidateEvaluations.candidateId })
+    .from(candidateEvaluations)
+    .innerJoin(
+      supplierCandidates,
+      eq(supplierCandidates.id, candidateEvaluations.candidateId),
+    )
+    .where(
+      and(
+        eq(supplierCandidates.supplierConnectionId, supplierConnectionId),
+        or(
+          and(
+            eq(candidateEvaluations.status, 'QUEUED'),
+            lt(candidateEvaluations.updatedAt, input.stalledSince),
+          ),
+          and(
+            eq(candidateEvaluations.status, 'EVALUATING'),
+            lt(candidateEvaluations.leasedUntil, new Date()),
+          ),
+        ),
+      ),
+    )
+    .limit(input.limit);
+
+  return rows.map((row) => row.candidateId);
+}
+
+/**
+ * Policy-version re-evaluation (ADR-010 §12.6): a new policy/algorithm
+ * version queues affected candidates even when the supplier fingerprint did
+ * not change - a historical `PASS` or `BLOCKED` row must never stay silently
+ * active under an obsolete rule pack. Decided rows whose stored composed
+ * `policyVersion` differs from the current one return to `QUEUED` with
+ * admission `POLICY_VERSION_CHANGED`, bounded per call. Idempotent: once
+ * requeued (or re-decided under the current version) a row no longer
+ * matches.
+ */
+export async function requeuePolicyVersionMismatches(
+  executor: Executor,
+  supplierConnectionId: string,
+  input: { currentPolicyVersion: string; limit: number },
+): Promise<string[]> {
+  const stale = await executor
+    .select({
+      id: candidateEvaluations.id,
+      candidateId: candidateEvaluations.candidateId,
+    })
+    .from(candidateEvaluations)
+    .innerJoin(
+      supplierCandidates,
+      eq(supplierCandidates.id, candidateEvaluations.candidateId),
+    )
+    .where(
+      and(
+        eq(supplierCandidates.supplierConnectionId, supplierConnectionId),
+        ne(candidateEvaluations.policyVersion, input.currentPolicyVersion),
+        or(
+          eq(candidateEvaluations.status, 'PASS'),
+          eq(candidateEvaluations.status, 'PASS_WITH_ATTENTION'),
+          eq(candidateEvaluations.status, 'BLOCKED'),
+          eq(candidateEvaluations.status, 'TEMPORARILY_INELIGIBLE'),
+          eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
+        ),
+      ),
+    )
+    .limit(input.limit);
+
+  if (stale.length === 0) return [];
+
+  await executor
+    .update(candidateEvaluations)
+    .set({
+      status: 'QUEUED',
+      admissionReason: 'POLICY_VERSION_CHANGED',
+      attemptCount: 0,
+      lastErrorCode: null,
+      nextRetryAt: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      inArray(
+        candidateEvaluations.id,
+        stale.map((row) => row.id),
+      ),
+    );
+
+  return stale.map((row) => row.candidateId);
+}
+
+/**
+ * Webhook-driven requeue (PRODUCT/VARIANT/STOCK change events): a decided
+ * candidate returns to `QUEUED` with admission `MATERIAL_SOURCE_CHANGE`.
+ * In-flight rows are left alone (never interrupt work); the change is
+ * still observed because the running evaluation fetches fresh evidence.
+ * Idempotent: once requeued, a duplicate event matches nothing.
+ */
+export async function requeueForSourceChange(
+  executor: Executor,
+  candidateId: string,
+): Promise<boolean> {
+  const updated = await executor
+    .update(candidateEvaluations)
+    .set({
+      status: 'QUEUED',
+      admissionReason: 'MATERIAL_SOURCE_CHANGE',
+      attemptCount: 0,
+      lastErrorCode: null,
+      nextRetryAt: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(candidateEvaluations.candidateId, candidateId),
+        or(
+          eq(candidateEvaluations.status, 'PASS'),
+          eq(candidateEvaluations.status, 'PASS_WITH_ATTENTION'),
+          eq(candidateEvaluations.status, 'BLOCKED'),
+          eq(candidateEvaluations.status, 'TEMPORARILY_INELIGIBLE'),
+          eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
+        ),
+      ),
+    )
+    .returning({ id: candidateEvaluations.id });
+
+  return updated.length > 0;
 }
 
 export async function insertIdempotencyRecordIfAbsent(

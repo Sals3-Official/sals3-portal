@@ -10,3 +10,4 @@ export * from './supplier-providers';
 export * from './supplier-connections';
 export * from './supplier-account-bindings';
 export * from './supplier-secrets';
+export * from './discovery';

@@ -19,6 +19,7 @@ import {
   MAX_EVALUATION_ATTEMPTS,
   nextRetryDelayMs,
   POLICY_VERSION,
+  RATE_LIMIT_DEFER_MS,
 } from './rules/policy';
 import { runQualification, summariseEvidence } from './rules/qualification';
 import { runScreening } from './rules/screening';
@@ -39,8 +40,20 @@ import {
  * matching the discipline already established in `capture-evidence.ts`; only
  * the final persistence step is a short transaction.
  */
+export type EvaluateCandidateOptions = {
+  /**
+   * Governs every supplier HTTP call of this evaluation. The queue handler
+   * passes a shared-limiter + pointsInfo-recording wrapper here (see
+   * `discovery/governed-fetch.ts`) so concurrent evaluation workers cannot
+   * collectively exceed the provider request rate; the break-glass tick uses
+   * the default fetch (single manual invocation, adapter self-spacing).
+   */
+  fetchImpl?: typeof fetch;
+};
+
 export default async function evaluateCandidate(
   row: CandidateEvaluationRow,
+  options: EvaluateCandidateOptions = {},
 ): Promise<void> {
   const candidate = await findCandidateById(getDb(), row.candidateId);
 
@@ -167,6 +180,7 @@ export default async function evaluateCandidate(
   const adapter = new CjSupplierAdapter(
     secretStore,
     new CjTokenManager(secretStore),
+    options.fetchImpl ?? fetch,
   );
 
   let evidence;
@@ -179,6 +193,32 @@ export default async function evaluateCandidate(
   } catch (error) {
     const reason =
       error instanceof CjApiError ? error.reason : 'unexpected-response';
+
+    if (reason === 'rate-limited') {
+      // Rate/points pressure - a real provider 429, or the shared limiter
+      // refusing a slot under concurrency. ADR-013 §5: recoverable
+      // connection health, never a technical failure of THIS product. The
+      // attempt budget stays untouched; the row defers with a retry time,
+      // so healthy products can never dead-letter from load alone.
+      await getDb().transaction(async (tx) => {
+        await recordEvaluationFailure(tx, {
+          candidateId: row.candidateId,
+          attemptCount: row.attemptCount,
+          lastErrorCode: reason,
+          nextRetryAt: new Date(Date.now() + RATE_LIMIT_DEFER_MS),
+        });
+        await appendAuditEvent(tx, {
+          actorId: 'system:catalog-evaluator',
+          action: 'CANDIDATE_EVALUATION_RATE_LIMIT_DEFERRED',
+          entityType: 'supplier_candidate',
+          entityId: row.candidateId,
+          payload: { reason, attemptCount: row.attemptCount },
+        });
+      });
+
+      return;
+    }
+
     const attemptCount = row.attemptCount + 1;
     const exhausted = attemptCount >= MAX_EVALUATION_ATTEMPTS;
 

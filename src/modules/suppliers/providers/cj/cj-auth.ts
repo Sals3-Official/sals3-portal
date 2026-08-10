@@ -2,6 +2,7 @@ import { CJ_BASE_URL, CjApiError } from '@/services/cj/config';
 import { cjAccessTokenSchema } from '@/lib/cj/schemas';
 import getDb from '@/lib/db/client';
 import type { SupplierSecretStore } from '@/lib/secrets/supplier-secret-store';
+import { writeWebhookSecret } from '@/lib/secrets/webhook-secret-store';
 import {
   cjCredentialBundleSchema,
   type CjCredentialBundle,
@@ -117,6 +118,18 @@ export default class CjTokenManager {
       'CJ_DROPSHIPPING',
       updated,
     );
+
+    // CJ documents the account's `openId` string as the webhook HMAC-SHA256
+    // secret. Persist it (encrypted) whenever a refresh observes it, so the
+    // webhook endpoint can verify signatures without a live CJ call. Best
+    // effort: a failure here must not fail the token refresh itself.
+    if (updated.openId !== undefined && updated.openId !== '') {
+      try {
+        await writeWebhookSecret(getDb(), connectionId, updated.openId);
+      } catch {
+        // The webhook secret refreshes again on the next token renewal.
+      }
+    }
 
     return fresh.accessToken;
   }

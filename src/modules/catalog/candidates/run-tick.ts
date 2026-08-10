@@ -1,31 +1,37 @@
 import getDb from '@/lib/db/client';
+import dispatchOutbox from '../discovery/outbox-dispatch';
 import evaluateCandidate from './evaluate';
-import ingestCjFeed, { type IngestionResult } from './ingestion';
 import claimBatch from './lease';
 import { requeueDueRetries } from './repository';
 import { EVALUATION_BATCH_SIZE } from './rules/policy';
 
 /**
- * One cron tick's worth of work (spec's automated pipeline, entry point for
- * `src/app/api/internal/catalog/evaluate-tick/route.ts`):
+ * BREAK-GLASS RECOVERY ONLY (ADR-013 §12). The normal execution model is
+ * the durable Vercel Queues chain (`src/modules/catalog/discovery/`), which
+ * needs no scheduler at all. This tick exists solely as an authenticated
+ * manual recovery action for a stalled chain:
  *
- * 1. Ingest the CJ feed (new/changed candidates -> `QUEUED`).
- * 2. Requeue any `TEMPORARILY_INELIGIBLE`/`EVALUATION_FAILED` row whose
- *    backoff has elapsed.
- * 3. Claim and evaluate one bounded batch, sequentially - CJ allows one
- *    request per second, so running a batch concurrently would only trip the
- *    rate limit, not finish faster.
+ * 1. Drain the transactional outbox (re-publishes any successor intent a
+ *    crashed worker committed but never published).
+ * 2. Requeue evaluations whose retry backoff elapsed while their delayed
+ *    retry message was lost.
+ * 3. Claim and evaluate one bounded batch.
+ *
+ * It must NOT be scheduled - the GitHub Actions cron that used to call it
+ * every five minutes is removed; only manual `workflow_dispatch` (or a
+ * direct authenticated call) remains. It performs no full-feed paging: all
+ * discovery goes through the partition-driven queue chain.
  */
 
 export type TickResult = {
-  ingestion: IngestionResult;
+  outbox: { dispatched: number; failed: number };
   requeuedForRetry: number;
   claimed: number;
   evaluated: number;
 };
 
 export default async function runEvaluationTick(): Promise<TickResult> {
-  const ingestion = await ingestCjFeed();
+  const outbox = await dispatchOutbox();
   const requeuedForRetry = await requeueDueRetries(
     getDb(),
     EVALUATION_BATCH_SIZE,
@@ -41,5 +47,5 @@ export default async function runEvaluationTick(): Promise<TickResult> {
     evaluated += 1;
   }
 
-  return { ingestion, requeuedForRetry, claimed: batch.length, evaluated };
+  return { outbox, requeuedForRetry, claimed: batch.length, evaluated };
 }
