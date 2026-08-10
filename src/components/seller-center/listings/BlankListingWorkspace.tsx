@@ -1,6 +1,7 @@
 import ListingCompletenessRail from '@/components/seller-center/listings/ListingCompletenessRail';
 import ListingProceedsEstimate from '@/components/seller-center/listings/ListingProceedsEstimate';
 import ListingWizard from '@/components/seller-center/listings/ListingWizard';
+import MarketNotConfiguredNotice from '@/components/seller-center/shared/MarketNotConfiguredNotice';
 import { getActiveMarket } from '@/lib/seller-center/market-config';
 import {
   LISTING_COMPLETE_FIELDS,
@@ -21,6 +22,11 @@ import {
  */
 export default function BlankListingWorkspace() {
   const market = getActiveMarket();
+
+  if (market === null) {
+    return <MarketNotConfiguredNotice />;
+  }
+
   const stages = buildListingStages(market);
   const remaining = buildRemainingRequirements(market);
   const proceeds = buildProceedsEstimate(market);

@@ -13,6 +13,25 @@
 export const POLICY_VERSION = 'catalog-eval-policy-placeholder-v1';
 
 /**
+ * Composes the catalog evaluation policy version with the buyer-destination
+ * policy version that was actually in effect for one evaluation, into one
+ * deterministic, storable identity (Codex review fix) - written to
+ * `candidate_evaluations.policy_version` instead of the bare catalog
+ * version alone, and carried into the audit payload. Equal inputs always
+ * produce an equal string and different buyer-destination versions always
+ * produce a different one, so a future policy-version-change re-evaluation
+ * job can detect "this row was decided under an older buyer-destination
+ * policy" by string comparison alone - no second column or migration
+ * needed. That re-evaluation job itself is not implemented here.
+ */
+export function composeEvaluationPolicyVersion(
+  catalogPolicyVersion: string,
+  buyerDestinationPolicyVersion: string,
+): string {
+  return `${catalogPolicyVersion}+buyer-destination:${buyerDestinationPolicyVersion}`;
+}
+
+/**
  * Bump when `CandidateEvidence`'s shape changes, so old snapshot rows stay
  * readable. `v2` (2026-08-10, ADR-013): each variant's stock is now
  * `stockByOrigin[]` (raw `cjInventory`/`factoryInventory`/`totalInventory`/
@@ -20,13 +39,6 @@ export const POLICY_VERSION = 'catalog-eval-policy-placeholder-v1';
  * instead of a bare summed `totalInventory`.
  */
 export const EVIDENCE_SCHEMA_VERSION = 'cj-evidence-v2';
-
-/**
- * The only enabled market today - matches the existing
- * `PLACEHOLDER_MARKET_CODE` in `src/app/(portal)/products/actions.ts`. Not an
- * ADR-003 approval.
- */
-export const PLACEHOLDER_MARKET_CODE = 'PH';
 
 /**
  * Category/product-name keyword denylist, verbatim from spec section 14.1's

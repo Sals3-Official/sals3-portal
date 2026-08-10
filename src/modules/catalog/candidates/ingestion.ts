@@ -5,6 +5,7 @@ import { listWorkableConnections } from '@/modules/suppliers/repository';
 import type { SupplierConnectionRow } from '@/lib/db/schema';
 import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
 import CjSupplierAdapter from '@/modules/suppliers/providers/cj/cj-adapter';
+import resolveBuyerDestinationCountryPolicy from '@/lib/country-policy/buyer-destination-country';
 import { computeFingerprint, toFeedSnapshot } from './fingerprint';
 import {
   findCandidateByConnectionAndExternalId,
@@ -28,7 +29,6 @@ import { POLICY_VERSION } from './rules/policy';
  */
 
 const INGESTION_ACTOR_ID = 'system:cj-ingestion';
-const INGESTION_MARKET_CODES = ['PH'];
 /**
  * Lowered from 5 on 2026-08-08: combined with `EVALUATION_BATCH_SIZE`,
  * the tick was consistently exceeding the evaluate-tick route's 60s
@@ -55,6 +55,12 @@ async function ingestProduct(
 ): Promise<ProductOutcome> {
   const fingerprint = computeFingerprint(product);
   const feedSnapshot = toFeedSnapshot(product);
+  // Buyer destination-country eligibility only - never the seller operating
+  // country (AU) or a supplier stock-origin country. Currently disabled
+  // (empty), so every new candidate records that fact rather than a false
+  // market; `checkValidMarket` in `rules/screening.ts` fails it closed.
+  const { countryCodes: intendedMarketCodes } =
+    resolveBuyerDestinationCountryPolicy();
 
   return getDb().transaction(async (tx) => {
     const created = await insertCandidateIfAbsent(tx, {
@@ -62,7 +68,7 @@ async function ingestProduct(
       externalProductId: product.id,
       intendedSellerId: connection.sellerAccountId,
       supplierConnectionId: connection.id,
-      intendedMarketCodes: INGESTION_MARKET_CODES,
+      intendedMarketCodes,
       actorId: INGESTION_ACTOR_ID,
     });
 

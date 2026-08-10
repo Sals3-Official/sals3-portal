@@ -1,8 +1,6 @@
 import getDb, { isDatabaseConfigured } from '@/lib/db/client';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
-import { resolveUsdToPhpRate } from '@/lib/storefront/fx';
 import { resolveUsdToAudMidRate } from '@/lib/products/catalog-fx';
-import type { CatalogFxRates } from '@/lib/products/catalog-types';
 import { findEvaluationsByExternalIds } from '@/modules/catalog/candidates/queries';
 import {
   findConnectionBySellerAndProvider,
@@ -26,6 +24,17 @@ import SourcingEmptyState from './SourcingEmptyState';
 type CjCatalogueViewProps = {
   query: ProductsPageQuery;
 };
+
+function formatFxAge(fetchedAt: Date): string {
+  const ageMinutes = Math.max(
+    0,
+    Math.round((Date.now() - fetchedAt.getTime()) / 60_000),
+  );
+
+  return ageMinutes < 60
+    ? `${ageMinutes}m ago`
+    : `${Math.round(ageMinutes / 60)}h ago`;
+}
 
 /**
  * The CJdropshipping catalogue view (ADR-008: the seller's own connection,
@@ -93,17 +102,15 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
   };
 
   let page;
-  let usdToPhpRate;
   let usdToAudMidRate;
 
   try {
-    [page, usdToPhpRate, usdToAudMidRate] = await Promise.all([
+    [page, usdToAudMidRate] = await Promise.all([
       adapter.listCandidates(connection.id, {
         page: query.cjPage,
         search: query.cjSearch,
         pid: query.cjPid,
       }),
-      resolveUsdToPhpRate(),
       resolveUsdToAudMidRate(),
     ]);
   } catch (error) {
@@ -129,22 +136,10 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
     page.products.map((product) => product.id),
   );
 
-  const rates: CatalogFxRates = {
-    USD: {
-      effectiveRate: usdToPhpRate.effective,
-      fetchedAt: usdToPhpRate.fetchedAt.toISOString(),
-      stale: usdToPhpRate.stale,
-    },
-  };
-
-  const fxAgeMinutes = Math.max(
-    0,
-    Math.round((Date.now() - usdToPhpRate.fetchedAt.getTime()) / 60_000),
-  );
   const fxUpdatedLabel =
-    fxAgeMinutes < 60
-      ? `${fxAgeMinutes}m ago`
-      : `${Math.round(fxAgeMinutes / 60)}h ago`;
+    usdToAudMidRate === null
+      ? 'unavailable'
+      : formatFxAge(usdToAudMidRate.fetchedAt);
 
   return (
     <div className="flex flex-col gap-3">
@@ -161,8 +156,8 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
         optional raw browser; the automated evaluation pipeline picks up new and
         changed products on its own, and the status column reflects that
         pipeline&apos;s current decision, not a manual check. Prices are the
-        supplier price; the peso amount is an estimate, never the final landed
-        cost.
+        supplier price; the AUD amount is a reference estimate, never the final
+        landed cost.
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -188,7 +183,6 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
               products={page.products}
               evaluations={evaluations}
               connection={connectionIdentity}
-              rates={rates}
               usdToAudRate={usdToAudMidRate?.rate ?? null}
             />
           ) : (
@@ -196,7 +190,6 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
               products={page.products}
               evaluations={evaluations}
               connection={connectionIdentity}
-              rates={rates}
               usdToAudRate={usdToAudMidRate?.rate ?? null}
             />
           )}

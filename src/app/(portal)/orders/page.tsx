@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import PageHeader from '@/components/portal/PageHeader';
 import DisclosureBanner from '@/components/seller-center/shared/DisclosureBanner';
+import MarketNotConfiguredNotice from '@/components/seller-center/shared/MarketNotConfiguredNotice';
 import OrdersFilterChips from '@/components/seller-center/orders/OrdersFilterChips';
 import OrdersHandoffPanel from '@/components/seller-center/orders/OrdersHandoffPanel';
 import OrdersReprintHistoryPanel from '@/components/seller-center/orders/OrdersReprintHistoryPanel';
@@ -37,22 +38,32 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Orders"
-        description={`Batch fulfillment · ${market.carrierName} · cutoff ${market.cutoffTime} ${market.timeZone}`}
+        description={
+          market === null
+            ? 'Batch fulfillment'
+            : `Batch fulfillment · ${market.carrierName} · cutoff ${market.cutoffTime} ${market.timeZone}`
+        }
       />
-      <OrdersFilterChips
-        active={query.orderFilter}
-        currentParams={{ orderFilter: query.orderFilter }}
-      />
-      {hasExcluded ? (
-        <DisclosureBanner tone="warning">
-          {ORDERS_EXCLUDED_NOTE}
-        </DisclosureBanner>
-      ) : null}
-      <OrdersWorkspace orders={filtered} market={market} />
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <OrdersReprintHistoryPanel />
-        <OrdersHandoffPanel market={market} />
-      </div>
+      {market === null ? (
+        <MarketNotConfiguredNotice />
+      ) : (
+        <>
+          <OrdersFilterChips
+            active={query.orderFilter}
+            currentParams={{ orderFilter: query.orderFilter }}
+          />
+          {hasExcluded ? (
+            <DisclosureBanner tone="warning">
+              {ORDERS_EXCLUDED_NOTE}
+            </DisclosureBanner>
+          ) : null}
+          <OrdersWorkspace orders={filtered} market={market} />
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <OrdersReprintHistoryPanel />
+            <OrdersHandoffPanel market={market} />
+          </div>
+        </>
+      )}
     </div>
   );
 }

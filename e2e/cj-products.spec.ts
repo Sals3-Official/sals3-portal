@@ -53,7 +53,7 @@ test.describe('supplier catalogue', () => {
     await expectLoadedOrReported(page);
   });
 
-  test('labels the peso amount as an estimate, never a final cost', async ({
+  test('labels the AUD amount as a reference estimate, never a final cost, and never mentions PHP', async ({
     page,
   }) => {
     await page.goto('/products');
@@ -73,7 +73,10 @@ test.describe('supplier catalogue', () => {
     });
 
     if (await notice.isVisible()) {
+      await expect(notice).toContainText('AUD amount is a reference estimate');
       await expect(notice).toContainText('never the final landed cost');
+      await expect(notice).not.toContainText('PHP');
+      await expect(notice).not.toContainText('peso');
     }
   });
 

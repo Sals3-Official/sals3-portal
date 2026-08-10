@@ -10,9 +10,15 @@ Orders, Inventory, Listings, Finances, Payouts, Market rules). Inherits
 `src/lib/seller-center/market-config.ts` exports `getActiveMarket()`, which
 reads the server-only `PORTAL_DEV_MARKET` env var (falls back to `PH`) and
 returns one of 3 illustrative sample markets (Philippines, Indonesia,
-Singapore). This mirrors `src/lib/auth/session.ts`'s `readDevRole()`
-placeholder pattern - same shape, same honesty about not being real
-per-seller configuration yet.
+Singapore) - or `null` in production (fixed after review 2026-08-10; it
+previously fell back to the `PH` fixture as if it were real). Every real
+caller (Orders, Finances, Payouts, Market rules, the blank listing wizard)
+renders `MarketNotConfiguredNotice` instead of the fixture-backed screen
+when this is `null`. This mirrors `src/lib/auth/session.ts`'s
+`readDevRole()` placeholder pattern - same shape, same honesty about not
+being real per-seller configuration yet. This fixture is also unrelated to
+the real seller-operating/buyer-destination country policies in
+`src/lib/country-policy/` (ADR-014).
 
 **Every value on these three markets is illustrative** - currency, carrier
 name, cutoff time, tax label, payout rail, rule version. None are confirmed

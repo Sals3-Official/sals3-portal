@@ -6,10 +6,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import type { CjProduct } from '@/lib/cj/normalize';
-import type {
-  CatalogFxRates,
-  SupplierConnectionFixture,
-} from '@/lib/products/catalog-types';
+import type { SupplierConnectionFixture } from '@/lib/products/catalog-types';
 import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
 import CjProductRow from './CjProductRow';
 
@@ -17,7 +14,6 @@ type CjProductsTableProps = {
   products: CjProduct[];
   evaluations: Map<string, EvaluatedCandidateRow>;
   connection: SupplierConnectionFixture;
-  rates: CatalogFxRates;
   usdToAudRate: number | null;
 };
 
@@ -41,7 +37,6 @@ export default function CjProductsTable({
   products,
   evaluations,
   connection,
-  rates,
   usdToAudRate,
 }: CjProductsTableProps) {
   return (
@@ -63,7 +58,6 @@ export default function CjProductsTable({
               product={product}
               evaluated={evaluations.get(product.id)}
               connection={connection}
-              rates={rates}
               usdToAudRate={usdToAudRate}
               index={index}
             />

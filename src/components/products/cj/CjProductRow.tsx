@@ -2,14 +2,7 @@ import Image from 'next/image';
 import { ExternalLink, Package, Star } from 'lucide-react';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { cjProductPageUrl, type CjProduct } from '@/lib/cj/normalize';
-import {
-  estimatePhpMinor,
-  formatPhpEstimate,
-} from '@/lib/products/catalog-presentation';
-import type {
-  CatalogFxRates,
-  SupplierConnectionFixture,
-} from '@/lib/products/catalog-types';
+import type { SupplierConnectionFixture } from '@/lib/products/catalog-types';
 import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
 import { cn } from '@/lib/utils';
 import SupplierIdentity from '../catalog/SupplierIdentity';
@@ -21,7 +14,6 @@ type CjProductRowProps = {
   product: CjProduct;
   evaluated: EvaluatedCandidateRow | undefined;
   connection: SupplierConnectionFixture;
-  rates: CatalogFxRates;
   usdToAudRate: number | null;
   /** Caps the stagger delay so a long page doesn't take seconds to finish animating in. */
   index: number;
@@ -54,15 +46,9 @@ export default function CjProductRow({
   product,
   evaluated,
   connection,
-  rates,
   usdToAudRate,
   index,
 }: CjProductRowProps) {
-  const phpEstimate = formatPhpEstimate(
-    product.priceCentsUsd === null
-      ? null
-      : estimatePhpMinor('USD', product.priceCentsUsd, rates),
-  );
   const audAmount =
     product.priceCentsUsd === null || usdToAudRate === null
       ? null
@@ -153,7 +139,6 @@ export default function CjProductRow({
         ) : (
           <CjPriceConversionPopover
             priceCentsUsd={product.priceCentsUsd}
-            phpEstimate={phpEstimate}
             audAmount={audAmount}
           />
         )}

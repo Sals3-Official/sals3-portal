@@ -10,20 +10,20 @@ import { formatUsdCents } from '@/lib/cj/normalize';
 
 type CjPriceConversionPopoverProps = {
   priceCentsUsd: number;
-  phpEstimate: string | null;
   audAmount: number | null;
 };
 
 /**
- * Click (not hover, so it works on touch) reveal of the same USD price in
- * PHP and AUD. PHP reuses the buffered estimate already shown elsewhere on
- * the row - one number, not two conflicting ones. AUD is a plain mid-market
- * reference conversion (no buffer): nobody transacts in AUD here, so there
- * is no rail cost to price in.
+ * Click (not hover, so it works on touch) reveal of the same USD supplier
+ * price in AUD - Sals3's own temporary seller-facing display currency
+ * (ADR-014), not PHP: this Portal browsing screen must not present PHP as
+ * its operating-market currency. A plain mid-market reference conversion (no
+ * buffer): nobody transacts in AUD here, so there is no rail cost to price
+ * in, and it is never resolved through the real customer-storefront pricing
+ * function (`src/lib/storefront/fx.ts`) - see `catalog-fx.ts`.
  */
 export default function CjPriceConversionPopover({
   priceCentsUsd,
-  phpEstimate,
   audAmount,
 }: CjPriceConversionPopoverProps) {
   return (
@@ -41,10 +41,6 @@ export default function CjPriceConversionPopover({
       <PopoverContent align="start">
         <PopoverTitle>{formatUsdCents(priceCentsUsd)} converted</PopoverTitle>
         <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
-          <dt className="text-muted-foreground">PHP (estimate)</dt>
-          <dd className="text-right font-medium tabular-nums">
-            {phpEstimate ?? '—'}
-          </dd>
           <dt className="text-muted-foreground">AUD (reference)</dt>
           <dd className="text-right font-medium tabular-nums">
             {audAmount === null

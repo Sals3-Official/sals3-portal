@@ -4,11 +4,18 @@
  * name, cutoff time, tax label, payout rail, rule version) are examples for
  * interface review only - they are not confirmed Sals3 launch markets, and
  * none of the figures are approved business rules. Do not read anything
- * here as a decided fee, tax, or logistics contract.
+ * here as a decided fee, tax, or logistics contract. In particular, this
+ * illustrative fixture set is unrelated to the real
+ * `src/lib/country-policy/` seller-operating-country and buyer-destination-
+ * country resolvers (ADR-014): switching this dev display never changes
+ * either real policy or `intended_market_codes`.
  *
  * `getActiveMarket()` mirrors `src/lib/auth/session.ts`'s `readDevRole()`
  * placeholder pattern: a server-only env var picks the active sample market
- * until a real per-seller market configuration exists.
+ * until a real per-seller market configuration exists. Like that pattern,
+ * the env var is inert outside `NODE_ENV === 'production'` - it can change
+ * which illustrative fixture is displayed in development, never anything a
+ * real seller or buyer sees in production.
  */
 
 export const SELLER_CENTER_MARKET_CODES = ['PH', 'ID', 'SG'] as const;
@@ -96,6 +103,10 @@ const SELLER_CENTER_MARKETS: Record<
 const DEV_FALLBACK_MARKET: SellerCenterMarketCode = 'PH';
 
 function readDevMarket(): SellerCenterMarketCode {
+  // Production authority must never come from an env var a developer can
+  // set locally - see the module doc comment.
+  if (process.env.NODE_ENV === 'production') return DEV_FALLBACK_MARKET;
+
   const raw = process.env.PORTAL_DEV_MARKET;
 
   return (
@@ -106,10 +117,18 @@ function readDevMarket(): SellerCenterMarketCode {
 
 /**
  * Placeholder, deliberately visible as one - see `session.ts`'s own comment
- * for the pattern this mirrors. Replace with a real per-seller market lookup
- * once one exists; every caller keeps working unchanged.
+ * for the pattern this mirrors. Returns `null` in production rather than a
+ * fallback sample market (Codex review fix): production must never present
+ * PH, ID, SG, or any other illustrative market as real seller configuration.
+ * Every real caller (`orders`/`finances`/`payouts`/`market-rules` pages,
+ * the blank listing wizard) must render an honest not-configured state -
+ * see `MarketNotConfiguredNotice` - instead of a fixture market when this
+ * returns `null`. Replace with a real per-seller market lookup once one
+ * exists.
  */
-export function getActiveMarket(): SellerCenterMarket {
+export function getActiveMarket(): SellerCenterMarket | null {
+  if (process.env.NODE_ENV === 'production') return null;
+
   return SELLER_CENTER_MARKETS[readDevMarket()];
 }
 

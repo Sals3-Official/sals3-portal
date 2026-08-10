@@ -1,3 +1,4 @@
+import type { BuyerDestinationCountryPolicy } from '@/lib/country-policy/types';
 import type { FeedSnapshot, RuleFinding } from './contracts';
 import {
   COUNTERFEIT_SIGNAL_KEYWORDS,
@@ -13,13 +14,81 @@ import {
  * CJ evidence-fetch call is made. A `BLOCK` finding here saves the ~30 CJ
  * points that a full evidence fetch would otherwise cost.
  *
- * Checks #1 (prohibited category) and #2 (destination-country restriction)
- * from the requested rule list collapse into one check today: with only one
- * placeholder market and no ADR-003-approved country matrix, there is no
- * honest way to differentiate "blocked everywhere" from "blocked in this
- * market" yet. `COUNTRY_RESTRICTED` stays a reserved, unused reason code
- * until a second market exists with different category rules.
+ * `COUNTRY_RESTRICTED` (per-category market rules) stays a reserved, unused
+ * reason code until a second enabled market exists with different category
+ * rules than the first.
  */
+
+/**
+ * The buyer-destination policy and the candidate's own persisted
+ * `intended_market_codes`, resolved exactly once at the evaluation boundary
+ * (`evaluate.ts`) and passed down as explicit inputs - never re-resolved
+ * inside this rule, so one evaluation can never observe two different
+ * policy versions.
+ */
+export type MarketValidationInput = {
+  buyerDestinationPolicy: BuyerDestinationCountryPolicy;
+  candidateDestinationCodes: string[];
+};
+
+/**
+ * Fails closed in three distinct, truthfully-detailed ways (Codex review
+ * fix): no enabled destination policy exists yet (ADR-014's approved-but-
+ * disabled default); this specific candidate has no intended destination
+ * recorded at all; or its intended destination(s) are not (all) inside the
+ * currently enabled allowlist. AU seller/business registration is never one
+ * of the candidate's own destinations unless a separate, explicit ingestion
+ * decision put it there - this rule only ever reads what is already stored.
+ *
+ * The rule is a strict subset check: every one of the candidate's intended
+ * destinations must already be enabled. A candidate is never silently
+ * narrowed to only its allowed destinations, and never widened to a newly
+ * enabled country it never asked for - it either fully qualifies or it
+ * blocks, recoverably (`TEMPORARILY_INELIGIBLE`; `NO_VALID_MARKET` is not a
+ * permanent reason code), so approving/widening a real policy re-admits
+ * every affected queued candidate without touching this file again.
+ */
+export function checkValidMarket(
+  input: MarketValidationInput,
+): RuleFinding | null {
+  const { buyerDestinationPolicy, candidateDestinationCodes } = input;
+
+  if (
+    buyerDestinationPolicy.effective === 'DISABLED' ||
+    buyerDestinationPolicy.countryCodes.length === 0
+  ) {
+    return {
+      reasonCode: 'NO_VALID_MARKET',
+      severity: 'BLOCK',
+      detail:
+        'No enabled buyer destination-country policy currently applies to any candidate',
+    };
+  }
+
+  if (candidateDestinationCodes.length === 0) {
+    return {
+      reasonCode: 'NO_VALID_MARKET',
+      severity: 'BLOCK',
+      detail:
+        'This candidate has no intended destination-country code recorded',
+    };
+  }
+
+  const enabled = new Set(buyerDestinationPolicy.countryCodes);
+  const unauthorized = candidateDestinationCodes.filter(
+    (code) => !enabled.has(code),
+  );
+
+  if (unauthorized.length > 0) {
+    return {
+      reasonCode: 'NO_VALID_MARKET',
+      severity: 'BLOCK',
+      detail: `Candidate destination(s) ${unauthorized.join(', ')} are outside the currently enabled buyer destination-country policy`,
+    };
+  }
+
+  return null;
+}
 
 function matchesKeyword(
   haystack: string,
@@ -95,8 +164,12 @@ export function checkPriceBoundsCheap(feed: FeedSnapshot): RuleFinding | null {
   return null;
 }
 
-export function runScreening(feed: FeedSnapshot): RuleFinding[] {
+export function runScreening(
+  feed: FeedSnapshot,
+  marketInput: MarketValidationInput,
+): RuleFinding[] {
   return [
+    checkValidMarket(marketInput),
     checkProhibitedCategory(feed),
     checkCounterfeitSignalCheap(feed),
     checkPriceBoundsCheap(feed),

@@ -39,8 +39,18 @@ vi.mock('@/modules/suppliers/providers/cj/cj-auth', () => ({
   }),
 }));
 
-const { getCandidateEvidenceMock } = vi.hoisted(() => ({
-  getCandidateEvidenceMock: vi.fn(),
+const { getCandidateEvidenceMock, resolveBuyerDestinationCountryPolicyMock } =
+  vi.hoisted(() => ({
+    getCandidateEvidenceMock: vi.fn(),
+    resolveBuyerDestinationCountryPolicyMock: vi.fn(),
+  }));
+
+// This suite tests orchestration (evidence fetch, retry, connection pause),
+// not the market-policy rule itself (see `rules/screening.test.ts`), so an
+// enabled policy is the default here - one dedicated test below overrides it
+// back to disabled to prove the real fail-closed integration.
+vi.mock('@/lib/country-policy/buyer-destination-country', () => ({
+  default: resolveBuyerDestinationCountryPolicyMock,
 }));
 
 vi.mock('@/modules/suppliers/providers/cj/cj-adapter', () => ({
@@ -72,7 +82,11 @@ import {
 // eslint-disable-next-line import/first
 import evaluateCandidate from './evaluate';
 // eslint-disable-next-line import/first
-import { MAX_EVALUATION_ATTEMPTS } from './rules/policy';
+import {
+  composeEvaluationPolicyVersion,
+  MAX_EVALUATION_ATTEMPTS,
+  POLICY_VERSION,
+} from './rules/policy';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
@@ -82,7 +96,12 @@ const CANDIDATE: SupplierCandidateRow = {
   externalProductId: 'CJLY1',
   supplierConnectionId: 'connection-1',
   intendedSellerId: 'seller-account-1',
-  intendedMarketCodes: ['PH'],
+  // Matches the beforeEach's default enabled buyer-destination mock
+  // (['TEST']) so the orchestration tests below reach the full evidence-
+  // fetch path. The market-scope rule itself (candidate destination vs.
+  // enabled allowlist) is unit-tested in `rules/screening.test.ts` and
+  // exercised end-to-end below.
+  intendedMarketCodes: ['TEST'],
   shortlistState: 'SHORTLISTED',
   createdAt: new Date(),
   createdBy: 'system:cj-ingestion',
@@ -189,6 +208,176 @@ describe('evaluateCandidate', () => {
     asMock(recordEvaluationFailure).mockReset().mockResolvedValue(undefined);
     asMock(upsertSnapshot).mockReset().mockResolvedValue(undefined);
     asMock(appendAuditEvent).mockReset().mockResolvedValue(undefined);
+    resolveBuyerDestinationCountryPolicyMock.mockReset().mockReturnValue({
+      countryCodes: ['TEST'],
+      policyVersion: 'test-buyer-destination-v1',
+      source: 'test-fixture',
+      effective: 'ENABLED',
+    });
+  });
+
+  it('fails closed with NO_VALID_MARKET when no buyer destination-country policy is enabled', async () => {
+    resolveBuyerDestinationCountryPolicyMock.mockReturnValue({
+      countryCodes: [],
+      policyVersion: 'buyer-destination-country-v1-disabled',
+      source: 'no-adr-003-market-approved-yet',
+      effective: 'DISABLED',
+    });
+
+    await evaluateCandidate(row({}));
+
+    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
+    expect(recordScreeningDecision).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        candidateId: 'candidate-1',
+        decision: expect.objectContaining({
+          status: 'TEMPORARILY_INELIGIBLE',
+          reasonCodes: ['NO_VALID_MARKET'],
+        }),
+      }),
+    );
+  });
+
+  it("blocks closed when the candidate's own intended destination is not in the enabled policy (historical PH under an AU-only policy)", async () => {
+    asMock(findCandidateById).mockResolvedValue({
+      ...CANDIDATE,
+      intendedMarketCodes: ['PH'],
+    });
+    resolveBuyerDestinationCountryPolicyMock.mockReturnValue({
+      countryCodes: ['AU'],
+      policyVersion: 'buyer-destination-country-v1',
+      source: 'owner-decision-2026-08-10-au-business-registration',
+      effective: 'ENABLED',
+    });
+
+    await evaluateCandidate(row({}));
+
+    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
+    expect(recordScreeningDecision).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        decision: expect.objectContaining({
+          status: 'TEMPORARILY_INELIGIBLE',
+          reasonCodes: ['NO_VALID_MARKET'],
+        }),
+      }),
+    );
+  });
+
+  it('blocks closed when the candidate has no intended destination at all, even under an enabled policy', async () => {
+    asMock(findCandidateById).mockResolvedValue({
+      ...CANDIDATE,
+      intendedMarketCodes: [],
+    });
+
+    await evaluateCandidate(row({}));
+
+    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
+    expect(recordScreeningDecision).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        decision: expect.objectContaining({
+          status: 'TEMPORARILY_INELIGIBLE',
+          reasonCodes: ['NO_VALID_MARKET'],
+        }),
+      }),
+    );
+  });
+
+  it('resolves the buyer-destination policy exactly once per evaluation and reuses that same snapshot everywhere', async () => {
+    getCandidateEvidenceMock.mockResolvedValue(CLEAN_EVIDENCE);
+
+    await evaluateCandidate(row({}));
+
+    // Not "at least once" - exactly once, so the market rule, the stored
+    // policy identity, and the audit payload can never disagree because
+    // they observed two different resolver calls.
+    expect(resolveBuyerDestinationCountryPolicyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists a stored policy identity that composes the catalog and buyer-destination versions, and changes deterministically when the buyer version changes', async () => {
+    getCandidateEvidenceMock.mockResolvedValue(CLEAN_EVIDENCE);
+
+    await evaluateCandidate(row({}));
+
+    const firstPolicyVersion = asMock(recordEvaluationDecision).mock
+      .calls[0]?.[1]?.policyVersion;
+
+    expect(firstPolicyVersion).toBe(
+      composeEvaluationPolicyVersion(
+        POLICY_VERSION,
+        'test-buyer-destination-v1',
+      ),
+    );
+
+    asMock(recordEvaluationDecision).mockReset().mockResolvedValue(undefined);
+    resolveBuyerDestinationCountryPolicyMock.mockReturnValue({
+      countryCodes: ['TEST'],
+      policyVersion: 'test-buyer-destination-v2',
+      source: 'test-fixture',
+      effective: 'ENABLED',
+    });
+
+    await evaluateCandidate(row({}));
+
+    const secondPolicyVersion = asMock(recordEvaluationDecision).mock
+      .calls[0]?.[1]?.policyVersion;
+
+    expect(secondPolicyVersion).toBe(
+      composeEvaluationPolicyVersion(
+        POLICY_VERSION,
+        'test-buyer-destination-v2',
+      ),
+    );
+    expect(secondPolicyVersion).not.toBe(firstPolicyVersion);
+  });
+
+  it('records the buyer-destination policy version, source, effective state, enabled codes, and the candidate scope in the audit payload', async () => {
+    getCandidateEvidenceMock.mockResolvedValue(CLEAN_EVIDENCE);
+
+    await evaluateCandidate(row({}));
+
+    expect(appendAuditEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'CANDIDATE_EVALUATION_DECIDED',
+        payload: expect.objectContaining({
+          catalogPolicyVersion: POLICY_VERSION,
+          buyerDestinationPolicyVersion: 'test-buyer-destination-v1',
+          buyerDestinationPolicySource: 'test-fixture',
+          buyerDestinationPolicyEffective: 'ENABLED',
+          buyerDestinationEnabledCountryCodes: ['TEST'],
+          candidateIntendedDestinationCodes: ['TEST'],
+        }),
+      }),
+    );
+  });
+
+  it('records the same market audit fields on a screening-blocked decision', async () => {
+    resolveBuyerDestinationCountryPolicyMock.mockReturnValue({
+      countryCodes: [],
+      policyVersion: 'buyer-destination-country-v1-disabled',
+      source: 'no-adr-003-market-approved-yet',
+      effective: 'DISABLED',
+    });
+
+    await evaluateCandidate(row({}));
+
+    expect(appendAuditEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'CANDIDATE_SCREENING_DECIDED',
+        payload: expect.objectContaining({
+          catalogPolicyVersion: POLICY_VERSION,
+          buyerDestinationPolicyVersion:
+            'buyer-destination-country-v1-disabled',
+          buyerDestinationPolicyEffective: 'DISABLED',
+          buyerDestinationEnabledCountryCodes: [],
+          candidateIntendedDestinationCodes: ['TEST'],
+        }),
+      }),
+    );
   });
 
   it('decides at the screening stage without ever calling CJ (saves evidence-fetch points)', async () => {

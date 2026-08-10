@@ -1,14 +1,7 @@
 import Image from 'next/image';
 import { ExternalLink, Package, Star } from 'lucide-react';
 import { cjProductPageUrl, type CjProduct } from '@/lib/cj/normalize';
-import {
-  estimatePhpMinor,
-  formatPhpEstimate,
-} from '@/lib/products/catalog-presentation';
-import type {
-  CatalogFxRates,
-  SupplierConnectionFixture,
-} from '@/lib/products/catalog-types';
+import type { SupplierConnectionFixture } from '@/lib/products/catalog-types';
 import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
 import SupplierIdentity from '../catalog/SupplierIdentity';
 import CjPriceConversionPopover from './CjPriceConversionPopover';
@@ -18,7 +11,6 @@ type CjProductCardProps = {
   product: CjProduct;
   evaluated: EvaluatedCandidateRow | undefined;
   connection: SupplierConnectionFixture;
-  rates: CatalogFxRates;
   usdToAudRate: number | null;
 };
 
@@ -31,14 +23,8 @@ export default function CjProductCard({
   product,
   evaluated,
   connection,
-  rates,
   usdToAudRate,
 }: CjProductCardProps) {
-  const phpEstimate = formatPhpEstimate(
-    product.priceCentsUsd === null
-      ? null
-      : estimatePhpMinor('USD', product.priceCentsUsd, rates),
-  );
   const audAmount =
     product.priceCentsUsd === null || usdToAudRate === null
       ? null
@@ -108,7 +94,6 @@ export default function CjProductCard({
           ) : (
             <CjPriceConversionPopover
               priceCentsUsd={product.priceCentsUsd}
-              phpEstimate={phpEstimate}
               audAmount={audAmount}
             />
           )}
