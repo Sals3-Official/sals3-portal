@@ -42,6 +42,7 @@ const DEFAULT_FILTERS: CatalogueFilters = {
   supplierProviderCode: null,
   availability: null,
   mediaStatus: null,
+  supplierConnectionHealth: null,
   evidenceFreshness: null,
   needsAttentionOnly: false,
   outOfStockOnly: false,

@@ -61,6 +61,7 @@ function product(
     createdAt: '2026-08-01T00:00:00.000Z',
     supplierProviderCode: 'cj-dropshipping',
     supplierProviderName: 'CJ Dropshipping',
+    supplierConnectionHealth: 'CONNECTED',
     cjProductId: `ext-${overrides.id}`,
     sellingPrice: money(1000),
     availability: 'AVAILABLE',

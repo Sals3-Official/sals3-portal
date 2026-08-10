@@ -20,6 +20,13 @@ import type { MoneyValue } from '@/lib/seller-center/product-editor/types';
  * - `Availability` is dropshipping source-health truth (ADR-013), separate
  *   from listing status - a listing can be `LIVE` while one variant is
  *   `OUT_OF_STOCK` and the rest stay purchasable.
+ * - `SupplierConnectionHealth` is the state of the underlying supplier
+ *   connection itself (ADR-013 §5's "recoverable connection health" -
+ *   points exhaustion, inactivity suspension, reauth, disconnect), never
+ *   collapsed into `Availability`. A connection can be `DEGRADED` while a
+ *   product's last trusted evidence still reads `AVAILABLE` (a stale-but-
+ *   real prior check), and `CONNECTED` covers products in every other
+ *   availability state - the two dimensions are independently filterable.
  * - `MediaStatus` uses ADR-011's exact labels
  *   (`OWN_PICTURES`/`SUPPLIER_PICTURES`/`MIXED_PICTURES`/`SUPPLIER_FALLBACK`/
  *   `NEEDS_MEDIA_REVIEW`/`NO_USABLE_PICTURES`), also independent of listing
@@ -83,6 +90,32 @@ export const AVAILABILITY_LABELS: Record<Availability, string> = {
   SUPPLIER_DISCONNECTED: 'Supplier disconnected',
   MARKET_UNAVAILABLE: 'Market unavailable',
   UNKNOWN_OR_STALE: 'Unknown or stale',
+};
+
+/**
+ * Health of the supplier connection itself (ADR-013 §5), independent of any
+ * one product's `Availability`. `DEGRADED` covers a recoverable condition
+ * such as CJ points exhaustion or inactivity suspension - the connection
+ * cannot refresh evidence right now, but that does not by itself invalidate
+ * the last trusted stock read. Never derive this from `Availability`, and
+ * never derive `Availability` from this alone.
+ */
+export const SUPPLIER_CONNECTION_HEALTH_STATES = [
+  'CONNECTED',
+  'DEGRADED',
+  'DISCONNECTED',
+] as const;
+
+export type SupplierConnectionHealth =
+  (typeof SUPPLIER_CONNECTION_HEALTH_STATES)[number];
+
+export const SUPPLIER_CONNECTION_HEALTH_LABELS: Record<
+  SupplierConnectionHealth,
+  string
+> = {
+  CONNECTED: 'Connected',
+  DEGRADED: 'Degraded',
+  DISCONNECTED: 'Disconnected',
 };
 
 /**
@@ -198,6 +231,11 @@ export type CatalogueProductFixture = {
   createdAt: string;
   supplierProviderCode: string;
   supplierProviderName: string;
+  /**
+   * Health of the underlying supplier connection - independently filterable
+   * from `availability`. See the `SupplierConnectionHealth` doc comment.
+   */
+  supplierConnectionHealth: SupplierConnectionHealth;
   /** Supplier reference only, shown read-only, never labelled "Product ID". */
   cjProductId: string;
   /** Seller-managed customer-facing price for a single-offer product. */

@@ -101,6 +101,12 @@ export function filterAndSortProducts(
     ) {
       return false;
     }
+    if (
+      filters.supplierConnectionHealth !== null &&
+      product.supplierConnectionHealth !== filters.supplierConnectionHealth
+    ) {
+      return false;
+    }
 
     const availability = productAvailability(product);
 
