@@ -8,21 +8,23 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import {
-  CONTENT_SCORE_LABELS,
-  type ContentScoreLevel,
+  CONTENT_READINESS_LABELS,
+  type CatalogueProductFixture,
 } from '@/lib/seller-center/product-catalogue/types';
 
+type ContentReadiness = CatalogueProductFixture['contentReadiness'];
+
 type ContentScoreBadgeProps = {
-  score: ContentScoreLevel;
+  score: ContentReadiness;
 };
 
-const TONE_BY_SCORE: Record<ContentScoreLevel, StatusPillTone> = {
+const TONE_BY_SCORE: Record<ContentReadiness, StatusPillTone> = {
   TOP: 'success',
   GOOD: 'neutral',
   NEEDS_IMPROVEMENT: 'warning',
 };
 
-const TIP_BY_SCORE: Record<ContentScoreLevel, string> = {
+const TIP_BY_SCORE: Record<ContentReadiness, string> = {
   TOP: 'Cover image, title, and required specifications all meet the recommended bar.',
   GOOD: 'Publishable, but at least one recommended field (extra images, a fuller description) is missing.',
   NEEDS_IMPROVEMENT:
@@ -31,9 +33,10 @@ const TIP_BY_SCORE: Record<ContentScoreLevel, string> = {
 
 /**
  * Fictional in this design preview - no real listing-quality scoring model
- * exists yet. Placement and wording match what a real one would need:
- * a tone-coded label plus a hover explanation, never a bare number with no
- * context for what to fix.
+ * exists yet. Deliberately demoted to a small secondary chip near the
+ * product name rather than its own table column: content readiness is a
+ * useful preview concept, but it must never crowd out or stand in for a
+ * hard publication gate (availability, supplier health, media, attention).
  */
 export default function ContentScoreBadge({ score }: ContentScoreBadgeProps) {
   return (
@@ -42,11 +45,11 @@ export default function ContentScoreBadge({ score }: ContentScoreBadgeProps) {
         render={
           <span className="inline-flex items-center gap-1">
             <StatusPill
-              label={CONTENT_SCORE_LABELS[score]}
+              label={`Content: ${CONTENT_READINESS_LABELS[score]}`}
               tone={TONE_BY_SCORE[score]}
             />
             <Info
-              aria-label={`What ${CONTENT_SCORE_LABELS[score]} content score means`}
+              aria-label={`What "${CONTENT_READINESS_LABELS[score]}" content readiness means`}
               className="size-3.5 text-muted-foreground"
             />
           </span>

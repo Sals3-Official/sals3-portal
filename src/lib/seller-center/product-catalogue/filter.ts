@@ -1,30 +1,42 @@
 import type { CatalogueFilters } from '@/components/products/catalogue/CatalogueFilterBar';
-import type { CatalogueProductFixture, CatalogueStatus } from './types';
+import {
+  deriveProductAvailability,
+  worstAttentionSeverity,
+  worstEvidenceFreshness,
+} from './derive';
+import type {
+  Availability,
+  CatalogueProductFixture,
+  ListingStatus,
+} from './types';
 
 /**
  * Pure filter/sort/count logic, kept out of the client component so it can
  * be unit-tested directly rather than only through rendered DOM assertions
- * - the same split `derive.ts` uses for the Product Editor.
+ * - the same split `product-editor/derive.ts` uses.
  */
 
 export function countByStatus(
   products: CatalogueProductFixture[],
-): Record<CatalogueStatus | 'ALL', number> {
+): Record<ListingStatus | 'ALL', number> {
   const counts = {
     ALL: products.length,
-    ACTIVE: 0,
-    INACTIVE: 0,
     DRAFT: 0,
-    PENDING_QC: 0,
-    VIOLATION: 0,
-    DELETED: 0,
-  } as Record<CatalogueStatus | 'ALL', number>;
+    LIVE: 0,
+    LIVE_NEEDS_ATTENTION: 0,
+    AUTO_PAUSED: 0,
+    ARCHIVED: 0,
+  } as Record<ListingStatus | 'ALL', number>;
 
   products.forEach((product) => {
     counts[product.status] += 1;
   });
 
   return counts;
+}
+
+function productAvailability(product: CatalogueProductFixture): Availability {
+  return deriveProductAvailability(product.variants, product.availability);
 }
 
 function matchesSearch(
@@ -37,18 +49,33 @@ function matchesSearch(
   if (needle === '') return true;
 
   if (field === 'NAME') return product.name.toLowerCase().includes(needle);
-  if (field === 'PRODUCT_ID') {
-    return product.externalProductId.toLowerCase().includes(needle);
+
+  if (field === 'SALS3_PRODUCT_ID') {
+    return (
+      product.sals3ProductId.toLowerCase().includes(needle) ||
+      product.variants.some((variant) =>
+        variant.sals3VariantId.toLowerCase().includes(needle),
+      )
+    );
   }
 
-  return product.variants.some((variant) =>
-    variant.sellerSku.toLowerCase().includes(needle),
+  if (field === 'SELLER_SKU') {
+    return product.variants.some((variant) =>
+      variant.sellerSku.toLowerCase().includes(needle),
+    );
+  }
+
+  return (
+    product.cjProductId.toLowerCase().includes(needle) ||
+    product.variants.some((variant) =>
+      variant.cjVariantId.toLowerCase().includes(needle),
+    )
   );
 }
 
 export function filterAndSortProducts(
   products: CatalogueProductFixture[],
-  activeTab: CatalogueStatus | 'ALL',
+  activeTab: ListingStatus | 'ALL',
   filters: CatalogueFilters,
 ): CatalogueProductFixture[] {
   const filtered = products.filter((product) => {
@@ -62,31 +89,70 @@ export function filterAndSortProducts(
     ) {
       return false;
     }
-    if (filters.abTestTag !== null && product.abTestTag !== filters.abTestTag) {
+    if (
+      filters.supplierProviderCode !== null &&
+      product.supplierProviderCode !== filters.supplierProviderCode
+    ) {
       return false;
     }
-    if (filters.outOfStockOnly && product.totalStock !== 0) return false;
+    if (
+      filters.mediaStatus !== null &&
+      product.mediaStatus !== filters.mediaStatus
+    ) {
+      return false;
+    }
+
+    const availability = productAvailability(product);
+
+    if (
+      filters.availability !== null &&
+      availability !== filters.availability
+    ) {
+      return false;
+    }
+    if (filters.outOfStockOnly && availability !== 'OUT_OF_STOCK') return false;
+    if (filters.needsAttentionOnly && product.attentionReasons.length === 0) {
+      return false;
+    }
+    if (
+      filters.evidenceFreshness !== null &&
+      worstEvidenceFreshness(product.variants, product.evidenceFreshness) !==
+        filters.evidenceFreshness
+    ) {
+      return false;
+    }
 
     return true;
   });
 
   const sorted = [...filtered];
+  const severityRank: Record<string, number> = {
+    CRITICAL: 0,
+    HIGH: 1,
+    MEDIUM: 2,
+    LOW: 3,
+  };
 
   switch (filters.sort) {
     case 'PRICE_ASC':
-      sorted.sort((a, b) => a.price.amountMinor - b.price.amountMinor);
+      sorted.sort(
+        (a, b) => a.sellingPrice.amountMinor - b.sellingPrice.amountMinor,
+      );
       break;
     case 'PRICE_DESC':
-      sorted.sort((a, b) => b.price.amountMinor - a.price.amountMinor);
+      sorted.sort(
+        (a, b) => b.sellingPrice.amountMinor - a.sellingPrice.amountMinor,
+      );
       break;
-    case 'STOCK_ASC':
-      sorted.sort((a, b) => a.totalStock - b.totalStock);
-      break;
-    case 'STOCK_DESC':
-      sorted.sort((a, b) => b.totalStock - a.totalStock);
-      break;
-    case 'UNITS_SOLD_DESC':
-      sorted.sort((a, b) => b.unitsSold30d - a.unitsSold30d);
+    case 'ATTENTION_SEVERITY_DESC':
+      sorted.sort((a, b) => {
+        const aSeverity = worstAttentionSeverity(a.attentionReasons);
+        const bSeverity = worstAttentionSeverity(b.attentionReasons);
+        const aRank = aSeverity === null ? 99 : severityRank[aSeverity];
+        const bRank = bSeverity === null ? 99 : severityRank[bSeverity];
+
+        return aRank - bRank;
+      });
       break;
     case 'CREATED_DESC':
     default:
@@ -105,18 +171,29 @@ export function uniqueCategories(
   return [...new Set(products.map((product) => product.categoryPath))].sort();
 }
 
-export function uniqueAbTestTags(
+export function uniqueSupplierProviders(
   products: CatalogueProductFixture[],
-): string[] {
-  return [
-    ...new Set(
-      products
-        .map((product) => product.abTestTag)
-        .filter((tag): tag is string => tag !== null),
-    ),
-  ].sort();
+): Array<{ code: string; name: string }> {
+  const byCode = new Map<string, string>();
+
+  products.forEach((product) => {
+    byCode.set(product.supplierProviderCode, product.supplierProviderName);
+  });
+
+  return [...byCode.entries()]
+    .map(([code, name]) => ({ code, name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function countOutOfStock(products: CatalogueProductFixture[]): number {
-  return products.filter((product) => product.totalStock === 0).length;
+  return products.filter(
+    (product) => productAvailability(product) === 'OUT_OF_STOCK',
+  ).length;
+}
+
+export function countNeedsAttention(
+  products: CatalogueProductFixture[],
+): number {
+  return products.filter((product) => product.attentionReasons.length > 0)
+    .length;
 }

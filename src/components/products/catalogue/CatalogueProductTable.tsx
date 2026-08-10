@@ -1,6 +1,5 @@
 'use client';
 
-import { Info } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -9,11 +8,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
 import type { CatalogueProductFixture } from '@/lib/seller-center/product-catalogue/types';
 import CatalogueProductRow from './CatalogueProductRow';
 
@@ -23,8 +17,9 @@ type CatalogueProductTableProps = {
   expandedIds: Set<string>;
   onToggleSelected: (id: string) => void;
   onToggleExpanded: (id: string) => void;
-  onToggleActive: (id: string) => void;
-  onToggleVariantActive: (productId: string, variantId: string) => void;
+  onPauseListing: (id: string) => void;
+  onArchive: (id: string) => void;
+  onToggleVariantPaused: (productId: string, variantId: string) => void;
 };
 
 export default function CatalogueProductTable({
@@ -33,8 +28,9 @@ export default function CatalogueProductTable({
   expandedIds,
   onToggleSelected,
   onToggleExpanded,
-  onToggleActive,
-  onToggleVariantActive,
+  onPauseListing,
+  onArchive,
+  onToggleVariantPaused,
 }: CatalogueProductTableProps) {
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -42,28 +38,12 @@ export default function CatalogueProductTable({
         <TableHeader>
           <TableRow>
             <TableHead className="w-10" />
-            <TableHead>Product Info</TableHead>
-            <TableHead>Price</TableHead>
-            <TableHead>
-              <span className="inline-flex items-center gap-1">
-                Stock
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Info
-                        aria-label="Total stock across every variant"
-                        className="size-3.5 text-muted-foreground"
-                      />
-                    }
-                  />
-                  <TooltipContent>
-                    Total stock across every variant.
-                  </TooltipContent>
-                </Tooltip>
-              </span>
-            </TableHead>
-            <TableHead>Active</TableHead>
-            <TableHead>Content Score</TableHead>
+            <TableHead>Product</TableHead>
+            <TableHead>Listing Status</TableHead>
+            <TableHead>Selling Price</TableHead>
+            <TableHead>Availability</TableHead>
+            <TableHead>Media</TableHead>
+            <TableHead>Attention</TableHead>
             <TableHead>Actions</TableHead>
           </TableRow>
         </TableHeader>
@@ -76,17 +56,18 @@ export default function CatalogueProductTable({
               expanded={expandedIds.has(product.id)}
               onToggleSelected={onToggleSelected}
               onToggleExpanded={onToggleExpanded}
-              onToggleActive={onToggleActive}
-              onToggleVariantActive={onToggleVariantActive}
+              onPauseListing={onPauseListing}
+              onArchive={onArchive}
+              onToggleVariantPaused={onToggleVariantPaused}
             />
           ))}
           {products.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={7}
+                colSpan={8}
                 className="py-10 text-center text-sm text-muted-foreground"
               >
-                No products match the current filters.
+                No listings match the current filters.
               </TableCell>
             </TableRow>
           ) : null}

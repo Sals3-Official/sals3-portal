@@ -2,24 +2,26 @@
 
 import { cn } from '@/lib/utils';
 import {
-  CATALOGUE_STATUS_LABELS,
-  CATALOGUE_STATUSES,
-  type CatalogueStatus,
+  LISTING_STATUS_LABELS,
+  LISTING_STATUSES,
+  type ListingStatus,
 } from '@/lib/seller-center/product-catalogue/types';
 
 type CatalogueStatusTabsProps = {
-  active: CatalogueStatus | 'ALL';
-  counts: Record<CatalogueStatus | 'ALL', number>;
-  onChange: (status: CatalogueStatus | 'ALL') => void;
+  active: ListingStatus | 'ALL';
+  counts: Record<ListingStatus | 'ALL', number>;
+  onChange: (status: ListingStatus | 'ALL') => void;
 };
 
-const TABS: Array<CatalogueStatus | 'ALL'> = ['ALL', ...CATALOGUE_STATUSES];
+const TABS: Array<ListingStatus | 'ALL'> = ['ALL', ...LISTING_STATUSES];
 
 /**
  * Real client-side filtering over an already-loaded fixture list, so this
  * is genuine tab state (React state, not a URL) rather than a per-tab
  * server query - there is no per-tab request to make, since nothing here
- * reads a database.
+ * reads a database. The tab set is ADR-011's five-state listing lifecycle,
+ * not a retail Active/Inactive/Pending QC/Violation/Deleted set - there is
+ * deliberately no `Deleted` tab; Archive is the safe lifecycle action.
  */
 export default function CatalogueStatusTabs({
   active,
@@ -34,7 +36,7 @@ export default function CatalogueStatusTabs({
     >
       {TABS.map((tab) => {
         const isActive = tab === active;
-        const label = tab === 'ALL' ? 'All' : CATALOGUE_STATUS_LABELS[tab];
+        const label = tab === 'ALL' ? 'All' : LISTING_STATUS_LABELS[tab];
 
         return (
           <button
@@ -42,6 +44,7 @@ export default function CatalogueStatusTabs({
             type="button"
             role="tab"
             aria-selected={isActive}
+            aria-label={label}
             onClick={() => onChange(tab)}
             className={cn(
               'flex items-center gap-1.5 border-b-2 pb-2.5 text-sm font-medium whitespace-nowrap transition-colors',
@@ -53,6 +56,7 @@ export default function CatalogueStatusTabs({
             {label}
             {counts[tab] > 0 ? (
               <span
+                aria-hidden="true"
                 className={cn(
                   'flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] font-semibold tabular-nums',
                   isActive

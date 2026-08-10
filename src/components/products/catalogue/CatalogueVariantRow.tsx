@@ -2,82 +2,173 @@
 
 import { Copy } from 'lucide-react';
 import { toast } from 'sonner';
-import { Switch } from '@/components/ui/switch';
+import { Button } from '@/components/ui/button';
 import { TableCell, TableRow } from '@/components/ui/table';
+import copyToClipboard from '@/lib/seller-center/clipboard';
+import { estimateMarginMinor } from '@/lib/seller-center/product-catalogue/derive';
 import {
+  formatDateTime,
   formatMoney,
-  formatCount,
 } from '@/lib/seller-center/product-editor/format';
 import type { CatalogueVariantFixture } from '@/lib/seller-center/product-catalogue/types';
+import AvailabilityBadge from './AvailabilityBadge';
 
 type CatalogueVariantRowProps = {
   variant: CatalogueVariantFixture;
-  onToggleActive: (variantId: string, active: boolean) => void;
+  onTogglePaused: (variantId: string) => void;
 };
 
-async function copySku(sku: string) {
-  await navigator.clipboard.writeText(sku);
-  toast(`Copied "${sku}" to clipboard.`);
+async function copyIdentity(value: string, label: string) {
+  const ok = await copyToClipboard(value);
+
+  toast(
+    ok
+      ? `Copied ${label} to clipboard.`
+      : `Couldn't copy ${label} to clipboard.`,
+  );
 }
 
-/** One SKU-level child row, nested under its parent product row. */
+function announceUnbuilt(action: string) {
+  toast(`${action} isn't built yet.`, {
+    description: 'This design preview has no catalogue backend.',
+  });
+}
+
+const SUPPLIER_DRIVEN_UNAVAILABLE = new Set([
+  'OUT_OF_STOCK',
+  'SUPPLIER_DISCONNECTED',
+  'MARKET_UNAVAILABLE',
+  'UNKNOWN_OR_STALE',
+  'SUPPLIER_CHECK_PENDING',
+]);
+
+type VariantAction = {
+  label: string;
+  onClick: () => void;
+};
+
+function resolveVariantAction(
+  variant: CatalogueVariantFixture,
+  onTogglePaused: (variantId: string) => void,
+): VariantAction {
+  if (variant.manuallyPaused) {
+    return {
+      label: 'Review & resume',
+      onClick: () => announceUnbuilt('Review & resume'),
+    };
+  }
+
+  if (SUPPLIER_DRIVEN_UNAVAILABLE.has(variant.availability)) {
+    return {
+      label: 'Request fresh check',
+      onClick: () => announceUnbuilt('Request fresh check'),
+    };
+  }
+
+  return {
+    label: 'Pause variant',
+    onClick: () => onTogglePaused(variant.id),
+  };
+}
+
+/** One Sals3 variant, nested under its parent listing row. */
 export default function CatalogueVariantRow({
   variant,
-  onToggleActive,
+  onTogglePaused,
 }: CatalogueVariantRowProps) {
+  const margin = estimateMarginMinor(
+    variant.sellingPrice,
+    variant.supplierCost,
+  );
+  const action = resolveVariantAction(variant, onTogglePaused);
+
   return (
     <TableRow className="bg-muted/30">
       <TableCell />
-      <TableCell>
-        <div className="flex items-center gap-2.5 pl-8">
+      <TableCell colSpan={2}>
+        <div className="flex items-start gap-2.5 pl-8">
           <span
             aria-hidden="true"
-            className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[10px] text-muted-foreground"
+            className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[10px] text-muted-foreground"
           >
             {variant.hasImage ? null : 'No image'}
           </span>
           <div className="min-w-0">
-            <p className="truncate text-sm">{variant.specsLabel}</p>
+            <p className="truncate text-sm">{variant.optionLabel}</p>
             <button
               type="button"
-              onClick={() => copySku(variant.sellerSku)}
-              className="mt-0.5 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() =>
+                copyIdentity(variant.sals3VariantId, 'Sals3 Variant ID')
+              }
+              aria-label={`Copy Sals3 Variant ID ${variant.sals3VariantId}`}
+              className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Sals3 Variant ID: {variant.sals3VariantId}
+              <Copy aria-hidden="true" className="size-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => copyIdentity(variant.sellerSku, 'Seller SKU')}
+              aria-label={`Copy Seller SKU ${variant.sellerSku}`}
+              className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
             >
               Seller SKU: {variant.sellerSku}
+              <Copy aria-hidden="true" className="size-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => copyIdentity(variant.cjVariantId, 'CJ Variant ID')}
+              aria-label={`Copy CJ Variant ID ${variant.cjVariantId}`}
+              className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              CJ Variant ID: {variant.cjVariantId}
               <Copy aria-hidden="true" className="size-3" />
             </button>
           </div>
         </div>
       </TableCell>
       <TableCell>
-        <div className="flex items-center gap-1.5 text-sm">
-          {formatMoney(variant.price)}
-          {variant.compareAtPrice === null ? null : (
-            <span className="text-xs text-muted-foreground line-through">
-              {formatMoney(variant.compareAtPrice)}
-            </span>
+        <div className="text-sm">
+          <div>{formatMoney(variant.sellingPrice)}</div>
+          <div className="text-xs text-muted-foreground">
+            Supplier cost: {formatMoney(variant.supplierCost)}
+          </div>
+          {margin === null ? null : (
+            <div className="text-xs text-muted-foreground">
+              Est. margin:{' '}
+              {formatMoney({
+                amountMinor: margin,
+                currency: variant.sellingPrice.currency,
+              })}{' '}
+              (illustrative, excludes freight/fees)
+            </div>
           )}
         </div>
       </TableCell>
-      <TableCell>
-        <span
-          className={
-            variant.stock === 0 ? 'text-sm font-medium text-red-600' : 'text-sm'
-          }
-        >
-          {formatCount(variant.stock)}
-        </span>
+      <TableCell colSpan={2}>
+        <div className="flex flex-col gap-1">
+          <AvailabilityBadge availability={variant.availability} />
+          <p className="text-xs text-muted-foreground">
+            {variant.supplierObservedQuantity === null
+              ? 'Supplier-reported quantity: unknown'
+              : `Supplier-reported: ${variant.supplierObservedQuantity} (not a guaranteed promise)`}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Last checked: {formatDateTime(variant.lastCheckedAt)}
+          </p>
+        </div>
       </TableCell>
+      <TableCell />
       <TableCell>
-        <Switch
+        <Button
+          type="button"
+          variant="outline"
           size="sm"
-          checked={variant.active}
-          onCheckedChange={(checked) => onToggleActive(variant.id, checked)}
-          aria-label={`${variant.active ? 'Deactivate' : 'Activate'} ${variant.specsLabel}`}
-        />
+          onClick={action.onClick}
+        >
+          {action.label}
+        </Button>
       </TableCell>
-      <TableCell />
-      <TableCell />
     </TableRow>
   );
 }

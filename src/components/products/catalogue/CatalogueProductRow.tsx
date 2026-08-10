@@ -3,6 +3,9 @@
 import { ChevronDown, ChevronRight, Copy, Pencil } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import StatusPill, {
+  type StatusPillTone,
+} from '@/components/seller-center/shared/StatusPill';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
@@ -10,16 +13,20 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Switch } from '@/components/ui/switch';
 import { TableCell, TableRow } from '@/components/ui/table';
+import copyToClipboard from '@/lib/seller-center/clipboard';
+import { deriveProductAvailability } from '@/lib/seller-center/product-catalogue/derive';
+import { formatMoney } from '@/lib/seller-center/product-editor/format';
 import {
-  formatCount,
-  formatMoney,
-} from '@/lib/seller-center/product-editor/format';
-import type { CatalogueProductFixture } from '@/lib/seller-center/product-catalogue/types';
+  LISTING_STATUS_LABELS,
+  type CatalogueProductFixture,
+  type ListingStatus,
+} from '@/lib/seller-center/product-catalogue/types';
+import AttentionBadge from './AttentionBadge';
+import AvailabilityBadge from './AvailabilityBadge';
 import CatalogueVariantRow from './CatalogueVariantRow';
 import ContentScoreBadge from './ContentScoreBadge';
-import MicroMetricBadges from './MicroMetricBadges';
+import MediaStatusBadge from './MediaStatusBadge';
 
 type CatalogueProductRowProps = {
   product: CatalogueProductFixture;
@@ -27,8 +34,17 @@ type CatalogueProductRowProps = {
   expanded: boolean;
   onToggleSelected: (id: string) => void;
   onToggleExpanded: (id: string) => void;
-  onToggleActive: (id: string) => void;
-  onToggleVariantActive: (productId: string, variantId: string) => void;
+  onPauseListing: (id: string) => void;
+  onArchive: (id: string) => void;
+  onToggleVariantPaused: (productId: string, variantId: string) => void;
+};
+
+const LISTING_STATUS_TONE: Record<ListingStatus, StatusPillTone> = {
+  DRAFT: 'neutral',
+  LIVE: 'success',
+  LIVE_NEEDS_ATTENTION: 'warning',
+  AUTO_PAUSED: 'danger',
+  ARCHIVED: 'neutral',
 };
 
 function announceUnbuilt(action: string, productName: string) {
@@ -37,18 +53,36 @@ function announceUnbuilt(action: string, productName: string) {
   });
 }
 
-/** Parent row: one product, plus its expandable SKU variant rows. */
+async function copyIdentity(value: string, label: string) {
+  const ok = await copyToClipboard(value);
+
+  toast(
+    ok
+      ? `Copied ${label} to clipboard.`
+      : `Couldn't copy ${label} to clipboard.`,
+  );
+}
+
+/** Parent row: one Sals3 listing, plus its expandable Sals3 variant rows. */
 export default function CatalogueProductRow({
   product,
   selected,
   expanded,
   onToggleSelected,
   onToggleExpanded,
-  onToggleActive,
-  onToggleVariantActive,
+  onPauseListing,
+  onArchive,
+  onToggleVariantPaused,
 }: CatalogueProductRowProps) {
   const hasVariants = product.variants.length > 0;
   const editHref = `/listings/new?fixture=${product.editorFixtureKey}`;
+  const availability = deriveProductAvailability(
+    product.variants,
+    product.availability,
+  );
+  const isLive =
+    product.status === 'LIVE' || product.status === 'LIVE_NEEDS_ATTENTION';
+  const canViewLive = isLive && product.storefrontUrl !== null;
 
   return (
     <>
@@ -96,37 +130,50 @@ export default function CatalogueProductRow({
               </Link>
               <button
                 type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(product.externalProductId);
-                  toast(`Copied "${product.externalProductId}" to clipboard.`);
-                }}
+                onClick={() =>
+                  copyIdentity(product.sals3ProductId, 'Sals3 Product ID')
+                }
+                aria-label={`Copy Sals3 Product ID ${product.sals3ProductId}`}
                 className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
               >
-                Product ID: {product.externalProductId}
+                Sals3 Product ID: {product.sals3ProductId}
                 <Copy aria-hidden="true" className="size-3" />
               </button>
-              <div className="mt-1.5">
-                <MicroMetricBadges product={product} />
+              <button
+                type="button"
+                onClick={() =>
+                  copyIdentity(product.cjProductId, 'CJ Product ID')
+                }
+                aria-label={`Copy CJ Product ID ${product.cjProductId}`}
+                className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+              >
+                {product.supplierProviderName} · CJ ID: {product.cjProductId}
+                <Copy aria-hidden="true" className="size-3" />
+              </button>
+              <div className="mt-1.5 min-w-0">
+                <ContentScoreBadge score={product.contentReadiness} />
               </div>
             </div>
           </div>
         </TableCell>
         <TableCell>
+          <StatusPill
+            label={LISTING_STATUS_LABELS[product.status]}
+            tone={LISTING_STATUS_TONE[product.status]}
+          />
+          {product.status === 'AUTO_PAUSED' && product.pauseReason !== null ? (
+            <p className="mt-1 max-w-40 text-xs text-muted-foreground">
+              {product.pauseReason}
+            </p>
+          ) : null}
+        </TableCell>
+        <TableCell>
           <div className="flex items-center gap-1.5">
-            <div>
-              <div className="flex items-center gap-1.5">
-                {formatMoney(product.price)}
-                {product.compareAtPrice === null ? null : (
-                  <span className="text-xs text-muted-foreground line-through">
-                    {formatMoney(product.compareAtPrice)}
-                  </span>
-                )}
-              </div>
-            </div>
+            {formatMoney(product.sellingPrice)}
             <button
               type="button"
               onClick={() => announceUnbuilt('Editing price', product.name)}
-              aria-label={`Edit price for ${product.name}`}
+              aria-label={`Edit selling price for ${product.name}`}
               className="text-muted-foreground hover:text-foreground"
             >
               <Pencil aria-hidden="true" className="size-3.5" />
@@ -134,35 +181,13 @@ export default function CatalogueProductRow({
           </div>
         </TableCell>
         <TableCell>
-          <div className="flex items-center gap-1.5">
-            <span
-              className={
-                product.totalStock === 0
-                  ? 'text-sm font-medium text-red-600'
-                  : 'text-sm'
-              }
-            >
-              {formatCount(product.totalStock)}
-            </span>
-            <button
-              type="button"
-              onClick={() => announceUnbuilt('Editing stock', product.name)}
-              aria-label={`Edit stock for ${product.name}`}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <Pencil aria-hidden="true" className="size-3.5" />
-            </button>
-          </div>
+          <AvailabilityBadge availability={availability} />
         </TableCell>
         <TableCell>
-          <Switch
-            checked={product.active}
-            onCheckedChange={() => onToggleActive(product.id)}
-            aria-label={`${product.active ? 'Deactivate' : 'Activate'} ${product.name}`}
-          />
+          <MediaStatusBadge mediaStatus={product.mediaStatus} />
         </TableCell>
         <TableCell>
-          <ContentScoreBadge score={product.contentScore} />
+          <AttentionBadge reasons={product.attentionReasons} />
         </TableCell>
         <TableCell>
           <div className="flex items-center gap-3">
@@ -185,36 +210,61 @@ export default function CatalogueProductRow({
                 }
               />
               <DropdownMenuContent align="end">
+                {isLive ? (
+                  <DropdownMenuItem onClick={() => onPauseListing(product.id)}>
+                    Pause listing
+                  </DropdownMenuItem>
+                ) : null}
+                {product.status === 'AUTO_PAUSED' ? (
+                  <DropdownMenuItem
+                    onClick={() =>
+                      announceUnbuilt('Review & resume', product.name)
+                    }
+                  >
+                    Review & resume
+                  </DropdownMenuItem>
+                ) : null}
+                {product.status === 'DRAFT' ? (
+                  <DropdownMenuItem
+                    onClick={() => announceUnbuilt('Publish', product.name)}
+                  >
+                    Publish
+                  </DropdownMenuItem>
+                ) : null}
+                {product.status === 'ARCHIVED' ? (
+                  <DropdownMenuItem
+                    onClick={() =>
+                      announceUnbuilt('Restore as new draft', product.name)
+                    }
+                  >
+                    Restore as new draft
+                  </DropdownMenuItem>
+                ) : null}
                 <DropdownMenuItem
                   onClick={() =>
-                    announceUnbuilt(
-                      product.active ? 'Deactivate' : 'Activate',
-                      product.name,
-                    )
+                    announceUnbuilt('Duplicate as new draft', product.name)
                   }
                 >
-                  {product.active ? 'Deactivate' : 'Activate'}
+                  Duplicate as new draft
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() =>
-                    announceUnbuilt('Duplicate Listing', product.name)
-                  }
-                >
-                  Duplicate Listing
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() =>
-                    announceUnbuilt('View Live Page', product.name)
-                  }
+                  disabled={!canViewLive}
+                  onClick={() => {
+                    if (canViewLive)
+                      announceUnbuilt('View Live Page', product.name);
+                  }}
                 >
                   View Live Page
+                  {canViewLive ? null : ' (not live)'}
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  variant="destructive"
-                  onClick={() => announceUnbuilt('Delete', product.name)}
-                >
-                  Delete
-                </DropdownMenuItem>
+                {product.status !== 'ARCHIVED' ? (
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onClick={() => onArchive(product.id)}
+                  >
+                    Archive
+                  </DropdownMenuItem>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -226,8 +276,8 @@ export default function CatalogueProductRow({
             <CatalogueVariantRow
               key={variant.id}
               variant={variant}
-              onToggleActive={(variantId) =>
-                onToggleVariantActive(product.id, variantId)
+              onTogglePaused={(variantId) =>
+                onToggleVariantPaused(product.id, variantId)
               }
             />
           ))
