@@ -20,11 +20,14 @@ import {
   EVIDENCE_FRESHNESS_LABELS,
   MEDIA_STATUSES,
   MEDIA_STATUS_LABELS,
+  SUPPLIER_CONNECTION_HEALTH_LABELS,
+  SUPPLIER_CONNECTION_HEALTH_STATES,
   type Availability,
   type CatalogueSearchField,
   type CatalogueSortKey,
   type EvidenceFreshness,
   type MediaStatus,
+  type SupplierConnectionHealth,
 } from '@/lib/seller-center/product-catalogue/types';
 
 export type CatalogueFilters = {
@@ -34,6 +37,12 @@ export type CatalogueFilters = {
   supplierProviderCode: string | null;
   availability: Availability | null;
   mediaStatus: MediaStatus | null;
+  /**
+   * Independent from `availability` - the connection can be `DEGRADED`
+   * while individual products still read `AVAILABLE` from their last
+   * trusted evidence. Never derive one filter from the other.
+   */
+  supplierConnectionHealth: SupplierConnectionHealth | null;
   evidenceFreshness: EvidenceFreshness | null;
   needsAttentionOnly: boolean;
   outOfStockOnly: boolean;
@@ -308,6 +317,47 @@ export default function CatalogueFilterBar({
               {MEDIA_STATUSES.map((state) => (
                 <SelectItem key={state} value={state}>
                   {MEDIA_STATUS_LABELS[state]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="catalogue-connection-health" className="sr-only">
+            Supplier connection health
+          </Label>
+          <Select
+            items={{
+              [ANY_VALUE]: 'Any connection health',
+              ...Object.fromEntries(
+                SUPPLIER_CONNECTION_HEALTH_STATES.map((state) => [
+                  state,
+                  SUPPLIER_CONNECTION_HEALTH_LABELS[state],
+                ]),
+              ),
+            }}
+            value={filters.supplierConnectionHealth ?? ANY_VALUE}
+            onValueChange={(value) =>
+              onChange({
+                supplierConnectionHealth:
+                  value === ANY_VALUE
+                    ? null
+                    : (value as SupplierConnectionHealth),
+              })
+            }
+          >
+            <SelectTrigger
+              id="catalogue-connection-health"
+              className="w-48 bg-card"
+            >
+              <SelectValue placeholder="Supplier connection health" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ANY_VALUE}>Any connection health</SelectItem>
+              {SUPPLIER_CONNECTION_HEALTH_STATES.map((state) => (
+                <SelectItem key={state} value={state}>
+                  {SUPPLIER_CONNECTION_HEALTH_LABELS[state]}
                 </SelectItem>
               ))}
             </SelectContent>

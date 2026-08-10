@@ -63,6 +63,7 @@ function product(
     createdAt: '2026-08-01T00:00:00.000Z',
     supplierProviderCode: 'cj-dropshipping',
     supplierProviderName: 'CJ Dropshipping',
+    supplierConnectionHealth: 'CONNECTED',
     cjProductId: `ext-${overrides.id}`,
     sellingPrice: money(1000),
     availability: 'AVAILABLE',
@@ -88,6 +89,7 @@ const DEFAULT_FILTERS: CatalogueFilters = {
   supplierProviderCode: null,
   availability: null,
   mediaStatus: null,
+  supplierConnectionHealth: null,
   evidenceFreshness: null,
   needsAttentionOnly: false,
   outOfStockOnly: false,
@@ -233,6 +235,75 @@ describe('filterAndSortProducts', () => {
     });
 
     expect(result.map((p) => p.id)).toEqual(['other']);
+  });
+
+  it('filters by supplier connection health, independently of availability', () => {
+    // Two products share the same DEGRADED connection health while sitting
+    // in two different availability states, and one CONNECTED product sits
+    // in a third availability state - proving the filter cannot be
+    // reproduced by filtering on `availability` alone.
+    const mixed = [
+      product({
+        id: 'degraded-available',
+        supplierConnectionHealth: 'DEGRADED',
+        availability: 'AVAILABLE',
+      }),
+      product({
+        id: 'degraded-stale',
+        supplierConnectionHealth: 'DEGRADED',
+        availability: 'UNKNOWN_OR_STALE',
+      }),
+      product({
+        id: 'connected-out-of-stock',
+        supplierConnectionHealth: 'CONNECTED',
+        availability: 'OUT_OF_STOCK',
+      }),
+    ];
+
+    const degraded = filterAndSortProducts(mixed, 'ALL', {
+      ...DEFAULT_FILTERS,
+      supplierConnectionHealth: 'DEGRADED',
+    });
+
+    expect(degraded.map((p) => p.id).sort()).toEqual([
+      'degraded-available',
+      'degraded-stale',
+    ]);
+
+    const connected = filterAndSortProducts(mixed, 'ALL', {
+      ...DEFAULT_FILTERS,
+      supplierConnectionHealth: 'CONNECTED',
+    });
+
+    expect(connected.map((p) => p.id)).toEqual(['connected-out-of-stock']);
+  });
+
+  it('composes supplier connection health with availability (AND, not either/or)', () => {
+    const mixed = [
+      product({
+        id: 'degraded-available',
+        supplierConnectionHealth: 'DEGRADED',
+        availability: 'AVAILABLE',
+      }),
+      product({
+        id: 'connected-available',
+        supplierConnectionHealth: 'CONNECTED',
+        availability: 'AVAILABLE',
+      }),
+      product({
+        id: 'degraded-stale',
+        supplierConnectionHealth: 'DEGRADED',
+        availability: 'UNKNOWN_OR_STALE',
+      }),
+    ];
+
+    const result = filterAndSortProducts(mixed, 'ALL', {
+      ...DEFAULT_FILTERS,
+      supplierConnectionHealth: 'DEGRADED',
+      availability: 'AVAILABLE',
+    });
+
+    expect(result.map((p) => p.id)).toEqual(['degraded-available']);
   });
 
   it('filters by media status', () => {

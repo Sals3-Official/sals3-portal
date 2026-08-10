@@ -27,6 +27,7 @@ import AvailabilityBadge from './AvailabilityBadge';
 import CatalogueVariantRow from './CatalogueVariantRow';
 import ContentScoreBadge from './ContentScoreBadge';
 import MediaStatusBadge from './MediaStatusBadge';
+import SupplierConnectionHealthBadge from './SupplierConnectionHealthBadge';
 
 type CatalogueProductRowProps = {
   product: CatalogueProductFixture;
@@ -150,8 +151,13 @@ export default function CatalogueProductRow({
                 {product.supplierProviderName} · CJ ID: {product.cjProductId}
                 <Copy aria-hidden="true" className="size-3" />
               </button>
-              <div className="mt-1.5 min-w-0">
+              <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5">
                 <ContentScoreBadge score={product.contentReadiness} />
+                {product.supplierConnectionHealth === 'CONNECTED' ? null : (
+                  <SupplierConnectionHealthBadge
+                    health={product.supplierConnectionHealth}
+                  />
+                )}
               </div>
             </div>
           </div>
