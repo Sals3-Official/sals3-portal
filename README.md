@@ -114,6 +114,33 @@ forbids cron/scheduled ticks in the target runtime). Both fail closed with
 | `npm run db:studio`                                                               | Drizzle Studio (browse the local database)                                    |
 | `npm run approve:portal-user -- --email seller@example.com --role seller_manager` | Approve/promote one verified portal user                                      |
 
+## Deployment and performance
+
+Production functions must run near the production database. The Neon host is
+in `ap-southeast-2`, so `vercel.json` pins Vercel Functions to `syd1`. Keep
+that setting in sync with the database region; do not use Next's deprecated
+`preferredRegion` route export. The change takes effect on the next Vercel
+deployment, then verify with `vercel inspect https://sals3-portal.vercel.app`.
+
+Seller Center keeps authentication and authorization server-side. The shared
+portal layout calls `getSession()` once, then passes the resolved seller id and
+business model into the shell data loader for badge and connection health
+reads. Individual pages still enforce access with `requirePermission()` or
+`requireDropshipperAccount()`.
+
+Sidebar links intentionally set `prefetch={false}`. Most Seller Center routes
+are dynamic and permission-gated, so automatic prefetch created extra serverless
+`MISS` requests for every visible nav item. Manual clicks still use `next/link`.
+
+Route-level `loading.tsx` files under Seller Center use
+`src/components/portal/PortalRouteLoading.tsx` for the compact loading
+skeleton. This gives immediate feedback while dynamic routes wait for the
+server payload; it is visual feedback only, not an auth shortcut. The loading
+state is intentionally not placed at `(portal)/loading.tsx` because the Add
+Product preview has a hard 404 status contract for unknown fixture keys, and a
+parent streaming boundary would turn that response into a streamed 200. No
+Redis, KV, or paid cache service is used for this path.
+
 ## Routes
 
 | Route                                    | What it does                                                                                                                                                                                                                                                                                                                                 |

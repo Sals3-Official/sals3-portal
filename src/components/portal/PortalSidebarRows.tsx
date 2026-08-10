@@ -93,6 +93,7 @@ function SoloRow({
   const link = (
     <Link
       href={item.href}
+      prefetch={false}
       className="relative mx-1.5 my-0.5 flex h-10 items-center gap-3 rounded-md px-2 text-[13px] font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-white"
     >
       <ActiveEdge active={active} inset={8} />
@@ -142,6 +143,7 @@ function ChildRow({
   return (
     <Link
       href={item.href}
+      prefetch={false}
       className={cn(
         'relative mx-1.5 my-px flex h-[34px] items-center gap-2 rounded-md pr-2 text-[12.5px] whitespace-nowrap text-sidebar-foreground/[.82] transition-colors hover:bg-sidebar-accent hover:text-white',
         nested ? 'pl-[68px]' : 'pl-[52px]',
