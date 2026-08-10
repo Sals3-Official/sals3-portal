@@ -151,13 +151,27 @@ export function issuesOfSeverity(
 export function sectionSeverity(
   issues: ReadinessIssue[],
   section: EditorSectionId,
-): IssueSeverity | null {
+): 'BLOCKER' | 'WARNING' | null {
   const inSection = issues.filter((issue) => issue.section === section);
 
   if (inSection.some((issue) => issue.severity === 'BLOCKER')) return 'BLOCKER';
   if (inSection.some((issue) => issue.severity === 'WARNING')) return 'WARNING';
 
   return null;
+}
+
+/**
+ * Blocker+warning count for one section, for the section-nav badge. Never
+ * counts suggestions - `sectionSeverity` does not either, so a
+ * suggestion-only section still shows no flag at all.
+ */
+export function sectionIssueCount(
+  issues: ReadinessIssue[],
+  section: EditorSectionId,
+): number {
+  return issues.filter(
+    (issue) => issue.section === section && issue.severity !== 'SUGGESTION',
+  ).length;
 }
 
 export function isPermanentIssue(issue: ReadinessIssue): boolean {

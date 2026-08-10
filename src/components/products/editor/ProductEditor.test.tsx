@@ -239,9 +239,11 @@ describe('Product Editor - structure', () => {
 
     const nav = screen.getByRole('navigation', { name: 'Editor sections' });
 
-    expect(within(nav).getAllByText('Blocker').length).toBeGreaterThanOrEqual(
-      3,
-    );
+    // The badge is an icon plus an issue count, not the word "Blocker"
+    // repeated per section - its accessible name is what to assert on.
+    expect(
+      within(nav).getAllByLabelText(/blocker issues?/).length,
+    ).toBeGreaterThanOrEqual(3);
   });
 
   it('marks each variant evidence row as collapsed until it is opened', () => {

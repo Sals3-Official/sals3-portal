@@ -5,6 +5,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import { cn } from '@/lib/utils';
 import {
   isPermanentIssue,
   issuesOfSeverity,
@@ -36,6 +37,21 @@ const ACCENT_CLASSES: Record<IssueSeverity, string> = {
   BLOCKER: 'text-red-600',
   WARNING: 'text-amber-600',
   SUGGESTION: 'text-primary',
+};
+
+/**
+ * A colored left rule per severity, not a filled tinted card - the earlier
+ * version boxed every group with its own border and background, which
+ * nested a card inside the panel's own card and read as clutter in a
+ * ~320px rail. A plain accent bar next to the group (Linear/GitHub's own
+ * issue-list convention) separates severities just as clearly without
+ * adding a second visible boundary. The row content itself (icon, title,
+ * Details) stays exactly as dense as before - no new chrome per issue.
+ */
+const GROUP_ACCENT_CLASSES: Record<IssueSeverity, string> = {
+  BLOCKER: 'border-l-red-600',
+  WARNING: 'border-l-amber-600',
+  SUGGESTION: 'border-l-primary',
 };
 
 type IssueRowProps = {
@@ -96,11 +112,13 @@ function IssueRow({ issue, onGoToSection }: IssueRowProps) {
             <p className="text-xs leading-relaxed text-ink-muted">
               {issue.explanation}
             </p>
-            <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs text-muted-foreground">
               <dt className="font-semibold">Source</dt>
-              <dd>{ISSUE_SOURCE_LABELS[issue.source]}</dd>
+              <dd className="min-w-0 break-words">
+                {ISSUE_SOURCE_LABELS[issue.source]}
+              </dd>
               <dt className="font-semibold">Resolution</dt>
-              <dd>{issue.resolution}</dd>
+              <dd className="min-w-0 break-words">{issue.resolution}</dd>
             </dl>
             {/* A permanent reason code is a policy or legal matter with no
                 override anywhere in the system. Saying so here stops a
@@ -134,8 +152,13 @@ function SeverityGroup({
   const presentation = SEVERITY_PRESENTATION[severity];
 
   return (
-    <section className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-1.5">
+    <section
+      className={cn(
+        'flex flex-col gap-1.5 border-l-[3px] py-0.5 pl-2.5',
+        GROUP_ACCENT_CLASSES[severity],
+      )}
+    >
+      <div className="flex items-center justify-between gap-1.5">
         <h4 className="text-xs font-bold tracking-wide uppercase">
           {SEVERITY_GROUP_TITLES[severity]}
         </h4>

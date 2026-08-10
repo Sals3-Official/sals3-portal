@@ -70,12 +70,12 @@ describe('EditorSectionNavigation', () => {
       />,
     );
 
-    const nav = screen.getByRole('navigation', { name: 'Editor sections' });
-
     expect(
       screen.getByRole('button', { name: /Variants & Pricing/ }),
     ).toBeInTheDocument();
-    expect(nav).toHaveTextContent('Blocker');
+    // The badge is an icon plus a count, not the word "Blocker" repeated -
+    // its accessible name is what a screen reader announces instead.
+    expect(screen.getByLabelText('1 blocker issue')).toBeInTheDocument();
   });
 
   it('has no raw overflow scrollbar container', () => {

@@ -1,6 +1,9 @@
 import { Label } from '@/components/ui/label';
-import StatusPill from '@/components/seller-center/shared/StatusPill';
-import { sectionSeverity } from '@/lib/seller-center/product-editor/derive';
+import { cn } from '@/lib/utils';
+import {
+  sectionIssueCount,
+  sectionSeverity,
+} from '@/lib/seller-center/product-editor/derive';
 import {
   EDITOR_SECTIONS,
   type EditorSectionId,
@@ -16,6 +19,7 @@ type EditorSectionNavigationProps = {
 
 type SectionFlagProps = {
   severity: ReturnType<typeof sectionSeverity>;
+  count: number;
 };
 
 /** Shorter than the section-card title, so seven labels read as a calm row instead of a wrapped paragraph. */
@@ -29,25 +33,44 @@ const NAV_LABELS: Record<EditorSectionId, string> = {
   review: 'Review & Publish',
 };
 
+const FLAG_TONE_CLASSES: Record<'BLOCKER' | 'WARNING', string> = {
+  BLOCKER: 'bg-danger-surface text-red-600',
+  WARNING: 'bg-warning-surface text-amber-600',
+};
+
 /**
- * The same bounded pill used everywhere else a severity needs a word plus an
- * icon (`EditorStatusPill`, the readiness issue groups) - loose coloured
- * text floating next to a variable-length label is what made a wrapped row
- * of seven tabs read as ragged/misaligned. A pill has a fixed height and a
- * visible edge, so the row stays tidy regardless of which labels wrap.
+ * A compact count badge, not the severity word repeated on every flagged
+ * tab - "Specifications ⚠ Warning", "Media ⚠ Warning" read as noise once
+ * three of seven tabs say the same word. The icon still distinguishes
+ * blocker from warning shape, and the number is real information the old
+ * pill did not carry (how many issues, not just "at least one") - so this
+ * still is not a colour-only signal, just a denser one.
+ *
+ * Pinned to the label's own top-right corner (`absolute`, on a `relative`
+ * button), not sat inline after the text with a gap - a notification badge
+ * overlapping the thing it flags reads as attached to it; one floating a
+ * gap to the right of a short label like "Specifications" reads as
+ * unrelated to it, especially once seven labels of different lengths put
+ * that gap at a different distance every time.
  */
-function SectionFlag({ severity }: SectionFlagProps) {
-  if (severity === null) return null;
+function SectionFlag({ severity, count }: SectionFlagProps) {
+  if (severity === null || count === 0) return null;
 
   const presentation = SEVERITY_PRESENTATION[severity];
+  const Icon = presentation.icon;
+  const noun = count === 1 ? 'issue' : 'issues';
 
   return (
-    <StatusPill
-      label={presentation.label}
-      tone={presentation.tone}
-      icon={presentation.icon}
-      className="pointer-events-none"
-    />
+    <span
+      aria-label={`${count} ${presentation.label.toLowerCase()} ${noun}`}
+      className={cn(
+        'pointer-events-none absolute -top-1.5 -right-1.5 inline-flex items-center gap-0.5 rounded-full px-1 py-0.5 text-[10px] font-semibold tabular-nums ring-2 ring-card',
+        FLAG_TONE_CLASSES[severity],
+      )}
+    >
+      <Icon aria-hidden="true" className="size-2.5" />
+      {count}
+    </span>
   );
 }
 
@@ -68,9 +91,11 @@ function SectionFlag({ severity }: SectionFlagProps) {
  *   cramped, wrapped button row competing with the section below it.
  *
  * Each entry carries the worst severity in its section, so a blocker three
- * screens down is visible without scrolling to find it. The indicator is a
- * word plus an icon, not a coloured dot - a dot alone would be exactly the
- * colour-only status signal the design system rejects. Touch targets are
+ * screens down is visible without scrolling to find it. The indicator is an
+ * icon plus the issue count for that section, not a coloured dot - a dot
+ * alone would be exactly the colour-only status signal the design system
+ * rejects, and the count is real information a bare severity word was not
+ * carrying. Touch targets are
  * 44px on small screens.
  */
 export default function EditorSectionNavigation({
@@ -110,11 +135,14 @@ export default function EditorSectionNavigation({
             );
           })}
         </select>
-        <SectionFlag severity={sectionSeverity(issues, activeSection)} />
+        <SectionFlag
+          severity={sectionSeverity(issues, activeSection)}
+          count={sectionIssueCount(issues, activeSection)}
+        />
       </div>
 
       <div
-        className="hidden flex-wrap gap-1 @min-[40rem]:flex"
+        className="hidden flex-wrap gap-x-2.5 gap-y-1.5 @min-[40rem]:flex"
         aria-hidden={false}
       >
         {EDITOR_SECTIONS.map((section) => {
@@ -127,14 +155,17 @@ export default function EditorSectionNavigation({
               type="button"
               aria-current={isActive ? 'true' : undefined}
               onClick={() => onGoToSection(section.id)}
-              className={`inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-[13px] whitespace-nowrap transition-colors sm:min-h-8 ${
+              className={`relative inline-flex min-h-11 shrink-0 cursor-pointer items-center rounded-md px-2.5 text-[13px] whitespace-nowrap transition-colors sm:min-h-8 ${
                 isActive
                   ? 'bg-accent font-semibold text-brand-900'
                   : 'font-medium text-ink-muted hover:bg-muted'
               }`}
             >
               {NAV_LABELS[section.id]}
-              <SectionFlag severity={severity} />
+              <SectionFlag
+                severity={severity}
+                count={sectionIssueCount(issues, section.id)}
+              />
             </button>
           );
         })}

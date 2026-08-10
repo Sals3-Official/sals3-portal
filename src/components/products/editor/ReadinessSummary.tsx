@@ -2,7 +2,9 @@ import presentEvaluationStatus from '@/components/products/cj/evaluation-status'
 import { Progress } from '@/components/ui/progress';
 import { formatDateTime } from '@/lib/seller-center/product-editor/format';
 import type { EvaluationStatus } from '@/modules/catalog/candidates/rules/contracts';
+import type { IssueSeverity } from '@/lib/seller-center/product-editor/types';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
+import { SEVERITY_PRESENTATION } from './presentation';
 
 type ReadinessSummaryProps = {
   status: EvaluationStatus;
@@ -13,31 +15,34 @@ type ReadinessSummaryProps = {
   lastValidatedAt: string;
 };
 
-type CountRowProps = {
-  label: string;
+type CountChipProps = {
+  severity: IssueSeverity;
   value: number;
-  emphasis?: 'danger' | 'warning';
 };
 
 /**
- * Sharing one grid across all three rows (rather than each row running its
- * own `justify-between`) is what actually guarantees the value column lines
- * up - three independent flex rows only look aligned by coincidence, the
- * moment any of them changes width.
+ * One glanceable chip per severity instead of three `label: value` text
+ * rows - the same "count first, colour second" pattern order-management
+ * screens use for status filters, applied to the same `SEVERITY_PRESENTATION`
+ * tokens the issue list below already uses, so this row and the list it
+ * summarises can never describe severity differently. Zero renders as a
+ * quiet neutral chip rather than disappearing - a missing chip would read
+ * as "not checked", not "none found".
  */
-function CountRow({ label, value, emphasis }: CountRowProps) {
-  const emphasised = value > 0 && emphasis !== undefined;
-  const toneClass = emphasis === 'danger' ? 'text-red-600' : 'text-amber-600';
+function CountChip({ severity, value }: CountChipProps) {
+  const presentation = SEVERITY_PRESENTATION[severity];
+  const label = `${value} ${value === 1 ? presentation.label : `${presentation.label}s`}`;
+
+  if (value === 0) {
+    return <StatusPill label={label} tone="neutral" />;
+  }
 
   return (
-    <>
-      <dt className="text-ink-muted">{label}</dt>
-      <dd
-        className={`text-right font-semibold tabular-nums ${emphasised ? toneClass : 'text-ink-muted'}`}
-      >
-        {value}
-      </dd>
-    </>
+    <StatusPill
+      label={label}
+      tone={presentation.tone}
+      icon={presentation.icon}
+    />
   );
 }
 
@@ -69,11 +74,11 @@ export default function ReadinessSummary({
 
       <Progress value={completionPercent} aria-label="Listing completeness" />
 
-      <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1.5 border-t border-border pt-3 text-xs">
-        <CountRow label="Blockers" value={blockerCount} emphasis="danger" />
-        <CountRow label="Warnings" value={warningCount} emphasis="warning" />
-        <CountRow label="Suggestions" value={suggestionCount} />
-      </dl>
+      <div className="flex flex-wrap gap-1.5 border-t border-border pt-3">
+        <CountChip severity="BLOCKER" value={blockerCount} />
+        <CountChip severity="WARNING" value={warningCount} />
+        <CountChip severity="SUGGESTION" value={suggestionCount} />
+      </div>
 
       <p className="text-xs text-muted-foreground">
         Last automated check {formatDateTime(lastValidatedAt)}

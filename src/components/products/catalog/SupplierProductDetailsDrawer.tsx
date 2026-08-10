@@ -193,13 +193,13 @@ export default function SupplierProductDetailsDrawer({
             </p>
             <div className="flex flex-wrap gap-3 text-primary">
               {product.evaluationStatus === 'PASS' ? (
-                <Link href="/products/qualified/ready" className="underline">
+                <Link href="/products/pipeline?tab=ready" className="underline">
                   View in Ready
                 </Link>
               ) : null}
               {product.evaluationStatus === 'PASS_WITH_ATTENTION' ? (
                 <Link
-                  href="/products/qualified/needs-attention"
+                  href="/products/pipeline?tab=needs-attention"
                   className="underline"
                 >
                   View in Needs Attention
@@ -207,12 +207,18 @@ export default function SupplierProductDetailsDrawer({
               ) : null}
               {product.evaluationStatus === 'BLOCKED' ||
               product.evaluationStatus === 'TEMPORARILY_INELIGIBLE' ? (
-                <Link href="/products/blocked" className="underline">
+                <Link
+                  href="/products/pipeline?tab=blocked"
+                  className="underline"
+                >
                   View blocking reason
                 </Link>
               ) : null}
               {product.evaluationStatus === 'EVALUATION_FAILED' ? (
-                <Link href="/products/exception-queue" className="underline">
+                <Link
+                  href="/products/pipeline?tab=exception"
+                  className="underline"
+                >
                   View in Exception Queue
                 </Link>
               ) : null}

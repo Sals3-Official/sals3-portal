@@ -61,6 +61,6 @@ test.describe('Seller Center overview', () => {
     // to the same href, which would otherwise match too.
     await expect(
       page.getByRole('table').getByRole('link', { name: 'Exception Queue' }),
-    ).toHaveAttribute('href', '/products/exception-queue');
+    ).toHaveAttribute('href', '/products/pipeline?tab=exception');
   });
 });
