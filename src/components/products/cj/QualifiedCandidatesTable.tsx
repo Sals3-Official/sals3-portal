@@ -13,7 +13,7 @@ import {
   displayName,
   formatUsd,
   formatStock,
-  shippingOrigins,
+  stockedOrigins,
   totalStock,
 } from './candidate-view';
 import CustomizeAndListButton from './CustomizeAndListButton';
@@ -30,7 +30,7 @@ const SHARED_COLUMNS = [
   'Supplier price',
   'Weight',
   'Available stock',
-  'Shipping origins',
+  'Stocked origins',
 ];
 
 /**
@@ -91,7 +91,7 @@ export default function QualifiedCandidatesTable({
                 <TableCell className="tabular-nums">
                   {formatStock(totalStock(candidate.evidence))}
                 </TableCell>
-                <TableCell>{shippingOrigins(candidate.evidence)}</TableCell>
+                <TableCell>{stockedOrigins(candidate.evidence)}</TableCell>
                 {showReasons ? (
                   <TableCell>
                     {reasonCodes.length === 0 ? (

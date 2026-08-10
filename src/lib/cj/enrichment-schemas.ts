@@ -7,6 +7,7 @@ import {
   looseNumber,
   looseStringArray,
   looseText,
+  looseVerifiedWarehouse,
 } from './primitives';
 
 /**
@@ -105,12 +106,18 @@ export const cjWarehouseInventorySchema = z.object({
 /**
  * Per-variant stock in one country, from
  * `data.variantInventories[].inventory[]`. Note the un-suffixed field names.
+ *
+ * `verifiedWarehouse` (`1` verified, `2` unverified, anything else/absent
+ * `UNKNOWN`) was previously stripped at this boundary because the schema did
+ * not declare it — ADR-013's corrected evidence model requires preserving it
+ * per exact variant/origin rather than collapsing to a bare quantity.
  */
 export const cjVariantStockSchema = z.object({
   countryCode: looseText,
   totalInventory: looseNumber,
   cjInventory: looseNumber,
   factoryInventory: looseNumber,
+  verifiedWarehouse: looseVerifiedWarehouse,
 });
 
 /**
