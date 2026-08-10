@@ -57,6 +57,13 @@
       "when": 1786363494152,
       "tag": "0007_amusing_power_man",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786374707710,
+      "tag": "0008_material_tyger_tiger",
+      "breakpoints": true
     }
   ]
 }

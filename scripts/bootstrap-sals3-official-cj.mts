@@ -45,6 +45,7 @@ import { encryptSupplierCredential } from '../src/lib/secrets/crypto-core';
 import { CJ_BASE_URL } from '../src/services/cj/config';
 import { cjAccessTokenSchema } from '../src/lib/cj/schemas';
 import {
+  claimAccountBinding,
   findConnectionBySellerAndProvider,
   insertConnection,
   insertProviderIfAbsent,
@@ -184,8 +185,28 @@ async function runBootstrap(
     .update(`${provider.code}:${verified.openId}`)
     .digest('hex');
 
+  // Permanent ownership of this CJ account, claimed before anything is
+  // written against it. Same rule the portal's own Connect flow enforces -
+  // the script is not exempt from it, and running it with another seller's
+  // CJ key must fail loudly rather than quietly re-point a connection.
+  const binding = await claimAccountBinding(db, {
+    providerId: provider.id,
+    externalAccountLookupHash: lookupHash,
+    sellerAccountId: sellerAccount.id,
+  });
+
+  if (binding.sellerAccountId !== sellerAccount.id) {
+    throw new Error(
+      `Refusing to bind CJ account ${maskedOpenId}: it is already permanently ` +
+        `bound to seller account ${binding.sellerAccountId}.`,
+    );
+  }
+
   if (existingConnection !== null) {
-    if (existingConnection.externalAccountMasked !== maskedOpenId) {
+    // Compares the lookup hash, not `externalAccountMasked` - the mask is a
+    // four-character openId suffix, which two different CJ accounts can
+    // collide on and would then pass this guard.
+    if (existingConnection.externalAccountLookupHash !== lookupHash) {
       throw new Error(
         `Refusing to overwrite existing connection ${existingConnection.id} ` +
           `(${existingConnection.externalAccountMasked}) with a different CJ account (${maskedOpenId}).`,

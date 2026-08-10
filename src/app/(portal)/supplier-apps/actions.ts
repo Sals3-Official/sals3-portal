@@ -4,6 +4,12 @@ import { createHash } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import getDb from '@/lib/db/client';
+import uniqueViolationConstraint from '@/lib/db/constraint-errors';
+import {
+  SUPPLIER_ACCOUNT_BINDINGS_PROVIDER_HASH_KEY,
+  SUPPLIER_CONNECTIONS_PROVIDER_EXTERNAL_HASH_KEY,
+  SUPPLIER_CONNECTIONS_SELLER_PROVIDER_KEY,
+} from '@/lib/db/schema';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { PermissionError } from '@/lib/auth/permissions';
 import { checkRateLimit } from '@/lib/rate-limit';
@@ -16,8 +22,9 @@ import {
   verifyStepUpChallenge,
 } from '@/lib/security/step-up-challenge';
 import {
+  claimAccountBinding,
   disconnectConnection,
-  findConnectionByProviderAndHash,
+  findAccountBinding,
   findConnectionBySellerAndProvider,
   findProviderByCode,
   insertConnection,
@@ -63,10 +70,23 @@ export type ConnectCjResult =
         | 'denied'
         | 'rate_limited'
         | 'already_connected'
+        | 'cj_account_taken'
         | 'provider_unavailable'
         | 'verification_failed'
         | 'failed';
     };
+
+/**
+ * Thrown inside the transaction when the CJ account behind the submitted key
+ * is permanently bound to a different seller account. A throw, not a return,
+ * because it must roll back everything the transaction has already done.
+ */
+class BindingConflictError extends Error {
+  constructor() {
+    super('This provider account belongs to a different seller account.');
+    this.name = 'BindingConflictError';
+  }
+}
 
 type VerifiedCjAuth = {
   openId: string;
@@ -123,6 +143,64 @@ async function verifyCjApiKey(apiKey: string): Promise<VerifiedCjAuth> {
 
 function maskOpenId(openId: string): string {
   return `CJ...${openId.slice(-4)}`;
+}
+
+/**
+ * Turns whatever the transaction threw into the reason the seller should
+ * see. The pre-checks before the transaction are read-then-write races; a
+ * unique index is what actually holds under concurrency, so a 23505 here is
+ * the invariant working, not an unknown fault, and must not be flattened
+ * into "try again in a moment".
+ *
+ * The constraint name never leaves this function - only a reason does.
+ */
+function classifyConnectFailure(
+  error: unknown,
+): Exclude<ConnectCjResult, { ok: true }>['reason'] {
+  if (error instanceof BindingConflictError) return 'cj_account_taken';
+
+  switch (uniqueViolationConstraint(error)) {
+    case SUPPLIER_CONNECTIONS_SELLER_PROVIDER_KEY:
+      return 'already_connected';
+    case SUPPLIER_CONNECTIONS_PROVIDER_EXTERNAL_HASH_KEY:
+    case SUPPLIER_ACCOUNT_BINDINGS_PROVIDER_HASH_KEY:
+      return 'cj_account_taken';
+    default:
+      return 'failed';
+  }
+}
+
+/**
+ * Audits a refused attempt to bind a CJ account owned by another seller.
+ * Written on the pooled client rather than a transaction because the
+ * transaction it relates to was rolled back or never opened.
+ *
+ * Best effort on purpose: an audit-write failure must not change what the
+ * seller is told, and must not turn a clean refusal into a 500. It carries
+ * no openId and no API key.
+ */
+async function recordBindRejected(
+  actorId: string,
+  sellerAccountId: string,
+  providerCode: string,
+): Promise<void> {
+  try {
+    await appendAuditEvent(getDb(), {
+      actorId,
+      action: 'supplier_connection.bind_rejected',
+      // The seller account, not a connection: no connection row exists for a
+      // refused bind, so anchoring it to one would invent an entity.
+      entityType: 'SellerAccount',
+      entityId: sellerAccountId,
+      payload: { sellerAccountId, providerCode, reason: 'cj_account_taken' },
+    });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] CJ bind-rejected audit write failed', {
+      sellerAccountId,
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+  }
 }
 
 export async function connectCjSupplier(
@@ -189,18 +267,28 @@ export async function connectCjSupplier(
     .update(`${provider.code}:${verified.openId}`)
     .digest('hex');
 
-  // Excludes the connection being reconnected itself - re-verifying the same
-  // CJ account it already belonged to must not read back as "another seller
-  // already has this account", which is the real thing this check guards.
-  const duplicateAccount = await findConnectionByProviderAndHash(
+  // Ownership of a CJ account is permanent and lives in
+  // `supplier_account_bindings`, so this is the check that matters - not
+  // "does a connection row hold this hash right now". A seller reconnecting
+  // their own account, or moving to a second CJ account of their own, both
+  // read back as theirs and pass. Only another seller's account is refused.
+  //
+  // Advisory only: the authoritative claim happens inside the transaction
+  // below. This one exists so the ordinary case gets an accurate message
+  // without paying for a rolled-back transaction.
+  const existingBinding = await findAccountBinding(
     getDb(),
     provider.id,
     lookupHash,
-    existing?.id,
   );
 
-  if (duplicateAccount !== null) {
-    return { ok: false, reason: 'already_connected' };
+  if (
+    existingBinding !== null &&
+    existingBinding.sellerAccountId !== sellerAccount.id
+  ) {
+    await recordBindRejected(session.userId, sellerAccount.id, provider.code);
+
+    return { ok: false, reason: 'cj_account_taken' };
   }
 
   const credentialBundle = cjCredentialBundleSchema.parse({
@@ -214,6 +302,20 @@ export async function connectCjSupplier(
 
   try {
     const connection = await getDb().transaction(async (tx) => {
+      // First statement in the transaction, before any connection row is
+      // touched. `claimAccountBinding` is an insert-or-read-back on a unique
+      // index, so two concurrent connects of the same CJ account cannot both
+      // win - one of them reads the other's row here and rolls back.
+      const binding = await claimAccountBinding(tx, {
+        providerId: provider.id,
+        externalAccountLookupHash: lookupHash,
+        sellerAccountId: sellerAccount.id,
+      });
+
+      if (binding.sellerAccountId !== sellerAccount.id) {
+        throw new BindingConflictError();
+      }
+
       const row =
         existing === null
           ? await insertConnection(tx, {
@@ -235,11 +337,16 @@ export async function connectCjSupplier(
             });
 
       // Encryption happens after the row's id is known, so the secret write
-      // is the second statement in the same short transaction rather than a
+      // is the next statement in the same short transaction rather than a
       // separate one - both are fast, local Postgres operations with no
       // third-party call in between. `write` upserts, so this also
       // overwrites a reconnected connection's previous (now stale) secret.
+      //
+      // `tx`, not `getDb()`: on a first-time connect the connection row this
+      // secret points at is still uncommitted, and the pooled client cannot
+      // see it. That is why `write` takes an executor at all.
       await new PostgresSupplierSecretStore().write(
+        tx,
         row.id,
         provider.code,
         credentialBundle,
@@ -283,12 +390,20 @@ export async function connectCjSupplier(
       status: connection.status,
     };
   } catch (error) {
+    const reason = classifyConnectFailure(error);
+
     // eslint-disable-next-line no-console
     console.error('[portal] CJ connection persistence failed', {
       sellerAccountId: sellerAccount.id,
+      reason,
       error: error instanceof Error ? error.message : 'unknown',
     });
-    return { ok: false, reason: 'failed' };
+
+    if (reason === 'cj_account_taken') {
+      await recordBindRejected(session.userId, sellerAccount.id, provider.code);
+    }
+
+    return { ok: false, reason };
   }
 }
 

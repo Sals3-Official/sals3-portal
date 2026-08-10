@@ -8,4 +8,5 @@ export * from './auth';
 export * from './seller-accounts';
 export * from './supplier-providers';
 export * from './supplier-connections';
+export * from './supplier-account-bindings';
 export * from './supplier-secrets';

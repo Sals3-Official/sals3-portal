@@ -1,5 +1,6 @@
 import { CJ_BASE_URL, CjApiError } from '@/services/cj/config';
 import { cjAccessTokenSchema } from '@/lib/cj/schemas';
+import getDb from '@/lib/db/client';
 import type { SupplierSecretStore } from '@/lib/secrets/supplier-secret-store';
 import {
   cjCredentialBundleSchema,
@@ -85,7 +86,12 @@ export default class CjTokenManager {
       return cached.token;
     }
 
+    // The pooled client, deliberately, not a caller's transaction: a token
+    // refresh is its own unit of work and must commit whether or not
+    // whatever triggered it succeeds. Every construction site of this class
+    // is outside a transaction already.
     const bundle = await this.secretStore.read<CjCredentialBundle>(
+      getDb(),
       connectionId,
       'CJ_DROPSHIPPING',
     );
@@ -105,7 +111,12 @@ export default class CjTokenManager {
       refreshTokenExpiresAt: fresh.refreshTokenExpiresAt,
     });
 
-    await this.secretStore.write(connectionId, 'CJ_DROPSHIPPING', updated);
+    await this.secretStore.write(
+      getDb(),
+      connectionId,
+      'CJ_DROPSHIPPING',
+      updated,
+    );
 
     return fresh.accessToken;
   }

@@ -21,22 +21,29 @@ vi.mock('@/lib/rate-limit', () => ({
 }));
 
 const {
+  claimAccountBindingMock,
+  findAccountBindingMock,
   findConnectionBySellerAndProviderMock,
-  findConnectionByProviderAndHashMock,
   findProviderByCodeMock,
   insertConnectionMock,
   reconnectConnectionMock,
 } = vi.hoisted(() => ({
+  claimAccountBindingMock: vi.fn(),
+  findAccountBindingMock: vi.fn(),
   findConnectionBySellerAndProviderMock: vi.fn(),
-  findConnectionByProviderAndHashMock: vi.fn(),
   findProviderByCodeMock: vi.fn(),
   insertConnectionMock: vi.fn(),
   reconnectConnectionMock: vi.fn(),
 }));
 
+// The permanent CJ-account binding replaced `findConnectionByProviderAndHash`
+// as the "is this account already taken?" check - see this module's own note
+// in `src/modules/suppliers/repository.ts`. These tests are about the requeue,
+// so both binding calls just answer "unclaimed, and now yours".
 vi.mock('@/modules/suppliers/repository', () => ({
+  claimAccountBinding: claimAccountBindingMock,
   disconnectConnection: vi.fn(),
-  findConnectionByProviderAndHash: findConnectionByProviderAndHashMock,
+  findAccountBinding: findAccountBindingMock,
   findConnectionBySellerAndProvider: findConnectionBySellerAndProviderMock,
   findProviderByCode: findProviderByCodeMock,
   insertConnection: insertConnectionMock,
@@ -104,7 +111,10 @@ describe('connectCjSupplier - reconnect-triggered requeue', () => {
   beforeEach(() => {
     asMock(requireDropshipperAccount).mockResolvedValue(SESSION);
     findProviderByCodeMock.mockReset().mockResolvedValue(PROVIDER);
-    findConnectionByProviderAndHashMock.mockReset().mockResolvedValue(null);
+    findAccountBindingMock.mockReset().mockResolvedValue(null);
+    claimAccountBindingMock
+      .mockReset()
+      .mockResolvedValue({ sellerAccountId: SESSION.sellerAccount.id });
     appendAuditEventMock.mockReset().mockResolvedValue(undefined);
     requeueConnectionPausedEvaluationsMock.mockReset().mockResolvedValue(0);
     insertConnectionMock.mockReset();

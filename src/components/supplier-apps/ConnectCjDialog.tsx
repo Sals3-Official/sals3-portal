@@ -70,6 +70,12 @@ export default function ConnectCjDialog({
           <li>Paste it below.</li>
         </ol>
 
+        <p className="text-[12.5px] text-muted-foreground">
+          One CJ Dropshipping account connects to one Sals3 seller account. If
+          the key belongs to a CJ account another seller already connected, this
+          will be refused.
+        </p>
+
         <ConnectCjForm mode={mode} onSuccess={() => setOpen(false)} />
       </DialogContent>
     </Dialog>

@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { eq } from 'drizzle-orm';
-import getDb from '@/lib/db/client';
+import type { DbExecutor } from '@/lib/db/client';
 import { supplierConnectionSecrets } from '@/lib/db/schema';
 import { decryptSupplierCredential, encryptSupplierCredential } from './crypto';
 import type { SupplierSecretStore } from './supplier-secret-store';
@@ -15,12 +15,13 @@ const CURRENT_KEY_VERSION = 1;
  * credential is written, logged, or returned outside this module.
  */
 export default class PostgresSupplierSecretStore implements SupplierSecretStore {
-  // These methods don't reference `this` - `getDb()` is a free-standing
-  // singleton accessor, not instance state - but the class shape matches
-  // the given `SupplierSecretStore` DI contract (constructible,
-  // mockable/swappable) rather than a plain module of functions.
+  // These methods don't reference `this` - each runs on the executor it is
+  // handed - but the class shape matches the given `SupplierSecretStore` DI
+  // contract (constructible, mockable/swappable) rather than a plain module
+  // of functions.
   // eslint-disable-next-line class-methods-use-this
   async write(
+    executor: DbExecutor,
     connectionId: string,
     providerCode: string,
     credentials: unknown,
@@ -31,7 +32,7 @@ export default class PostgresSupplierSecretStore implements SupplierSecretStore 
       keyVersion: CURRENT_KEY_VERSION,
     });
 
-    await getDb()
+    await executor
       .insert(supplierConnectionSecrets)
       .values({
         connectionId,
@@ -54,8 +55,12 @@ export default class PostgresSupplierSecretStore implements SupplierSecretStore 
   }
 
   // eslint-disable-next-line class-methods-use-this
-  async read<T>(connectionId: string, providerCode: string): Promise<T> {
-    const rows = await getDb()
+  async read<T>(
+    executor: DbExecutor,
+    connectionId: string,
+    providerCode: string,
+  ): Promise<T> {
+    const rows = await executor
       .select()
       .from(supplierConnectionSecrets)
       .where(eq(supplierConnectionSecrets.connectionId, connectionId))
@@ -81,8 +86,8 @@ export default class PostgresSupplierSecretStore implements SupplierSecretStore 
   }
 
   // eslint-disable-next-line class-methods-use-this
-  async delete(connectionId: string): Promise<void> {
-    await getDb()
+  async delete(executor: DbExecutor, connectionId: string): Promise<void> {
+    await executor
       .delete(supplierConnectionSecrets)
       .where(eq(supplierConnectionSecrets.connectionId, connectionId));
   }

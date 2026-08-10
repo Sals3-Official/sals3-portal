@@ -326,9 +326,10 @@ Fifteen tables: `supplier_candidates` (the shortlist record, unique on
 `supplier_snapshots` (one normalised CJ evidence record per candidate),
 `candidate_evaluations` (one automated-evaluation record per candidate - see
 [Automated candidate evaluation](#automated-candidate-evaluation)),
-append-only `audit_events`, and four multi-tenant tables added for
+append-only `audit_events`, and five multi-tenant tables added for
 [Supplier Apps](#supplier-apps-multi-tenant-provider-connections):
-`seller_accounts`, `supplier_providers`, `supplier_connections`, and
+`seller_accounts`, `supplier_providers`, `supplier_connections`,
+append-only `supplier_account_bindings`, and
 `supplier_connection_secrets`. Authentication adds `auth_users`,
 `auth_sessions`, `auth_accounts`, `auth_verifications`, `auth_two_factors`,
 and `auth_rate_limits`.
@@ -504,18 +505,18 @@ credential instead of the whole app sharing one global `CJ_API_KEY`. `/supplier-
 is the seller-facing screen; `src/modules/suppliers/` is the provider-agnostic
 boundary every screen goes through.
 
-| Piece                                   | File                                                                                              |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Schema (4 tables)                       | `src/lib/db/schema/{seller-accounts,supplier-providers,supplier-connections,supplier-secrets}.ts` |
-| Provider-agnostic interface             | `src/modules/suppliers/contracts.ts`                                                              |
-| Tenant-scoped connection CRUD           | `src/modules/suppliers/repository.ts`                                                             |
-| CJ adapter (implements the interface)   | `src/modules/suppliers/providers/cj/cj-adapter.ts`                                                |
-| Per-connection CJ token cache           | `src/modules/suppliers/providers/cj/cj-auth.ts`                                                   |
-| AES-256-GCM credential encryption       | `src/lib/secrets/crypto-core.ts` (+ guarded `crypto.ts`)                                          |
-| Encrypted credential store              | `src/lib/secrets/postgres-supplier-secret-store.ts`                                               |
-| Seller/role guard                       | `src/lib/auth/seller-guard.ts`                                                                    |
-| Connect / Disconnect / Reconnect action | `src/app/(portal)/supplier-apps/actions.ts`                                                       |
-| One-time bootstrap (Sals3 Official)     | `scripts/bootstrap-sals3-official-cj.mts` (`npm run bootstrap:cj`)                                |
+| Piece                                   | File                                                                                                                        |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Schema (5 tables)                       | `src/lib/db/schema/{seller-accounts,supplier-providers,supplier-connections,supplier-account-bindings,supplier-secrets}.ts` |
+| Provider-agnostic interface             | `src/modules/suppliers/contracts.ts`                                                                                        |
+| Tenant-scoped connection CRUD           | `src/modules/suppliers/repository.ts`                                                                                       |
+| CJ adapter (implements the interface)   | `src/modules/suppliers/providers/cj/cj-adapter.ts`                                                                          |
+| Per-connection CJ token cache           | `src/modules/suppliers/providers/cj/cj-auth.ts`                                                                             |
+| AES-256-GCM credential encryption       | `src/lib/secrets/crypto-core.ts` (+ guarded `crypto.ts`)                                                                    |
+| Encrypted credential store              | `src/lib/secrets/postgres-supplier-secret-store.ts`                                                                         |
+| Seller/role guard                       | `src/lib/auth/seller-guard.ts`                                                                                              |
+| Connect / Disconnect / Reconnect action | `src/app/(portal)/supplier-apps/actions.ts`                                                                                 |
+| One-time bootstrap (Sals3 Official)     | `scripts/bootstrap-sals3-official-cj.mts` (`npm run bootstrap:cj`)                                                          |
 
 - **Credentials are encrypted at rest.** AES-256-GCM, with the connection id,
   provider code, and key version bound in as AAD, so a copied ciphertext row
@@ -527,6 +528,28 @@ boundary every screen goes through.
   is `NOT NULL` and every Product Sourcing query joins through
   `supplier_connections.seller_account_id` — never the legacy
   `intended_seller_id` text column, which is now unused display-only data.
+- **One seller account, one supplier configuration.** Enforced by the
+  `(seller_account_id, provider_id)` unique index, not by an application
+  check — a seller gets at most one connection per provider.
+- **One CJ account, one seller account, permanently.** `supplier_account_bindings`
+  is an append-only ledger of `(provider_id, sha256(providerCode:openId)) →
+seller_account_id`. `connectCjSupplier` claims the binding as the first
+  statement inside its transaction, so two concurrent connects of the same CJ
+  account cannot both win. The binding is never released: disconnecting frees
+  the _configuration_, never the ownership, and a seller moving to a second CJ
+  account of their own adds a row rather than replacing one (so they can move
+  back later). `supplier_connections`' own `(provider_id, hash)` unique index
+  cannot provide this — reconnecting rewrites that hash, which would free the
+  old account for anyone to claim. A seller pasting a key for a CJ account
+  another seller owns is refused with a distinct message and an appended
+  `supplier_connection.bind_rejected` audit event. **Consequence to accept:**
+  releasing a binding needs a manual database change; there is no UI for it.
+- **The database is the enforcer, not the pre-check.** Every "is this taken?"
+  read before a write is a race. `src/lib/db/constraint-errors.ts` maps a
+  Postgres `23505` back to the right user-facing reason by constraint name
+  (walking `error.cause`, because Drizzle wraps driver errors), so a violation
+  under concurrency reads as a permanent, explainable refusal instead of
+  "try again in a moment".
 - **Connect / Disconnect / Reconnect.** Disconnecting
   (`disconnectCjSupplier`) is soft: the row and its encrypted secret stay, only
   `status` flips to `DISCONNECTED`, which is what the automation pipeline's
