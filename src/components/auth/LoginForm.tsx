@@ -6,12 +6,29 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import authClient from '@/lib/auth/client';
-import { safeAuthRedirect } from '@/lib/auth/redirect';
+import authClient, { clearAuthNext, rememberAuthNext } from '@/lib/auth/client';
+import {
+  authStepRedirect,
+  continueAuthRedirect,
+  safeAuthRedirect,
+} from '@/lib/auth/redirect';
 import { loginSchema } from '@/lib/auth/schemas';
 import FieldError from './FieldError';
 
 type FieldErrors = Partial<Record<'email' | 'password', string>>;
+
+type TwoFactorRedirectResponse = {
+  twoFactorRedirect: true;
+};
+
+function needsTwoFactor(data: unknown): data is TwoFactorRedirectResponse {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'twoFactorRedirect' in data &&
+    data.twoFactorRedirect === true
+  );
+}
 
 export default function LoginForm() {
   const router = useRouter();
@@ -44,20 +61,27 @@ export default function LoginForm() {
 
     setIsPending(true);
     const callbackURL = safeAuthRedirect(parsed.data.next);
+    rememberAuthNext(callbackURL);
     const response = await authClient.signIn.email({
       email: parsed.data.email,
       password: parsed.data.password,
-      callbackURL,
       rememberMe: true,
     });
     setIsPending(false);
 
     if (response.error !== null) {
+      clearAuthNext();
       setMessage('We could not sign you in with those credentials.');
       return;
     }
 
-    router.push(callbackURL);
+    if (needsTwoFactor(response.data)) {
+      router.replace(authStepRedirect('/two-factor', callbackURL));
+      return;
+    }
+
+    clearAuthNext();
+    router.replace(continueAuthRedirect(callbackURL));
     router.refresh();
   }
 

@@ -8,6 +8,7 @@ import {
   type PortalPermission,
   type PortalRole,
 } from './permissions';
+import { resolvePortalEntryRedirect } from './redirect';
 
 /**
  * Session gate. The production path always reads Better Auth on the server and
@@ -53,6 +54,7 @@ function readTestBypassSession(): PortalSession | null {
 
 export type PortalAccessState = {
   hasSession: boolean;
+  hasPendingTwoFactor: boolean;
   emailVerified: boolean;
   twoFactorEnabled: boolean;
   sellerApproved: boolean;
@@ -66,6 +68,13 @@ type BetterAuthUser = {
   twoFactorEnabled?: boolean;
 };
 
+const TWO_FACTOR_COOKIE_NAMES = [
+  'better-auth.two_factor',
+  '__Secure-better-auth.two_factor',
+  'better-auth-two_factor',
+  '__Secure-better-auth-two_factor',
+];
+
 export async function getRawAuthSession() {
   // `headers()` first, on purpose. It is the dynamic signal that makes Next
   // abandon a prerender, and it must land before anything touches the
@@ -75,6 +84,17 @@ export async function getRawAuthSession() {
   const { default: getAuth } = await import('./server');
 
   return getAuth().api.getSession({ headers: requestHeaders });
+}
+
+async function hasPendingTwoFactorChallenge(): Promise<boolean> {
+  const requestHeaders = await headers();
+  const cookieHeader = requestHeaders.get('cookie');
+
+  if (cookieHeader === null) return false;
+
+  return TWO_FACTOR_COOKIE_NAMES.some((name) =>
+    cookieHeader.includes(`${name}=`),
+  );
 }
 
 function coercePortalRole(role: unknown): PortalRole {
@@ -116,17 +136,22 @@ export async function getPortalAccessState(): Promise<PortalAccessState> {
   if (testSession !== null) {
     return {
       hasSession: true,
+      hasPendingTwoFactor: false,
       emailVerified: true,
       twoFactorEnabled: true,
       sellerApproved: true,
     };
   }
 
-  const data = await getRawAuthSession();
+  const [data, hasPendingTwoFactor] = await Promise.all([
+    getRawAuthSession(),
+    hasPendingTwoFactorChallenge(),
+  ]);
 
   if (data === null) {
     return {
       hasSession: false,
+      hasPendingTwoFactor,
       emailVerified: false,
       twoFactorEnabled: false,
       sellerApproved: false,
@@ -149,10 +174,17 @@ export async function getPortalAccessState(): Promise<PortalAccessState> {
 
   return {
     hasSession: true,
+    hasPendingTwoFactor: false,
     emailVerified: user.emailVerified,
     twoFactorEnabled: user.twoFactorEnabled === true,
     sellerApproved,
   };
+}
+
+export async function getPortalEntryRedirect(
+  intended: string | null | undefined,
+): Promise<string> {
+  return resolvePortalEntryRedirect(await getPortalAccessState(), intended);
 }
 
 export async function getSession(): Promise<PortalSession> {

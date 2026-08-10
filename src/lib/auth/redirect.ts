@@ -1,4 +1,4 @@
-const DEFAULT_AFTER_LOGIN = '/overview';
+export const DEFAULT_AFTER_LOGIN = '/overview';
 
 const ALLOWED_REDIRECTS = new Set([
   '/overview',
@@ -39,15 +39,63 @@ export function safeAuthRedirect(input: string | null | undefined): string {
   return DEFAULT_AFTER_LOGIN;
 }
 
+export type PortalEntryState = {
+  hasSession: boolean;
+  hasPendingTwoFactor?: boolean;
+  emailVerified: boolean;
+  twoFactorEnabled: boolean;
+  sellerApproved: boolean;
+};
+
+export function authStepRedirect(
+  pathname: '/login' | '/setup-2fa' | '/two-factor',
+  intended: string | null | undefined,
+): string {
+  const destination = new URL(pathname, 'https://portal.sals3.local');
+  destination.searchParams.set('next', safeAuthRedirect(intended));
+
+  return `${destination.pathname}${destination.search}`;
+}
+
+export function continueAuthRedirect(
+  intended: string | null | undefined,
+): string {
+  const destination = new URL('/auth/continue', 'https://portal.sals3.local');
+  destination.searchParams.set('next', safeAuthRedirect(intended));
+
+  return `${destination.pathname}${destination.search}`;
+}
+
+export function resolvePortalEntryRedirect(
+  state: PortalEntryState,
+  intended: string | null | undefined,
+): string {
+  if (!state.hasSession) {
+    return state.hasPendingTwoFactor === true
+      ? authStepRedirect('/two-factor', intended)
+      : authStepRedirect('/login', intended);
+  }
+
+  if (!state.emailVerified) return authStepRedirect('/login', intended);
+  if (!state.twoFactorEnabled) return authStepRedirect('/setup-2fa', intended);
+  if (!state.sellerApproved) return '/auth/pending';
+
+  return safeAuthRedirect(intended);
+}
+
 export function redirectAfterPortalState(params?: {
   isVerifiedEmail?: boolean;
   isTwoFactorEnabled?: boolean;
   isSellerApproved?: boolean;
   intended?: string | null;
 }): string {
-  if (params?.isVerifiedEmail === false) return '/login';
-  if (params?.isSellerApproved === false) return '/auth/pending';
-  if (params?.isTwoFactorEnabled === false) return '/setup-2fa';
-
-  return safeAuthRedirect(params?.intended);
+  return resolvePortalEntryRedirect(
+    {
+      hasSession: true,
+      emailVerified: params?.isVerifiedEmail !== false,
+      twoFactorEnabled: params?.isTwoFactorEnabled !== false,
+      sellerApproved: params?.isSellerApproved !== false,
+    },
+    params?.intended,
+  );
 }

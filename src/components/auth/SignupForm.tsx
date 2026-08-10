@@ -33,7 +33,7 @@ function SubmitButton() {
       {status.pending ? (
         <Loader2 className="animate-spin" aria-hidden="true" />
       ) : null}
-      Create seller application
+      Create seller account
     </Button>
   );
 }

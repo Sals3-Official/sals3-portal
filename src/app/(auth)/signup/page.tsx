@@ -3,17 +3,17 @@ import AuthShell from '@/components/auth/AuthShell';
 import SignupForm from '@/components/auth/SignupForm';
 
 export const metadata = {
-  title: 'Apply for access | Sals3 Seller Center',
+  title: 'Create seller account | Sals3 Seller Center',
 };
 
 export default function SignupPage() {
   return (
     <AuthShell
-      title="Create seller application"
-      description="Signup starts a pending seller application. Portal access starts only after approval."
+      title="Create seller account"
+      description="Verify your email, set up an authenticator, then enter Seller Center."
       footer={
         <>
-          Already approved?{' '}
+          Already have an account?{' '}
           <Link
             href="/login"
             className="font-medium text-foreground underline-offset-4 hover:underline"

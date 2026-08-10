@@ -11,7 +11,7 @@ export default function HomePage() {
   return (
     <AuthShell
       title="Sign in"
-      description="Use your approved seller email and password."
+      description="Use your seller email and password."
       footer={
         <>
           Need seller access?{' '}

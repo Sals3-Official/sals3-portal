@@ -16,6 +16,10 @@ import {
 } from '@/lib/db/schema';
 import { insertSellerAccountIfAbsent } from '@/modules/suppliers/repository';
 import sendAuthEmail from './email';
+import {
+  buildInitialSellerAccount,
+  PUBLIC_SIGNUP_PORTAL_ROLE,
+} from './signup-policy';
 
 const authSchema = {
   user: authUsers,
@@ -49,7 +53,7 @@ function createAuth() {
         portalRole: {
           type: 'string',
           required: false,
-          defaultValue: 'seller_manager',
+          defaultValue: PUBLIC_SIGNUP_PORTAL_ROLE,
           input: false,
         },
         registrationBusinessModel: {
@@ -94,19 +98,11 @@ function createAuth() {
       user: {
         create: {
           after: async (user) => {
-            if (
-              user.registrationBusinessModel !== 'RETAILER' &&
-              user.registrationBusinessModel !== 'DROPSHIPPER'
-            ) {
-              return;
-            }
+            const sellerAccount = buildInitialSellerAccount(user);
 
-            await insertSellerAccountIfAbsent(getDb(), {
-              identityId: user.id,
-              businessModel: user.registrationBusinessModel,
-              verificationState: 'PENDING',
-              accountState: 'PENDING',
-            });
+            if (sellerAccount === null) return;
+
+            await insertSellerAccountIfAbsent(getDb(), sellerAccount);
           },
         },
       },

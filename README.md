@@ -57,13 +57,17 @@ set `AUTH_EMAIL_CONSOLE_FALLBACK=1`. Verification and password-reset links are
 then logged to the dev server console instead of being emailed. The fallback
 is ignored when `NODE_ENV=production`.
 
-Public signup creates a pending seller application. It does not grant Seller
-Center access. After the user verifies email and sets up TOTP, approve the
-seller from an owner shell:
+Public signup creates an active `seller_manager` seller account. Seller Center
+entry still requires the user to verify email and set up TOTP; after that,
+`/auth/continue` re-reads the server session and sends them to their intended
+portal route.
 
 ```bash
 npm run approve:portal-user -- --email seller@example.com --role seller_manager
 ```
+
+Use the approval script only for existing accounts that need a role change,
+email-verification override, or manual repair.
 
 Then fill in `CJ_API_KEY` in `.env.local` — used only by the one-time
 bootstrap below; nothing reads it at request time anymore. `.env.local`
@@ -115,11 +119,12 @@ Cron - see below for why).
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/`                                     | Seller Center sign-in form                                                                                                                                                                                                                                                                                                                   |
 | `/login`                                | Better Auth email/password sign-in                                                                                                                                                                                                                                                                                                           |
-| `/signup`                               | Public seller application signup (`RETAILER` or `DROPSHIPPER`), always generic success copy                                                                                                                                                                                                                                                  |
+| `/signup`                               | Public seller account signup (`RETAILER` or `DROPSHIPPER`), always generic success copy; new users get active `seller_manager` access after email verification and TOTP setup                                                                                                                                                                |
 | `/reset-password`                       | Password reset request and token completion                                                                                                                                                                                                                                                                                                  |
 | `/setup-2fa`                            | Required TOTP enrolment before Seller Center entry                                                                                                                                                                                                                                                                                           |
 | `/two-factor`                           | TOTP challenge after sign-in                                                                                                                                                                                                                                                                                                                 |
-| `/auth/pending`                         | Verified, signed-in sellers whose application is not yet approved                                                                                                                                                                                                                                                                            |
+| `/auth/continue`                        | Server-side post-auth continuation gate: checks session, verified email, TOTP, seller state, and safe `next` before redirecting                                                                                                                                                                                                              |
+| `/auth/pending`                         | Fallback for legacy or manually deactivated seller accounts that are signed in but not active/verified                                                                                                                                                                                                                                       |
 | `/overview`                             | Seller Center dashboard: needs-action tasks, money position, glance stats                                                                                                                                                                                                                                                                    |
 | `/orders`                               | Batch fulfillment: filter, select, print (static), handoff                                                                                                                                                                                                                                                                                   |
 | `/listings/new`                         | Add Product. No query: the blank essentials-first wizard (read-only fields, no save yet). `?fixture=<key>`: the supplier-prefilled Product Editor design preview — see [Product Editor](#product-editor-add-product-from-a-supplier-product). `?supplierCandidateId=`: reserved for the real integration, states that it is not wired up yet |
@@ -154,8 +159,9 @@ in a component.
 Authentication is Better Auth backed by the portal Postgres database. Email
 verification is required before login, TOTP is required before Seller Center
 entry, and auth rate limits are stored in `auth_rate_limits`. Public signup
-can only choose the business model; `portalRole` is server-owned and changed
-only by owner scripts.
+can only choose the business model; the server creates an active seller account
+with the `seller_manager` role. `portalRole` remains server-owned after signup
+and is changed only by owner scripts.
 
 `src/lib/auth/permissions.ts` holds a role-to-permission allow list: `admin`,
 `catalogue_reviewer`, `seller_manager`, `seller_staff`, `viewer`. Every server
@@ -678,9 +684,10 @@ endpoint replaces that workaround with one request.
 
 These are real gaps, not oversights. Do not treat any screen as production ready.
 
-- **Application approval is script-only.** There is no public admin UI in v1.
-  Use `npm run approve:portal-user -- --email <email> --role <role>` from an
-  owner shell after reviewing the seller application.
+- **Role changes are script-only.** There is no public admin UI in v1. Public
+  signup grants `seller_manager` after email verification and TOTP setup; use
+  `npm run approve:portal-user -- --email <email> --role <role>` from an owner
+  shell only to repair or change an existing account.
 - **Read-only catalogue.** The portal shows the CJdropshipping supplier feed
   and nothing else — there is no writable Sals3 product catalogue, no add/edit
   form, and no import/export. A real Postgres database does exist now (see

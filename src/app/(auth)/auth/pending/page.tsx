@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import AuthShell from '@/components/auth/AuthShell';
 import SignOutButton from '@/components/auth/SignOutButton';
+import { authStepRedirect } from '@/lib/auth/redirect';
 import { getPortalAccessState } from '@/lib/auth/session';
 
 export const metadata = {
@@ -14,11 +15,15 @@ export default async function PendingPage() {
   const state = await getPortalAccessState();
 
   if (!state.hasSession) {
-    redirect('/login');
+    redirect(
+      state.hasPendingTwoFactor
+        ? authStepRedirect('/two-factor', '/overview')
+        : authStepRedirect('/login', '/overview'),
+    );
   }
 
   if (!state.emailVerified) {
-    redirect('/login');
+    redirect(authStepRedirect('/login', '/overview'));
   }
 
   if (!state.twoFactorEnabled) {

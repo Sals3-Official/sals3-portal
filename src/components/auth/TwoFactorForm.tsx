@@ -7,13 +7,39 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import authClient from '@/lib/auth/client';
-import { safeAuthRedirect } from '@/lib/auth/redirect';
+import { continueAuthRedirect } from '@/lib/auth/redirect';
 import { totpCodeSchema } from '@/lib/auth/schemas';
 import FieldError from './FieldError';
 
 type TwoFactorFormProps = {
   next?: string;
 };
+
+type AuthClientError = {
+  code?: string;
+  message?: string;
+  status?: number;
+};
+
+function twoFactorFailureMessage(error: AuthClientError): string {
+  if (
+    error.status === 429 ||
+    error.code === 'ACCOUNT_TEMPORARILY_LOCKED' ||
+    error.message ===
+      'Too many failed verification attempts. Your account is temporarily locked. Please try again later.'
+  ) {
+    return 'Too many attempts. Wait a few minutes, then try again.';
+  }
+
+  if (
+    error.code === 'INVALID_TWO_FACTOR_COOKIE' ||
+    error.code === 'TOTP_NOT_ENABLED'
+  ) {
+    return 'Your verification session expired. Sign in again to continue.';
+  }
+
+  return 'That code was not accepted. Try the latest code.';
+}
 
 export default function TwoFactorForm({ next }: TwoFactorFormProps) {
   const router = useRouter();
@@ -42,11 +68,11 @@ export default function TwoFactorForm({ next }: TwoFactorFormProps) {
     setIsPending(false);
 
     if (response.error !== null) {
-      setMessage('That code was not accepted. Try the latest code.');
+      setMessage(twoFactorFailureMessage(response.error));
       return;
     }
 
-    router.push(safeAuthRedirect(next));
+    router.replace(continueAuthRedirect(next));
     router.refresh();
   }
 
