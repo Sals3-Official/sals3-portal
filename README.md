@@ -87,13 +87,14 @@ Set `SALS3_STOREFRONT_API_TOKEN` to a long random value if
 `sals3-ecommerce` will read products from this portal. Use the same value in
 `sals3-ecommerce/.env.local`.
 
-Set `CRON_SECRET` to a long random value so the automated candidate-evaluation
-tick (see [Automated candidate evaluation](#automated-candidate-evaluation)
-below) can authenticate. Without it the tick endpoint always returns `401` -
-harmless locally, but the same value must also be set as the Vercel project
-env var and as this repository's `CRON_SECRET` Actions secret in any deployed
-environment (the tick is invoked by a GitHub Actions schedule, not Vercel
-Cron - see below for why).
+Set `DISCOVERY_CONTROL_SECRET` to a long random value so the discovery
+control routes (see
+[Continuous full-catalogue discovery](#continuous-full-catalogue-discovery))
+can authenticate. Set `CRON_SECRET` to a different long random value for the
+**break-glass** recovery tick - that endpoint is no longer scheduled anywhere;
+it exists only for manual recovery of a stalled queue chain (ADR-013 §12
+forbids cron/scheduled ticks in the target runtime). Both fail closed with
+`401` when unset.
 
 ## Commands
 
@@ -115,36 +116,42 @@ Cron - see below for why).
 
 ## Routes
 
-| Route                                   | What it does                                                                                                                                                                                                                                                                                                                                 |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/`                                     | Seller Center sign-in form                                                                                                                                                                                                                                                                                                                   |
-| `/login`                                | Better Auth email/password sign-in                                                                                                                                                                                                                                                                                                           |
-| `/signup`                               | Public seller account signup (`RETAILER` or `DROPSHIPPER`), always generic success copy; new users get active `seller_manager` access after email verification and TOTP setup                                                                                                                                                                |
-| `/reset-password`                       | Password reset request and token completion                                                                                                                                                                                                                                                                                                  |
-| `/setup-2fa`                            | Required TOTP enrolment before Seller Center entry                                                                                                                                                                                                                                                                                           |
-| `/two-factor`                           | TOTP challenge after sign-in                                                                                                                                                                                                                                                                                                                 |
-| `/auth/continue`                        | Server-side post-auth continuation gate: checks session, verified email, TOTP, seller state, and safe `next` before redirecting                                                                                                                                                                                                              |
-| `/auth/pending`                         | Fallback for legacy or manually deactivated seller accounts that are signed in but not active/verified                                                                                                                                                                                                                                       |
-| `/overview`                             | Seller Center dashboard: needs-action tasks, money position, glance stats                                                                                                                                                                                                                                                                    |
-| `/orders`                               | Batch fulfillment: filter, select, print (static), handoff                                                                                                                                                                                                                                                                                   |
-| `/listings/new`                         | Add Product. No query: the blank essentials-first wizard (read-only fields, no save yet). `?fixture=<key>`: the supplier-prefilled Product Editor design preview — see [Product Editor](#product-editor-add-product-from-a-supplier-product). `?supplierCandidateId=`: reserved for the real integration, states that it is not wired up yet |
-| `/inventory`                            | Inline stock edits with undo and an audit record                                                                                                                                                                                                                                                                                             |
-| `/finances`                             | Itemized ledger and estimated proceeds for one example order                                                                                                                                                                                                                                                                                 |
-| `/payouts`                              | Payout schedule, states, and destination                                                                                                                                                                                                                                                                                                     |
-| `/market-rules`                         | Every rule applied to the account, plus role access                                                                                                                                                                                                                                                                                          |
-| `/supplier-apps`                        | Connect / disconnect / reconnect the seller's own CJ Dropshipping account (ADR-008)                                                                                                                                                                                                                                                          |
-| `/products`                             | All Supplier Products — the raw supplier feed browser (today: CJdropshipping), through the seller's own connection, with a live AUD reference estimate alongside each USD price (read-only status badges, no click-to-check action)                                                                                                          |
-| `/design-preview/all-supplier-products` | Design preview of the full multi-supplier layout against isolated fixtures (dynamic supplier/evaluation filters, duplicate detection) - `robots: noindex`, not linked from the sidebar, for review before a second real Supplier App exists                                                                                                  |
-| `/products/qualified/ready`             | Qualified Products · Ready — automated `PASS` candidates, default Product Sourcing screen                                                                                                                                                                                                                                                    |
-| `/products/qualified/needs-attention`   | Qualified Products · Needs Attention — automated `PASS_WITH_ATTENTION` candidates                                                                                                                                                                                                                                                            |
-| `/products/evaluating`                  | Candidates the pipeline has `QUEUED` or is actively `EVALUATING`                                                                                                                                                                                                                                                                             |
-| `/products/blocked`                     | Blocked / Rejected — `BLOCKED` (permanent) and `TEMPORARILY_INELIGIBLE` (retryable) candidates                                                                                                                                                                                                                                               |
-| `/products/exception-queue`             | Dead-lettered evaluation failures only (retries exhausted) — never ordinary rejections                                                                                                                                                                                                                                                       |
-| `/products/shortlisted`                 | Retired — redirects to `/products/qualified/ready`                                                                                                                                                                                                                                                                                           |
-| `/api/internal/catalog/evaluate-tick`   | Protected (`CRON_SECRET` bearer token) - runs one ingest+evaluate tick. Called every 5 minutes by a GitHub Actions schedule (`.github/workflows/evaluate-tick.yml`), not Vercel Cron - see [Automated candidate evaluation](#automated-candidate-evaluation)                                                                                 |
-| `/api/storefront/products`              | Protected product feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                 |
-| `/api/storefront/products/[id]`         | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                                                                                                                                                                                                                                                                      |
-| `/api/storefront/categories`            | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                |
+| Route                                    | What it does                                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/`                                      | Seller Center sign-in form                                                                                                                                                                                                                                                                                                                   |
+| `/login`                                 | Better Auth email/password sign-in                                                                                                                                                                                                                                                                                                           |
+| `/signup`                                | Public seller account signup (`RETAILER` or `DROPSHIPPER`), always generic success copy; new users get active `seller_manager` access after email verification and TOTP setup                                                                                                                                                                |
+| `/reset-password`                        | Password reset request and token completion                                                                                                                                                                                                                                                                                                  |
+| `/setup-2fa`                             | Required TOTP enrolment before Seller Center entry                                                                                                                                                                                                                                                                                           |
+| `/two-factor`                            | TOTP challenge after sign-in                                                                                                                                                                                                                                                                                                                 |
+| `/auth/continue`                         | Server-side post-auth continuation gate: checks session, verified email, TOTP, seller state, and safe `next` before redirecting                                                                                                                                                                                                              |
+| `/auth/pending`                          | Fallback for legacy or manually deactivated seller accounts that are signed in but not active/verified                                                                                                                                                                                                                                       |
+| `/overview`                              | Seller Center dashboard: needs-action tasks, money position, glance stats                                                                                                                                                                                                                                                                    |
+| `/orders`                                | Batch fulfillment: filter, select, print (static), handoff                                                                                                                                                                                                                                                                                   |
+| `/listings/new`                          | Add Product. No query: the blank essentials-first wizard (read-only fields, no save yet). `?fixture=<key>`: the supplier-prefilled Product Editor design preview — see [Product Editor](#product-editor-add-product-from-a-supplier-product). `?supplierCandidateId=`: reserved for the real integration, states that it is not wired up yet |
+| `/inventory`                             | Inline stock edits with undo and an audit record                                                                                                                                                                                                                                                                                             |
+| `/finances`                              | Itemized ledger and estimated proceeds for one example order                                                                                                                                                                                                                                                                                 |
+| `/payouts`                               | Payout schedule, states, and destination                                                                                                                                                                                                                                                                                                     |
+| `/market-rules`                          | Every rule applied to the account, plus role access                                                                                                                                                                                                                                                                                          |
+| `/supplier-apps`                         | Connect / disconnect / reconnect the seller's own CJ Dropshipping account (ADR-008)                                                                                                                                                                                                                                                          |
+| `/products`                              | All Supplier Products — the raw supplier feed browser (today: CJdropshipping), through the seller's own connection, with a live AUD reference estimate alongside each USD price (read-only status badges, no click-to-check action)                                                                                                          |
+| `/design-preview/all-supplier-products`  | Design preview of the full multi-supplier layout against isolated fixtures (dynamic supplier/evaluation filters, duplicate detection) - `robots: noindex`, not linked from the sidebar, for review before a second real Supplier App exists                                                                                                  |
+| `/products/qualified/ready`              | Qualified Products · Ready — automated `PASS` candidates, default Product Sourcing screen                                                                                                                                                                                                                                                    |
+| `/products/qualified/needs-attention`    | Qualified Products · Needs Attention — automated `PASS_WITH_ATTENTION` candidates                                                                                                                                                                                                                                                            |
+| `/products/evaluating`                   | Candidates the pipeline has `QUEUED` or is actively `EVALUATING`                                                                                                                                                                                                                                                                             |
+| `/products/blocked`                      | Blocked / Rejected — `BLOCKED` (permanent) and `TEMPORARILY_INELIGIBLE` (retryable) candidates                                                                                                                                                                                                                                               |
+| `/products/exception-queue`              | Dead-lettered evaluation failures only (retries exhausted) — never ordinary rejections                                                                                                                                                                                                                                                       |
+| `/products/shortlisted`                  | Retired — redirects to `/products/qualified/ready`                                                                                                                                                                                                                                                                                           |
+| `/api/internal/catalog/evaluate-tick`    | Protected (`CRON_SECRET` bearer token) - **break-glass recovery only**: drains the outbox, requeues due retries, evaluates one bounded batch. NOT scheduled; the manual `workflow_dispatch` in `.github/workflows/evaluate-tick.yml` or a direct authenticated call invokes it                                                               |
+| `/api/internal/catalog/discovery/start`  | Protected (`DISCOVERY_CONTROL_SECRET` bearer, constant-time) - idempotent owner Start: creates the durable queue chain once; see [Continuous full-catalogue discovery](#continuous-full-catalogue-discovery)                                                                                                                                 |
+| `/api/internal/catalog/discovery/pause`  | Protected - idempotent pause: no new supplier calls; checkpoints and queue/database state retained                                                                                                                                                                                                                                           |
+| `/api/internal/catalog/discovery/resume` | Protected - idempotent resume: re-enqueues every parked, unleased non-terminal partition                                                                                                                                                                                                                                                     |
+| `/api/internal/catalog/discovery/status` | Protected - truthful coverage/budget/outbox/failure status; never claims completion while any partition is unproven                                                                                                                                                                                                                          |
+| `/api/webhooks/cj`                       | CJ webhook receiver: raw-body Base64 HMAC-SHA256 verification (secret = the connection's CJ `openId`, stored encrypted), size-capped, messageId-deduplicated, acknowledged in well under CJ's 3-second window; heavy work happens in the queue                                                                                               |
+| `/api/queues/catalog-discovery`          | Private Vercel Queues push consumer (air-gapped by the platform - no public URL); every message re-validates and re-authorizes against the database                                                                                                                                                                                          |
+| `/api/storefront/products`               | Protected product feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                 |
+| `/api/storefront/products/[id]`          | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                                                                                                                                                                                                                                                                      |
+| `/api/storefront/categories`             | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                |
 
 ## Design system
 
@@ -317,11 +324,11 @@ credential to store or leak.
 | CJ evidence normaliser                       | `src/lib/cj/evidence.ts`                            |
 | CJ evidence fetch (per-connection adapter)   | `src/modules/suppliers/providers/cj/cj-adapter.ts`  |
 | Evidence fetch + decide (automated pipeline) | `src/modules/catalog/candidates/evaluate.ts`        |
-| Feed ingestion (automated pipeline)          | `src/modules/catalog/candidates/ingestion.ts`       |
+| Continuous discovery (queue-driven)          | `src/modules/catalog/discovery/`                    |
 | Provider connections (ADR-006/ADR-008)       | `src/modules/suppliers/repository.ts`               |
 | Encrypted credential store                   | `src/lib/secrets/postgres-supplier-secret-store.ts` |
 
-Fifteen tables: `supplier_candidates` (the shortlist record, unique on
+Twenty-five tables: `supplier_candidates` (the shortlist record, unique on
 `(supplier_connection_id, external_product_id)`), `idempotency_records`,
 `supplier_snapshots` (one normalised CJ evidence record per candidate),
 `candidate_evaluations` (one automated-evaluation record per candidate - see
@@ -330,14 +337,20 @@ append-only `audit_events`, and five multi-tenant tables added for
 [Supplier Apps](#supplier-apps-multi-tenant-provider-connections):
 `seller_accounts`, `supplier_providers`, `supplier_connections`,
 append-only `supplier_account_bindings`, and
-`supplier_connection_secrets`. Authentication adds `auth_users`,
+`supplier_connection_secrets`. Continuous discovery (migration `0009`,
+**not yet applied anywhere** - see
+[Continuous full-catalogue discovery](#continuous-full-catalogue-discovery))
+adds `discovery_run_states`, `discovery_cycles`, `discovery_partitions`,
+`discovery_reconcile_pids`, `work_outbox`, append-only `discovery_failures`,
+`supplier_request_budgets`, `webhook_inbox`, `product_subscriptions`, and
+`supplier_webhook_secrets`. Authentication adds `auth_users`,
 `auth_sessions`, `auth_accounts`, `auth_verifications`, `auth_two_factors`,
 and `auth_rate_limits`.
 
 `src/modules/catalog/candidates/shortlist.ts` and `contracts.ts` are retired
-(stubbed to an empty export) - superseded by `ingestion.ts`'s automated feed
-pull. Kept as empty files rather than deleted because of a sandbox
-restriction encountered while building this; safe to delete outright.
+(stubbed to an empty export) - superseded by the automated pipeline. Kept as
+empty files rather than deleted because of a sandbox restriction encountered
+while building this; safe to delete outright.
 
 - **Server-only.** `DATABASE_URL` has no `NEXT_PUBLIC_` prefix, and
   `src/lib/db/client.ts` throws if it is ever imported from client code.
@@ -391,35 +404,174 @@ destination market, and ADR-003 has not approved one.
 If CJ is unreachable, the candidate is still shortlisted and the drawer says
 evidence could not be fetched — never that there is none.
 
+### Continuous full-catalogue discovery
+
+Discovery of CJ's catalogue runs as a **durable, self-continuing queue
+chain** - Neon PostgreSQL as the authoritative state store plus private
+Vercel Queues as the at-least-once transport (ADR-013 §12). There is **no
+cron and no scheduled GitHub Actions tick**: one owner-authorized
+`POST /api/internal/catalog/discovery/start` creates the chain, and from
+then on each unit of work persists its successor intent in a transactional
+outbox, publishes it, and completed cycles enqueue the next cycle with a
+points/freshness-aware queue delay. **The owner's browser and PC can be
+closed after Start** - Vercel's managed queue infrastructure delivers the
+messages and runs the (air-gapped, platform-invoked) consumer function.
+
+Coverage semantics (ADR-010 §12.1, ADR-013 §3):
+
+- **Legacy endpoint only.** Discovery uses `GET /api2.0/v1/product/list` and
+  never `product/listV2`. There is **no 6,000-record assumption anywhere**:
+  that cap is documented for listV2 only, and on the legacy endpoint a total
+  of exactly 6,000 or greater is ordinary density data.
+- **Immutable cycle cutoff.** Every cycle snapshots `cycleCutoff`; all its
+  partitions cover only products created at or before it. Later products are
+  the next cycle's work, so a moving catalogue never invalidates in-progress
+  coverage.
+- **Category roots from the provider tree.** Cycle start fetches
+  `GET /product/getCategory` once, persists the leaf snapshot immutably, and
+  seeds two roots per leaf: an open-start sentinel (products before the
+  configurable `CJ_DISCOVERY_EPOCH`) and the epoch-to-cutoff range. Identity
+  is the provider category id, never the label.
+- **Density-driven adaptive splitting.** A partition reporting more than one
+  full page (200) bisects by time, then by price at provider precision, with
+  inclusive-overlap boundaries and global PID deduplication so
+  inclusive/exclusive ambiguity cannot lose a boundary product.
+  Non-progressing splits are refused.
+- **Atomic-bucket reconciliation.** When the minimum time-and-price bucket is
+  still dense, every page is enumerated under the immutable filters and fixed
+  `orderBy=createAt&sort=asc` ordering, resumably and rate-limited. Coverage
+  is proven only by **two consecutive complete passes with identical
+  sorted-unique-PID checksums AND a unique count equal to the reported
+  total**. A bucket that never converges within bounded retries becomes
+  `PROVIDER_COVERAGE_UNRESOLVED` - visibly unresolved.
+- **No silent omission, no false completeness.** Invalid provider pagination
+  (wrong page identity, inconsistent totals, overflow, empty-with-remaining,
+  malformed identities, ...) is rejected fail-closed: nothing ingests, no
+  cursor advances, the exact error is recorded. A cycle becomes `COMPLETE`
+  only when every partition proved coverage; any unresolved or failed
+  partition forces the visible `COVERAGE_UNRESOLVED` terminal state instead.
+- **Status at discovery.** Every valid new PID is upserted with its candidate
+  row, its non-null `QUEUED` evaluation row, an admission audit event, and
+  its `EVALUATE_CANDIDATE` outbox intent in ONE transaction - no discovered
+  product can exist without a persisted lifecycle status.
+- **Freshness tiers + recovery sweep.** Qualified-but-unselected decisions
+  refresh within 72 hours; other operational nonterminal rows within 30
+  days; permanent `BLOCKED` only on a policy/evidence version or supplier
+  data change. Selected/imported/live products (once that layer exists) get
+  webhook-driven updates plus daily reconciliation. The same self-chaining
+  sweep also requeues every decided row whose stored policy version is
+  obsolete (admission `POLICY_VERSION_CHANGED` - no historical `PASS`/
+  `BLOCKED` stays silently active under an old rule pack) and re-enqueues
+  evaluation messages for stranded rows (`QUEUED` gone stale, `EVALUATING`
+  with an expired lease), so a lost or delivery-cap-parked message can never
+  leave a product in-flight forever.
+- **Budget safety.** A database-backed shared limiter enforces one supplier
+  request per second per connection (the documented lowest tier) across all
+  concurrent workers - discovery pages acquire a slot per request, and
+  evaluation evidence calls run through a governed fetch wrapper that gates
+  every HTTP call on the same limiter; `pointsInfo` from every response
+  (list and evidence alike) is persisted;
+  background work may spend at most 80% of known available points (20%
+  reserved for selected/live/order-critical work); HTTP 429 persists a pause
+  aligned with CJ's documented per-minute replenishment / 00:00 UTC reset and
+  continues via a delayed queue message - never a function kept alive
+  sleeping.
+
+Queue operations: `DISCOVERY_CYCLE_START` (ensure/seed/sweep - also the
+self-healing heartbeat), `DISCOVERY_PARTITION`, `EVALUATE_CANDIDATE`,
+`RECONCILE_PRODUCT` (freshness sweep + per-product reconcile),
+`WEBHOOK_EVENT`, `OUTBOX_DISPATCH`. Every handler validates its message with
+Zod, claims work through database leases with exact compare-and-swap
+predicates (state, version, lease token, unexpired lease), performs a bounded
+unit of work, persists successor intent durably, and publishes successors
+before acknowledging - so duplicate and out-of-order at-least-once deliveries
+can delay work but never corrupt state or double-spend a supplier call.
+Failed work lands in PostgreSQL (`discovery_failures`, outbox `FAILED` rows,
+partition `FAILED`/`PROVIDER_COVERAGE_UNRESOLVED` states) because the
+transport has no application dead-letter queue.
+
+Operating it:
+
+1. **Deploy** (owner action; nothing auto-starts). Apply migration `0009`
+   first - `npm run db:migrate` is an owner-run step and has NOT been
+   executed by the implementation.
+2. **Start once**: `POST /api/internal/catalog/discovery/start` with
+   `Authorization: Bearer $DISCOVERY_CONTROL_SECRET`. Idempotent; concurrent
+   or repeated calls converge on one chain (a partial unique index allows at
+   most one active cycle per connection). A new deployment does NOT create a
+   second chain for the same reason.
+3. **Pause / resume**: the matching `POST .../pause` and `.../resume` routes.
+   Pause stops new supplier work while keeping every checkpoint; in-flight
+   work finishes its local transaction only. Resume re-enqueues all parked
+   work.
+4. **Inspect**: `GET .../status` reports run states, cycle/partition coverage
+   counts, unresolved partitions with reasons, points budget, outbox depth,
+   recent failures, and the storage guard - and never claims completion
+   while any partition is unproven.
+
+| Piece                           | File                                                      |
+| ------------------------------- | --------------------------------------------------------- |
+| Queue message contracts         | `src/modules/catalog/discovery/messages.ts`               |
+| Transport boundary              | `src/modules/catalog/discovery/queue-transport.ts`        |
+| Transactional outbox            | `src/modules/catalog/discovery/outbox-repository.ts`      |
+| Consumer dispatcher             | `src/modules/catalog/discovery/dispatcher.ts`             |
+| Cycle ensure/seed/sweep         | `src/modules/catalog/discovery/handle-cycle-start.ts`     |
+| Partition prove/split/reconcile | `src/modules/catalog/discovery/handle-partition.ts`       |
+| Adaptive split planning         | `src/modules/catalog/discovery/partition-plan.ts`         |
+| Pagination validation matrix    | `src/modules/catalog/discovery/page-validation.ts`        |
+| Coverage checksums              | `src/modules/catalog/discovery/coverage-checksum.ts`      |
+| Rate/points budget              | `src/modules/catalog/discovery/budget-repository.ts`      |
+| Storage guard (Neon pilot)      | `src/modules/catalog/discovery/storage-guard.ts`          |
+| Webhook verification            | `src/modules/catalog/discovery/webhook-verify.ts`         |
+| Subscription reconciliation     | `src/modules/catalog/discovery/subscription-reconcile.ts` |
+| Owner controls                  | `src/modules/catalog/discovery/control.ts`                |
+
+**Rollout blockers (deliberate, documented):** CJ documents the
+`createTimeFrom/To` format (`yyyy-MM-dd hh:mm:ss`) but NOT its timezone, and
+no provider-earliest timestamp is documented. `CJ_CREATE_TIME_TIMEZONE`
+(default UTC) and `CJ_DISCOVERY_EPOCH` (default 2016-01-01, a labelled
+assumption bounded by the open-start sentinel partitions) are configuration,
+and a separate owner-authorized read-only sandbox probe must verify the real
+timestamp interpretation, boundary inclusivity, price precision, total/page
+consistency, and ordering stability before production rollout. Vercel Queues
+is public beta (`queue/v2beta` trigger) and its Hobby-plan billing allotment
+is not published - treat queue availability/cost on the current plan as a
+deploy-time verification step.
+
+**Development-pilot limits (not production capacity):** Vercel Hobby and
+Neon Free are development-pilot constraints. Neon Free's 0.5 GB allowance
+may not fit the entire CJ catalogue - the storage guard warns at ~70% of the
+configured allowance (`NEON_STORAGE_ALLOWANCE_BYTES`) and pauses new broad
+discovery at ~80%, and never deletes accumulated product/evidence records.
+The architecture supports full scale; the free pilot must not be represented
+as production-ready full-catalogue capacity. Local tests prove the logic,
+not real coverage: actual full-catalogue completion requires the deployed
+pilot, the contract probe, the owner-run migration, sustained queue
+operation, and zero unresolved coverage partitions.
+
 ### Automated candidate evaluation
 
-Candidates are no longer shortlisted by clicking a row. A protected internal
-route, `/api/internal/catalog/evaluate-tick`, runs the whole pipeline on a
-schedule - every 5 minutes, via `.github/workflows/evaluate-tick.yml`, not
-`vercel.json`/Vercel Cron. **Why:** Vercel's Hobby plan rejects any cron more
-frequent than once/day and fails the whole deployment when one is configured
-([usage & pricing](https://vercel.com/docs/cron-jobs/usage-and-pricing)); a
-GitHub Actions schedule calling the same bearer-token-protected route is free
-and keeps the 5-minute cadence, at the cost of GitHub's own best-effort
-timing (schedules can lag under load, and auto-disable after 60 days with no
-repository activity - see the workflow file). Move the tick back to
-`vercel.json`/Vercel Cron if the project ever upgrades to Pro, which allows
-per-minute schedules.
+Candidates are never shortlisted by clicking a row - discovery admits them
+(see above) and `EVALUATE_CANDIDATE` queue messages drive evaluation. The
+break-glass route `/api/internal/catalog/evaluate-tick` remains only as an
+authenticated manual recovery action (outbox drain + bounded batch), invoked
+by hand - never on a schedule.
 
 ```text
-CJ /product/list (paginated)
-  -> ingest: upsert supplier_candidates + a QUEUED candidate_evaluations row
-     for every unseen or feed-changed CJ pid
-  -> lease: a short transaction claims a bounded batch (Postgres
-     `FOR UPDATE SKIP LOCKED` - no Redis/queue service, per the cost-efficiency
-     rules)
+discovery partition proves a page of products
+  -> ingest: candidate + QUEUED evaluation + admission audit + EVALUATE_CANDIDATE
+     outbox intent, one durable transaction per product
+  -> claim: the queue handler claims exactly that candidate (FOR UPDATE CAS:
+     QUEUED, expired-lease EVALUATING, or a due retry)
   -> screen: cheap rules against feed-level data only (category/brand
      keywords, price sanity) - a hit blocks WITHOUT spending a CJ evidence call
   -> evidence: survivors call the existing CJ evidence fetch (unchanged,
-     outside any transaction, ~30 points/candidate)
+     outside any transaction, ~20-30 points/candidate, budget-gated)
   -> qualify: the full rule set runs against real evidence
   -> decide + persist: one short transaction stores the snapshot, the
-     decision, and an audit event
+     decision (with its freshness deadline), and an audit event
+  -> retry: a retryable failure persists a delayed EVALUATE_CANDIDATE
+     continuation - the queue replaces the old cron retry scan
 ```
 
 | Piece                       | File                                                                            |
@@ -429,11 +581,11 @@ CJ /product/list (paginated)
 | Qualification rules         | `src/modules/catalog/candidates/rules/qualification.ts`                         |
 | Decision combinator         | `src/modules/catalog/candidates/rules/decide.ts`                                |
 | Placeholder policy values   | `src/modules/catalog/candidates/rules/policy.ts`                                |
-| Ingestion                   | `src/modules/catalog/candidates/ingestion.ts`                                   |
-| Lease/claim                 | `src/modules/catalog/candidates/lease.ts`                                       |
+| Product ingest (discovery)  | `src/modules/catalog/discovery/ingest-product.ts`                               |
+| Queue evaluation handler    | `src/modules/catalog/discovery/handle-evaluate.ts`                              |
 | Per-candidate orchestration | `src/modules/catalog/candidates/evaluate.ts`                                    |
-| Cron tick entry point       | `src/modules/catalog/candidates/run-tick.ts`                                    |
-| Route handler               | `src/app/api/internal/catalog/evaluate-tick/route.ts`                           |
+| Break-glass tick            | `src/modules/catalog/candidates/run-tick.ts`                                    |
+| Break-glass route           | `src/app/api/internal/catalog/evaluate-tick/route.ts`                           |
 
 Seven decision states: `QUEUED`, `EVALUATING`, `PASS`, `PASS_WITH_ATTENTION`,
 `TEMPORARILY_INELIGIBLE`, `BLOCKED`, `EVALUATION_FAILED`. `BLOCKED` is
@@ -757,6 +909,25 @@ endpoint replaces that workaround with one request.
 ## Important limitations
 
 These are real gaps, not oversights. Do not treat any screen as production ready.
+
+- **Discovery coverage is proven per partition, never assumed.** The
+  queue-driven scanner (see
+  [Continuous full-catalogue discovery](#continuous-full-catalogue-discovery))
+  covers immutable-cutoff cycles of adaptive category/time/price partitions;
+  a partition/cycle that cannot prove coverage stays visibly
+  `PROVIDER_COVERAGE_UNRESOLVED`/`COVERAGE_UNRESOLVED`. Migration `0009` must
+  be applied (owner-run `npm run db:migrate` - NOT executed by this change)
+  and an owner-authorized read-only CJ contract probe must verify the
+  timestamp/boundary/precision assumptions before production rollout. Local
+  tests prove logic, not real catalogue coverage.
+- **CJ product webhooks accelerate freshness; they do not discover.** The
+  `/api/webhooks/cj` receiver verifies the documented raw-body HMAC and
+  deduplicates by messageId; subscriptions (max 100 ids per request, never
+  `subscribeAll` - unavailable to all users after July 2026) are reserved for
+  selected/imported/live/accepted-order products, none of which exist yet, so
+  the desired set is currently empty. CJ disables a webhook after two
+  complete hours below 80% callback success; `.../discovery/status` is where
+  that health surfaces.
 
 - **Role changes are script-only.** There is no public admin UI in v1. Public
   signup grants `seller_manager` after email verification and TOTP setup; use

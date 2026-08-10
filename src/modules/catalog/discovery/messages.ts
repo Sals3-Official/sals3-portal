@@ -1,0 +1,114 @@
+import { z } from 'zod';
+
+/**
+ * Strict queue message contracts (ADR-013 §12). Messages carry stable IDs,
+ * operation type, attempt/version information, and idempotency keys ONLY -
+ * never supplier payloads, tokens, credentials, or seller personal data.
+ * Every handler validates its message with these schemas before touching
+ * any state; an unparseable message is a visible failure, never a guess.
+ */
+
+export const QUEUE_OPERATIONS = [
+  'DISCOVERY_CYCLE_START',
+  'DISCOVERY_PARTITION',
+  'EVALUATE_CANDIDATE',
+  'RECONCILE_PRODUCT',
+  'WEBHOOK_EVENT',
+  'OUTBOX_DISPATCH',
+] as const;
+
+export type QueueOperation = (typeof QUEUE_OPERATIONS)[number];
+
+const base = {
+  /** Schema version for the message contract itself. */
+  v: z.literal(1),
+  idempotencyKey: z.string().min(1).max(500),
+};
+
+/**
+ * Ensure-and-sweep for one connection's discovery chain: creates the run
+ * state/cycle when absent, seeds category roots in bounded batches, and
+ * re-enqueues work for unleased non-terminal partitions. Safe under
+ * duplicate and out-of-order delivery - everything it does is guarded by
+ * database state.
+ */
+export const discoveryCycleStartMessageSchema = z.object({
+  ...base,
+  operation: z.literal('DISCOVERY_CYCLE_START'),
+  supplierConnectionId: z.uuid(),
+  /** Present when this message continues a specific cycle's seeding/sweep. */
+  cycleId: z.uuid().optional(),
+});
+
+export const discoveryPartitionMessageSchema = z.object({
+  ...base,
+  operation: z.literal('DISCOVERY_PARTITION'),
+  supplierConnectionId: z.uuid(),
+  cycleId: z.uuid(),
+  partitionId: z.uuid(),
+  /** The partition stateVersion this message expects; a stale message no-ops. */
+  expectedStateVersion: z.number().int().positive().optional(),
+});
+
+export const evaluateCandidateMessageSchema = z.object({
+  ...base,
+  operation: z.literal('EVALUATE_CANDIDATE'),
+  candidateId: z.uuid(),
+  /** Evidence/policy identity this logical evaluation job belongs to. */
+  policyVersion: z.string().min(1).max(300),
+  admissionReason: z.enum([
+    'NEW_PRODUCT',
+    'MATERIAL_SOURCE_CHANGE',
+    'EVIDENCE_EXPIRED',
+    'POLICY_VERSION_CHANGED',
+    'RETRY_DUE',
+    'CONNECTION_RESTORED',
+  ]),
+});
+
+export const reconcileProductMessageSchema = z.object({
+  ...base,
+  operation: z.literal('RECONCILE_PRODUCT'),
+  mode: z.enum(['SWEEP', 'PRODUCT']),
+  /** SWEEP: which connection's due rows to requeue (bounded batch + self-chain). */
+  supplierConnectionId: z.uuid().optional(),
+  /** PRODUCT: the exact candidate to reconcile. */
+  candidateId: z.uuid().optional(),
+});
+
+export const webhookEventMessageSchema = z.object({
+  ...base,
+  operation: z.literal('WEBHOOK_EVENT'),
+  inboxId: z.uuid(),
+  supplierConnectionId: z.uuid(),
+});
+
+export const outboxDispatchMessageSchema = z.object({
+  ...base,
+  operation: z.literal('OUTBOX_DISPATCH'),
+});
+
+export const queueMessageSchema = z.discriminatedUnion('operation', [
+  discoveryCycleStartMessageSchema,
+  discoveryPartitionMessageSchema,
+  evaluateCandidateMessageSchema,
+  reconcileProductMessageSchema,
+  webhookEventMessageSchema,
+  outboxDispatchMessageSchema,
+]);
+
+export type DiscoveryCycleStartMessage = z.infer<
+  typeof discoveryCycleStartMessageSchema
+>;
+export type DiscoveryPartitionMessage = z.infer<
+  typeof discoveryPartitionMessageSchema
+>;
+export type EvaluateCandidateMessage = z.infer<
+  typeof evaluateCandidateMessageSchema
+>;
+export type ReconcileProductMessage = z.infer<
+  typeof reconcileProductMessageSchema
+>;
+export type WebhookEventMessage = z.infer<typeof webhookEventMessageSchema>;
+export type OutboxDispatchMessage = z.infer<typeof outboxDispatchMessageSchema>;
+export type QueueMessage = z.infer<typeof queueMessageSchema>;

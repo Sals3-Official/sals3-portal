@@ -1,20 +1,20 @@
-name: Evaluate Tick
-
-# Vercel's Hobby plan rejects any cron more frequent than once/day, so the
-# catalog-evaluation tick runs here instead of `vercel.json` (see the
-# "Automated candidate evaluation" section of README.md). GitHub does not
-# guarantee this exact cadence - scheduled runs can lag under GitHub's own
-# load, and a schedule auto-disables after 60 days with no repository
-# activity (re-enable it from the Actions tab, or push a commit).
+# BREAK-GLASS RECOVERY ONLY - no schedule (ADR-013 §12: "No cron or
+# scheduled GitHub Actions tick belongs in the target runtime").
+#
+# The catalog pipeline runs on a durable Vercel Queues chain started once by
+# an owner-authorized POST /api/internal/catalog/discovery/start. This
+# manual workflow exists solely to nudge the authenticated recovery route
+# (outbox drain + bounded evaluation batch) when the queue chain has stalled
+# and the owner wants a hands-off kick from GitHub instead of a direct call.
 #
 # Requires, set on this repository:
 #   - Secret   CRON_SECRET      same value as the Vercel project env var.
 #   - Variable PORTAL_BASE_URL  the deployed portal's origin, e.g.
 #                                https://sals3-portal.example.com
 
+name: Evaluate Tick (break-glass)
+
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Call the evaluation tick endpoint
+      - name: Call the break-glass evaluation tick endpoint
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}

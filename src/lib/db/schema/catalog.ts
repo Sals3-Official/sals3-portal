@@ -275,6 +275,15 @@ export const candidateEvaluations = pgTable(
     attemptCount: integer('attempt_count').notNull().default(0),
     lastErrorCode: text('last_error_code'),
     nextRetryAt: timestamp('next_retry_at', { withTimezone: true }),
+    /**
+     * Freshness deadline (ADR-010 §12.2): when this decision's evidence must
+     * be reconciled again. Qualified-but-unselected products refresh within
+     * 72 hours, other operational nonterminal products within 30 days;
+     * permanent policy blocks stay `null` and re-evaluate only on a supplier
+     * data or policy/evidence version change. The freshness sweep requeues
+     * rows whose deadline passed with admission reason `EVIDENCE_EXPIRED`.
+     */
+    nextRefreshAt: timestamp('next_refresh_at', { withTimezone: true }),
     evaluatedAt: timestamp('evaluated_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
@@ -287,6 +296,7 @@ export const candidateEvaluations = pgTable(
     uniqueIndex('candidate_evaluations_candidate_id_key').on(table.candidateId),
     index('candidate_evaluations_status_idx').on(table.status),
     index('candidate_evaluations_next_retry_at_idx').on(table.nextRetryAt),
+    index('candidate_evaluations_next_refresh_at_idx').on(table.nextRefreshAt),
   ],
 );
 

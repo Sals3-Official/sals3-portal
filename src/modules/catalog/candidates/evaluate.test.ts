@@ -152,6 +152,7 @@ function row(
     attemptCount: 0,
     lastErrorCode: null,
     nextRetryAt: null,
+    nextRefreshAt: null,
     evaluatedAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -504,6 +505,45 @@ describe('evaluateCandidate', () => {
       }),
     );
     expect(recordEvaluationDecision).not.toHaveBeenCalled();
+  });
+
+  it('defers a rate-limited fetch WITHOUT burning an attempt - load pressure can never dead-letter a healthy product', async () => {
+    getCandidateEvidenceMock.mockRejectedValue(new CjApiError('rate-limited'));
+
+    await evaluateCandidate(row({ attemptCount: 2 }));
+
+    expect(recordEvaluationFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        candidateId: 'candidate-1',
+        // Attempt budget untouched (ADR-013 §5: recoverable connection
+        // health, not a technical failure of the product).
+        attemptCount: 2,
+        lastErrorCode: 'rate-limited',
+        nextRetryAt: expect.any(Date),
+      }),
+    );
+    expect(appendAuditEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'CANDIDATE_EVALUATION_RATE_LIMIT_DEFERRED',
+      }),
+    );
+    expect(recordEvaluationDecision).not.toHaveBeenCalled();
+  });
+
+  it('never dead-letters from rate limiting even at the attempt ceiling - the defer keeps a retry time', async () => {
+    getCandidateEvidenceMock.mockRejectedValue(new CjApiError('rate-limited'));
+
+    await evaluateCandidate(row({ attemptCount: MAX_EVALUATION_ATTEMPTS - 1 }));
+
+    expect(recordEvaluationFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        attemptCount: MAX_EVALUATION_ATTEMPTS - 1,
+        nextRetryAt: expect.any(Date),
+      }),
+    );
   });
 
   it('dead-letters once the max attempt count is reached (nextRetryAt is null)', async () => {
