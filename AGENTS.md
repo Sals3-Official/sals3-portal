@@ -13,6 +13,18 @@ Package manager is `npm` with `package-lock.json` as the lockfile. Run `npm run 
 
 Do not deploy, publish, push, or commit unless the owner explicitly asks.
 
+## Feature-work guardrails learned from the portal navigation fix
+
+Before adding or changing a feature, check for these failure modes explicitly:
+
+- Keep protected Seller Center navigation server-authorized. Do not add a client-side auth shortcut; every protected page/action still needs `requirePermission()` or `requireDropshipperAccount()`.
+- Avoid duplicate server work in shared layouts. If a layout already resolved the session or seller account, pass the resolved facts into shell/badge loaders instead of calling `getSession()` or doing the same seller lookup again.
+- Do not let visible sidebar links prefetch protected dynamic routes by default. Use `next/link`, but set `prefetch={false}` unless prefetch has been measured and intentionally accepted.
+- Be careful with App Router `loading.tsx` boundaries. A parent loading boundary can stream a `200` before a child route calls `notFound()`, breaking hard 404 status contracts. Put loading states at route segments where streaming cannot make the route lie about existence.
+- Keep Vercel Function regions near the database region. For the production Neon database in `ap-southeast-2`, keep functions in `syd1` and verify after deployment with `vercel inspect`; do not use deprecated Next route exports such as `preferredRegion`.
+- When tests reveal a valid empty/no-connection state, update the test contract to accept that honest state rather than waiting for data that may not exist.
+- After any UI navigation/performance change, smoke-test real clicks and watch `_rsc` requests so idle prefetch storms and delayed redirects are caught before deploy.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
