@@ -31,6 +31,7 @@ const SESSION = {
   displayName: 'Development user',
   role: 'seller_manager' as const,
   sellerId: 'seller-001',
+  sellerBusinessModel: 'DROPSHIPPER' as const,
 };
 
 function account(overrides: Partial<SellerAccountRow>): SellerAccountRow {

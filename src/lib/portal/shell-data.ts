@@ -1,5 +1,5 @@
 import getDb, { isDatabaseConfigured } from '@/lib/db/client';
-import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
+import type { PortalSession } from '@/lib/auth/session';
 import {
   countCandidateStatusSummary,
   type CandidateStatusCounts,
@@ -23,18 +23,25 @@ const NO_DATA: PortalShellData = {
 /**
  * Best-effort enrichment for the shared portal shell (rail badges, footer
  * connection health) - rendered on every portal page regardless of role, so
- * it must never throw. `requireDropshipperAccount` throws for every
- * non-dropshipper role (admin, catalogue_reviewer, viewer, ...), which have
- * no seller account at all; that, an unconfigured database, and any other
- * read failure all fall back to `NO_DATA` rather than breaking navigation -
- * the shell simply renders without badges/footer detail, never a fabricated
- * or stale one.
+ * it must never throw. The layout already resolved the authenticated session
+ * and seller row; reuse that identity here instead of doing another
+ * `getSession()` + seller lookup on every navigation. Non-dropshipper roles,
+ * an unconfigured database, and any other read failure all fall back to
+ * `NO_DATA` rather than breaking navigation - the shell simply renders without
+ * badges/footer detail, never a fabricated or stale one.
  */
-export async function resolvePortalShellData(): Promise<PortalShellData> {
+export async function resolvePortalShellData(
+  session: PortalSession,
+): Promise<PortalShellData> {
   if (!isDatabaseConfigured()) return NO_DATA;
+  if (
+    session.sellerBusinessModel !== 'DROPSHIPPER' ||
+    session.sellerId === 'system'
+  ) {
+    return NO_DATA;
+  }
 
   try {
-    const { sellerAccount } = await requireDropshipperAccount();
     const db = getDb();
     const provider = await findProviderByCode(db, 'CJ_DROPSHIPPING');
     const connection =
@@ -42,11 +49,11 @@ export async function resolvePortalShellData(): Promise<PortalShellData> {
         ? null
         : await findConnectionBySellerAndProvider(
             db,
-            sellerAccount.id,
+            session.sellerId,
             provider.id,
           );
 
-    const sourcingCounts = await countCandidateStatusSummary(sellerAccount.id);
+    const sourcingCounts = await countCandidateStatusSummary(session.sellerId);
 
     return {
       connectionSummary:

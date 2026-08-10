@@ -70,6 +70,7 @@ export default function PortalSidebarFooter({
     <div className="overflow-hidden border-t border-sidebar-border p-1.5">
       <Link
         href="/supplier-apps"
+        prefetch={false}
         className="flex h-12 w-full items-center gap-3 rounded-md px-2 text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
       >
         <span className="relative flex size-8 shrink-0 items-center justify-center">

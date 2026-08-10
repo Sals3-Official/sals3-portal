@@ -24,8 +24,11 @@ async function expectLoadedOrReported(page: Page): Promise<void> {
   const noDatabase = page.getByRole('heading', {
     name: 'No database configured in this environment',
   });
+  const noConnection = page.getByRole('heading', {
+    name: 'No CJ connection yet',
+  });
 
-  await expect(notice.or(failure).or(noDatabase)).toBeVisible({
+  await expect(notice.or(failure).or(noDatabase).or(noConnection)).toBeVisible({
     timeout: 30_000,
   });
 }
@@ -67,8 +70,13 @@ test.describe('supplier catalogue', () => {
     const noDatabase = page.getByRole('heading', {
       name: 'No database configured in this environment',
     });
+    const noConnection = page.getByRole('heading', {
+      name: 'No CJ connection yet',
+    });
 
-    await expect(notice.or(failure).or(noDatabase)).toBeVisible({
+    await expect(
+      notice.or(failure).or(noDatabase).or(noConnection),
+    ).toBeVisible({
       timeout: 30_000,
     });
 
