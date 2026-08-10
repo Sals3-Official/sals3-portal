@@ -1,19 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
-import { and, eq, ne } from 'drizzle-orm';
-import { supplierConnections } from '@/lib/db/schema/supplier-connections';
+import { and, eq } from 'drizzle-orm';
+import { supplierAccountBindings } from '@/lib/db/schema/supplier-account-bindings';
 import {
+  claimAccountBinding,
   disconnectConnection,
-  findConnectionByProviderAndHash,
+  findAccountBinding,
   reconnectConnection,
 } from './repository';
 
 /**
  * Verifies the disconnect/reconnect repository functions - the update-in-
  * place shape that lets a seller reconnect the same connection row (the
- * unique `(sellerAccountId, providerId)` index forbids a second row), and
- * that the duplicate-account lookup excludes the connection being
- * reconnected so re-verifying its own CJ account never reads back as
- * "another seller already has this account".
+ * unique `(sellerAccountId, providerId)` index forbids a second row) - and
+ * the binding-ledger functions that decide whether a CJ account may be
+ * connected at all.
  */
 function fakeUpdateExecutor(returnedRows: unknown[]) {
   const builder = {
@@ -32,6 +32,28 @@ function fakeSelectExecutor(resolvedRows: unknown[]) {
     from: vi.fn().mockReturnThis(),
     where: vi.fn().mockReturnThis(),
     limit: vi.fn().mockResolvedValue(resolvedRows),
+  };
+
+  return builder as never;
+}
+
+/**
+ * `claimAccountBinding` inserts, then falls back to a select when the insert
+ * conflicted, so this fake has to answer both in one object.
+ */
+function fakeInsertExecutor(
+  insertedRows: unknown[],
+  selectedRows: unknown[] = [],
+) {
+  const builder = {
+    insert: vi.fn().mockReturnThis(),
+    values: vi.fn().mockReturnThis(),
+    onConflictDoNothing: vi.fn().mockReturnThis(),
+    returning: vi.fn().mockResolvedValue(insertedRows),
+    select: vi.fn().mockReturnThis(),
+    from: vi.fn().mockReturnThis(),
+    where: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockResolvedValue(selectedRows),
   };
 
   return builder as never;
@@ -88,41 +110,66 @@ describe('reconnectConnection', () => {
   });
 });
 
-describe('findConnectionByProviderAndHash', () => {
-  it('excludes the given connection id from the duplicate-account lookup', async () => {
+describe('findAccountBinding', () => {
+  it('looks the binding up by provider and account hash', async () => {
     const executor = fakeSelectExecutor([]);
 
-    await findConnectionByProviderAndHash(
-      executor,
-      'provider-a',
-      'hash-a',
-      'connection-a',
-    );
+    await findAccountBinding(executor, 'provider-a', 'hash-a');
 
     const whereArg = (executor as { where: ReturnType<typeof vi.fn> }).where
       .mock.calls[0][0];
     const expected = and(
-      eq(supplierConnections.providerId, 'provider-a'),
-      eq(supplierConnections.externalAccountLookupHash, 'hash-a'),
-      ne(supplierConnections.id, 'connection-a'),
+      eq(supplierAccountBindings.providerId, 'provider-a'),
+      eq(supplierAccountBindings.externalAccountLookupHash, 'hash-a'),
     );
 
     expect(String(whereArg)).toBe(String(expected));
   });
+});
 
-  it('omits the exclusion condition when no connection id is given', async () => {
-    const executor = fakeSelectExecutor([]);
+/**
+ * The binding ledger is what makes "one CJ account belongs to one seller
+ * account" permanent, so the case that matters is the *conflict*: the claim
+ * must read back whoever already owns the account instead of throwing or
+ * returning null, because the caller has to tell "already mine" apart from
+ * "already someone else's".
+ */
+describe('claimAccountBinding', () => {
+  it('returns the inserted row when the account is unclaimed', async () => {
+    const inserted = { id: 'binding-a', sellerAccountId: 'seller-a' };
+    const executor = fakeInsertExecutor([inserted]);
 
-    await findConnectionByProviderAndHash(executor, 'provider-a', 'hash-a');
+    const result = await claimAccountBinding(executor, {
+      providerId: 'provider-a',
+      externalAccountLookupHash: 'hash-a',
+      sellerAccountId: 'seller-a',
+    });
 
-    const whereArg = (executor as { where: ReturnType<typeof vi.fn> }).where
-      .mock.calls[0][0];
-    const expected = and(
-      eq(supplierConnections.providerId, 'provider-a'),
-      eq(supplierConnections.externalAccountLookupHash, 'hash-a'),
-      undefined,
-    );
+    expect(result).toBe(inserted);
+  });
 
-    expect(String(whereArg)).toBe(String(expected));
+  it('reads back the existing owner when the account is already claimed', async () => {
+    const owner = { id: 'binding-a', sellerAccountId: 'seller-b' };
+    const executor = fakeInsertExecutor([], [owner]);
+
+    const result = await claimAccountBinding(executor, {
+      providerId: 'provider-a',
+      externalAccountLookupHash: 'hash-a',
+      sellerAccountId: 'seller-a',
+    });
+
+    expect(result).toBe(owner);
+  });
+
+  it('throws when the insert conflicted but nothing can be read back', async () => {
+    const executor = fakeInsertExecutor([], []);
+
+    await expect(
+      claimAccountBinding(executor, {
+        providerId: 'provider-a',
+        externalAccountLookupHash: 'hash-a',
+        sellerAccountId: 'seller-a',
+      }),
+    ).rejects.toThrow('could not be read back');
   });
 });

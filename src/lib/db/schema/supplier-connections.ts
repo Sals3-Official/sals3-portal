@@ -19,6 +19,17 @@ import { supplierProviders } from './supplier-providers';
  * in displayable plaintext, since it doubles as webhook signing material.
  */
 
+/**
+ * Exported because `connectCjSupplier` maps a Postgres 23505 back to a
+ * specific user-facing reason by constraint name. A literal repeated in that
+ * file would drift silently on a rename and the mapping would quietly
+ * degrade to a generic failure - an invariant that fails open.
+ */
+export const SUPPLIER_CONNECTIONS_SELLER_PROVIDER_KEY =
+  'supplier_connections_seller_provider_key';
+export const SUPPLIER_CONNECTIONS_PROVIDER_EXTERNAL_HASH_KEY =
+  'supplier_connections_provider_external_hash_key';
+
 export const supplierConnectionStatusEnum = pgEnum(
   'supplier_connection_status',
   [
@@ -75,11 +86,17 @@ export const supplierConnections = pgTable(
   },
   (table) => [
     // Phase 1: one account per provider for each Dropshipper.
-    uniqueIndex('supplier_connections_seller_provider_key').on(
+    uniqueIndex(SUPPLIER_CONNECTIONS_SELLER_PROVIDER_KEY).on(
       table.sellerAccountId,
       table.providerId,
     ),
-    uniqueIndex('supplier_connections_provider_external_hash_key').on(
+    // At most one *live* connection per provider account. Permanent ownership
+    // is a different guarantee and lives in `supplier_account_bindings` -
+    // this index cannot provide it, because the hash it constrains is
+    // rewritten whenever a seller reconnects with a different account.
+    // Must stay unconditional: a partial index (e.g. excluding DISCONNECTED)
+    // is exactly the weakening `supplier-connections.test.ts` guards against.
+    uniqueIndex(SUPPLIER_CONNECTIONS_PROVIDER_EXTERNAL_HASH_KEY).on(
       table.providerId,
       table.externalAccountLookupHash,
     ),

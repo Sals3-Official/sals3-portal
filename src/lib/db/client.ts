@@ -34,6 +34,30 @@ const CONNECT_TIMEOUT_SECONDS = 10;
 
 export type Database = ReturnType<typeof drizzle<typeof schema>>;
 
+/**
+ * One transaction's reserved connection. Take this instead of `DbExecutor`
+ * only where the pooled client would be *wrong* rather than merely different
+ * — a `SELECT ... FOR UPDATE SKIP LOCKED` whose locks must survive until a
+ * following `UPDATE` commits, for instance.
+ */
+export type DbTransaction = Parameters<
+  Parameters<Database['transaction']>[0]
+>[0];
+
+/**
+ * Anything that can run a statement: the pooled client, or one transaction's
+ * reserved connection. Every function that touches the database takes one of
+ * these as its first argument rather than reaching for `getDb()` itself.
+ *
+ * That is not a style preference. `db.transaction()` reserves its own
+ * `postgres.js` connection, so a statement issued through `getDb()` from
+ * inside a transaction callback runs on a *different* connection and cannot
+ * see the uncommitted rows around it - a foreign key to a row the
+ * transaction just inserted fails outright. Passing the executor makes
+ * "which connection does this run on?" a compile-time question.
+ */
+export type DbExecutor = Database | DbTransaction;
+
 const globalForDb = globalThis as unknown as {
   sals3Sql?: ReturnType<typeof postgres>;
   sals3Db?: Database;

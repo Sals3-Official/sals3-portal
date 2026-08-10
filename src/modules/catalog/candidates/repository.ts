@@ -1,5 +1,5 @@
 import { and, eq, inArray, lt, ne, or } from 'drizzle-orm';
-import type { Database } from '@/lib/db/client';
+import type { DbExecutor, DbTransaction } from '@/lib/db/client';
 import {
   auditEvents,
   candidateEvaluations,
@@ -26,8 +26,7 @@ import { MAX_EVALUATION_ATTEMPTS, nextRetryDelayMs } from './rules/policy';
  * without this file knowing about transaction control.
  */
 
-type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
-export type Executor = Database | Transaction;
+export type Executor = DbExecutor;
 
 /**
  * Atomic create-or-nothing on the `(supplier, external_product_id)` unique
@@ -420,7 +419,7 @@ export async function requeueConnectionPausedEvaluations(
  * until the following `UPDATE` commits.
  */
 export async function claimEvaluationBatch(
-  tx: Transaction,
+  tx: DbTransaction,
   input: { workerId: string; batchSize: number; leaseDurationMs: number },
 ): Promise<CandidateEvaluationRow[]> {
   const claimable = await tx

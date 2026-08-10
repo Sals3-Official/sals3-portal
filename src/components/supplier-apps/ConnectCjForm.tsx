@@ -22,7 +22,10 @@ const FAILURE_MESSAGES: Record<
   invalid_input: 'That API key or display name was not in an expected format.',
   denied: 'Your account cannot connect a supplier - Dropshipper accounts only.',
   rate_limited: 'Too many connection attempts. Wait a moment and try again.',
-  already_connected: 'A CJ account is already connected.',
+  already_connected:
+    'A CJ account is already connected to this seller account. Disconnect it before connecting another.',
+  cj_account_taken:
+    'That CJ account is already linked to a different Sals3 seller account. A CJ account can only be connected to one seller account.',
   provider_unavailable: 'CJ Dropshipping is not available right now.',
   verification_failed:
     'CJ could not verify that API key. Check it and try again.',

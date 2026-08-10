@@ -1,12 +1,14 @@
-import { and, eq, inArray, ne } from 'drizzle-orm';
-import type { Database } from '@/lib/db/client';
+import { and, eq, inArray } from 'drizzle-orm';
+import type { DbExecutor } from '@/lib/db/client';
 import {
   sellerAccounts,
+  supplierAccountBindings,
   supplierConnections,
   supplierProviders,
   type NewSellerAccountRow,
   type NewSupplierConnectionRow,
   type SellerAccountRow,
+  type SupplierAccountBindingRow,
   type SupplierConnectionRow,
   type SupplierProviderRow,
 } from '@/lib/db/schema';
@@ -19,8 +21,7 @@ import {
  * to enforce.
  */
 
-type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
-export type Executor = Database | Transaction;
+export type Executor = DbExecutor;
 
 export async function findSellerAccountByIdentityId(
   executor: Executor,
@@ -154,30 +155,87 @@ export async function listConnectionsBySeller(
     .where(eq(supplierConnections.sellerAccountId, sellerAccountId));
 }
 
-export async function findConnectionByProviderAndHash(
+/*
+ * `findConnectionByProviderAndHash` used to live here as the "is this CJ
+ * account already taken?" check. It was removed with the binding ledger:
+ * asking the connection table that question could only ever see accounts
+ * connected *right now*, because `reconnectConnection` rewrites the hash it
+ * searched on. `findAccountBinding` answers the question that actually
+ * matters and cannot go stale.
+ */
+
+export async function findAccountBinding(
   executor: Executor,
   providerId: string,
   externalAccountLookupHash: string,
-  excludeConnectionId?: string,
-): Promise<SupplierConnectionRow | null> {
+): Promise<SupplierAccountBindingRow | null> {
   const rows = await executor
     .select()
-    .from(supplierConnections)
+    .from(supplierAccountBindings)
     .where(
       and(
-        eq(supplierConnections.providerId, providerId),
+        eq(supplierAccountBindings.providerId, providerId),
         eq(
-          supplierConnections.externalAccountLookupHash,
+          supplierAccountBindings.externalAccountLookupHash,
           externalAccountLookupHash,
         ),
-        excludeConnectionId === undefined
-          ? undefined
-          : ne(supplierConnections.id, excludeConnectionId),
       ),
     )
     .limit(1);
 
   return rows[0] ?? null;
+}
+
+/**
+ * Claims permanent ownership of a provider account for a seller, or reads
+ * back whoever already owns it. Returns the *winning* row either way and
+ * never throws on a conflict - the caller compares `sellerAccountId` and
+ * decides what that means, because "already yours" and "already someone
+ * else's" are different answers from the same statement.
+ *
+ * Insert-then-read rather than select-then-insert, for the same reason
+ * `insertCandidateIfAbsent` is: two concurrent connects of the same provider
+ * account would both pass a prior existence check and one would then fail on
+ * the unique index. Letting Postgres arbitrate removes the race, which is the
+ * only reason this can be called an enforced binding rather than a checked one.
+ *
+ * There is deliberately no update and no delete counterpart. See this table's
+ * schema header - the binding is permanent because the row is never released.
+ */
+export async function claimAccountBinding(
+  executor: Executor,
+  input: {
+    providerId: string;
+    externalAccountLookupHash: string;
+    sellerAccountId: string;
+  },
+): Promise<SupplierAccountBindingRow> {
+  const inserted = await executor
+    .insert(supplierAccountBindings)
+    .values(input)
+    .onConflictDoNothing({
+      target: [
+        supplierAccountBindings.providerId,
+        supplierAccountBindings.externalAccountLookupHash,
+      ],
+    })
+    .returning();
+
+  if (inserted[0] !== undefined) return inserted[0];
+
+  const existing = await findAccountBinding(
+    executor,
+    input.providerId,
+    input.externalAccountLookupHash,
+  );
+
+  if (existing === null) {
+    throw new Error(
+      'Supplier account binding conflicted on insert but could not be read back.',
+    );
+  }
+
+  return existing;
 }
 
 export async function insertConnection(
