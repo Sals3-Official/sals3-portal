@@ -8,10 +8,37 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import authClient from '@/lib/auth/client';
+import { continueAuthRedirect } from '@/lib/auth/redirect';
 import { totpCodeSchema } from '@/lib/auth/schemas';
 import FieldError from './FieldError';
 
-export default function SetupTotpForm() {
+type SetupTotpFormProps = {
+  next?: string;
+};
+
+type AuthClientError = {
+  code?: string;
+  message?: string;
+  status?: number;
+};
+
+function setupFailureMessage(error: AuthClientError): string {
+  if (error.status === 401) {
+    return 'Your sign-in expired. Sign in again to finish setup.';
+  }
+
+  return 'Two-factor setup could not start. Check your password.';
+}
+
+function verifyFailureMessage(error: AuthClientError): string {
+  if (error.status === 429) {
+    return 'Too many attempts. Wait a few minutes, then try again.';
+  }
+
+  return 'That code was not accepted. Try the latest code.';
+}
+
+export default function SetupTotpForm({ next }: SetupTotpFormProps) {
   const router = useRouter();
   const [isPending, setIsPending] = useState(false);
   const [message, setMessage] = useState('');
@@ -41,7 +68,7 @@ export default function SetupTotpForm() {
     setIsPending(false);
 
     if (response.error !== null) {
-      setMessage('Two-factor setup could not start. Check your password.');
+      setMessage(setupFailureMessage(response.error));
       return;
     }
 
@@ -70,11 +97,11 @@ export default function SetupTotpForm() {
     setIsPending(false);
 
     if (response.error !== null) {
-      setMessage('That code was not accepted. Try the latest code.');
+      setMessage(verifyFailureMessage(response.error));
       return;
     }
 
-    router.push('/overview');
+    router.replace(continueAuthRedirect(next));
     router.refresh();
   }
 

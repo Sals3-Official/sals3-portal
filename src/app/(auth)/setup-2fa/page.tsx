@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import AuthShell from '@/components/auth/AuthShell';
 import SetupTotpForm from '@/components/auth/SetupTotpForm';
+import { authStepRedirect, safeAuthRedirect } from '@/lib/auth/redirect';
 import { getRawAuthSession } from '@/lib/auth/session';
 
 export const metadata = {
@@ -9,19 +10,26 @@ export const metadata = {
 
 export const dynamic = 'force-dynamic';
 
-export default async function SetupTwoFactorPage() {
+type SetupTwoFactorPageProps = {
+  searchParams: Promise<{ next?: string }>;
+};
+
+export default async function SetupTwoFactorPage({
+  searchParams,
+}: SetupTwoFactorPageProps) {
+  const params = await searchParams;
   const data = await getRawAuthSession();
 
   if (data === null) {
-    redirect('/login');
+    redirect(authStepRedirect('/login', params.next));
   }
 
   if (data.user.emailVerified !== true) {
-    redirect('/login');
+    redirect(authStepRedirect('/login', params.next));
   }
 
   if (data.user.twoFactorEnabled === true) {
-    redirect('/overview');
+    redirect(safeAuthRedirect(params.next));
   }
 
   return (
@@ -29,7 +37,7 @@ export default async function SetupTwoFactorPage() {
       title="Set up two-factor"
       description="Scan the authenticator code, save your backup codes, then verify the current code."
     >
-      <SetupTotpForm />
+      <SetupTotpForm next={params.next} />
     </AuthShell>
   );
 }

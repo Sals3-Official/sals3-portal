@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { redirectAfterPortalState, safeAuthRedirect } from './redirect';
+import {
+  authStepRedirect,
+  continueAuthRedirect,
+  redirectAfterPortalState,
+  resolvePortalEntryRedirect,
+  safeAuthRedirect,
+} from './redirect';
 
 describe('auth redirects', () => {
   it('allows only portal-local destinations', () => {
@@ -20,7 +26,7 @@ describe('auth redirects', () => {
         isSellerApproved: true,
         intended: '/orders',
       }),
-    ).toBe('/login');
+    ).toBe('/login?next=%2Forders');
 
     expect(
       redirectAfterPortalState({
@@ -38,6 +44,45 @@ describe('auth redirects', () => {
         isSellerApproved: true,
         intended: '/orders',
       }),
-    ).toBe('/setup-2fa');
+    ).toBe('/setup-2fa?next=%2Forders');
+  });
+
+  it('routes pending two-factor challenges before a fresh login', () => {
+    expect(
+      resolvePortalEntryRedirect(
+        {
+          hasSession: false,
+          hasPendingTwoFactor: true,
+          emailVerified: false,
+          twoFactorEnabled: false,
+          sellerApproved: false,
+        },
+        '/products/qualified/ready',
+      ),
+    ).toBe('/two-factor?next=%2Fproducts%2Fqualified%2Fready');
+
+    expect(
+      resolvePortalEntryRedirect(
+        {
+          hasSession: false,
+          emailVerified: false,
+          twoFactorEnabled: false,
+          sellerApproved: false,
+        },
+        '/orders',
+      ),
+    ).toBe('/login?next=%2Forders');
+  });
+
+  it('builds auth step and continuation routes with sanitized next values', () => {
+    expect(authStepRedirect('/setup-2fa', '/orders?filter=open')).toBe(
+      '/setup-2fa?next=%2Forders%3Ffilter%3Dopen',
+    );
+    expect(continueAuthRedirect('/finances')).toBe(
+      '/auth/continue?next=%2Ffinances',
+    );
+    expect(continueAuthRedirect('https://example.com')).toBe(
+      '/auth/continue?next=%2Foverview',
+    );
   });
 });
