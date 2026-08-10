@@ -90,7 +90,7 @@ export default async function AddProductPage({ searchParams }: PageProps) {
           description="This screen exists as a design preview only. It will not open a real candidate against fictional data, because that would misrepresent your product. Use Qualified Products to review candidates in the meantime."
         />
         <div>
-          <LinkButton href="/products/qualified/ready" variant="outline">
+          <LinkButton href="/products/pipeline?tab=ready" variant="outline">
             Go to Qualified Products
           </LinkButton>
         </div>

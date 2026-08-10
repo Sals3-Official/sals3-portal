@@ -47,7 +47,10 @@ export default function ProductEditorHeader({
       <nav aria-label="Breadcrumb">
         <ol className="flex list-none flex-wrap items-center gap-1.5 p-0 text-xs text-muted-foreground">
           <li>
-            <Link href="/products/qualified/ready" className="hover:underline">
+            <Link
+              href="/products/pipeline?tab=ready"
+              className="hover:underline"
+            >
               Product Sourcing
             </Link>
           </li>

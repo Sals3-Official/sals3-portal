@@ -80,16 +80,26 @@ test.describe('automated candidate-evaluation pipeline', () => {
 });
 
 test.describe('Product Sourcing screens', () => {
+  /**
+   * Ready/Needs Attention/Evaluating/Blocked/Exception Queue used to be
+   * five separate routes, each with its own `<h1>`. They now redirect into
+   * one window (`/products/pipeline?tab=`) with a shared `<h1>` and a tab
+   * bar - every case below asserts the redirect target and the active tab
+   * instead of a page-specific heading.
+   */
   test('Qualified Products defaults to Ready and never shows a per-row check button', async ({
     page,
   }) => {
     await page.goto('/products/qualified/ready');
 
+    await expect(page).toHaveURL(/\/products\/pipeline\?tab=ready$/);
     await expect(
-      page.getByRole('heading', { name: 'Ready', level: 1 }),
-    ).toBeVisible({
-      timeout: 30_000,
-    });
+      page.getByRole('heading', { name: 'Product Sourcing', level: 1 }),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('tab', { name: /^Ready/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
     await expect(
       page.getByRole('button', { name: 'Check for Sals3' }),
     ).toHaveCount(0);
@@ -101,8 +111,11 @@ test.describe('Product Sourcing screens', () => {
     await page.goto('/products/qualified/needs-attention');
 
     await expect(
-      page.getByRole('heading', { name: 'Needs Attention', level: 1 }),
+      page.getByRole('heading', { name: 'Product Sourcing', level: 1 }),
     ).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page.getByRole('tab', { name: /^Needs Attention/ }),
+    ).toHaveAttribute('aria-selected', 'true');
 
     await Promise.all(
       PREFLIGHT_SCORE_LABELS.map((label) =>
@@ -117,8 +130,11 @@ test.describe('Product Sourcing screens', () => {
     await page.goto('/products/blocked');
 
     await expect(
-      page.getByRole('heading', { name: 'Blocked / Rejected', level: 1 }),
+      page.getByRole('heading', { name: 'Product Sourcing', level: 1 }),
     ).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page.getByRole('tab', { name: /^Blocked \/ Rejected/ }),
+    ).toHaveAttribute('aria-selected', 'true');
   });
 
   test('Evaluating shows queued/in-progress candidates, not a manual action', async ({
@@ -127,10 +143,13 @@ test.describe('Product Sourcing screens', () => {
     await page.goto('/products/evaluating');
 
     await expect(
-      page.getByRole('heading', { name: 'Evaluating', level: 1 }),
+      page.getByRole('heading', { name: 'Product Sourcing', level: 1 }),
     ).toBeVisible({
       timeout: 30_000,
     });
+    await expect(
+      page.getByRole('tab', { name: /^Evaluating/ }),
+    ).toHaveAttribute('aria-selected', 'true');
   });
 
   test('the old /products/shortlisted link redirects to Ready instead of 404ing', async ({
@@ -138,7 +157,7 @@ test.describe('Product Sourcing screens', () => {
   }) => {
     await page.goto('/products/shortlisted');
 
-    await expect(page).toHaveURL(/\/products\/qualified\/ready$/);
+    await expect(page).toHaveURL(/\/products\/pipeline\?tab=ready$/);
   });
 
   test('the sidebar names the Product Sourcing group correctly and All Supplier Products is the raw browser', async ({
@@ -158,8 +177,11 @@ test.describe('Product Sourcing screens', () => {
     await page.goto('/products/exception-queue');
 
     await expect(
-      page.getByRole('heading', { name: 'Exception Queue', level: 1 }),
+      page.getByRole('heading', { name: 'Product Sourcing', level: 1 }),
     ).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page.getByRole('tab', { name: /^Exception Queue/ }),
+    ).toHaveAttribute('aria-selected', 'true');
     await expect(
       page.getByText(/preflight, which is not implemented/i),
     ).toHaveCount(0);
@@ -195,7 +217,7 @@ test.describe('automated pipeline on a phone', () => {
   test('the Ready screen never scrolls the page sideways', async ({ page }) => {
     await page.goto('/products/qualified/ready');
     await page
-      .getByRole('heading', { name: 'Ready', level: 1 })
+      .getByRole('heading', { name: 'Product Sourcing', level: 1 })
       .waitFor({ timeout: 30_000 });
 
     const overflow = await page.evaluate(

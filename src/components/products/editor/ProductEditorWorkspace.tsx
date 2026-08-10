@@ -59,7 +59,7 @@ type ProductEditorWorkspaceProps = {
   initialLifecycle: EditorLifecycle;
 };
 
-const EXIT_HREF = '/products/qualified/ready';
+const EXIT_HREF = '/products/pipeline?tab=ready';
 
 /** A bulk price change must never touch a variant policy has ruled out. */
 function isBulkPriceable(variant: VariantFixture): boolean {
@@ -359,7 +359,7 @@ export default function ProductEditorWorkspace({
           and Preview into sheets instead of shrinking the column the
           seller is actually typing in. */}
       <div className="grid grid-cols-1 items-start gap-4 @min-[86.5rem]:grid-cols-[17rem_minmax(47.5rem,1fr)_20rem]">
-        <aside className="sticky top-20 hidden max-h-[calc(100vh-6rem)] overflow-y-auto @min-[86.5rem]:block">
+        <aside className="sticky top-20 hidden max-h-[calc(100vh-6rem)] overflow-x-hidden overflow-y-auto @min-[86.5rem]:block">
           <ListingReadinessPanel
             fixture={fixture}
             blockerCount={decision.blockerCount}
@@ -579,7 +579,7 @@ export default function ProductEditorWorkspace({
           </EditorSectionCard>
         </div>
 
-        <aside className="sticky top-20 hidden max-h-[calc(100vh-6rem)] overflow-y-auto @min-[76rem]:block">
+        <aside className="sticky top-20 hidden max-h-[calc(100vh-6rem)] overflow-x-hidden overflow-y-auto @min-[76rem]:block">
           {renderPreview(true)}
         </aside>
       </div>

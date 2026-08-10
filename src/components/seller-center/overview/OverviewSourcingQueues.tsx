@@ -57,7 +57,7 @@ export default function OverviewSourcingQueues({
   const rows: QueueRow[] = [
     {
       label: 'Ready',
-      href: '/products/qualified/ready',
+      href: '/products/pipeline?tab=ready',
       count: counts.ready,
       oldestAgeMs: oldestReadyAgeMs,
       todo: 'Customize and list when ready.',
@@ -65,7 +65,7 @@ export default function OverviewSourcingQueues({
     },
     {
       label: 'Needs Attention',
-      href: '/products/qualified/needs-attention',
+      href: '/products/pipeline?tab=needs-attention',
       count: counts.needsAttention,
       oldestAgeMs: oldestNeedsAttentionAgeMs,
       todo: 'Read the warning, then customize and list.',
@@ -73,7 +73,7 @@ export default function OverviewSourcingQueues({
     },
     {
       label: 'Evaluating',
-      href: '/products/evaluating',
+      href: '/products/pipeline?tab=evaluating',
       count: counts.evaluating,
       oldestAgeMs: oldestEvaluatingAgeMs,
       todo: 'Nothing to do - clears on its own.',
@@ -81,7 +81,7 @@ export default function OverviewSourcingQueues({
     },
     {
       label: 'Blocked / Rejected',
-      href: '/products/blocked',
+      href: '/products/pipeline?tab=blocked',
       count: counts.blockedRejected,
       oldestAgeMs: oldestBlockedRejectedAgeMs,
       todo: 'Temporary ones retry on their own; permanent ones need no action.',
@@ -89,7 +89,7 @@ export default function OverviewSourcingQueues({
     },
     {
       label: 'Exception Queue',
-      href: '/products/exception-queue',
+      href: '/products/pipeline?tab=exception',
       count: counts.exceptionQueue,
       oldestAgeMs: oldestExceptionAgeMs,
       todo: 'Needs a person to review the failure.',

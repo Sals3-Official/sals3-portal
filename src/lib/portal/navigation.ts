@@ -95,7 +95,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: 'package',
         permission: 'product:read',
         description:
-          'The seller’s authoritative list of Sals3 listings - distinct from the raw supplier feed. Proposed route: no writable Sals3 catalogue exists yet.',
+          'The seller’s authoritative list of Sals3 listings - distinct from the raw supplier feed. Currently a design preview on fictional data; no writable Sals3 catalogue exists yet.',
       },
       {
         href: '/listings/new?fixture=attention',
@@ -127,54 +127,12 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: 'circle-check',
     items: [
       {
-        href: '/products/qualified/ready',
-        label: 'Qualified Products',
+        href: '/products/pipeline',
+        label: 'Candidate Pipeline',
         icon: 'circle-check',
         permission: 'catalog.candidate.read',
         description:
-          'Products the automatic checks have already decided on: split into Ready (no issue) and Needs Attention (passed with a warning).',
-        items: [
-          {
-            href: '/products/qualified/ready',
-            label: 'Ready',
-            icon: 'circle-check',
-            permission: 'catalog.candidate.read',
-            description:
-              'Passed every automatic check with no open issue. Safe to customize and list as-is.',
-          },
-          {
-            href: '/products/qualified/needs-attention',
-            label: 'Needs Attention',
-            icon: 'star',
-            permission: 'catalog.candidate.read',
-            description:
-              'Passed, but with a warning flagged - read the reason before you customize and list it.',
-          },
-        ],
-      },
-      {
-        href: '/products/evaluating',
-        label: 'Evaluating',
-        icon: 'loader',
-        permission: 'catalog.candidate.read',
-        description:
-          'Being checked right now (pricing, stock, policy). Moves on its own to Ready, Needs Attention, or Blocked - nothing to do here.',
-      },
-      {
-        href: '/products/blocked',
-        label: 'Blocked / Rejected',
-        icon: 'ban',
-        permission: 'catalog.candidate.read',
-        description:
-          'Could not qualify - permanently (policy/pricing) or temporarily (e.g. supplier out of stock). Temporary ones retry on their own.',
-      },
-      {
-        href: '/products/exception-queue',
-        label: 'Exception Queue',
-        icon: 'alert-triangle',
-        permission: 'catalog.candidate.read',
-        description:
-          'The pipeline itself failed here (e.g. could not reach the supplier) after every retry. This needs a person, not a product judgment call.',
+          'Every candidate the automated pipeline has touched, one window - Ready, Needs Attention, Evaluating, Blocked/Rejected, and Exception Queue as tabs instead of separate pages.',
       },
       {
         href: '/products',
@@ -253,11 +211,18 @@ export type SourcingBadgeCounts = {
 };
 
 /**
- * Patches Product Sourcing's real per-seller counts (from the automated
+ * Patches Candidate Pipeline's real per-seller counts (from the automated
  * evaluation pipeline) into an already permission-filtered group list.
  * `counts === null` means no real number was resolvable this request (no
  * seller account, DB not configured) - groups pass through unbadged rather
  * than showing a fabricated or stale figure.
+ *
+ * One badge, not five: the count is always the total across every status
+ * (matches the page's own "All" tab exactly, so the sidebar and the page
+ * never disagree), and only the *colour* changes with the worst signal
+ * present - an exhausted exception needs a person (danger), a warning still
+ * lets you list but is worth reading first (warning), anything else is a
+ * plain informational total (neutral).
  */
 export function withSourcingBadges(
   groups: NavGroup[],
@@ -265,54 +230,28 @@ export function withSourcingBadges(
 ): NavGroup[] {
   if (counts === null) return groups;
 
-  const neutral = (count: number): NavBadge => ({ count, tone: 'neutral' });
-  const ifPositive = (
-    count: number,
-    tone: 'warning' | 'danger',
-  ): NavBadge | undefined => (count > 0 ? { count, tone } : undefined);
+  const total =
+    counts.ready +
+    counts.needsAttention +
+    counts.evaluating +
+    counts.blockedRejected +
+    counts.exceptionQueue;
+  const tone: NavBadge['tone'] = (() => {
+    if (counts.exceptionQueue > 0) return 'danger';
+    if (counts.needsAttention > 0) return 'warning';
+    return 'neutral';
+  })();
 
   return groups.map((group) => {
     if (group.label !== 'Product Sourcing') return group;
 
     return {
       ...group,
-      badge: ifPositive(counts.exceptionQueue, 'danger'),
-      items: group.items.map((item) => {
-        if (
-          item.href === '/products/qualified/ready' &&
-          item.items !== undefined
-        ) {
-          return {
-            ...item,
-            badge: neutral(counts.ready + counts.needsAttention),
-            items: item.items.map((child) => {
-              if (child.href === '/products/qualified/ready') {
-                return { ...child, badge: neutral(counts.ready) };
-              }
-              if (child.href === '/products/qualified/needs-attention') {
-                return {
-                  ...child,
-                  badge: ifPositive(counts.needsAttention, 'warning'),
-                };
-              }
-              return child;
-            }),
-          };
-        }
-        if (item.href === '/products/evaluating') {
-          return { ...item, badge: neutral(counts.evaluating) };
-        }
-        if (item.href === '/products/blocked') {
-          return { ...item, badge: neutral(counts.blockedRejected) };
-        }
-        if (item.href === '/products/exception-queue') {
-          return {
-            ...item,
-            badge: ifPositive(counts.exceptionQueue, 'danger'),
-          };
-        }
-        return item;
-      }),
+      items: group.items.map((item) =>
+        item.href === '/products/pipeline'
+          ? { ...item, badge: { count: total, tone } }
+          : item,
+      ),
     };
   });
 }
