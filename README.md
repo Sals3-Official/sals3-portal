@@ -133,7 +133,7 @@ Cron - see below for why).
 | `/payouts`                              | Payout schedule, states, and destination                                                                                                                                                                                                                                                                                                     |
 | `/market-rules`                         | Every rule applied to the account, plus role access                                                                                                                                                                                                                                                                                          |
 | `/supplier-apps`                        | Connect / disconnect / reconnect the seller's own CJ Dropshipping account (ADR-008)                                                                                                                                                                                                                                                          |
-| `/products`                             | All Supplier Products — the raw supplier feed browser (today: CJdropshipping), through the seller's own connection, with a live PHP estimate alongside each USD price (read-only status badges, no click-to-check action)                                                                                                                    |
+| `/products`                             | All Supplier Products — the raw supplier feed browser (today: CJdropshipping), through the seller's own connection, with a live AUD reference estimate alongside each USD price (read-only status badges, no click-to-check action)                                                                                                          |
 | `/design-preview/all-supplier-products` | Design preview of the full multi-supplier layout against isolated fixtures (dynamic supplier/evaluation filters, duplicate detection) - `robots: noindex`, not linked from the sidebar, for review before a second real Supplier App exists                                                                                                  |
 | `/products/qualified/ready`             | Qualified Products · Ready — automated `PASS` candidates, default Product Sourcing screen                                                                                                                                                                                                                                                    |
 | `/products/qualified/needs-attention`   | Qualified Products · Needs Attention — automated `PASS_WITH_ATTENTION` candidates                                                                                                                                                                                                                                                            |
@@ -450,13 +450,11 @@ category-required-attribute checks are not implemented — CJ's modelled
 endpoints return neither, and the latter needs the ADR-002 taxonomy mapping
 wired up first (separate task).
 
-**Three checks use labelled placeholders, not an approved policy:**
+**Two checks use labelled placeholders, not an approved policy:**
 
 - The prohibited-category/counterfeit denylist reuses spec section 14.1's own
   "recommended initial exclusions" wording - not invented here - but no
   ADR-002 pilot category/market has actually been approved.
-- The destination market stays the same placeholder `'PH'` already used by the
-  rest of this app - not an ADR-003 approval.
 - Price bounds and the margin-floor estimate are env-configured placeholder
   numbers (`CATALOG_MIN_PRICE_USD_CENTS`, `CATALOG_MAX_PRICE_USD_CENTS`,
   `CATALOG_ESTIMATED_OVERHEAD_PERCENT`, `CATALOG_MIN_MARGIN_PERCENT`,
@@ -465,9 +463,52 @@ wired up first (separate task).
   placeholder overhead percentage, and is the same for every candidate today
   (not product-differentiated), never a real per-product margin calculation.
 
-`candidate_evaluations.policy_version` records which policy produced a stored
-decision, so a real ADR-002/ADR-003 rule pack can replace these placeholders
-later without a schema change.
+**Destination market fixed 2026-08-10 (ADR-014):** the old hardcoded
+`INGESTION_MARKET_CODES = ['PH']` / `PLACEHOLDER_MARKET_CODE = 'PH'` are gone.
+`src/lib/country-policy/` now separates three concepts that a single
+`marketCode` used to blur together:
+
+- `resolveSellerOperatingCountryPolicy()` — where Sals3 the business is
+  registered and may operate a seller account. Currently `AU`, enabled, per
+  Bogs's 2026-08-10 decision.
+- `resolveBuyerDestinationCountryPolicy()` — where customers may purchase and
+  receive delivery. **Currently disabled with an empty allowlist** — no
+  ADR-003 market has been approved, and AU seller registration does not by
+  itself approve AU (or anywhere else) as a buyer destination.
+- `resolvePortalDisplayCurrency()` — Portal's own temporary seller-facing
+  display currency (`AUD`), unrelated to either country policy and unrelated
+  to the real `sals3-ecommerce` storefront checkout currency (still USD, see
+  `src/lib/storefront/fx.ts`).
+
+Because the buyer-destination policy is disabled, `rules/screening.ts`'s
+`checkValidMarket` now fails every new candidate closed with
+`NO_VALID_MARKET` (a recoverable `TEMPORARILY_INELIGIBLE`, not a permanent
+block) before any CJ evidence-fetch call - **no candidate can currently reach
+`Ready` until a real buyer-destination market is approved.** This replaces
+the previous silent assumption that `'PH'` was a real, approved market.
+`checkValidMarket` also checks each candidate's own persisted
+`intended_market_codes` against the enabled allowlist, not only whether the
+global policy is on: every one of the candidate's destinations must already
+be enabled, or it blocks with a detail that distinguishes "no policy
+enabled," "this candidate has no destination recorded," and "this
+candidate's destination isn't in the enabled set" - so a historical `['PH']`
+candidate never silently passes once `['AU']` is approved; it stays blocked
+until its own stored scope is separately, explicitly migrated. Existing
+historical `PASS`/`PASS_WITH_ATTENTION` rows are untouched; only new
+evaluations are affected. A repository guard
+(`no-scattered-market-literals.test.ts`) fails the build if a bare `'PH'`/
+`'AU'` market-code literal is reintroduced into this module.
+
+The buyer-destination policy is resolved exactly once per evaluation and
+composed with the catalog policy version into one stored identity
+(`candidate_evaluations.policy_version`, e.g.
+`catalog-eval-policy-placeholder-v1+buyer-destination:buyer-destination-country-v1-disabled`)
+via `composeEvaluationPolicyVersion()`, so a later policy-version change can
+be detected by string comparison alone - no second column. Every screening
+and evaluation audit event also records the catalog policy version, the
+buyer-destination policy version/source/effective state/enabled codes, and
+the candidate's own intended destination codes, so a decision is always
+reproducible from its audit trail.
 
 Multi-tenant as of 2026-08-07: ingestion and evaluation loop over every
 seller's own `CONNECTED`/`DEGRADED` [Supplier Apps connection](#supplier-apps-multi-tenant-provider-connections)
@@ -487,16 +528,26 @@ sanitises it yet.
 `src/lib/seller-center/market-config.ts` carries 3 illustrative sample
 markets (Philippines, Indonesia, Singapore) with their own currency, carrier,
 tax label, and payout rail — a placeholder for a future per-seller market
-configuration:
+configuration, and unrelated to the real `src/lib/country-policy/` seller-
+operating/buyer-destination resolvers above: switching this dev display
+never changes real policy or `intended_market_codes`.
 
 ```bash
 PORTAL_DEV_MARKET=SG npm run dev
 ```
 
-Accepted values are `PH`, `ID`, `SG`. Anything else falls back to `PH`. None
-of the three markets' figures (fees, tax rates, thresholds) are confirmed
-Sals3 business rules — they were carried over from an imported design mockup
-for interface review only.
+**`getActiveMarket()` returns `null` in production** (fixed after review;
+it previously fell back to the `PH` fixture as if it were real
+configuration) — production must never present a sample country's currency,
+carrier, tax, or payout figures as a seller's actual configuration.
+`/orders`, `/finances`, `/payouts`, `/market-rules`, and the blank listing
+wizard all check for `null` and render `MarketNotConfiguredNotice` (an
+honest "Market configuration is not available" state) instead of the
+fixture-backed screen. In development/test, accepted `PORTAL_DEV_MARKET`
+values are `PH`, `ID`, `SG`; anything else falls back to `PH`. None of the
+three markets' figures (fees, tax rates, thresholds) are confirmed Sals3
+business rules — they were carried over from an imported design mockup for
+interface review only.
 
 ## Supplier Apps (multi-tenant provider connections)
 

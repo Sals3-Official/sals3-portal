@@ -2,6 +2,15 @@ import { z } from 'zod';
 import type { CjProduct } from '@/lib/cj/normalize';
 import { resolveUsdToPhpRate } from './fx';
 
+/**
+ * The real `sals3-ecommerce` storefront feed contract - a live
+ * cross-repository dependency, still PHP-priced (see `fx.ts`'s own doc
+ * comment). This is unrelated to, and must not be reused by, Portal's own
+ * seller-facing screens (which use `src/lib/products/catalog-fx.ts`'s
+ * isolated AUD resolvers instead, per ADR-014's seller-operating vs.
+ * buyer-destination separation).
+ */
+
 export const storefrontSectionSchema = z.enum(['for-you', 'deals']);
 
 export const storefrontFeedQuerySchema = z.object({

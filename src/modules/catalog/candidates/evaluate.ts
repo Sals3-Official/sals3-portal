@@ -3,6 +3,7 @@ import { CjApiError } from '@/services/cj/config';
 import { checksumOfEvidence } from '@/lib/cj/evidence';
 import type { CandidateEvaluationRow } from '@/lib/db/schema';
 import PostgresSupplierSecretStore from '@/lib/secrets/postgres-supplier-secret-store';
+import resolveBuyerDestinationCountryPolicy from '@/lib/country-policy/buyer-destination-country';
 import {
   findConnectionById,
   isWorkableConnectionStatus,
@@ -13,6 +14,7 @@ import { CONNECTION_PAUSE_ERROR_CODES } from './connection-pause';
 import { decide } from './rules/decide';
 import { feedSnapshotSchema } from './rules/contracts';
 import {
+  composeEvaluationPolicyVersion,
   EVIDENCE_SCHEMA_VERSION,
   MAX_EVALUATION_ATTEMPTS,
   nextRetryDelayMs,
@@ -49,7 +51,29 @@ export default async function evaluateCandidate(
   }
 
   const feedSnapshot = feedSnapshotSchema.parse(row.feedSnapshot);
-  const screeningFindings = runScreening(feedSnapshot);
+
+  // Resolved exactly once for this evaluation (Codex review fix): every
+  // downstream use - the market rule, the stored policy identity, and the
+  // audit payload - reads this same snapshot, so one evaluation can never
+  // observe two different buyer-destination policy versions.
+  const buyerDestinationPolicy = resolveBuyerDestinationCountryPolicy();
+  const evaluationPolicyVersion = composeEvaluationPolicyVersion(
+    POLICY_VERSION,
+    buyerDestinationPolicy.policyVersion,
+  );
+  const marketAuditFields = {
+    catalogPolicyVersion: POLICY_VERSION,
+    buyerDestinationPolicyVersion: buyerDestinationPolicy.policyVersion,
+    buyerDestinationPolicySource: buyerDestinationPolicy.source,
+    buyerDestinationPolicyEffective: buyerDestinationPolicy.effective,
+    buyerDestinationEnabledCountryCodes: buyerDestinationPolicy.countryCodes,
+    candidateIntendedDestinationCodes: candidate.intendedMarketCodes,
+  };
+
+  const screeningFindings = runScreening(feedSnapshot, {
+    buyerDestinationPolicy,
+    candidateDestinationCodes: candidate.intendedMarketCodes,
+  });
   const screeningBlocked = screeningFindings.some(
     (finding) => finding.severity === 'BLOCK',
   );
@@ -61,14 +85,14 @@ export default async function evaluateCandidate(
       await recordScreeningDecision(tx, {
         candidateId: row.candidateId,
         decision,
-        policyVersion: POLICY_VERSION,
+        policyVersion: evaluationPolicyVersion,
       });
       await appendAuditEvent(tx, {
         actorId: 'system:catalog-evaluator',
         action: 'CANDIDATE_SCREENING_DECIDED',
         entityType: 'supplier_candidate',
         entityId: row.candidateId,
-        payload: { decision, screeningOnly: true },
+        payload: { decision, screeningOnly: true, ...marketAuditFields },
       });
     });
 
@@ -218,7 +242,7 @@ export default async function evaluateCandidate(
       decision,
       evidenceSummary,
       sourceSnapshotChecksum: checksum,
-      policyVersion: POLICY_VERSION,
+      policyVersion: evaluationPolicyVersion,
       lastKnownPriceUsdCents: currentPriceUsdCents,
       attemptCount: row.attemptCount,
     });
@@ -227,7 +251,7 @@ export default async function evaluateCandidate(
       action: 'CANDIDATE_EVALUATION_DECIDED',
       entityType: 'supplier_candidate',
       entityId: row.candidateId,
-      payload: { decision, checksum },
+      payload: { decision, checksum, ...marketAuditFields },
     });
   });
 }

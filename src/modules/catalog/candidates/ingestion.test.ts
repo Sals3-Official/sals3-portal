@@ -132,6 +132,13 @@ describe('ingestCjFeed', () => {
       expect.anything(),
       expect.objectContaining({ supplierConnectionId: 'connection-1' }),
     );
+    // No ADR-003 buyer destination is approved yet, and AU seller
+    // registration must not leak into it - see
+    // `resolveBuyerDestinationCountryPolicy()`.
+    expect(insertCandidateIfAbsent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ intendedMarketCodes: [] }),
+    );
     expect(insertQueuedEvaluationIfAbsent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ candidateId: 'candidate-1' }),
