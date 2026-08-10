@@ -1,5 +1,6 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
+import type { SellerAccountRow } from '@/lib/db/schema';
 import { SALS3_OFFICIAL_IDENTITY_ID } from './identity';
 import {
   can,
@@ -21,6 +22,7 @@ export type PortalSession = {
   displayName: string;
   role: PortalRole;
   sellerId: string;
+  sellerBusinessModel: SellerAccountRow['businessModel'] | null;
 };
 
 const DEV_FALLBACK_ROLE: PortalRole = 'seller_manager';
@@ -49,6 +51,7 @@ function readTestBypassSession(): PortalSession | null {
     displayName: 'Development user',
     role: readDevRole(),
     sellerId: 'seller-001',
+    sellerBusinessModel: 'DROPSHIPPER',
   };
 }
 
@@ -127,6 +130,7 @@ async function resolvePortalSession(
     displayName: user.name,
     role,
     sellerId: sellerAccount?.id ?? 'system',
+    sellerBusinessModel: sellerAccount?.businessModel ?? null,
   };
 }
 

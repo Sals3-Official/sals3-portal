@@ -132,6 +132,7 @@ export default function PortalSidebarFlyout({
                 <Link
                   key={`${depth}-${item.href}`}
                   href={item.href}
+                  prefetch={false}
                   role="menuitem"
                   className={cn(
                     'flex min-h-[34px] items-center gap-2.5 px-3.5 text-[12.5px] whitespace-nowrap text-foreground transition-colors hover:bg-muted',

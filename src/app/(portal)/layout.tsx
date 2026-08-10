@@ -19,10 +19,8 @@ type PortalLayoutProps = Readonly<{ children: ReactNode }>;
  * needs for its badges and footer.
  */
 export default async function PortalLayout({ children }: PortalLayoutProps) {
-  const [session, shellData] = await Promise.all([
-    getSession(),
-    resolvePortalShellData(),
-  ]);
+  const session = await getSession();
+  const shellData = await resolvePortalShellData(session);
   const groups = withSourcingBadges(
     NAV_GROUPS.map((group) => ({
       ...group,
