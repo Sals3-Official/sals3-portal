@@ -18,6 +18,8 @@ vi.mock('./repository', () => ({
 
 vi.mock('@/modules/suppliers/repository', () => ({
   findConnectionById: vi.fn(),
+  isWorkableConnectionStatus: (status: string) =>
+    status === 'CONNECTED' || status === 'DEGRADED',
 }));
 
 vi.mock('@/lib/secrets/postgres-supplier-secret-store', () => ({
@@ -111,6 +113,7 @@ function row(
     id: 'eval-1',
     candidateId: 'candidate-1',
     status: 'EVALUATING',
+    admissionReason: null,
     reasonCodes: [],
     evidenceSummary: null,
     sourceSnapshotChecksum: null,
@@ -216,19 +219,73 @@ describe('evaluateCandidate', () => {
     );
   });
 
-  it('fails safely when the connection is disconnected', async () => {
-    asMock(findConnectionById).mockResolvedValue({
-      ...CONNECTION,
-      status: 'DISCONNECTED',
-    });
+  it('fails safely when the connection object itself is missing (dangling reference)', async () => {
+    asMock(findConnectionById).mockResolvedValue(null);
 
-    await evaluateCandidate(row({}));
+    await evaluateCandidate(row({ attemptCount: 0 }));
 
     expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
     expect(recordEvaluationFailure).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ lastErrorCode: 'connection_unavailable' }),
+      expect.objectContaining({
+        // A genuine data anomaly, not a seller-caused pause - still burns a
+        // technical attempt like any other unexpected failure.
+        attemptCount: 1,
+        lastErrorCode: 'connection_unavailable',
+      }),
     );
+  });
+
+  it.each([
+    ['DISCONNECTED', 'SUPPLIER_CONNECTION_DISCONNECTED'],
+    ['REVOKED', 'SUPPLIER_CONNECTION_REVOKED'],
+    ['REAUTH_REQUIRED', 'SUPPLIER_CONNECTION_REAUTH_REQUIRED'],
+    ['PENDING', 'SUPPLIER_CONNECTION_PENDING'],
+  ] as const)(
+    'pauses without a technical attempt or CJ call when the connection is %s',
+    async (status, expectedErrorCode) => {
+      asMock(findConnectionById).mockResolvedValue({
+        ...CONNECTION,
+        status,
+      });
+
+      await evaluateCandidate(row({ attemptCount: 2 }));
+
+      expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
+      expect(recordEvaluationFailure).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          // Never incremented - the candidate did nothing wrong, and
+          // recovery is event-driven (reconnect), not a backoff clock.
+          attemptCount: 2,
+          lastErrorCode: expectedErrorCode,
+          nextRetryAt: null,
+        }),
+      );
+      expect(appendAuditEvent).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          action: 'CANDIDATE_EVALUATION_PAUSED_CONNECTION_UNAVAILABLE',
+          payload: expect.objectContaining({
+            connectionStatus: status,
+            lastErrorCode: expectedErrorCode,
+          }),
+        }),
+      );
+    },
+  );
+
+  it('still evaluates through a DEGRADED connection (stays workable by design)', async () => {
+    asMock(findConnectionById).mockResolvedValue({
+      ...CONNECTION,
+      status: 'DEGRADED',
+    });
+    getCandidateEvidenceMock.mockResolvedValue(CLEAN_EVIDENCE);
+
+    await evaluateCandidate(row({}));
+
+    expect(getCandidateEvidenceMock).toHaveBeenCalled();
+    expect(recordEvaluationFailure).not.toHaveBeenCalled();
   });
 
   it('schedules a retry on a CJ fetch failure, never fabricating a decision', async () => {

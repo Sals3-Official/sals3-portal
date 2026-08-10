@@ -26,7 +26,10 @@ export default function EvaluationStatusBadge({
   evidence,
 }: EvaluationStatusBadgeProps) {
   const [open, setOpen] = useState(false);
-  const presentation = presentEvaluationStatus(evaluation?.status ?? null);
+  const presentation = presentEvaluationStatus(
+    evaluation?.status ?? null,
+    evaluation?.attemptCount ?? null,
+  );
 
   return (
     <>

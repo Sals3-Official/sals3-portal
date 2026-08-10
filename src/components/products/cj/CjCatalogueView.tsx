@@ -7,6 +7,7 @@ import { findEvaluationsByExternalIds } from '@/modules/catalog/candidates/queri
 import {
   findConnectionBySellerAndProvider,
   findProviderByCode,
+  isWorkableConnectionStatus,
 } from '@/modules/suppliers/repository';
 import PostgresSupplierSecretStore from '@/lib/secrets/postgres-supplier-secret-store';
 import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
@@ -62,8 +63,7 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
   if (
     provider === null ||
     connection === null ||
-    connection.status === 'REVOKED' ||
-    connection.status === 'DISCONNECTED'
+    !isWorkableConnectionStatus(connection.status)
   ) {
     return (
       <SourcingEmptyState

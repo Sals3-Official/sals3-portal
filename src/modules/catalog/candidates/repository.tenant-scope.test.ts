@@ -1,8 +1,30 @@
 import { describe, expect, it, vi } from 'vitest';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, type SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { supplierCandidates } from '@/lib/db/schema/catalog';
 import { supplierConnections } from '@/lib/db/schema/supplier-connections';
 import { candidateBelongsToSeller } from './repository';
+
+/**
+ * Renders real SQL text via `PgDialect` - the same pure, connection-free
+ * renderer Drizzle itself uses before sending a query to `postgres.js`.
+ * Drizzle's `SQL` class has no custom `toString()`, so comparing
+ * `String(sqlObject)` directly always renders `"[object Object]"`
+ * regardless of content - that would make a comparison vacuous (always
+ * pass, prove nothing). `and()`'s TS signature allows `undefined` only
+ * because it also accepts zero conditions; every call here passes two, so
+ * it is never actually undefined at runtime - asserted explicitly rather
+ * than silenced.
+ */
+const dialect = new PgDialect();
+
+function renderSql(sql: SQL | undefined): { sql: string; params: unknown[] } {
+  if (sql === undefined) {
+    throw new Error('Expected a defined SQL condition, got undefined.');
+  }
+
+  return dialect.sqlToQuery(sql);
+}
 
 /**
  * Verifies `candidateBelongsToSeller` builds one query with both the
@@ -38,10 +60,14 @@ describe('candidateBelongsToSeller', () => {
       eq(supplierConnections.sellerAccountId, 'seller-a'),
     );
 
-    // `and(eq(...), eq(...))` builds a real SQL AST node - comparing its
-    // rendered SQL string is a meaningful check that both conditions are
+    // `and(eq(...), eq(...))` builds a real SQL AST node - rendering its
+    // actual SQL text is a meaningful check that both conditions are
     // actually present and ANDed, not a superficial "was called" assertion.
-    expect(String(whereArg)).toBe(String(expected));
+    const actualQuery = renderSql(whereArg as SQL);
+    const expectedQuery = renderSql(expected);
+
+    expect(actualQuery.sql).toBe(expectedQuery.sql);
+    expect(actualQuery.params).toEqual(expectedQuery.params);
   });
 
   it('returns true when the joined query finds a matching row', async () => {

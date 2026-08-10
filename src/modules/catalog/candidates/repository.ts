@@ -12,9 +12,10 @@ import {
   type SupplierCandidateRow,
   type SupplierSnapshotRow,
 } from '@/lib/db/schema';
+import { CONNECTION_PAUSE_ERROR_CODE_VALUES } from './connection-pause';
 import type { Decision } from './rules/decide';
 import type { EvidenceSummary, FeedSnapshot } from './rules/contracts';
-import { MAX_EVALUATION_ATTEMPTS } from './rules/policy';
+import { MAX_EVALUATION_ATTEMPTS, nextRetryDelayMs } from './rules/policy';
 
 /**
  * Data access for the candidate shortlist. Every statement is parameterized
@@ -235,6 +236,7 @@ export async function insertQueuedEvaluationIfAbsent(
     .values({
       candidateId: input.candidateId,
       status: 'QUEUED',
+      admissionReason: 'NEW_PRODUCT',
       feedSnapshot: input.feedSnapshot,
       lastSeenFingerprint: input.fingerprint,
       policyVersion: input.policyVersion,
@@ -262,6 +264,7 @@ export async function requeueIfFingerprintChanged(
     .update(candidateEvaluations)
     .set({
       status: 'QUEUED',
+      admissionReason: 'MATERIAL_SOURCE_CHANGE',
       feedSnapshot: input.feedSnapshot,
       lastSeenFingerprint: input.fingerprint,
       attemptCount: 0,
@@ -328,7 +331,11 @@ export async function requeueDueRetries(
 
   await executor
     .update(candidateEvaluations)
-    .set({ status: 'QUEUED', updatedAt: new Date() })
+    .set({
+      status: 'QUEUED',
+      admissionReason: 'RETRY_DUE',
+      updatedAt: new Date(),
+    })
     .where(
       inArray(
         candidateEvaluations.id,
@@ -337,6 +344,70 @@ export async function requeueDueRetries(
     );
 
   return due.length;
+}
+
+/**
+ * Bounded default so one reconnect can never enqueue an unbounded scan of a
+ * seller's whole history in one request/transaction.
+ */
+const RECONNECT_REQUEUE_BATCH_SIZE = 50;
+
+/**
+ * ADR-007's "reconnect and resume evaluation... performs a bounded requeue
+ * through Evaluating before any row can return to Ready": matches only rows
+ * this exact connection's own pause caused (`EVALUATION_FAILED` with one of
+ * `CONNECTION_PAUSE_ERROR_CODE_VALUES`, never a genuinely unrelated
+ * technical failure like a CJ fetch timeout), and only ever moves them back
+ * to `QUEUED` for a fresh full evaluation - never directly to `PASS`/Ready,
+ * so reconnecting can never falsely restore a candidate without re-running
+ * every current gate. Idempotent by construction: once a row leaves
+ * `EVALUATION_FAILED` here, it no longer matches this `WHERE` clause, so
+ * calling this twice for the same connection cannot double-requeue it or
+ * duplicate any row.
+ */
+export async function requeueConnectionPausedEvaluations(
+  executor: Executor,
+  supplierConnectionId: string,
+  limit = RECONNECT_REQUEUE_BATCH_SIZE,
+): Promise<number> {
+  const paused = await executor
+    .select({ id: candidateEvaluations.id })
+    .from(candidateEvaluations)
+    .innerJoin(
+      supplierCandidates,
+      eq(supplierCandidates.id, candidateEvaluations.candidateId),
+    )
+    .where(
+      and(
+        eq(supplierCandidates.supplierConnectionId, supplierConnectionId),
+        eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
+        inArray(candidateEvaluations.lastErrorCode, [
+          ...CONNECTION_PAUSE_ERROR_CODE_VALUES,
+        ]),
+      ),
+    )
+    .limit(limit);
+
+  if (paused.length === 0) return 0;
+
+  await executor
+    .update(candidateEvaluations)
+    .set({
+      status: 'QUEUED',
+      admissionReason: 'CONNECTION_RESTORED',
+      attemptCount: 0,
+      lastErrorCode: null,
+      nextRetryAt: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      inArray(
+        candidateEvaluations.id,
+        paused.map((row) => row.id),
+      ),
+    );
+
+  return paused.length;
 }
 
 /**
@@ -414,7 +485,23 @@ export async function requeueForManualRecheck(
   return updated.length > 0;
 }
 
-/** Persists a completed decision (PASS / PASS_WITH_ATTENTION / BLOCKED / TEMPORARILY_INELIGIBLE). */
+/**
+ * Persists a completed decision (PASS / PASS_WITH_ATTENTION / BLOCKED /
+ * TEMPORARILY_INELIGIBLE).
+ *
+ * `TEMPORARILY_INELIGIBLE` is the one status that schedules its own
+ * automatic retry here, exactly like `recordEvaluationFailure` does for a
+ * technical failure - `decide.ts`/`contracts.ts` already document it as
+ * "auto-retried," but until this fix nothing actually set `nextRetryAt` for
+ * it, so `requeueDueRetries`'s `lt(nextRetryAt, now())` filter could never
+ * match it (`NULL < now()` is neither true nor false in SQL). `attemptCount`
+ * is shared with the technical-failure counter and the same
+ * `MAX_EVALUATION_ATTEMPTS` cap - past the cap it simply stops auto-
+ * retrying (still visible on Blocked/Rejected, since its `status` column
+ * never changes; "Recheck now" still works). Every other decision resets
+ * `attemptCount` to 0 and clears `nextRetryAt`, since a real qualification
+ * pass/fail is not a retry-eligible state.
+ */
 export async function recordEvaluationDecision(
   executor: Executor,
   input: {
@@ -424,8 +511,16 @@ export async function recordEvaluationDecision(
     sourceSnapshotChecksum: string;
     policyVersion: string;
     lastKnownPriceUsdCents: number | null;
+    /** The row's `attemptCount` before this decision - only read when the decision is `TEMPORARILY_INELIGIBLE`. */
+    attemptCount: number;
   },
 ): Promise<void> {
+  const isTemporarilyIneligible =
+    input.decision.status === 'TEMPORARILY_INELIGIBLE';
+  const nextAttemptCount = isTemporarilyIneligible ? input.attemptCount + 1 : 0;
+  const exhausted =
+    isTemporarilyIneligible && nextAttemptCount >= MAX_EVALUATION_ATTEMPTS;
+
   await executor
     .update(candidateEvaluations)
     .set({
@@ -437,9 +532,12 @@ export async function recordEvaluationDecision(
       lastKnownPriceUsdCents: input.lastKnownPriceUsdCents,
       leasedBy: null,
       leasedUntil: null,
-      attemptCount: 0,
+      attemptCount: nextAttemptCount,
       lastErrorCode: null,
-      nextRetryAt: null,
+      nextRetryAt:
+        isTemporarilyIneligible && !exhausted
+          ? new Date(Date.now() + nextRetryDelayMs(nextAttemptCount))
+          : null,
       evaluatedAt: new Date(),
       updatedAt: new Date(),
     })

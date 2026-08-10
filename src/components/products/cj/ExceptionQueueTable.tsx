@@ -6,9 +6,16 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Info } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
 import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
 import { displayName } from './candidate-view';
+import explainLastErrorCode from './last-error-code';
 
 type ExceptionQueueTableProps = {
   candidates: EvaluatedCandidateRow[];
@@ -59,10 +66,27 @@ export default function ExceptionQueueTable({
                   {candidate.externalProductId}
                 </TableCell>
                 <TableCell>
-                  <StatusPill
-                    label={candidate.evaluation.lastErrorCode ?? 'unknown'}
-                    tone="danger"
-                  />
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span className="inline-flex items-center gap-1">
+                          <StatusPill
+                            label={
+                              candidate.evaluation.lastErrorCode ?? 'unknown'
+                            }
+                            tone="danger"
+                          />
+                          <Info
+                            aria-label={`What "${candidate.evaluation.lastErrorCode ?? 'unknown'}" means`}
+                            className="size-3.5 text-muted-foreground"
+                          />
+                        </span>
+                      }
+                    />
+                    <TooltipContent>
+                      {explainLastErrorCode(candidate.evaluation.lastErrorCode)}
+                    </TooltipContent>
+                  </Tooltip>
                 </TableCell>
                 <TableCell className="tabular-nums">
                   {candidate.evaluation.attemptCount}
