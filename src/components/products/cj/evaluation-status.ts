@@ -1,5 +1,6 @@
 import type { StatusPillTone } from '@/components/seller-center/shared/StatusPill';
 import type { EvaluationStatus } from '@/modules/catalog/candidates/rules/contracts';
+import { MAX_EVALUATION_ATTEMPTS } from '@/modules/catalog/candidates/rules/policy';
 
 export type EvaluationStatusPresentation = {
   label: string;
@@ -63,8 +64,34 @@ const NOT_TRACKED: EvaluationStatusPresentation = {
     'This product has not been picked up by the automated pipeline yet.',
 };
 
+const EXHAUSTED_EVALUATION_FAILED: EvaluationStatusPresentation = {
+  label: 'Needs a person',
+  tone: 'danger',
+  description:
+    'CJ evidence could not be fetched after every automatic retry. This needs manual review, not another automatic attempt.',
+};
+
+/**
+ * `attemptCount` is optional so every existing call site keeps compiling,
+ * but pass it whenever available: `EVALUATION_FAILED` reads very
+ * differently before the automatic-retry cap ("will retry automatically",
+ * `STATUS_TEXT`'s entry) versus after it (`EXHAUSTED_EVALUATION_FAILED`) -
+ * the status column alone cannot tell those two apart, same distinction
+ * `pipeline-bucket.ts#classifyPipelineBucket` makes for the list tables.
+ */
 export default function presentEvaluationStatus(
   status: EvaluationStatus | null,
+  attemptCount: number | null = null,
 ): EvaluationStatusPresentation {
-  return status === null ? NOT_TRACKED : STATUS_TEXT[status];
+  if (status === null) return NOT_TRACKED;
+
+  if (
+    status === 'EVALUATION_FAILED' &&
+    attemptCount !== null &&
+    attemptCount >= MAX_EVALUATION_ATTEMPTS
+  ) {
+    return EXHAUSTED_EVALUATION_FAILED;
+  }
+
+  return STATUS_TEXT[status];
 }

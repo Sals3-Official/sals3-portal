@@ -1,0 +1,2 @@
+CREATE TYPE "public"."admission_reason" AS ENUM('NEW_PRODUCT', 'MATERIAL_SOURCE_CHANGE', 'EVIDENCE_EXPIRED', 'POLICY_VERSION_CHANGED', 'RETRY_DUE', 'CONNECTION_RESTORED');--> statement-breakpoint
+ALTER TABLE "candidate_evaluations" ADD COLUMN "admission_reason" "admission_reason";

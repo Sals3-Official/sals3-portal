@@ -38,7 +38,10 @@ export default function EvaluationDrawer({
   open,
   onOpenChange,
 }: EvaluationDrawerProps) {
-  const presentation = presentEvaluationStatus(evaluation?.status ?? null);
+  const presentation = presentEvaluationStatus(
+    evaluation?.status ?? null,
+    evaluation?.attemptCount ?? null,
+  );
   const reasonCodes = (evaluation?.reasonCodes ?? []) as ReasonCode[];
 
   return (

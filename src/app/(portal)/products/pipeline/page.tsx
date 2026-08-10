@@ -23,9 +23,11 @@ import {
   countCandidateStatusSummary,
   listCandidatesByStatus,
   listDeadLetteredEvaluations,
+  listEvaluatingCandidates,
   oldestQueuedAgeMs,
   type EvaluatedCandidateRow,
 } from '@/modules/catalog/candidates/queries';
+import { EVALUATION_STATUSES } from '@/modules/catalog/candidates/rules/contracts';
 
 export const metadata: Metadata = { title: 'Product Sourcing · Sals3 Portal' };
 export const dynamic = 'force-dynamic';
@@ -116,7 +118,11 @@ async function fetchTabCandidates(
     case 'needs-attention':
       return listCandidatesByStatus(sellerAccountId, ['PASS_WITH_ATTENTION']);
     case 'evaluating':
-      return listCandidatesByStatus(sellerAccountId, ['QUEUED', 'EVALUATING']);
+      // Includes a technical evaluation failure still under its automatic
+      // retry cap - see `listEvaluatingCandidates`'s own doc comment for why
+      // a plain QUEUED/EVALUATING status filter used to let that row
+      // disappear from every tab.
+      return listEvaluatingCandidates(sellerAccountId);
     case 'blocked':
       return listCandidatesByStatus(sellerAccountId, [
         'BLOCKED',
@@ -124,25 +130,15 @@ async function fetchTabCandidates(
       ]);
     case 'exception':
       return listDeadLetteredEvaluations(sellerAccountId);
-    case 'all': {
-      const [decided, exhausted] = await Promise.all([
-        listCandidatesByStatus(sellerAccountId, [
-          'PASS',
-          'PASS_WITH_ATTENTION',
-          'QUEUED',
-          'EVALUATING',
-          'BLOCKED',
-          'TEMPORARILY_INELIGIBLE',
-        ]),
-        listDeadLetteredEvaluations(sellerAccountId),
-      ]);
-
-      return [...decided, ...exhausted].sort(
-        (a, b) =>
-          new Date(b.evaluation.updatedAt).getTime() -
-          new Date(a.evaluation.updatedAt).getTime(),
+    case 'all':
+      // Every status, unsplit by attemptCount - "all" means literally every
+      // row regardless of which of the other four tabs an
+      // `EVALUATION_FAILED` row currently belongs to.
+      return listCandidatesByStatus(
+        sellerAccountId,
+        [...EVALUATION_STATUSES],
+        200,
       );
-    }
     default:
       return [];
   }

@@ -205,7 +205,7 @@ export const WORKABLE_CONNECTION_STATUSES = [
 
 export function isWorkableConnectionStatus(
   status: SupplierConnectionRow['status'],
-): boolean {
+): status is (typeof WORKABLE_CONNECTION_STATUSES)[number] {
   return (WORKABLE_CONNECTION_STATUSES as readonly string[]).includes(status);
 }
 

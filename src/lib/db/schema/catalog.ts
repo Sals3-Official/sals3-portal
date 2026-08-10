@@ -221,6 +221,27 @@ export const evaluationStatusEnum = pgEnum('evaluation_status', [
   'EVALUATION_FAILED',
 ]);
 
+/**
+ * Why a row is currently `QUEUED` (or was, the last time it left `QUEUED`) -
+ * distinct from `reasonCodes`, which explain a *decision*, not an admission.
+ * `EVIDENCE_EXPIRED`/`POLICY_VERSION_CHANGED` are reserved for the freshness/
+ * policy-version re-evaluation slices approved in ADR-010 §12 but not yet
+ * implemented here - same forward-declared-but-unused pattern as
+ * `shortlistStateEnum`'s `PREFLIGHT_PENDING` above. `requeueForManualRecheck`
+ * (admin/debug "Recheck now") intentionally leaves this null: it is not one
+ * of the six approved reasons, and the actor/action fields on its own
+ * `AuditEvent` already distinguish "a person did this" from "the pipeline
+ * did this on its own."
+ */
+export const admissionReasonEnum = pgEnum('admission_reason', [
+  'NEW_PRODUCT',
+  'MATERIAL_SOURCE_CHANGE',
+  'EVIDENCE_EXPIRED',
+  'POLICY_VERSION_CHANGED',
+  'RETRY_DUE',
+  'CONNECTION_RESTORED',
+]);
+
 export const candidateEvaluations = pgTable(
   'candidate_evaluations',
   {
@@ -229,6 +250,8 @@ export const candidateEvaluations = pgTable(
       .notNull()
       .references(() => supplierCandidates.id, { onDelete: 'cascade' }),
     status: evaluationStatusEnum('status').notNull().default('QUEUED'),
+    /** See `admissionReasonEnum` above. Null for a row that was never (re)queued through one of the six approved paths. */
+    admissionReason: admissionReasonEnum('admission_reason'),
     /** Validated against a Zod enum at the write boundary; see rules/contracts.ts. */
     reasonCodes: text('reason_codes').array().notNull().default([]),
     /** Short derived facts for display - never the raw CJ payload. */

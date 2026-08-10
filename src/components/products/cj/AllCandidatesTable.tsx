@@ -11,6 +11,7 @@ import StatusPill, {
 } from '@/components/seller-center/shared/StatusPill';
 import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
 import type { EvaluationStatus } from '@/modules/catalog/candidates/rules/contracts';
+import { MAX_EVALUATION_ATTEMPTS } from '@/modules/catalog/candidates/rules/policy';
 import { displayName } from './candidate-view';
 
 type AllCandidatesTableProps = {
@@ -20,7 +21,7 @@ type AllCandidatesTableProps = {
 const COLUMNS = ['Product', 'CJ product ID', 'Status', 'Last updated'];
 
 const STATUS_DISPLAY: Record<
-  EvaluationStatus,
+  Exclude<EvaluationStatus, 'EVALUATION_FAILED'>,
   { label: string; tone: StatusPillTone }
 > = {
   PASS: { label: 'Ready', tone: 'success' },
@@ -32,8 +33,23 @@ const STATUS_DISPLAY: Record<
     label: 'Temporarily unavailable',
     tone: 'warning',
   },
-  EVALUATION_FAILED: { label: 'Exception', tone: 'danger' },
 };
+
+/**
+ * `EVALUATION_FAILED` is not one label - see `pipeline-bucket.ts`: below the
+ * automatic retry cap it is still retrying (same as Evaluating), at or past
+ * it it genuinely is an exception. Labelling every `EVALUATION_FAILED` row
+ * "Exception" regardless of `attemptCount` would overstate a row on its
+ * first retry as already needing a person.
+ */
+function evaluationFailedDisplay(attemptCount: number): {
+  label: string;
+  tone: StatusPillTone;
+} {
+  return attemptCount >= MAX_EVALUATION_ATTEMPTS
+    ? { label: 'Exception', tone: 'danger' }
+    : { label: 'Retrying', tone: 'warning' };
+}
 
 /**
  * The "All" tab: every status in one glance, one row each. Deliberately
@@ -60,7 +76,10 @@ export default function AllCandidatesTable({
               candidate.externalProductId,
               candidate.evidence,
             );
-            const status = STATUS_DISPLAY[candidate.evaluation.status];
+            const status =
+              candidate.evaluation.status === 'EVALUATION_FAILED'
+                ? evaluationFailedDisplay(candidate.evaluation.attemptCount)
+                : STATUS_DISPLAY[candidate.evaluation.status];
 
             return (
               <TableRow key={candidate.candidateId}>

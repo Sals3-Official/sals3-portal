@@ -70,7 +70,10 @@ export default function CjProductRow({
   const reviews = evaluated?.evidence?.reviews ?? null;
   const accentClass =
     ACCENT_BORDER_CLASS[
-      presentEvaluationStatus(evaluated?.evaluation.status ?? null).tone
+      presentEvaluationStatus(
+        evaluated?.evaluation.status ?? null,
+        evaluated?.evaluation.attemptCount ?? null,
+      ).tone
     ];
 
   return (

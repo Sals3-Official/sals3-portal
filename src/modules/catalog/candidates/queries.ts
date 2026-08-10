@@ -1,4 +1,15 @@
-import { and, asc, count, desc, eq, gte, inArray, max } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  lt,
+  max,
+  or,
+} from 'drizzle-orm';
 import getDb from '@/lib/db/client';
 import {
   candidateEvaluations,
@@ -66,6 +77,28 @@ function asEvidence(value: unknown): CandidateEvidence | null {
 }
 
 /**
+ * `EVALUATION_FAILED` splits into two buckets by `attemptCount` alone, not
+ * status - see `pipeline-bucket.ts#classifyPipelineBucket`, the pure,
+ * unit-tested spec these two conditions are hand-transcribed from. Every
+ * query below that touches `EVALUATION_FAILED` uses one of these two, never
+ * a third hand-rolled variant, so the five pipeline tabs and the count
+ * summary can never disagree on where one row belongs.
+ */
+export function isPreExhaustionFailure() {
+  return and(
+    eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
+    lt(candidateEvaluations.attemptCount, MAX_EVALUATION_ATTEMPTS),
+  );
+}
+
+export function isExhaustedFailure() {
+  return and(
+    eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
+    gte(candidateEvaluations.attemptCount, MAX_EVALUATION_ATTEMPTS),
+  );
+}
+
+/**
  * Candidates joined with their evaluation (and evidence, when captured),
  * scoped to one seller account and filtered to the given decision statuses
  * - the shared read behind every automated pipeline screen (Ready, Needs
@@ -91,9 +124,42 @@ export async function listCandidatesByStatus(
 }
 
 /**
+ * Candidates still mid-pipeline: `QUEUED`/`EVALUATING`, plus a technical
+ * evaluation failure still under its automatic retry cap
+ * (`isPreExhaustionFailure`). A row that has exhausted every retry moves to
+ * `listDeadLetteredEvaluations` instead - before this function existed,
+ * neither query included a mid-retry `EVALUATION_FAILED` row, so it
+ * appeared in zero tabs.
+ */
+export async function listEvaluatingCandidates(
+  sellerAccountId: string,
+  limit = 100,
+): Promise<EvaluatedCandidateRow[]> {
+  const rows = await baseQuery()
+    .where(
+      and(
+        eq(supplierConnections.sellerAccountId, sellerAccountId),
+        or(
+          eq(candidateEvaluations.status, 'QUEUED'),
+          eq(candidateEvaluations.status, 'EVALUATING'),
+          isPreExhaustionFailure(),
+        ),
+      ),
+    )
+    .orderBy(desc(candidateEvaluations.updatedAt))
+    .limit(Math.min(Math.max(limit, 1), 200));
+
+  return rows.map((row) => ({ ...row, evidence: asEvidence(row.evidence) }));
+}
+
+/**
  * Dead-lettered evaluation failures: retries exhausted, genuinely needs a
  * person (spec's Exception Queue - operational failures, never ordinary
- * rejected products).
+ * rejected products). Filters `attemptCount` in SQL rather than fetching
+ * every `EVALUATION_FAILED` row and discarding most of them in JS - the
+ * previous shape both over-fetched and, combined with `evaluating`'s old
+ * query never including this status at all, let a mid-retry row disappear
+ * from every tab.
  */
 export async function listDeadLetteredEvaluations(
   sellerAccountId: string,
@@ -103,15 +169,13 @@ export async function listDeadLetteredEvaluations(
     .where(
       and(
         eq(supplierConnections.sellerAccountId, sellerAccountId),
-        eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
+        isExhaustedFailure(),
       ),
     )
     .orderBy(desc(candidateEvaluations.updatedAt))
     .limit(Math.min(Math.max(limit, 1), 200));
 
-  return rows
-    .filter((row) => row.evaluation.attemptCount >= MAX_EVALUATION_ATTEMPTS)
-    .map((row) => ({ ...row, evidence: asEvidence(row.evidence) }));
+  return rows.map((row) => ({ ...row, evidence: asEvidence(row.evidence) }));
 }
 
 /**
@@ -206,8 +270,7 @@ export async function oldestExceptionAgeMs(
     .where(
       and(
         eq(supplierConnections.sellerAccountId, sellerAccountId),
-        eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
-        gte(candidateEvaluations.attemptCount, MAX_EVALUATION_ATTEMPTS),
+        isExhaustedFailure(),
       ),
     )
     .orderBy(asc(candidateEvaluations.updatedAt))
@@ -252,10 +315,13 @@ export type CandidateStatusCounts = {
 /**
  * Lightweight per-seller counts for the nav rail's badges - grouped `COUNT`s,
  * never a full row fetch, since this runs on every portal page render (the
- * shell layout), not a single sourcing screen. Status groupings mirror each
- * status page's own query exactly (`evaluating/page.tsx`, `blocked/page.tsx`,
- * `exception-queue/page.tsx`) so the badge and the page it links to can never
- * disagree.
+ * shell layout), not a single sourcing screen. Status groupings mirror
+ * `queries.ts`'s own list functions exactly (`listCandidatesByStatus`,
+ * `listEvaluatingCandidates`, `listDeadLetteredEvaluations`) - and both of
+ * the `EVALUATION_FAILED` sub-counts below reuse the identical
+ * `isPreExhaustionFailure`/`isExhaustedFailure` predicates those list
+ * functions use, rather than a third hand-typed copy - so the badge and the
+ * tab it links to can never disagree.
  */
 export async function countCandidateStatusSummary(
   sellerAccountId: string,
@@ -272,8 +338,41 @@ export async function countCandidateStatusSummary(
       supplierConnections,
       eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
     )
-    .where(eq(supplierConnections.sellerAccountId, sellerAccountId))
+    // EVALUATION_FAILED is counted separately below - it is the one status
+    // that does not map to a single bucket by itself (see
+    // `pipeline-bucket.ts`).
+    .where(
+      and(
+        eq(supplierConnections.sellerAccountId, sellerAccountId),
+        or(
+          eq(candidateEvaluations.status, 'PASS'),
+          eq(candidateEvaluations.status, 'PASS_WITH_ATTENTION'),
+          eq(candidateEvaluations.status, 'QUEUED'),
+          eq(candidateEvaluations.status, 'EVALUATING'),
+          eq(candidateEvaluations.status, 'BLOCKED'),
+          eq(candidateEvaluations.status, 'TEMPORARILY_INELIGIBLE'),
+        ),
+      ),
+    )
     .groupBy(candidateEvaluations.status);
+
+  const preExhaustionFailed = db
+    .select({ total: count() })
+    .from(candidateEvaluations)
+    .innerJoin(
+      supplierCandidates,
+      eq(supplierCandidates.id, candidateEvaluations.candidateId),
+    )
+    .innerJoin(
+      supplierConnections,
+      eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
+    )
+    .where(
+      and(
+        eq(supplierConnections.sellerAccountId, sellerAccountId),
+        isPreExhaustionFailure(),
+      ),
+    );
 
   const exceptionQueue = db
     .select({ total: count() })
@@ -289,13 +388,13 @@ export async function countCandidateStatusSummary(
     .where(
       and(
         eq(supplierConnections.sellerAccountId, sellerAccountId),
-        eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
-        gte(candidateEvaluations.attemptCount, MAX_EVALUATION_ATTEMPTS),
+        isExhaustedFailure(),
       ),
     );
 
-  const [statusRows, exceptionRows] = await Promise.all([
+  const [statusRows, preExhaustionRows, exceptionRows] = await Promise.all([
     scopedByStatus,
+    preExhaustionFailed,
     exceptionQueue,
   ]);
 
@@ -307,7 +406,10 @@ export async function countCandidateStatusSummary(
   return {
     ready: of('PASS'),
     needsAttention: of('PASS_WITH_ATTENTION'),
-    evaluating: of('QUEUED') + of('EVALUATING'),
+    evaluating:
+      of('QUEUED') +
+      of('EVALUATING') +
+      Number(preExhaustionRows[0]?.total ?? 0),
     blockedRejected: of('BLOCKED') + of('TEMPORARILY_INELIGIBLE'),
     exceptionQueue: Number(exceptionRows[0]?.total ?? 0),
   };

@@ -23,7 +23,10 @@ import {
   insertConnection,
   reconnectConnection,
 } from '@/modules/suppliers/repository';
-import { appendAuditEvent } from '@/modules/catalog/candidates/repository';
+import {
+  appendAuditEvent,
+  requeueConnectionPausedEvaluations,
+} from '@/modules/catalog/candidates/repository';
 
 /**
  * "Connect CJ" (ADR-008 Supplier Apps). The browser sends only an API key
@@ -242,6 +245,17 @@ export async function connectCjSupplier(
         credentialBundle,
       );
 
+      // ADR-007: reconnect "performs a bounded requeue through Evaluating
+      // before any row can return to Ready." Only meaningful on an actual
+      // reconnect (`existing !== null`) - a brand-new connection cannot yet
+      // own any paused candidate. Every affected row goes back through a
+      // full re-evaluation (`QUEUED`, not straight to `PASS`), and only rows
+      // this exact connection's own pause caused are touched.
+      const requeuedEvaluationCount =
+        existing === null
+          ? 0
+          : await requeueConnectionPausedEvaluations(tx, row.id);
+
       await appendAuditEvent(tx, {
         actorId: session.userId,
         action:
@@ -253,6 +267,7 @@ export async function connectCjSupplier(
         payload: {
           sellerAccountId: sellerAccount.id,
           providerCode: provider.code,
+          ...(existing === null ? {} : { requeuedEvaluationCount }),
         },
       });
 

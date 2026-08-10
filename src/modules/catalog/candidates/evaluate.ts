@@ -3,9 +3,13 @@ import { CjApiError } from '@/services/cj/config';
 import { checksumOfEvidence } from '@/lib/cj/evidence';
 import type { CandidateEvaluationRow } from '@/lib/db/schema';
 import PostgresSupplierSecretStore from '@/lib/secrets/postgres-supplier-secret-store';
-import { findConnectionById } from '@/modules/suppliers/repository';
+import {
+  findConnectionById,
+  isWorkableConnectionStatus,
+} from '@/modules/suppliers/repository';
 import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
 import CjSupplierAdapter from '@/modules/suppliers/providers/cj/cj-adapter';
+import { CONNECTION_PAUSE_ERROR_CODES } from './connection-pause';
 import { decide } from './rules/decide';
 import { feedSnapshotSchema } from './rules/contracts';
 import {
@@ -91,17 +95,45 @@ export default async function evaluateCandidate(
     candidate.supplierConnectionId,
   );
 
-  if (
-    connection === null ||
-    connection.status === 'REVOKED' ||
-    connection.status === 'DISCONNECTED'
-  ) {
+  if (connection === null) {
+    // A dangling supplierConnectionId should not happen - the FK is
+    // `onDelete: 'restrict'` - but if it ever does, this is a genuine data
+    // anomaly, not a seller-caused pause, so it still burns a technical
+    // attempt like any other unexpected failure.
     await getDb().transaction(async (tx) => {
       await recordEvaluationFailure(tx, {
         candidateId: row.candidateId,
         attemptCount: row.attemptCount + 1,
         lastErrorCode: 'connection_unavailable',
         nextRetryAt: null,
+      });
+    });
+    return;
+  }
+
+  if (!isWorkableConnectionStatus(connection.status)) {
+    // The candidate itself did nothing wrong - its seller's own connection
+    // is disconnected, revoked, needs reauth, or still pending verification.
+    // Never burn a technical attempt for that (ADR-007: an intentional
+    // disconnect "does not increment technical attempts"), and never
+    // schedule a time-based retry - recovery is event-driven, via
+    // `requeueConnectionPausedEvaluations` when the connection becomes
+    // workable again, not a backoff clock.
+    const lastErrorCode = CONNECTION_PAUSE_ERROR_CODES[connection.status];
+
+    await getDb().transaction(async (tx) => {
+      await recordEvaluationFailure(tx, {
+        candidateId: row.candidateId,
+        attemptCount: row.attemptCount,
+        lastErrorCode,
+        nextRetryAt: null,
+      });
+      await appendAuditEvent(tx, {
+        actorId: 'system:catalog-evaluator',
+        action: 'CANDIDATE_EVALUATION_PAUSED_CONNECTION_UNAVAILABLE',
+        entityType: 'supplier_candidate',
+        entityId: row.candidateId,
+        payload: { connectionStatus: connection.status, lastErrorCode },
       });
     });
     return;
@@ -188,6 +220,7 @@ export default async function evaluateCandidate(
       sourceSnapshotChecksum: checksum,
       policyVersion: POLICY_VERSION,
       lastKnownPriceUsdCents: currentPriceUsdCents,
+      attemptCount: row.attemptCount,
     });
     await appendAuditEvent(tx, {
       actorId: 'system:catalog-evaluator',

@@ -50,6 +50,13 @@
       "when": 1786125302010,
       "tag": "0006_bouncy_dorian_gray",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786363494152,
+      "tag": "0007_amusing_power_man",
+      "breakpoints": true
     }
   ]
 }
