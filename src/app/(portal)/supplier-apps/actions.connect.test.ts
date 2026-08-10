@@ -327,6 +327,37 @@ describe('connectCjSupplier - persistence', () => {
   });
 });
 
+/**
+ * Production, 2026-08-10: the `supplier_account_bindings` read reached a
+ * deployment whose database had not run the migration yet. It sat outside any
+ * handler, so the Postgres 42P01 escaped the Server Action and the seller got
+ * Next's "This page couldn't load" instead of a message. Every read this
+ * action makes is a database call and any of them can fail that way, so each
+ * one is pinned here.
+ */
+describe('connectCjSupplier - a failed read is a reason, never a crash', () => {
+  const dbDown = () =>
+    Object.assign(new Error('Failed query'), {
+      cause: { code: '42P01', message: 'relation does not exist' },
+    });
+
+  it.each([
+    ['the provider lookup', () => vi.mocked(findProviderByCode)],
+    [
+      'the existing-connection lookup',
+      () => vi.mocked(findConnectionBySellerAndProvider),
+    ],
+    ['the binding lookup', () => vi.mocked(findAccountBinding)],
+  ])('returns failed when %s throws', async (_label, pick) => {
+    pick().mockRejectedValue(dbDown());
+
+    await expect(connectCjSupplier(validInput())).resolves.toEqual({
+      ok: false,
+      reason: 'failed',
+    });
+  });
+});
+
 describe('connectCjSupplier - the database as the enforcer', () => {
   function rejectTransactionWith(constraintName: string) {
     transactionMock.mockRejectedValue(

@@ -231,76 +231,93 @@ export async function connectCjSupplier(
     return { ok: false, reason: 'rate_limited' };
   }
 
-  const provider = await findProviderByCode(getDb(), 'CJ_DROPSHIPPING');
+  // Hoisted so the failure handler at the bottom can still name the provider
+  // in its audit event after a throw from anywhere below. Only the code, not
+  // the row - a `let` row would lose its non-null narrowing inside the
+  // transaction callback and buy nothing.
+  let providerCode: string | null = null;
 
-  if (provider === null) {
-    return { ok: false, reason: 'provider_unavailable' };
-  }
-
-  const existing = await findConnectionBySellerAndProvider(
-    getDb(),
-    sellerAccount.id,
-    provider.id,
-  );
-
-  if (existing !== null && !RECONNECTABLE_STATUSES.has(existing.status)) {
-    return { ok: false, reason: 'already_connected' };
-  }
-
-  let verified: VerifiedCjAuth;
-
+  // Everything from here to the end of the action runs inside one handler.
+  // Each read below is a database call, and a database call that throws
+  // escapes the Server Action entirely - Next then renders its global error
+  // page and the seller sees "This page couldn't load" instead of a sentence
+  // they can act on. That is not hypothetical: production hit exactly this on
+  // 2026-08-10, when `supplier_account_bindings` reached a deployment before
+  // its migration had been applied (Postgres 42P01, digest 3452554471). This
+  // action's contract is a discriminated union, so every path out of it -
+  // including an unexpected one - has to be a `reason`.
   try {
-    // CJ call happens outside any transaction, per this codebase's
-    // established rule against holding a DB transaction across a
-    // third-party round trip.
-    verified = await verifyCjApiKey(parsedInput.data.apiKey);
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('[portal] CJ connection verification failed', {
-      sellerAccountId: sellerAccount.id,
-      reason: error instanceof CjApiError ? error.reason : 'unknown',
+    const provider = await findProviderByCode(getDb(), 'CJ_DROPSHIPPING');
+
+    if (provider === null) {
+      return { ok: false, reason: 'provider_unavailable' };
+    }
+
+    providerCode = provider.code;
+
+    const existing = await findConnectionBySellerAndProvider(
+      getDb(),
+      sellerAccount.id,
+      provider.id,
+    );
+
+    if (existing !== null && !RECONNECTABLE_STATUSES.has(existing.status)) {
+      return { ok: false, reason: 'already_connected' };
+    }
+
+    let verified: VerifiedCjAuth;
+
+    try {
+      // CJ call happens outside any transaction, per this codebase's
+      // established rule against holding a DB transaction across a
+      // third-party round trip.
+      verified = await verifyCjApiKey(parsedInput.data.apiKey);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[portal] CJ connection verification failed', {
+        sellerAccountId: sellerAccount.id,
+        reason: error instanceof CjApiError ? error.reason : 'unknown',
+      });
+      return { ok: false, reason: 'verification_failed' };
+    }
+
+    const lookupHash = createHash('sha256')
+      .update(`${provider.code}:${verified.openId}`)
+      .digest('hex');
+
+    // Ownership of a CJ account is permanent and lives in
+    // `supplier_account_bindings`, so this is the check that matters - not
+    // "does a connection row hold this hash right now". A seller reconnecting
+    // their own account, or moving to a second CJ account of their own, both
+    // read back as theirs and pass. Only another seller's account is refused.
+    //
+    // Advisory only: the authoritative claim happens inside the transaction
+    // below. This one exists so the ordinary case gets an accurate message
+    // without paying for a rolled-back transaction.
+    const existingBinding = await findAccountBinding(
+      getDb(),
+      provider.id,
+      lookupHash,
+    );
+
+    if (
+      existingBinding !== null &&
+      existingBinding.sellerAccountId !== sellerAccount.id
+    ) {
+      await recordBindRejected(session.userId, sellerAccount.id, provider.code);
+
+      return { ok: false, reason: 'cj_account_taken' };
+    }
+
+    const credentialBundle = cjCredentialBundleSchema.parse({
+      apiKey: parsedInput.data.apiKey,
+      openId: verified.openId,
+      accessToken: verified.accessToken,
+      accessTokenExpiresAt: verified.accessTokenExpiresAt,
+      refreshToken: verified.refreshToken,
+      refreshTokenExpiresAt: verified.refreshTokenExpiresAt,
     });
-    return { ok: false, reason: 'verification_failed' };
-  }
 
-  const lookupHash = createHash('sha256')
-    .update(`${provider.code}:${verified.openId}`)
-    .digest('hex');
-
-  // Ownership of a CJ account is permanent and lives in
-  // `supplier_account_bindings`, so this is the check that matters - not
-  // "does a connection row hold this hash right now". A seller reconnecting
-  // their own account, or moving to a second CJ account of their own, both
-  // read back as theirs and pass. Only another seller's account is refused.
-  //
-  // Advisory only: the authoritative claim happens inside the transaction
-  // below. This one exists so the ordinary case gets an accurate message
-  // without paying for a rolled-back transaction.
-  const existingBinding = await findAccountBinding(
-    getDb(),
-    provider.id,
-    lookupHash,
-  );
-
-  if (
-    existingBinding !== null &&
-    existingBinding.sellerAccountId !== sellerAccount.id
-  ) {
-    await recordBindRejected(session.userId, sellerAccount.id, provider.code);
-
-    return { ok: false, reason: 'cj_account_taken' };
-  }
-
-  const credentialBundle = cjCredentialBundleSchema.parse({
-    apiKey: parsedInput.data.apiKey,
-    openId: verified.openId,
-    accessToken: verified.accessToken,
-    accessTokenExpiresAt: verified.accessTokenExpiresAt,
-    refreshToken: verified.refreshToken,
-    refreshTokenExpiresAt: verified.refreshTokenExpiresAt,
-  });
-
-  try {
     const connection = await getDb().transaction(async (tx) => {
       // First statement in the transaction, before any connection row is
       // touched. `claimAccountBinding` is an insert-or-read-back on a unique
@@ -393,14 +410,14 @@ export async function connectCjSupplier(
     const reason = classifyConnectFailure(error);
 
     // eslint-disable-next-line no-console
-    console.error('[portal] CJ connection persistence failed', {
+    console.error('[portal] CJ connect failed', {
       sellerAccountId: sellerAccount.id,
       reason,
       error: error instanceof Error ? error.message : 'unknown',
     });
 
-    if (reason === 'cj_account_taken') {
-      await recordBindRejected(session.userId, sellerAccount.id, provider.code);
+    if (reason === 'cj_account_taken' && providerCode !== null) {
+      await recordBindRejected(session.userId, sellerAccount.id, providerCode);
     }
 
     return { ok: false, reason };
@@ -456,40 +473,55 @@ export async function requestCjDisconnectVerification(): Promise<RequestDisconne
     return { ok: false, reason: 'rate_limited' };
   }
 
-  const provider = await findProviderByCode(getDb(), 'CJ_DROPSHIPPING');
+  // Same handler discipline as `connectCjSupplier`: a read that throws would
+  // otherwise escape the Server Action and render Next's global error page
+  // instead of a `reason` the browser can turn into a sentence.
+  try {
+    const provider = await findProviderByCode(getDb(), 'CJ_DROPSHIPPING');
 
-  if (provider === null) {
-    return { ok: false, reason: 'not_connected' };
-  }
+    if (provider === null) {
+      return { ok: false, reason: 'not_connected' };
+    }
 
-  const connection = await findConnectionBySellerAndProvider(
-    getDb(),
-    sellerAccount.id,
-    provider.id,
-  );
+    const connection = await findConnectionBySellerAndProvider(
+      getDb(),
+      sellerAccount.id,
+      provider.id,
+    );
 
-  if (connection === null || RECONNECTABLE_STATUSES.has(connection.status)) {
-    return { ok: false, reason: 'not_connected' };
-  }
+    if (connection === null || RECONNECTABLE_STATUSES.has(connection.status)) {
+      return { ok: false, reason: 'not_connected' };
+    }
 
-  const { code } = createStepUpChallenge(disconnectChallengeKey(connection.id));
+    const { code } = createStepUpChallenge(
+      disconnectChallengeKey(connection.id),
+    );
 
-  await appendAuditEvent(getDb(), {
-    actorId: session.userId,
-    action: 'supplier_connection.disconnect_verification_requested',
-    entityType: 'SupplierConnection',
-    entityId: connection.id,
-    payload: {
+    await appendAuditEvent(getDb(), {
+      actorId: session.userId,
+      action: 'supplier_connection.disconnect_verification_requested',
+      entityType: 'SupplierConnection',
+      entityId: connection.id,
+      payload: {
+        sellerAccountId: sellerAccount.id,
+        providerCode: provider.code,
+      },
+    });
+
+    if (process.env.NODE_ENV === 'production') {
+      return { ok: true };
+    }
+
+    return { ok: true, devCode: code };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] CJ disconnect verification failed', {
       sellerAccountId: sellerAccount.id,
-      providerCode: provider.code,
-    },
-  });
+      error: error instanceof Error ? error.message : 'unknown',
+    });
 
-  if (process.env.NODE_ENV === 'production') {
-    return { ok: true };
+    return { ok: false, reason: 'failed' };
   }
-
-  return { ok: true, devCode: code };
 }
 
 export type DisconnectCjResult =
@@ -530,27 +562,30 @@ export async function disconnectCjSupplier(
     return { ok: false, reason: 'rate_limited' };
   }
 
-  const provider = await findProviderByCode(getDb(), 'CJ_DROPSHIPPING');
-
-  if (provider === null) {
-    return { ok: false, reason: 'not_connected' };
-  }
-
-  const connection = await findConnectionBySellerAndProvider(
-    getDb(),
-    sellerAccount.id,
-    provider.id,
-  );
-
-  if (connection === null || RECONNECTABLE_STATUSES.has(connection.status)) {
-    return { ok: false, reason: 'not_connected' };
-  }
-
-  if (!verifyStepUpChallenge(disconnectChallengeKey(connection.id), code)) {
-    return { ok: false, reason: 'invalid_code' };
-  }
-
+  // The reads are inside the handler for the same reason as the other two
+  // actions: a throw here would reach the browser as Next's global error
+  // page rather than as this action's own `failed` reason.
   try {
+    const provider = await findProviderByCode(getDb(), 'CJ_DROPSHIPPING');
+
+    if (provider === null) {
+      return { ok: false, reason: 'not_connected' };
+    }
+
+    const connection = await findConnectionBySellerAndProvider(
+      getDb(),
+      sellerAccount.id,
+      provider.id,
+    );
+
+    if (connection === null || RECONNECTABLE_STATUSES.has(connection.status)) {
+      return { ok: false, reason: 'not_connected' };
+    }
+
+    if (!verifyStepUpChallenge(disconnectChallengeKey(connection.id), code)) {
+      return { ok: false, reason: 'invalid_code' };
+    }
+
     await getDb().transaction(async (tx) => {
       await disconnectConnection(tx, connection.id);
 
