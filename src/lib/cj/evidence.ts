@@ -6,7 +6,8 @@ import type {
   CjVariantStock,
   CjWarehouseInventory,
 } from './enrichment-schemas';
-import { CJ_IMAGE_HOSTS } from './primitives';
+import { CJ_IMAGE_HOSTS, type VerifiedWarehouseState } from './primitives';
+import { deriveStockEvidence, type StockEvidenceLabel } from './stock-evidence';
 
 /**
  * Normalised preflight evidence for one CJ candidate (spec section 8.3).
@@ -15,7 +16,28 @@ import { CJ_IMAGE_HOSTS } from './primitives';
  * publish eligibility: the hard gates (8.5), scoring (8.6), and compliance
  * gate (14) are not implemented, and inventing any of them from this data
  * would be fabricating a result.
+ *
+ * No supplier request correlation ID is captured here: none of the three CJ
+ * response envelopes this module reads (`/product/query`,
+ * `/product/stock/getInventoryByPid`, `/product/productComments`) return one
+ * — only `code`/`message`/`pointsInfo`/`data`. Fabricating one would violate
+ * ADR-013's evidence-truth rule, so it is simply absent rather than invented.
  */
+
+/**
+ * One preserved CJ inventory observation for one variant in one country
+ * (ADR-013). Raw components survive here even though `totalInventory` below
+ * is a convenient derived sum — a future policy change must be able to
+ * re-evaluate CJ-warehouse vs. factory-backed vs. unverified stock without
+ * another supplier call.
+ */
+export type StockByOrigin = {
+  countryCode: string;
+  cjInventory: number | null;
+  factoryInventory: number | null;
+  totalInventory: number | null;
+  verifiedWarehouse: VerifiedWarehouseState;
+};
 
 export type VariantEvidence = {
   vid: string;
@@ -24,8 +46,12 @@ export type VariantEvidence = {
   optionLabel: string;
   priceUsd: number | null;
   weightGrams: number | null;
-  /** Summed across warehouses for this variant. Null when CJ reported none. */
+  /** Raw per-country observations, attached by `vid` — never by array index. */
+  stockByOrigin: StockByOrigin[];
+  /** Summed across origins for this variant. Null when CJ reported none. */
   totalInventory: number | null;
+  /** Pure derivation from `stockByOrigin` (see `stock-evidence.ts`). Evidence only, not a decision. */
+  stockEvidence: StockEvidenceLabel;
 };
 
 export type WarehouseEvidence = {
@@ -101,13 +127,28 @@ function parseUsd(value: string): number | null {
 }
 
 /**
+ * Preserves one variant's raw per-country stock rows exactly as CJ reported
+ * them — `verifiedWarehouse` included — rather than collapsing straight to a
+ * sum (ADR-013).
+ */
+function toStockByOrigin(stocks: CjVariantStock[]): StockByOrigin[] {
+  return stocks.map((stock) => ({
+    countryCode: stock.countryCode,
+    cjInventory: stock.cjInventory,
+    factoryInventory: stock.factoryInventory,
+    totalInventory: stock.totalInventory,
+    verifiedWarehouse: stock.verifiedWarehouse,
+  }));
+}
+
+/**
  * Sums one variant's stock across countries.
  *
  * Reads `totalInventory` — the per-variant field name. The product-level
  * warehouse entries use `totalInventoryNum` instead; reusing one shape for
  * both made every variant report null while real stock existed.
  */
-function sumVariantStock(stocks: CjVariantStock[]): number | null {
+function sumVariantStock(stocks: StockByOrigin[]): number | null {
   const values = stocks
     .map((stock) => stock.totalInventory)
     .filter((value): value is number => value !== null);
@@ -170,14 +211,22 @@ export default function toCandidateEvidence(input: {
     isTestProduct: input.detail.isTestProduct,
     listedCount: input.detail.listedNum,
     usableImageCount: countUsableImages(input.detail),
-    variants: input.detail.variants.map((variant) => ({
-      vid: variant.vid,
-      sku: variant.variantSku,
-      optionLabel: variant.variantKey,
-      priceUsd: variant.variantSellPrice,
-      weightGrams: variant.variantWeight,
-      totalInventory: sumVariantStock(inventoryByVid.get(variant.vid) ?? []),
-    })),
+    variants: input.detail.variants.map((variant) => {
+      const stockByOrigin = toStockByOrigin(
+        inventoryByVid.get(variant.vid) ?? [],
+      );
+
+      return {
+        vid: variant.vid,
+        sku: variant.variantSku,
+        optionLabel: variant.variantKey,
+        priceUsd: variant.variantSellPrice,
+        weightGrams: variant.variantWeight,
+        stockByOrigin,
+        totalInventory: sumVariantStock(stockByOrigin),
+        stockEvidence: deriveStockEvidence(stockByOrigin),
+      };
+    }),
     warehouses: input.warehouseInventories.map((warehouse) => ({
       countryCode: warehouse.countryCode,
       name:

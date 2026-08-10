@@ -159,7 +159,17 @@ const CLEAN_EVIDENCE = {
       optionLabel: 'Black',
       priceUsd: 5,
       weightGrams: 100,
+      stockByOrigin: [
+        {
+          countryCode: 'CN',
+          totalInventory: 10,
+          cjInventory: 10,
+          factoryInventory: 0,
+          verifiedWarehouse: 'VERIFIED',
+        },
+      ],
       totalInventory: 10,
+      stockEvidence: 'CJ_WAREHOUSE_STOCK',
     },
   ],
   warehouses: [

@@ -1,5 +1,6 @@
 import StatusPill from '@/components/seller-center/shared/StatusPill';
 import type { CandidateEvidence } from '@/lib/cj/evidence';
+import type { StockEvidenceLabel } from '@/lib/cj/stock-evidence';
 
 type CandidateEvidencePanelProps = {
   evidence: CandidateEvidence;
@@ -12,6 +13,15 @@ function formatUsd(value: number | null): string {
 function formatStock(value: number | null): string {
   return value === null ? 'not reported' : String(value);
 }
+
+/** Plain evidence labels only — never a claim about a confirmed freight route (ADR-013). */
+const STOCK_EVIDENCE_TEXT: Record<StockEvidenceLabel, string> = {
+  CJ_WAREHOUSE_STOCK: 'CJ warehouse stock',
+  FACTORY_BACKED_STOCK: 'Factory-backed stock',
+  MIXED_STOCK: 'Mixed CJ/factory stock',
+  ZERO_STOCK: 'No stocked origin observed',
+  UNKNOWN_STOCK: 'Stock evidence unknown',
+};
 
 /**
  * Fresh CJ evidence for one candidate (spec section 8.3).
@@ -74,7 +84,8 @@ export default function CandidateEvidencePanel({
                 </span>
                 <span className="tabular-nums text-ink-muted">
                   {formatUsd(variant.priceUsd)} · stock{' '}
-                  {formatStock(variant.totalInventory)}
+                  {formatStock(variant.totalInventory)} ·{' '}
+                  {STOCK_EVIDENCE_TEXT[variant.stockEvidence]}
                 </span>
               </li>
             ))}

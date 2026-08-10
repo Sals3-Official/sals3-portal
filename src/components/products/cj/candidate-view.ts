@@ -22,7 +22,11 @@ export function totalStock(evidence: CandidateEvidence | null): number | null {
     : known.reduce((sum, value) => sum + value, 0);
 }
 
-export function shippingOrigins(evidence: CandidateEvidence | null): string {
+/**
+ * Countries where CJ reports observed stock. This proves a stocked origin
+ * exists, never that Sals3 confirmed a usable freight route there (ADR-013).
+ */
+export function stockedOrigins(evidence: CandidateEvidence | null): string {
   if (evidence === null) return '—';
 
   const stocked = evidence.warehouses.filter(

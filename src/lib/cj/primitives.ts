@@ -108,6 +108,30 @@ export function looseArrayOf<T>(itemSchema: z.ZodType<T>) {
     );
 }
 
+export const VERIFIED_WAREHOUSE_STATES = [
+  'VERIFIED',
+  'UNVERIFIED',
+  'UNKNOWN',
+] as const;
+export type VerifiedWarehouseState = (typeof VERIFIED_WAREHOUSE_STATES)[number];
+
+/**
+ * CJ's `verifiedWarehouse` flag on a per-variant, per-country inventory row:
+ * `1` means verified inventory, `2` means unverified — see ADR-013 and the
+ * real fixture in `enrichment-schemas.test.ts` (captured live 2026-08-07,
+ * value `2`). Any other value, or a missing key, becomes `UNKNOWN`. Never
+ * inferred from a quantity or country — only ever read from this exact field.
+ */
+export const looseVerifiedWarehouse = z
+  .unknown()
+  .optional()
+  .transform((value): VerifiedWarehouseState => {
+    if (value === 1 || value === '1') return 'VERIFIED';
+    if (value === 2 || value === '2') return 'UNVERIFIED';
+
+    return 'UNKNOWN';
+  });
+
 /**
  * `pointsInfo` is returned on every CJ response. Observed live on
  * 2026-08-07: `{ total: 56107, usedToday: 50110, remaining: 51559 }`, with

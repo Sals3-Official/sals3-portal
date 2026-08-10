@@ -12,8 +12,14 @@
 
 export const POLICY_VERSION = 'catalog-eval-policy-placeholder-v1';
 
-/** Bump when `CandidateEvidence`'s shape changes, so old snapshot rows stay readable. */
-export const EVIDENCE_SCHEMA_VERSION = 'cj-evidence-v1';
+/**
+ * Bump when `CandidateEvidence`'s shape changes, so old snapshot rows stay
+ * readable. `v2` (2026-08-10, ADR-013): each variant's stock is now
+ * `stockByOrigin[]` (raw `cjInventory`/`factoryInventory`/`totalInventory`/
+ * `verifiedWarehouse` per country) plus a derived `stockEvidence` label,
+ * instead of a bare summed `totalInventory`.
+ */
+export const EVIDENCE_SCHEMA_VERSION = 'cj-evidence-v2';
 
 /**
  * The only enabled market today - matches the existing

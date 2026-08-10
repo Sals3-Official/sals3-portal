@@ -26,7 +26,12 @@ export const REASON_CODES = [
   'COUNTERFEIT_HIGH_CONFIDENCE',
   'NO_VALID_MARKET',
   'NO_STOCK',
+  /**
+   * Legacy code, kept only so historical evaluation rows stay readable
+   * (ADR-013). No code path writes this any more — see `NO_STOCKED_ORIGIN`.
+   */
   'NO_SHIPPING_ROUTE',
+  'NO_STOCKED_ORIGIN',
   'INVALID_SUPPLIER_DATA',
   'DATA_FETCH_FAILED',
   'DUPLICATE',
@@ -50,6 +55,8 @@ export const REASON_CODE_EXPLANATIONS: Record<ReasonCode, string> = {
   NO_STOCK: 'CJ reports zero stock across every variant and warehouse.',
   NO_SHIPPING_ROUTE:
     'CJ reports no warehouse with any stock, so no shipping origin exists.',
+  NO_STOCKED_ORIGIN:
+    'No observed supplier origin currently reports any stock. This does not mean a shipping route was checked or confirmed — only that no stocked origin was found.',
   INVALID_SUPPLIER_DATA:
     'The CJ response for this product could not be read safely.',
   DATA_FETCH_FAILED: 'CJ evidence could not be fetched for this candidate.',

@@ -48,11 +48,35 @@ describe('inventory field names differ by level', () => {
     expect(parsed.countryNameEn).toBe('China Warehouse');
   });
 
-  it('parses a real per-variant stock entry', () => {
+  it('parses a real per-variant stock entry, including verifiedWarehouse', () => {
     const parsed = cjVariantStockSchema.parse(REAL_VARIANT_STOCK_ENTRY);
 
     expect(parsed.totalInventory).toBe(6406);
     expect(parsed.factoryInventory).toBe(6406);
+    // Real captured value was 2 — unverified. Previously stripped entirely
+    // because the schema did not declare this field (ADR-013).
+    expect(parsed.verifiedWarehouse).toBe('UNVERIFIED');
+  });
+
+  it('degrades an absent or unrecognised verifiedWarehouse to UNKNOWN, never guessed', () => {
+    expect(
+      cjVariantStockSchema.parse({
+        ...REAL_VARIANT_STOCK_ENTRY,
+        verifiedWarehouse: undefined,
+      }).verifiedWarehouse,
+    ).toBe('UNKNOWN');
+    expect(
+      cjVariantStockSchema.parse({
+        ...REAL_VARIANT_STOCK_ENTRY,
+        verifiedWarehouse: 1,
+      }).verifiedWarehouse,
+    ).toBe('VERIFIED');
+    expect(
+      cjVariantStockSchema.parse({
+        ...REAL_VARIANT_STOCK_ENTRY,
+        verifiedWarehouse: 99,
+      }).verifiedWarehouse,
+    ).toBe('UNKNOWN');
   });
 
   it('does not find a per-variant total under the warehouse field name', () => {

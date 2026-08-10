@@ -96,18 +96,24 @@ export function checkStock(evidence: CandidateEvidence): RuleFinding | null {
   return null;
 }
 
-export function checkShippingRoute(
+/**
+ * Proves only that at least one observed origin currently reports stock —
+ * never that Sals3 confirmed a usable freight route to any destination. A
+ * real destination quote requires `freightCalculate` against an ADR-003
+ * approved market, which this function does not call (ADR-013).
+ */
+export function checkStockedOrigin(
   evidence: CandidateEvidence,
 ): RuleFinding | null {
-  const anyWarehouseStocked = evidence.warehouses.some(
+  const anyOriginStocked = evidence.warehouses.some(
     (warehouse) => (warehouse.totalInventory ?? 0) > 0,
   );
 
-  if (!anyWarehouseStocked) {
+  if (!anyOriginStocked) {
     return {
-      reasonCode: 'NO_SHIPPING_ROUTE',
+      reasonCode: 'NO_STOCKED_ORIGIN',
       severity: 'BLOCK',
-      detail: 'No warehouse reports any stock, so no shipping origin exists',
+      detail: 'No observed origin reports any stock',
     };
   }
 
@@ -227,7 +233,7 @@ export function runQualification(
     checkImages(evidence),
     checkVariants(evidence),
     checkStock(evidence),
-    checkShippingRoute(evidence),
+    checkStockedOrigin(evidence),
     checkCounterfeitSignalFull(evidence),
     checkPriceBoundsFull(evidence),
     checkWeakMargin(),

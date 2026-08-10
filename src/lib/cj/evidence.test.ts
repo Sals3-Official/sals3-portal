@@ -79,6 +79,7 @@ describe('toCandidateEvidence', () => {
               totalInventory: 99,
               cjInventory: 0,
               factoryInventory: 99,
+              verifiedWarehouse: 'UNVERIFIED',
             },
           ],
         },
@@ -90,6 +91,7 @@ describe('toCandidateEvidence', () => {
               totalInventory: 7,
               cjInventory: 0,
               factoryInventory: 7,
+              verifiedWarehouse: 'UNVERIFIED',
             },
           ],
         },
@@ -102,6 +104,15 @@ describe('toCandidateEvidence', () => {
     const byVid = new Map(evidence.variants.map((v) => [v.vid, v]));
     expect(byVid.get('vid-A')?.totalInventory).toBe(7);
     expect(byVid.get('vid-B')?.totalInventory).toBe(99);
+    expect(byVid.get('vid-A')?.stockByOrigin).toEqual([
+      {
+        countryCode: 'CN',
+        totalInventory: 7,
+        cjInventory: 0,
+        factoryInventory: 7,
+        verifiedWarehouse: 'UNVERIFIED',
+      },
+    ]);
   });
 
   it('reads per-variant stock from totalInventory, not the warehouse totalInventoryNum', () => {
@@ -119,6 +130,7 @@ describe('toCandidateEvidence', () => {
               totalInventory: 6406,
               cjInventory: 0,
               factoryInventory: 6406,
+              verifiedWarehouse: 'UNVERIFIED',
             },
           ],
         },
@@ -142,6 +154,8 @@ describe('toCandidateEvidence', () => {
     });
 
     expect(evidence.variants[0].totalInventory).toBeNull();
+    expect(evidence.variants[0].stockByOrigin).toEqual([]);
+    expect(evidence.variants[0].stockEvidence).toBe('UNKNOWN_STOCK');
   });
 
   it('sums a variant stock across warehouses', () => {
@@ -157,12 +171,14 @@ describe('toCandidateEvidence', () => {
               totalInventory: 5,
               cjInventory: 5,
               factoryInventory: 0,
+              verifiedWarehouse: 'VERIFIED',
             },
             {
               countryCode: 'US',
               totalInventory: 3,
-              cjInventory: 3,
-              factoryInventory: 0,
+              cjInventory: 0,
+              factoryInventory: 3,
+              verifiedWarehouse: 'UNKNOWN',
             },
           ],
         },
@@ -173,6 +189,92 @@ describe('toCandidateEvidence', () => {
     });
 
     expect(evidence.variants[0].totalInventory).toBe(8);
+  });
+
+  it("preserves each origin's verified/unverified/unknown warehouse state exactly as parsed, per vid", () => {
+    // The raw-number-to-state mapping (1/2/absent) is the schema boundary's
+    // job, covered in enrichment-schemas.test.ts. This checks that
+    // toCandidateEvidence, given already-parsed states, never collapses or
+    // reassigns them across origins.
+    const evidence = toCandidateEvidence({
+      detail: DETAIL,
+      warehouseInventories: [],
+      variantInventories: [
+        {
+          vid: 'vid-A',
+          inventory: [
+            {
+              countryCode: 'CN',
+              totalInventory: 5,
+              cjInventory: 5,
+              factoryInventory: 0,
+              verifiedWarehouse: 'VERIFIED',
+            },
+            {
+              countryCode: 'US',
+              totalInventory: 3,
+              cjInventory: 0,
+              factoryInventory: 3,
+              verifiedWarehouse: 'UNVERIFIED',
+            },
+            {
+              countryCode: 'AU',
+              totalInventory: 1,
+              cjInventory: 1,
+              factoryInventory: 0,
+              verifiedWarehouse: 'UNKNOWN',
+            },
+          ],
+        },
+      ],
+      reviewTotal: 0,
+      comments: [],
+      capturedAt: CAPTURED_AT,
+    });
+
+    const [cn, us, au] = evidence.variants[0].stockByOrigin;
+    expect(cn.verifiedWarehouse).toBe('VERIFIED');
+    expect(us.verifiedWarehouse).toBe('UNVERIFIED');
+    expect(au.verifiedWarehouse).toBe('UNKNOWN');
+  });
+
+  it('derives mixed stock evidence when one origin is CJ-backed and another factory-backed, and it survives a JSON round-trip', () => {
+    const evidence = toCandidateEvidence({
+      detail: DETAIL,
+      warehouseInventories: [],
+      variantInventories: [
+        {
+          vid: 'vid-A',
+          inventory: [
+            {
+              countryCode: 'CN',
+              totalInventory: 5,
+              cjInventory: 5,
+              factoryInventory: 0,
+              verifiedWarehouse: 'VERIFIED',
+            },
+            {
+              countryCode: 'US',
+              totalInventory: 3,
+              cjInventory: 0,
+              factoryInventory: 3,
+              verifiedWarehouse: 'UNVERIFIED',
+            },
+          ],
+        },
+      ],
+      reviewTotal: 0,
+      comments: [],
+      capturedAt: CAPTURED_AT,
+    });
+
+    expect(evidence.variants[0].stockEvidence).toBe('MIXED_STOCK');
+
+    // Raw components must survive snapshot serialization (JSON in Postgres jsonb).
+    const roundTripped: typeof evidence = JSON.parse(JSON.stringify(evidence));
+    expect(roundTripped.variants[0].stockByOrigin).toEqual(
+      evidence.variants[0].stockByOrigin,
+    );
   });
 
   it('counts only allow-listed image hosts as usable', () => {

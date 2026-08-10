@@ -1,14 +1,45 @@
 import { describe, expect, it } from 'vitest';
-import type { CandidateEvidence } from '@/lib/cj/evidence';
+import type { CandidateEvidence, VariantEvidence } from '@/lib/cj/evidence';
 import {
   checkAbnormalPriceChange,
   checkImages,
-  checkShippingRoute,
+  checkStockedOrigin,
   checkStock,
   checkVariants,
   runQualification,
   summariseEvidence,
 } from './qualification';
+
+/** Fills in `stockByOrigin`/`stockEvidence` from a plain total for test brevity. */
+function variant(overrides: Partial<VariantEvidence>): VariantEvidence {
+  const totalInventory = overrides.totalInventory ?? 10;
+
+  return {
+    vid: 'v1',
+    sku: 'v1-sku',
+    optionLabel: 'Black',
+    priceUsd: 5,
+    weightGrams: 100,
+    stockByOrigin:
+      totalInventory === null
+        ? []
+        : [
+            {
+              countryCode: 'CN',
+              totalInventory,
+              cjInventory: totalInventory,
+              factoryInventory: 0,
+              verifiedWarehouse: 'UNKNOWN',
+            },
+          ],
+    totalInventory,
+    stockEvidence:
+      totalInventory === null || totalInventory <= 0
+        ? 'ZERO_STOCK'
+        : 'CJ_WAREHOUSE_STOCK',
+    ...overrides,
+  };
+}
 
 function evidence(overrides: Partial<CandidateEvidence>): CandidateEvidence {
   return {
@@ -24,22 +55,18 @@ function evidence(overrides: Partial<CandidateEvidence>): CandidateEvidence {
     listedCount: 10,
     usableImageCount: 3,
     variants: [
-      {
+      variant({
         vid: 'v1',
         sku: 'v1-sku',
         optionLabel: 'Black',
-        priceUsd: 5,
-        weightGrams: 100,
         totalInventory: 10,
-      },
-      {
+      }),
+      variant({
         vid: 'v2',
         sku: 'v2-sku',
         optionLabel: 'White',
-        priceUsd: 5,
-        weightGrams: 100,
         totalInventory: 5,
-      },
+      }),
     ],
     warehouses: [
       { countryCode: 'CN', name: 'China warehouse', totalInventory: 15 },
@@ -80,22 +107,18 @@ describe('checkVariants', () => {
   it('flags duplicate option labels as attention', () => {
     const withDuplicate = evidence({
       variants: [
-        {
+        variant({
           vid: 'v1',
           sku: 's1',
           optionLabel: 'Black',
-          priceUsd: 5,
-          weightGrams: 100,
           totalInventory: 10,
-        },
-        {
+        }),
+        variant({
           vid: 'v2',
           sku: 's2',
           optionLabel: 'Black',
-          priceUsd: 5,
-          weightGrams: 100,
           totalInventory: 5,
-        },
+        }),
       ],
     });
 
@@ -109,14 +132,12 @@ describe('checkStock', () => {
   it('blocks when every variant reports zero or unknown stock', () => {
     const noStock = evidence({
       variants: [
-        {
+        variant({
           vid: 'v1',
           sku: 's1',
           optionLabel: 'Black',
-          priceUsd: 5,
-          weightGrams: 100,
           totalInventory: 0,
-        },
+        }),
       ],
     });
 
@@ -131,20 +152,25 @@ describe('checkStock', () => {
   });
 });
 
-describe('checkShippingRoute', () => {
-  it('blocks when no warehouse reports any stock', () => {
-    const noRoute = evidence({
+describe('checkStockedOrigin', () => {
+  it('blocks with NO_STOCKED_ORIGIN when no origin reports any stock, without mentioning freight/route', () => {
+    const noStockedOrigin = evidence({
       warehouses: [{ countryCode: 'CN', name: 'China', totalInventory: 0 }],
     });
 
-    expect(checkShippingRoute(noRoute)).toMatchObject({
-      reasonCode: 'NO_SHIPPING_ROUTE',
+    const finding = checkStockedOrigin(noStockedOrigin);
+
+    expect(finding).toMatchObject({
+      reasonCode: 'NO_STOCKED_ORIGIN',
       severity: 'BLOCK',
     });
+    expect(finding?.detail?.toLowerCase()).not.toContain('shipping');
+    expect(finding?.detail?.toLowerCase()).not.toContain('route');
+    expect(finding?.detail?.toLowerCase()).not.toContain('freight');
   });
 
-  it('passes when at least one warehouse has stock', () => {
-    expect(checkShippingRoute(evidence({}))).toBeNull();
+  it('passes when at least one origin has stock', () => {
+    expect(checkStockedOrigin(evidence({}))).toBeNull();
   });
 });
 
@@ -172,6 +198,63 @@ describe('runQualification', () => {
     expect(runQualification(evidence({}), null)).toEqual([]);
   });
 
+  it('treats factory-backed, unverified stock the same as CJ-warehouse stock — neither an automatic pass nor a permanent block', () => {
+    // ADR-013: stock evidence is evidence, not policy. checkStock/
+    // checkStockedOrigin must not treat FACTORY_BACKED_STOCK/UNVERIFIED any
+    // differently from CJ_WAREHOUSE_STOCK/VERIFIED while no versioned policy
+    // decision exists yet.
+    const buildWith = (
+      stockEvidence: VariantEvidence['stockEvidence'],
+      stock: {
+        cjInventory: number;
+        factoryInventory: number;
+        verifiedWarehouse: VariantEvidence['stockByOrigin'][number]['verifiedWarehouse'];
+      },
+    ) =>
+      evidence({
+        variants: [
+          {
+            vid: 'v1',
+            sku: 'v1-sku',
+            optionLabel: 'Black',
+            priceUsd: 5,
+            weightGrams: 100,
+            stockByOrigin: [
+              {
+                countryCode: 'CN',
+                totalInventory: 10,
+                cjInventory: stock.cjInventory,
+                factoryInventory: stock.factoryInventory,
+                verifiedWarehouse: stock.verifiedWarehouse,
+              },
+            ],
+            totalInventory: 10,
+            stockEvidence,
+          },
+        ],
+        warehouses: [
+          { countryCode: 'CN', name: 'China warehouse', totalInventory: 10 },
+        ],
+      });
+
+    const cjBacked = buildWith('CJ_WAREHOUSE_STOCK', {
+      cjInventory: 10,
+      factoryInventory: 0,
+      verifiedWarehouse: 'VERIFIED',
+    });
+    const factoryBacked = buildWith('FACTORY_BACKED_STOCK', {
+      cjInventory: 0,
+      factoryInventory: 10,
+      verifiedWarehouse: 'UNVERIFIED',
+    });
+
+    expect(runQualification(factoryBacked, null)).toEqual(
+      runQualification(cjBacked, null),
+    );
+    expect(checkStock(factoryBacked)).toBeNull();
+    expect(checkStockedOrigin(factoryBacked)).toBeNull();
+  });
+
   it('never claims a fact CJ did not return - no dimension/attribute checks exist', () => {
     // Regression guard: this suite intentionally has no test asserting an
     // image-dimension or category-required-attribute check, because CJ's
@@ -197,22 +280,18 @@ describe('summariseEvidence', () => {
   it('notes when some variants have no stock', () => {
     const partial = evidence({
       variants: [
-        {
+        variant({
           vid: 'v1',
           sku: 's1',
           optionLabel: 'Black',
-          priceUsd: 5,
-          weightGrams: 100,
           totalInventory: 10,
-        },
-        {
+        }),
+        variant({
           vid: 'v2',
           sku: 's2',
           optionLabel: 'White',
-          priceUsd: 5,
-          weightGrams: 100,
           totalInventory: 0,
-        },
+        }),
       ],
     });
     const summary = summariseEvidence(partial, null);
