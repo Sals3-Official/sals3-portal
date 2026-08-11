@@ -7,5 +7,5 @@ test('home page shows the portal sign-in form', async ({ page }) => {
     page.getByRole('heading', { level: 1, name: 'Sign in' }),
   ).toBeVisible();
   await expect(page.getByLabel('Email')).toBeVisible();
-  await expect(page.getByLabel('Password')).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Password' })).toBeVisible();
 });
