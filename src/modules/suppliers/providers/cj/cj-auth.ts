@@ -44,6 +44,11 @@ function expiryToMs(expiryDate: string): number {
   return Number.isNaN(parsed) ? Date.now() + FALLBACK_LIFETIME_MS : parsed;
 }
 
+function logCredentialFailure(message: string, error: unknown): void {
+  // eslint-disable-next-line no-console
+  console.error(message, error instanceof Error ? error.message : error);
+}
+
 async function reauthenticate(apiKey: string): Promise<ReauthResult> {
   const response = await fetch(`${CJ_BASE_URL}/authentication/getAccessToken`, {
     method: 'POST',
@@ -87,15 +92,24 @@ export default class CjTokenManager {
       return cached.token;
     }
 
-    // The pooled client, deliberately, not a caller's transaction: a token
-    // refresh is its own unit of work and must commit whether or not
-    // whatever triggered it succeeds. Every construction site of this class
-    // is outside a transaction already.
-    const bundle = await this.secretStore.read<CjCredentialBundle>(
-      getDb(),
-      connectionId,
-      'CJ_DROPSHIPPING',
-    );
+    // The pooled client, deliberately, not a caller's transaction: credential
+    // reads/refresh persistence are their own units of work. A persistence
+    // miss must not crash a seller page after CJ already returned a usable
+    // token; the cache carries this instance until the next cold start.
+    let bundle: CjCredentialBundle;
+
+    try {
+      bundle = cjCredentialBundleSchema.parse(
+        await this.secretStore.read<CjCredentialBundle>(
+          getDb(),
+          connectionId,
+          'CJ_DROPSHIPPING',
+        ),
+      );
+    } catch (error) {
+      logCredentialFailure('[portal] CJ credential read failed', error);
+      throw new CjApiError('missing-credentials');
+    }
 
     const fresh = await reauthenticate(bundle.apiKey);
     cache.set(connectionId, {
@@ -112,12 +126,19 @@ export default class CjTokenManager {
       refreshTokenExpiresAt: fresh.refreshTokenExpiresAt,
     });
 
-    await this.secretStore.write(
-      getDb(),
-      connectionId,
-      'CJ_DROPSHIPPING',
-      updated,
-    );
+    try {
+      await this.secretStore.write(
+        getDb(),
+        connectionId,
+        'CJ_DROPSHIPPING',
+        updated,
+      );
+    } catch (error) {
+      logCredentialFailure(
+        '[portal] CJ credential refresh persistence failed',
+        error,
+      );
+    }
 
     // CJ documents the account's `openId` string as the webhook HMAC-SHA256
     // secret. Persist it (encrypted) whenever a refresh observes it, so the
