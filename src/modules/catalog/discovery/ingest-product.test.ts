@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { transactionSpy } = vi.hoisted(() => ({
+const { buyerPolicyMock, transactionSpy } = vi.hoisted(() => ({
+  buyerPolicyMock: vi.fn(() => ({
+    countryCodes: ['AU'],
+    policyVersion: 'buyer-destination-v2',
+    source: 'test',
+    effective: 'ENABLED',
+  })),
   transactionSpy: vi.fn(),
 }));
 
@@ -15,12 +21,7 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 vi.mock('@/lib/country-policy/buyer-destination-country', () => ({
-  default: () => ({
-    countryCodes: ['AU'],
-    policyVersion: 'buyer-destination-v2',
-    source: 'test',
-    effective: 'ENABLED',
-  }),
+  default: buyerPolicyMock,
 }));
 
 vi.mock('../candidates/repository', () => ({
@@ -28,6 +29,7 @@ vi.mock('../candidates/repository', () => ({
   findCandidateByConnectionAndExternalId: vi.fn(),
   insertCandidateIfAbsent: vi.fn(),
   insertQueuedEvaluationIfAbsent: vi.fn(),
+  recordScreeningDecision: vi.fn(),
   requeueIfFingerprintChanged: vi.fn(),
 }));
 
@@ -45,6 +47,7 @@ import {
   findCandidateByConnectionAndExternalId,
   insertCandidateIfAbsent,
   insertQueuedEvaluationIfAbsent,
+  recordScreeningDecision,
   requeueIfFingerprintChanged,
 } from '../candidates/repository';
 // eslint-disable-next-line import/first
@@ -80,6 +83,12 @@ const CONTEXT = { cycleId: 'cycle-1', partitionId: 'partition-1' };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  buyerPolicyMock.mockReturnValue({
+    countryCodes: ['AU'],
+    policyVersion: 'buyer-destination-v2',
+    source: 'test',
+    effective: 'ENABLED',
+  });
 });
 
 describe('ingestDiscoveredProduct', () => {
@@ -126,6 +135,7 @@ describe('ingestDiscoveredProduct', () => {
     asMock(insertCandidateIfAbsent).mockResolvedValue(null);
     asMock(findCandidateByConnectionAndExternalId).mockResolvedValue({
       id: 'candidate-1',
+      intendedMarketCodes: ['AU'],
     });
     asMock(requeueIfFingerprintChanged).mockResolvedValue(true);
 
@@ -145,10 +155,74 @@ describe('ingestDiscoveredProduct', () => {
     );
   });
 
+  it('short-circuits a new candidate with no enabled market without enqueueing evaluation work', async () => {
+    buyerPolicyMock.mockReturnValue({
+      countryCodes: [],
+      policyVersion: 'buyer-destination-v1-disabled',
+      source: 'test',
+      effective: 'DISABLED',
+    });
+    asMock(insertCandidateIfAbsent).mockResolvedValue({ id: 'candidate-1' });
+
+    await expect(
+      ingestDiscoveredProduct(PRODUCT, CONNECTION, CONTEXT),
+    ).resolves.toBe('created');
+
+    expect(insertQueuedEvaluationIfAbsent).toHaveBeenCalledWith(
+      { tx: true },
+      expect.objectContaining({ candidateId: 'candidate-1' }),
+    );
+    expect(recordScreeningDecision).toHaveBeenCalledWith(
+      { tx: true },
+      {
+        candidateId: 'candidate-1',
+        decision: {
+          status: 'TEMPORARILY_INELIGIBLE',
+          reasonCodes: ['NO_VALID_MARKET'],
+        },
+        policyVersion:
+          'catalog-eval-policy-placeholder-v1+buyer-destination:buyer-destination-v1-disabled',
+      },
+    );
+    expect(insertOutboxIntents).not.toHaveBeenCalled();
+  });
+
+  it('short-circuits an existing material change with no enabled market without re-enqueueing evaluation work', async () => {
+    buyerPolicyMock.mockReturnValue({
+      countryCodes: [],
+      policyVersion: 'buyer-destination-v1-disabled',
+      source: 'test',
+      effective: 'DISABLED',
+    });
+    asMock(insertCandidateIfAbsent).mockResolvedValue(null);
+    asMock(findCandidateByConnectionAndExternalId).mockResolvedValue({
+      id: 'candidate-1',
+      intendedMarketCodes: [],
+    });
+    asMock(requeueIfFingerprintChanged).mockResolvedValue(true);
+
+    await expect(
+      ingestDiscoveredProduct(PRODUCT, CONNECTION, CONTEXT),
+    ).resolves.toBe('requeued');
+
+    expect(recordScreeningDecision).toHaveBeenCalledWith(
+      { tx: true },
+      expect.objectContaining({
+        candidateId: 'candidate-1',
+        decision: {
+          status: 'TEMPORARILY_INELIGIBLE',
+          reasonCodes: ['NO_VALID_MARKET'],
+        },
+      }),
+    );
+    expect(insertOutboxIntents).not.toHaveBeenCalled();
+  });
+
   it('changes nothing for an unchanged product - idempotent under re-delivery and re-walked pages', async () => {
     asMock(insertCandidateIfAbsent).mockResolvedValue(null);
     asMock(findCandidateByConnectionAndExternalId).mockResolvedValue({
       id: 'candidate-1',
+      intendedMarketCodes: ['AU'],
     });
     asMock(requeueIfFingerprintChanged).mockResolvedValue(false);
 

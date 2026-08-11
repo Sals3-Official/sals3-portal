@@ -308,6 +308,8 @@ export type CandidateStatusCounts = {
   ready: number;
   needsAttention: number;
   evaluating: number;
+  evaluatingQueued: number;
+  evaluatingProcessing: number;
   blockedRejected: number;
   exceptionQueue: number;
 };
@@ -403,13 +405,16 @@ export async function countCandidateStatusSummary(
   );
   const of = (status: EvaluationStatus) => totalByStatus.get(status) ?? 0;
 
+  const evaluatingQueued =
+    of('QUEUED') + Number(preExhaustionRows[0]?.total ?? 0);
+  const evaluatingProcessing = of('EVALUATING');
+
   return {
     ready: of('PASS'),
     needsAttention: of('PASS_WITH_ATTENTION'),
-    evaluating:
-      of('QUEUED') +
-      of('EVALUATING') +
-      Number(preExhaustionRows[0]?.total ?? 0),
+    evaluating: evaluatingQueued + evaluatingProcessing,
+    evaluatingQueued,
+    evaluatingProcessing,
     blockedRejected: of('BLOCKED') + of('TEMPORARILY_INELIGIBLE'),
     exceptionQueue: Number(exceptionRows[0]?.total ?? 0),
   };

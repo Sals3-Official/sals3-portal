@@ -186,8 +186,10 @@ test.describe('Product Sourcing screens', () => {
       timeout: 30_000,
     });
     await expect(
-      page.getByRole('tab', { name: /^Evaluating/ }),
+      page.getByRole('tab', { name: /^Queued \/ Evaluating/ }),
     ).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByText(/^Queued \d+/)).toBeVisible();
+    await expect(page.getByText(/^Processing now \d+/)).toBeVisible();
   });
 
   test('the old /products/shortlisted link redirects to Ready instead of 404ing', async ({

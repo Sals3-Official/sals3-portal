@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { EVALUATION_STATUSES } from './rules/contracts';
 import { MAX_EVALUATION_ATTEMPTS } from './rules/policy';
-import { classifyPipelineBucket, PIPELINE_BUCKETS } from './pipeline-bucket';
+import {
+  classifyEvaluatingBreakdown,
+  classifyPipelineBucket,
+  PIPELINE_BUCKETS,
+} from './pipeline-bucket';
 
 describe('classifyPipelineBucket', () => {
   it('assigns every status a bucket, at every attempt count, with no gaps', () => {
@@ -62,5 +66,30 @@ describe('classifyPipelineBucket', () => {
     expect(classifyPipelineBucket('TEMPORARILY_INELIGIBLE', 0)).toBe(
       'blockedRejected',
     );
+  });
+});
+
+describe('classifyEvaluatingBreakdown', () => {
+  it('splits queued rows from actively processing rows', () => {
+    expect(classifyEvaluatingBreakdown('QUEUED', 0)).toBe('queued');
+    expect(classifyEvaluatingBreakdown('EVALUATING', 0)).toBe('processing');
+  });
+
+  it('counts pre-exhaustion evaluation failures as queued retry work', () => {
+    expect(classifyEvaluatingBreakdown('EVALUATION_FAILED', 0)).toBe('queued');
+    expect(
+      classifyEvaluatingBreakdown(
+        'EVALUATION_FAILED',
+        MAX_EVALUATION_ATTEMPTS - 1,
+      ),
+    ).toBe('queued');
+  });
+
+  it('excludes exhausted failures and decided rows from the evaluating breakdown', () => {
+    expect(
+      classifyEvaluatingBreakdown('EVALUATION_FAILED', MAX_EVALUATION_ATTEMPTS),
+    ).toBeNull();
+    expect(classifyEvaluatingBreakdown('PASS', 0)).toBeNull();
+    expect(classifyEvaluatingBreakdown('TEMPORARILY_INELIGIBLE', 0)).toBeNull();
   });
 });
