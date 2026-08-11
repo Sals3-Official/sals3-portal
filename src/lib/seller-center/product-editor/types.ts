@@ -2,6 +2,7 @@ import type {
   EvaluationStatus,
   ReasonCode,
 } from '@/modules/catalog/candidates/rules/contracts';
+import type { PricingDecision } from '@/modules/pricing/types';
 
 /**
  * Types for the Product Editor ("Add Product" prefilled from a qualified
@@ -223,6 +224,10 @@ export type EditorBanner = {
   body: string;
 };
 
+/** ADR-002's four mapping-confidence states. `AMBIGUOUS`/`UNMAPPED` never receive category-policy price guidance — see `src/modules/pricing/resolver.ts`. */
+export type CategoryMappingConfidence =
+  'EXACT' | 'ACCEPTABLE' | 'AMBIGUOUS' | 'UNMAPPED';
+
 export type ProductEditorFixture = {
   /** Development fixture key, e.g. `pass`. Never a real candidate id. */
   fixtureKey: string;
@@ -232,6 +237,20 @@ export type ProductEditorFixture = {
   supplierProductName: string;
   supplierCategoryPath: string;
   sals3CategoryPath: string;
+  /**
+   * The stable Sals3 universal category code (ADR-002) `sals3CategoryPath`
+   * displays. `null` when unmapped — pricing guidance requires this, a
+   * display label is never an acceptable substitute for it.
+   */
+  sals3CategoryCode: string | null;
+  categoryMappingConfidence: CategoryMappingConfidence;
+  /**
+   * The real, persisted `supplier_candidates.id` this draft would be keyed
+   * to for a product/variant pricing override. `null` for every fixture in
+   * this design preview — nothing here corresponds to a real candidate, so
+   * a product/variant override action has nothing real to attach to yet.
+   */
+  realSupplierCandidateId: string | null;
   sellerSku: string;
   brandDeclaration: string;
   descriptionText: string;
@@ -269,6 +288,19 @@ export type EditorLifecycle =
   | 'VALIDATION_FAILED'
   | 'CONNECTION_UNAVAILABLE'
   | 'SESSION_EXPIRED';
+
+/**
+ * One variant's server-resolved pricing guidance (`resolveProductPricing`).
+ * `decision` is `null` only when the resolver itself could not run (e.g.
+ * the pricing-policy tables are not migrated in this environment yet) —
+ * distinct from a real `PRICING_UNAVAILABLE` outcome, but rendered the
+ * same neutral way so the editor never crashes on a missing schema.
+ */
+export type VariantPricingGuidance = {
+  variantId: string;
+  optionLabel: string;
+  decision: PricingDecision | null;
+};
 
 export const EDITOR_SECTIONS: ReadonlyArray<{
   id: EditorSectionId;

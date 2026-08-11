@@ -20,8 +20,18 @@ function fixture(key: string): ProductEditorFixture {
 }
 
 function renderEditor(key: string, lifecycle: EditorLifecycle = 'IDLE') {
+  const resolved = fixture(key);
+
   return render(
-    <ProductEditor fixture={fixture(key)} initialLifecycle={lifecycle} />,
+    <ProductEditor
+      fixture={resolved}
+      initialLifecycle={lifecycle}
+      variantGuidance={resolved.variants.map((variant) => ({
+        variantId: variant.id,
+        optionLabel: variant.optionLabel,
+        decision: null,
+      }))}
+    />,
   );
 }
 

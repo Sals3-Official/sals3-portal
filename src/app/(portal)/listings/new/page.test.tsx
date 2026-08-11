@@ -1,10 +1,17 @@
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PortalSession } from '@/lib/auth/session';
 
-// The page awaits the gate but does not read its return value, so the mock
-// only has to record which permission was demanded.
-const requirePermission = vi.fn<(permission: string) => Promise<void>>(
-  async () => {},
+// The page reads `.sellerId` off the resolved session to resolve pricing
+// guidance, so the mock has to look like a real `PortalSession`.
+const requirePermission = vi.fn<(permission: string) => Promise<PortalSession>>(
+  async () => ({
+    userId: 'user-1',
+    displayName: 'Test seller',
+    role: 'seller_manager',
+    sellerId: 'seller-1',
+    sellerBusinessModel: 'DROPSHIPPER',
+  }),
 );
 
 class NotFoundError extends Error {}
@@ -20,6 +27,15 @@ vi.mock('@/lib/auth/session', () => ({
 vi.mock('next/navigation', () => ({
   notFound: () => notFound(),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+}));
+
+// Real pricing guidance needs a live Postgres connection
+// (`src/lib/db/client.ts` refuses to even import under jsdom's `window`) -
+// mocked at this boundary the same way the DB-touching modules in
+// `actions.connect.test.ts` are, rather than reaching for a real database
+// in a component test.
+vi.mock('@/lib/seller-center/product-editor/pricing-guidance', () => ({
+  default: vi.fn(async () => []),
 }));
 
 // eslint-disable-next-line import/first
