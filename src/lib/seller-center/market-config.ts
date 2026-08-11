@@ -10,6 +10,28 @@
  * country resolvers (ADR-014): switching this dev display never changes
  * either real policy or `intended_market_codes`.
  *
+ * NOT the source of truth for a seller's real market configuration. That now
+ * lives in `seller_market_profiles` behind `src/modules/market-config/`, and
+ * the Market Rules screen reads it instead of anything in this file.
+ *
+ * Remaining callers of this fixture, honestly stated — each still renders
+ * `MarketNotConfiguredNotice` in production because `getActiveMarket()`
+ * returns `null` there, so none of them shows invented data to a real
+ * seller, but none has been migrated to the real profile either:
+ *
+ * - `app/(portal)/orders/page.tsx`, `finances/page.tsx`, `payouts/page.tsx`
+ *   — `getActiveMarket()` for currency/payout/carrier display.
+ * - `components/seller-center/listings/BlankListingWorkspace.tsx` — same.
+ * - `components/products/catalog/{ActiveFilterChips,CatalogFilterDrawer}.tsx`
+ *   and `lib/products/catalog-filters.ts` — `getAllMarkets()` /
+ *   `SELLER_CENTER_MARKET_CODES` as the destination-filter vocabulary. Note
+ *   this vocabulary (PH/ID/SG) does not match the real approved destinations
+ *   (AU/PH); reconciling it is follow-up work, not part of this change.
+ *
+ * Moving those screens onto the real profile is deliberately out of scope
+ * here — each needs its own product decision about what to show when an
+ * account has no active destination.
+ *
  * `getActiveMarket()` mirrors `src/lib/auth/session.ts`'s `readDevRole()`
  * placeholder pattern: a server-only env var picks the active sample market
  * until a real per-seller market configuration exists. Like that pattern,

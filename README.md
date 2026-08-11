@@ -164,7 +164,7 @@ Redis, KV, or paid cache service is used for this path.
 | `/inventory`                             | Inline stock edits with undo and an audit record                                                                                                                                                                                                                                                                                             |
 | `/finances`                              | Itemized ledger and estimated proceeds for one example order                                                                                                                                                                                                                                                                                 |
 | `/payouts`                               | Payout schedule, states, and destination                                                                                                                                                                                                                                                                                                     |
-| `/market-rules`                          | Every rule applied to the account, plus role access                                                                                                                                                                                                                                                                                          |
+| `/market-rules`                          | The account's own market setup (which approved destinations it is configured for), the platform policies around it, role access, and category pricing / FX adjustment — see [Seller market configuration](#seller-market-configuration)                                                                                                      |
 | `/supplier-apps`                         | Connect / disconnect / reconnect the seller's own CJ Dropshipping account (ADR-008)                                                                                                                                                                                                                                                          |
 | `/products`                              | All Supplier Products — the raw supplier feed browser (today: CJdropshipping), through the seller's own connection, with a live AUD reference estimate alongside each USD price (read-only status badges, no click-to-check action)                                                                                                          |
 | `/design-preview/all-supplier-products`  | Design preview of the full multi-supplier layout against isolated fixtures (dynamic supplier/evaluation filters, duplicate detection) - `robots: noindex`, not linked from the sidebar, for review before a second real Supplier App exists                                                                                                  |
@@ -845,14 +845,91 @@ PORTAL_DEV_MARKET=SG npm run dev
 it previously fell back to the `PH` fixture as if it were real
 configuration) — production must never present a sample country's currency,
 carrier, tax, or payout figures as a seller's actual configuration.
-`/orders`, `/finances`, `/payouts`, `/market-rules`, and the blank listing
-wizard all check for `null` and render `MarketNotConfiguredNotice` (an
-honest "Market configuration is not available" state) instead of the
-fixture-backed screen. In development/test, accepted `PORTAL_DEV_MARKET`
+`/orders`, `/finances`, `/payouts`, and the blank listing wizard all check
+for `null` and render `MarketNotConfiguredNotice` (an honest "Market
+configuration is not available" state) instead of the fixture-backed
+screen.
+
+**`/market-rules` no longer uses this fixture at all** — it reads the real
+per-seller profile instead; see
+[Seller market configuration](#seller-market-configuration). The other
+screens above are still fixture-only and have not been migrated; each needs
+its own product decision about what to show when an account has no active
+destination. Note also that the catalog destination filters
+(`getAllMarkets()` / `SELLER_CENTER_MARKET_CODES`) still use the fixture's
+`PH`/`ID`/`SG` vocabulary, which does **not** match the real approved
+destinations (`AU`/`PH`); reconciling that is open follow-up work.
+
+In development/test, accepted `PORTAL_DEV_MARKET`
 values are `PH`, `ID`, `SG`; anything else falls back to `PH`. None of the
 three markets' figures (fees, tax rates, thresholds) are confirmed Sals3
 business rules — they were carried over from an imported design mockup for
 interface review only.
+
+## Seller market configuration
+
+`/market-rules` shows what the **signed-in account** is actually set up to
+sell to, resolved from `session.sellerId`. It replaced a screen that could
+only ever say "Market configuration is not available" in production, because
+its only data source was the illustrative PH/ID/SG fixture above.
+
+Four things are kept deliberately separate, and the page states them
+separately:
+
+| Concept                       | Where it lives                                      | What it does **not** mean                                                                                 |
+| ----------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Global catalogue destinations | `lib/country-policy/buyer-destination-country.ts`   | Not a seller preference; not proof any account sells there                                                |
+| Sals3 business registration   | `lib/country-policy/seller-operating-country.ts`    | Never implies a buyer destination (AU appearing in both is a coincidence of two separate owner decisions) |
+| Portal reference currency     | `lib/country-policy/currency.ts`                    | Not a checkout, settlement, or FX-conversion contract                                                     |
+| A seller's own market profile | `modules/market-config/` + `seller_market_profiles` | Not a launched market — see the pilot limits below                                                        |
+
+**Setup allow list.** `modules/market-config/capabilities.ts` is the
+server-owned, versioned boundary
+(`seller-market-capability-v1-au-ph-bounded-pilot`) deciding which
+destinations may be offered. It is fail-closed against the global policy: a
+destination is offerable only if this module lists it **and** the global
+policy currently permits it, so narrowing the global policy narrows setup
+automatically while widening it can never silently widen what sellers may
+configure. It is deliberately not reachable from candidate screening, so a
+seller-facing change can never move
+`candidate_evaluations.policy_version`.
+
+**Lifecycle.** `DRAFT` → `ACTIVE` → `SUSPENDED`, each transition requiring
+`market_profile:manage` (admin and seller_manager only — `market_rules:read`
+is deliberately broader and does not grant it), a business reason, and a
+compare-and-set on the exact status and version the page was rendered from,
+so a stale tab or double submit loses the race instead of replaying. Every
+accepted transition writes an `audit_events` row inside the same
+transaction. Nothing activates implicitly: the AU+PH global policy makes a
+destination _offerable_, never _configured_.
+
+**Tenant isolation.** Every repository call folds the authenticated
+`sellerAccountId` into the SQL, including read-one-by-id. No action accepts a
+seller or owner id from the browser. A cross-tenant id, a missing row, and a
+stale state all return the same `not_found`, so the result cannot be used to
+probe for another account's profile.
+
+**Pilot limits — explicitly deferred.** AU and PH are a bounded evidence
+pilot, not launch markets. No payment onboarding, freight quoting, tax
+treatment, or payout rail is proven for either, so every destination carries
+its outstanding capabilities on screen and an active profile is labelled
+"Active — pilot, capabilities incomplete". `selling_currency_code`,
+`locale`, and `time_zone` are nullable and currently always null:
+`authorizedSellingCurrencyCodes` is empty because no per-destination selling
+currency has been authorized, and recording AUD or PHP there would invent a
+commercial contract. Checkout, payouts, tax calculation, freight, real FX
+conversion, and a seller-editable global allowlist all remain out of scope.
+
+**Migration.** `drizzle/0012_flashy_penance.sql` adds the
+`seller_market_profile_status` enum and the `seller_market_profiles` table
+(purely additive; it writes no existing data). **It has not been applied to
+any database.** Until it is, `/market-rules` renders its honest
+"Market setup is not available right now" state — a backend condition, not a
+statement about the account — and offers no setup control. Apply it with:
+
+```bash
+npm run db:migrate
+```
 
 ## Supplier Apps (multi-tenant provider connections)
 

@@ -47,6 +47,19 @@ describe('Seller Center permissions', () => {
     expect(can('seller_staff', 'payout:manage')).toBe(false);
   });
 
+  it('separates seeing market rules from changing market setup', () => {
+    // Every role that can open the page can read it; only owner-level roles
+    // may change which destinations the account is configured for.
+    expect(can('admin', 'market_profile:manage')).toBe(true);
+    expect(can('seller_manager', 'market_profile:manage')).toBe(true);
+
+    expect(can('seller_staff', 'market_rules:read')).toBe(true);
+    expect(can('seller_staff', 'market_profile:manage')).toBe(false);
+    expect(can('viewer', 'market_rules:read')).toBe(true);
+    expect(can('viewer', 'market_profile:manage')).toBe(false);
+    expect(can('catalogue_reviewer', 'market_profile:manage')).toBe(false);
+  });
+
   it('gives viewer read-only access with no financial visibility', () => {
     expect(can('viewer', 'overview:read')).toBe(true);
     expect(can('viewer', 'order:read')).toBe(true);
