@@ -58,4 +58,16 @@ describe('resolveFixtureVariantGuidance', () => {
     expect(guidance.every((entry) => entry.decision === null)).toBe(true);
     expect(guidance).toHaveLength(fixture().variants.length);
   });
+
+  it('degrades to a null decision per variant rather than throwing when getDb() itself throws (e.g. DATABASE_URL unset)', async () => {
+    mocks.getDb.mockImplementation(() => {
+      throw new Error('DATABASE_URL is not set.');
+    });
+
+    const guidance = await resolveFixtureVariantGuidance(fixture(), 'seller-1');
+
+    expect(guidance.every((entry) => entry.decision === null)).toBe(true);
+    expect(guidance).toHaveLength(fixture().variants.length);
+    expect(mocks.resolveProductPricing).not.toHaveBeenCalled();
+  });
 });

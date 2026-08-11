@@ -18,12 +18,34 @@ const SETTLEMENT_CURRENCY = 'USD';
  * prior real incident (a table reaching a deployment before its
  * migration) — the failure surfaces as an honest "unavailable" panel
  * rather than a crashed page.
+ *
+ * `getDb()` itself is inside this same degrade-don't-crash boundary: it
+ * throws synchronously (not just on a failed query) when `DATABASE_URL`
+ * is unset at all, which is exactly CI's condition and is exactly as
+ * "not the pricing feature's fault" as a missing table — confirmed by a
+ * real CI failure where this line sat outside the try/catch and took the
+ * whole `/listings/new` page down for every test that visited it.
  */
 export default async function resolveFixtureVariantGuidance(
   fixture: ProductEditorFixture,
   sellerAccountId: string,
 ): Promise<VariantPricingGuidance[]> {
-  const db = getDb();
+  let db: ReturnType<typeof getDb>;
+
+  try {
+    db = getDb();
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] pricing guidance database unavailable', {
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+
+    return fixture.variants.map((variant) => ({
+      variantId: variant.id,
+      optionLabel: variant.optionLabel,
+      decision: null,
+    }));
+  }
 
   return Promise.all(
     fixture.variants.map(async (variant) => {
