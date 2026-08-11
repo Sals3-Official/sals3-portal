@@ -94,6 +94,16 @@ type PageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
+type PipelinePageData = {
+  counts: Awaited<ReturnType<typeof countCandidateStatusSummary>> | null;
+  candidates: EvaluatedCandidateRow[];
+  queueAgeMs: number | null;
+};
+
+function safeErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'Unknown error';
+}
+
 function matchesSearch(candidate: EvaluatedCandidateRow, term: string) {
   const needle = term.toLowerCase();
   const name = displayName(
@@ -141,6 +151,29 @@ async function fetchTabCandidates(
       );
     default:
       return [];
+  }
+}
+
+async function resolvePipelinePageData(
+  sellerAccountId: string,
+  tab: PipelineTab,
+): Promise<PipelinePageData> {
+  try {
+    const [counts, candidates, queueAgeMs] = await Promise.all([
+      countCandidateStatusSummary(sellerAccountId),
+      fetchTabCandidates(sellerAccountId, tab),
+      tab === 'exception' ? oldestQueuedAgeMs(sellerAccountId) : null,
+    ]);
+
+    return { counts, candidates, queueAgeMs };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error(
+      '[portal] CJ pipeline lookup failed',
+      safeErrorMessage(error),
+    );
+
+    return { counts: null, candidates: [], queueAgeMs: null };
   }
 }
 
@@ -217,11 +250,10 @@ export default async function ProductSourcingPipelinePage({
   }
 
   const { sellerAccount } = await requireDropshipperAccount();
-  const [counts, candidates, queueAgeMs] = await Promise.all([
-    countCandidateStatusSummary(sellerAccount.id),
-    fetchTabCandidates(sellerAccount.id, tab),
-    tab === 'exception' ? oldestQueuedAgeMs(sellerAccount.id) : null,
-  ]);
+  const { counts, candidates, queueAgeMs } = await resolvePipelinePageData(
+    sellerAccount.id,
+    tab,
+  );
   const filtered =
     search === ''
       ? candidates
