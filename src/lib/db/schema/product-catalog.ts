@@ -16,6 +16,10 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { sals3Categories } from './pricing-policy';
+import {
+  categoryMappingConfidenceEnum,
+  providerCategoryMappings,
+} from './category-mapping';
 import { sellerAccounts } from './seller-accounts';
 import { supplierCandidates } from './catalog';
 import { supplierConnections } from './supplier-connections';
@@ -137,10 +141,13 @@ export const productGenderEnum = pgEnum('product_gender', [
  * A CJ-sourced draft starts `UNMAPPED`: no CJ-to-Sals3 taxonomy crosswalk
  * exists (spec §26 "Explicitly NOT implemented").
  */
-export const categoryMappingConfidenceEnum = pgEnum(
-  'category_mapping_confidence',
-  ['EXACT', 'ACCEPTABLE', 'AMBIGUOUS', 'UNMAPPED'],
-);
+/*
+ * `categoryMappingConfidenceEnum` and `CategoryMappingConfidence` are
+ * declared in `category-mapping.ts` and imported above, not redeclared here:
+ * the ADR-002 mapping is what *decides* a confidence, this table only
+ * *records* the one it was handed. One Postgres type, exported from one
+ * place, keeps the two from drifting into separate vocabularies.
+ */
 
 export const products = pgTable(
   'products',
@@ -179,6 +186,20 @@ export const products = pgTable(
     )
       .notNull()
       .default('UNMAPPED'),
+
+    /**
+     * Which approved mapping produced `categoryId`, and at which version.
+     * Without these a stored category is an assertion nobody can trace: the
+     * rule behind it can be superseded later, and re-deriving "what did we
+     * decide, and under which rule" would be guesswork. `categoryMappingId`
+     * survives supersession because mapping rows are never rewritten, so an
+     * old product still points at the exact reasoning it was assigned under.
+     */
+    categoryMappingId: uuid('category_mapping_id').references(
+      () => providerCategoryMappings.id,
+      { onDelete: 'restrict' },
+    ),
+    categoryMappingVersion: integer('category_mapping_version'),
 
     brandMode: productBrandModeEnum('brand_mode')
       .notNull()
@@ -258,13 +279,27 @@ export const products = pgTable(
       sql`${table.brandMode} <> 'DECLARED' OR ${table.brandName} IS NOT NULL`,
     ),
     /**
-     * A mapped confidence needs a category, and a category needs a
-     * confidence better than `UNMAPPED`. Keeps the pricing resolver's
-     * `CATEGORY_MAPPING_REQUIRES_REVIEW` branch meaningful.
+     * A category is present exactly when the mapping was confident.
+     *
+     * This was `(category_id IS NULL) = (confidence = 'UNMAPPED')`, which
+     * forced an `AMBIGUOUS` product to name a category. ADR-002 defines
+     * `ambiguous` as "more than one Sals3 category is plausible and none can
+     * be chosen automatically" — so an ambiguous product has no category to
+     * store, and the old form made the honest state unrepresentable. The
+     * mapping table carries the mirror-image constraint
+     * (`provider_category_mappings_target_matches_confidence`), so neither
+     * side can hold a guess. Nothing wrote `AMBIGUOUS` before this change:
+     * `create-draft.ts` starts every CJ-sourced draft `UNMAPPED`.
      */
     check(
       'products_category_mapping_consistent',
-      sql`(${table.categoryId} IS NULL) = (${table.categoryMappingConfidence} = 'UNMAPPED')`,
+      sql`(${table.categoryId} IS NOT NULL) = (${table.categoryMappingConfidence} IN ('EXACT','ACCEPTABLE'))`,
+    ),
+    /** Provenance is all-or-nothing, and only exists for a real category. */
+    check(
+      'products_category_mapping_provenance_complete',
+      sql`(${table.categoryMappingId} IS NULL) = (${table.categoryMappingVersion} IS NULL)
+          and (${table.categoryMappingId} IS NULL or ${table.categoryId} IS NOT NULL)`,
     ),
   ],
 );

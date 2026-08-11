@@ -118,6 +118,8 @@ queue delivery needs self-healing.
 | `npm run db:migrate`                                                              | Apply pending migrations in `drizzle/`                                        |
 | `npm run db:studio`                                                               | Drizzle Studio (browse the local database)                                    |
 | `npm run approve:portal-user -- --email seller@example.com --role seller_manager` | Approve/promote one verified portal user                                      |
+| `npm run seed:taxonomy`                                                           | Seed Sals3 Taxonomy v0 category identities (one-time, idempotent)             |
+| `npm run seed:taxonomy-presets`                                                   | Seed Sals3 Taxonomy v0 form presets (run after `seed:taxonomy`)               |
 
 ## Deployment and performance
 
@@ -996,6 +998,95 @@ values are `PH`, `ID`, `SG`; anything else falls back to `PH`. None of the
 three markets' figures (fees, tax rates, thresholds) are confirmed Sals3
 business rules — they were carried over from an imported design mockup for
 interface review only.
+
+## CJ-to-Sals3 category mapping (ADR-002)
+
+A supplier category only becomes a Sals3 category through an approved,
+versioned mapping. There is no fallback that guesses one. This is the
+crosswalk `product-catalog.ts` refers to when it says a CJ-sourced draft
+starts `UNMAPPED`.
+
+| Piece                                       | File                                                  |
+| ------------------------------------------- | ----------------------------------------------------- |
+| Tables (mapping, presets, remap review)     | `src/lib/db/schema/category-mapping.ts`               |
+| Resolver (the only way to a Sals3 category) | `src/modules/catalog/taxonomy/resolver.ts`            |
+| Required attributes / variation rules       | `src/modules/catalog/taxonomy/category-form.ts`       |
+| Applying a decision to a product            | `src/modules/catalog/taxonomy/product-category.ts`    |
+| Zod contracts                               | `src/modules/catalog/taxonomy/contracts.ts`           |
+| Server-only governance operations           | `src/modules/catalog/taxonomy/governance.ts`          |
+| Authorization gate (denies everyone today)  | `src/modules/catalog/taxonomy/authorization.ts`       |
+| Frozen Taxonomy v0 preset extract           | `src/lib/db/seed-data/sals3-taxonomy-presets-v0.json` |
+
+Three tables, added by migration `0015_taxonomy_mapping_pilot`, **not applied
+anywhere**: `provider_category_mappings` (one versioned rule per
+`(provider, external category id)`, at most one `ACTIVE` at a time by partial
+unique index), `sals3_category_presets` (the workbook's variation
+architecture, tier-1/2 attributes, SKU format and required attributes, keyed
+by `(category_id, taxonomy_version)`), and `category_remap_review_findings`.
+The Sals3-side category identity is the existing `sals3_categories` table —
+nothing here declares a second taxonomy.
+
+`resolveCategoryMapping()` takes only persisted provider-category facts and
+returns one of five outcomes:
+
+| Outcome              | Meaning                                                       |
+| -------------------- | ------------------------------------------------------------- |
+| `MAPPED_EXACT`       | An approved, active `EXACT` rule names a real Sals3 code      |
+| `MAPPED_ACCEPTABLE`  | Same, reviewed as an acceptable rather than exact fit         |
+| `AMBIGUOUS`          | A rule exists but cannot be decided automatically             |
+| `UNMAPPED`           | No rule, no supplier category, or an explicit "no Sals3 home" |
+| `MAPPING_SUPERSEDED` | The caller's recorded mapping version is no longer in force   |
+
+Only the two `MAPPED_*` shapes carry a category code at all; the rest have no
+such field, so a caller cannot read a "best guess" off a review outcome. Two
+database check constraints enforce the same rule on the rows themselves — a
+confident mapping must name a category, an ambiguous or unmapped one must
+not, on both `provider_category_mappings` and `products`.
+
+### How a product gets its category
+
+`applyResolvedCategoryToProduct()` is the one write path. It has **no
+category parameter**: it takes supplier-category facts, asks the resolver,
+and writes whatever came back. `products` now also records
+`category_mapping_id` and `category_mapping_version`, so a stored category
+can always be traced to the exact rule and version that produced it.
+
+A review outcome **clears** the product's category rather than leaving a
+stale one standing — including when the rule a product was mapped under has
+since been superseded. Losing a category is recoverable; pricing and
+publishing against a withdrawn one is not.
+
+> The `products_category_mapping_consistent` check changed shape here. It was
+> `(category_id IS NULL) = (confidence = 'UNMAPPED')`, which forced an
+> `AMBIGUOUS` product to name a category — the opposite of what ADR-002 means
+> by ambiguous. It is now "a category is present exactly when the mapping was
+> confident". Nothing wrote `AMBIGUOUS` before this change.
+
+- **Zero supplier calls.** Mapping, resolution, the category form contract,
+  the product write and the remap record are local database reads and writes.
+  A repository-guard test scans this module's source and fails if a CJ
+  adapter import, a `fetch`, or a workbook parse ever appears.
+- **No runtime workbook.** The `.xlsx` in the sibling `sals3-ecommerce` vault
+  is never read by this app. `sals3-taxonomy-presets-v0.json` is a frozen,
+  checksummed extraction; a test recomputes its SHA-256 and re-checks it
+  against ADR-002's verified record counts.
+- **Corrections never rewrite history.** Approving a replacement supersedes
+  the previous rule and opens one `category_remap_review_findings` row. No
+  candidate, evaluation, snapshot, audit row, or price is modified. That row
+  carries `affected_candidates_enumerated = false` — _recorded but not
+  listed_, never "nothing was affected": naming the affected candidates needs
+  a stable provider category id on `supplier_candidates`, which does not
+  exist yet, and selecting them by a supplier category _name_ would be the
+  guess this whole module refuses to make. `supplier_candidate_id` is
+  nullable so per-candidate rows need no further migration once that id
+  lands. **No worker consumes these rows yet.**
+- **No seller-facing surface, deliberately.** ADR-014 places platform
+  category governance in the Admin Portal, and this repository has no
+  permission that expresses it, so `governance.ts` and
+  `product-category.ts` have no Server Action, route handler or UI.
+  `authorizeCategoryGovernance()` is an allow list that is currently empty —
+  it denies **every** role including `admin`, with one identical message. A
+  test fails if anything under `src/app/` imports those modules.
 
 ## Seller market configuration
 
