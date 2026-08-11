@@ -8,7 +8,11 @@ import { describe, expect, it } from 'vitest';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
 import { classifyPipelineBucket } from './pipeline-bucket';
-import { isExhaustedFailure, isPreExhaustionFailure } from './queries';
+import {
+  isExhaustedFailure,
+  isPreExhaustionFailure,
+  searchCondition,
+} from './queries';
 
 /**
  * `isPreExhaustionFailure`/`isExhaustedFailure` are the single shared
@@ -79,5 +83,57 @@ describe('isPreExhaustionFailure / isExhaustedFailure', () => {
     expect(renderSql(isPreExhaustionFailure()).sql).not.toBe(
       renderSql(isExhaustedFailure()).sql,
     );
+  });
+});
+
+/**
+ * The pipeline search runs in SQL now - it used to re-filter the ~100 rows
+ * the page had already fetched, which reported "No matches" for a hit sitting
+ * at row 5,000 of a 86,605-row tab. Same renderer as above: what matters is
+ * that the seller's term travels as a bind parameter rather than inlined
+ * text, and that LIKE wildcards inside it are escaped.
+ */
+describe('searchCondition', () => {
+  it('is absent for a missing, empty, or whitespace-only term', () => {
+    expect(searchCondition(undefined)).toBeUndefined();
+    expect(searchCondition('')).toBeUndefined();
+    expect(searchCondition('   ')).toBeUndefined();
+  });
+
+  it('parameterizes the term instead of concatenating it into SQL', () => {
+    const query = renderSql(
+      searchCondition("acme'; drop table supplier_candidates;--"),
+    );
+
+    expect(query.sql).not.toContain('drop table');
+    // The `_` comes back escaped - it is a LIKE wildcard, and a seller typing
+    // one means the character, not "any character".
+    expect(query.params).toEqual(
+      Array(4).fill("%acme'; drop table supplier\\_candidates;--%"),
+    );
+  });
+
+  it('matches the CJ id, evidence name, evidence SKU, and feed-snapshot name', () => {
+    const query = renderSql(searchCondition('phone case'));
+
+    expect(query.sql).toContain('"external_product_id" ilike');
+    expect(query.sql).toContain(`"evidence"->>'name' ILIKE`);
+    expect(query.sql).toContain(`"evidence"->>'supplierSku' ILIKE`);
+    // The only name a screening-blocked candidate has: those rows are decided
+    // before any CJ evidence call, so `evidence` is null for every one of them.
+    expect(query.sql).toContain(`"feed_snapshot"->>'name' ILIKE`);
+    expect(query.params).toEqual(Array(4).fill('%phone case%'));
+  });
+
+  it('escapes LIKE wildcards so a typed % or _ matches itself', () => {
+    expect(renderSql(searchCondition('50%_off\\now')).params[0]).toBe(
+      '%50\\%\\_off\\\\now%',
+    );
+  });
+
+  it('trims the term before matching', () => {
+    expect(
+      renderSql(searchCondition('  1399191407142506496  ')).params[0],
+    ).toBe('%1399191407142506496%');
   });
 });

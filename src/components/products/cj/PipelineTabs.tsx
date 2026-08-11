@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import { buildHref } from '@/lib/portal/search-params';
 import type { CandidateStatusCounts } from '@/modules/catalog/candidates/queries';
 import {
+  countForTab,
   PIPELINE_TABS,
   PIPELINE_TAB_LABELS,
   type PipelineTab,
@@ -14,33 +15,6 @@ type PipelineTabsProps = {
   counts: CandidateStatusCounts | null;
   searchParams: Record<string, string>;
 };
-
-function countFor(tab: PipelineTab, counts: CandidateStatusCounts | null) {
-  if (counts === null) return 0;
-
-  switch (tab) {
-    case 'all':
-      return (
-        counts.ready +
-        counts.needsAttention +
-        counts.evaluating +
-        counts.blockedRejected +
-        counts.exceptionQueue
-      );
-    case 'ready':
-      return counts.ready;
-    case 'needs-attention':
-      return counts.needsAttention;
-    case 'evaluating':
-      return counts.evaluating;
-    case 'blocked':
-      return counts.blockedRejected;
-    case 'exception':
-      return counts.exceptionQueue;
-    default:
-      return 0;
-  }
-}
 
 /**
  * Server-rendered tab bar: every tab is a real link (`?tab=`), not client
@@ -82,7 +56,7 @@ export default function PipelineTabs({
                   : 'bg-background/60 text-muted-foreground',
               )}
             >
-              {countFor(tab, counts)}
+              {countForTab(tab, counts).toLocaleString()}
             </span>
           </Link>
         );
