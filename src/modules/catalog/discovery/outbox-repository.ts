@@ -171,7 +171,7 @@ export async function summarizeOutbox(executor: DbExecutor): Promise<{
     .select({
       state: workOutbox.state,
       total: sql<number>`count(*)`,
-      oldest: sql<Date | null>`min(${workOutbox.createdAt})`,
+      oldest: sql<Date | string | null>`min(${workOutbox.createdAt})`,
     })
     .from(workOutbox)
     .where(or(eq(workOutbox.state, 'PENDING'), eq(workOutbox.state, 'FAILED')))
@@ -184,7 +184,12 @@ export async function summarizeOutbox(executor: DbExecutor): Promise<{
   rows.forEach((row) => {
     if (row.state === 'PENDING') {
       pending = Number(row.total);
-      oldestPendingAt = row.oldest;
+      if (row.oldest === null) {
+        oldestPendingAt = null;
+      } else {
+        oldestPendingAt =
+          row.oldest instanceof Date ? row.oldest : new Date(row.oldest);
+      }
     }
     if (row.state === 'FAILED') failed = Number(row.total);
   });
