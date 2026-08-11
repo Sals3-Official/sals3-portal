@@ -55,6 +55,8 @@ type ProductEditorWorkspaceProps = {
    * client bundle while the interactive shell still positions it.
    */
   marketsSection: React.ReactNode;
+  /** Server-resolved pricing guidance, same reasoning as `marketsSection`. */
+  pricingBasisSection: React.ReactNode;
   /** Entry state from `?state=`. Development only - see `query.ts`. */
   initialLifecycle: EditorLifecycle;
 };
@@ -88,6 +90,7 @@ function isBulkPriceable(variant: VariantFixture): boolean {
 export default function ProductEditorWorkspace({
   fixture,
   marketsSection,
+  pricingBasisSection,
   initialLifecycle,
 }: ProductEditorWorkspaceProps) {
   const router = useRouter();
@@ -462,6 +465,7 @@ export default function ProductEditorWorkspace({
               </span>
             }
           >
+            {pricingBasisSection}
             <VariantPricingTable
               variants={variants}
               expandedVariantId={expandedVariantId}

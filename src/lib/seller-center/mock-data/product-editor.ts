@@ -328,6 +328,14 @@ const BASE: ProductEditorFixture = {
     'Aurelis Outdoor 20L 28L Foldable Lightweight Travel Daypack Backpack for Hiking Camping',
   supplierCategoryPath: 'Luggage & Bags > Backpacks > Casual Daypacks',
   sals3CategoryPath: 'Bags & Travel / Backpacks / Daypacks',
+  // Sals3 Taxonomy v0 (ADR-002) has no unisex/outdoor backpack branch today
+  // - only gendered "Bags" departments carry one. `CAT-MEN-100564` is the
+  // closest real code, kept `ACCEPTABLE` rather than `EXACT` because a
+  // unisex daypack does not really belong under "Men's Bags". This is a
+  // genuine taxonomy gap, not smoothed over for the preview.
+  sals3CategoryCode: 'CAT-MEN-100564',
+  categoryMappingConfidence: 'ACCEPTABLE',
+  realSupplierCandidateId: null,
   sellerSku: 'S3-AUR-DP',
   brandDeclaration: 'No brand / generic',
   descriptionText: DESCRIPTION,

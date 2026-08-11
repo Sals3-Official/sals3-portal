@@ -9,6 +9,7 @@ import AddProductModeChooser from '@/components/seller-center/listings/AddProduc
 import BlankListingWorkspace from '@/components/seller-center/listings/BlankListingWorkspace';
 import { requirePermission } from '@/lib/auth/session';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
+import resolveFixtureVariantGuidance from '@/lib/seller-center/product-editor/pricing-guidance';
 import {
   editorLifecycleParamSchema,
   lifecycleFromParam,
@@ -74,7 +75,7 @@ export async function generateMetadata({
 export default async function AddProductPage({ searchParams }: PageProps) {
   // Authorization runs on the server before anything is read or rendered.
   // Hiding a nav link is never the check - see `src/lib/auth/permissions.ts`.
-  await requirePermission('product:create');
+  const session = await requirePermission('product:create');
 
   const query = querySchema.parse(await searchParams);
 
@@ -105,10 +106,16 @@ export default async function AddProductPage({ searchParams }: PageProps) {
     // silent fallback to a default fictional product.
     if (fixture === null) notFound();
 
+    const variantGuidance = await resolveFixtureVariantGuidance(
+      fixture,
+      session.sellerId,
+    );
+
     return (
       <ProductEditor
         fixture={fixture}
         initialLifecycle={lifecycleFromParam(query.state)}
+        variantGuidance={variantGuidance}
       />
     );
   }

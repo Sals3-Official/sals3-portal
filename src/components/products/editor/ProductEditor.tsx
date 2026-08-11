@@ -3,14 +3,18 @@ import { sectionSeverity } from '@/lib/seller-center/product-editor/derive';
 import type {
   EditorLifecycle,
   ProductEditorFixture,
+  VariantPricingGuidance,
 } from '@/lib/seller-center/product-editor/types';
 import EditorSectionCard from './EditorSectionCard';
 import MarketShippingEvidence from './MarketShippingEvidence';
+import PricingBasisPanel from './PricingBasisPanel';
 import ProductEditorWorkspace from './ProductEditorWorkspace';
 
 type ProductEditorProps = {
   fixture: ProductEditorFixture;
   initialLifecycle: EditorLifecycle;
+  /** Server-resolved price guidance, one entry per variant — see `page.tsx`. */
+  variantGuidance: VariantPricingGuidance[];
 };
 
 /**
@@ -29,6 +33,7 @@ type ProductEditorProps = {
 export default function ProductEditor({
   fixture,
   initialLifecycle,
+  variantGuidance,
 }: ProductEditorProps) {
   return (
     <div className="flex flex-col gap-4">
@@ -51,6 +56,15 @@ export default function ProductEditor({
       <ProductEditorWorkspace
         fixture={fixture}
         initialLifecycle={initialLifecycle}
+        pricingBasisSection={
+          <PricingBasisPanel
+            categoryPath={fixture.sals3CategoryPath}
+            categoryCode={fixture.sals3CategoryCode}
+            categoryMappingConfidence={fixture.categoryMappingConfidence}
+            variantGuidance={variantGuidance}
+            overridesAvailable={fixture.realSupplierCandidateId !== null}
+          />
+        }
         marketsSection={
           <EditorSectionCard
             id="markets"

@@ -47,6 +47,8 @@ export const PORTAL_PERMISSIONS = [
   'payout:read',
   'payout:manage',
   'market_rules:read',
+  'pricing_policy:read',
+  'pricing_policy:manage',
   'catalog.candidate.read',
   'catalog.candidate.shortlist',
 ] as const;
@@ -85,6 +87,8 @@ const ROLE_PERMISSIONS: Record<PortalRole, readonly PortalPermission[]> = {
     'payout:read',
     'payout:manage',
     'market_rules:read',
+    'pricing_policy:read',
+    'pricing_policy:manage',
     'catalog.candidate.read',
     'catalog.candidate.shortlist',
   ],
