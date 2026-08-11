@@ -96,6 +96,11 @@ it exists only for manual recovery of a stalled queue chain (ADR-013 §12
 forbids cron/scheduled ticks in the target runtime). Both fail closed with
 `401` when unset.
 
+In production, set `CATALOG_DISCOVERY_SWEEP_DELAY_SECONDS=300` so the
+queue-chain watchdog wakes every five minutes. This does not speed up CJ's own
+rate-limited supplier calls; it only reduces dead air when a partition lease or
+queue delivery needs self-healing.
+
 ## Commands
 
 | Command                                                                           | What it does                                                                  |

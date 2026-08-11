@@ -42,7 +42,7 @@ const TAB_DESCRIPTIONS: Record<PipelineTab, string> = {
   'needs-attention':
     'Passed, but with a warning flagged - still eligible to customize and list.',
   evaluating:
-    'Being checked right now (pricing, stock, policy). Moves on its own - nothing to do here.',
+    'Queued or being checked for pricing, stock, and policy. Moves on its own - nothing to do here.',
   blocked:
     'Could not qualify - permanently (policy/pricing) or temporarily (e.g. supplier out of stock).',
   exception:
@@ -218,6 +218,28 @@ function renderTable(
   }
 }
 
+function renderEvaluatingBreakdown(
+  tab: PipelineTab,
+  counts: PipelinePageData['counts'],
+) {
+  if (tab !== 'evaluating' || counts === null) return null;
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <StatusPill
+        label={`Queued ${counts.evaluatingQueued}`}
+        tone="neutral"
+        className="w-fit"
+      />
+      <StatusPill
+        label={`Processing now ${counts.evaluatingProcessing}`}
+        tone="info"
+        className="w-fit"
+      />
+    </div>
+  );
+}
+
 /**
  * Product Sourcing, one window. Was five separate routes (Qualified
  * Products -> Ready/Needs Attention, Evaluating, Blocked/Rejected, Exception
@@ -292,6 +314,7 @@ export default async function ProductSourcingPipelinePage({
           className="w-fit whitespace-normal"
         />
       ) : null}
+      {renderEvaluatingBreakdown(tab, counts)}
       {renderTable(tab, filtered, candidates.length === 0, search)}
     </div>
   );

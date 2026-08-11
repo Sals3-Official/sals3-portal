@@ -8,12 +8,15 @@ import {
   findCandidateByConnectionAndExternalId,
   insertCandidateIfAbsent,
   insertQueuedEvaluationIfAbsent,
+  recordScreeningDecision,
   requeueIfFingerprintChanged,
 } from '../candidates/repository';
 import {
   composeEvaluationPolicyVersion,
   POLICY_VERSION,
 } from '../candidates/rules/policy';
+import { decide } from '../candidates/rules/decide';
+import { checkValidMarket } from '../candidates/rules/screening';
 import { insertOutboxIntents } from './outbox-repository';
 
 /**
@@ -41,6 +44,22 @@ const DISCOVERY_ACTOR_ID = 'system:cj-discovery';
 
 export type IngestOutcome = 'created' | 'requeued' | 'unchanged';
 
+function noValidMarketDecision(
+  buyerDestinationPolicy: ReturnType<
+    typeof resolveBuyerDestinationCountryPolicy
+  >,
+  candidateDestinationCodes: string[],
+) {
+  const marketFinding = checkValidMarket({
+    buyerDestinationPolicy,
+    candidateDestinationCodes,
+  });
+
+  if (marketFinding?.reasonCode !== 'NO_VALID_MARKET') return null;
+
+  return decide([marketFinding]);
+}
+
 export default async function ingestDiscoveredProduct(
   product: CjProduct,
   connection: SupplierConnectionRow,
@@ -54,6 +73,10 @@ export default async function ingestDiscoveredProduct(
   const evaluationPolicyVersion = composeEvaluationPolicyVersion(
     POLICY_VERSION,
     buyerDestinationPolicy.policyVersion,
+  );
+  const newCandidateMarketDecision = noValidMarketDecision(
+    buyerDestinationPolicy,
+    buyerDestinationPolicy.countryCodes,
   );
 
   return getDb().transaction(async (tx) => {
@@ -85,6 +108,17 @@ export default async function ingestDiscoveredProduct(
           fingerprint,
         },
       });
+
+      if (newCandidateMarketDecision !== null) {
+        await recordScreeningDecision(tx, {
+          candidateId: created.id,
+          decision: newCandidateMarketDecision,
+          policyVersion: evaluationPolicyVersion,
+        });
+
+        return 'created';
+      }
+
       await insertOutboxIntents(tx, [
         {
           message: {
@@ -113,6 +147,11 @@ export default async function ingestDiscoveredProduct(
       );
     }
 
+    const existingCandidateMarketDecision = noValidMarketDecision(
+      buyerDestinationPolicy,
+      existing.intendedMarketCodes,
+    );
+
     const requeued = await requeueIfFingerprintChanged(tx, {
       candidateId: existing.id,
       feedSnapshot,
@@ -132,6 +171,17 @@ export default async function ingestDiscoveredProduct(
           fingerprint,
         },
       });
+
+      if (existingCandidateMarketDecision !== null) {
+        await recordScreeningDecision(tx, {
+          candidateId: existing.id,
+          decision: existingCandidateMarketDecision,
+          policyVersion: evaluationPolicyVersion,
+        });
+
+        return 'requeued';
+      }
+
       await insertOutboxIntents(tx, [
         {
           message: {

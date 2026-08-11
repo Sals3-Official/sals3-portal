@@ -32,7 +32,7 @@ export const PIPELINE_TAB_LABELS: Record<PipelineTab, string> = {
   all: 'All',
   ready: 'Ready',
   'needs-attention': 'Needs Attention',
-  evaluating: 'Evaluating',
+  evaluating: 'Queued / Evaluating',
   blocked: 'Blocked / Rejected',
   exception: 'Exception Queue',
 };
