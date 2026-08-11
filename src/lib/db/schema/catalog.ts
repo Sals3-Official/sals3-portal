@@ -80,6 +80,18 @@ export const supplierCandidates = pgTable(
     shortlistState: shortlistStateEnum('shortlist_state')
       .notNull()
       .default('SHORTLISTED'),
+    providerLastSeenAt: timestamp('provider_last_seen_at', {
+      withTimezone: true,
+    }),
+    providerLastVerifiedAt: timestamp('provider_last_verified_at', {
+      withTimezone: true,
+    }),
+    providerRemovalSuspectedAt: timestamp('provider_removal_suspected_at', {
+      withTimezone: true,
+    }),
+    providerRemovalConfirmedAt: timestamp('provider_removal_confirmed_at', {
+      withTimezone: true,
+    }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -101,6 +113,10 @@ export const supplierCandidates = pgTable(
     index('supplier_candidates_connection_state_idx').on(
       table.supplierConnectionId,
       table.shortlistState,
+    ),
+    index('supplier_candidates_provider_freshness_idx').on(
+      table.providerLastSeenAt,
+      table.providerLastVerifiedAt,
     ),
     index('supplier_candidates_intended_seller_id_idx').on(
       table.intendedSellerId,

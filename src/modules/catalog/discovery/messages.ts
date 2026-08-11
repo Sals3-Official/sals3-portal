@@ -11,6 +11,7 @@ import { z } from 'zod';
 export const QUEUE_OPERATIONS = [
   'DISCOVERY_CYCLE_START',
   'DISCOVERY_PARTITION',
+  'DISCOVERY_AUDIT_UNIT',
   'EVALUATE_CANDIDATE',
   'RECONCILE_PRODUCT',
   'WEBHOOK_EVENT',
@@ -25,6 +26,12 @@ const base = {
   idempotencyKey: z.string().min(1).max(500),
 };
 
+export const discoveryLaneSchema = z.enum([
+  'BOOTSTRAP',
+  'INCREMENTAL',
+  'AUDIT',
+]);
+
 /**
  * Ensure-and-sweep for one connection's discovery chain: creates the run
  * state/cycle when absent, seeds category roots in bounded batches, and
@@ -36,6 +43,7 @@ export const discoveryCycleStartMessageSchema = z.object({
   ...base,
   operation: z.literal('DISCOVERY_CYCLE_START'),
   supplierConnectionId: z.uuid(),
+  lane: discoveryLaneSchema.optional(),
   /** Present when this message continues a specific cycle's seeding/sweep. */
   cycleId: z.uuid().optional(),
 });
@@ -48,6 +56,12 @@ export const discoveryPartitionMessageSchema = z.object({
   partitionId: z.uuid(),
   /** The partition stateVersion this message expects; a stale message no-ops. */
   expectedStateVersion: z.number().int().positive().optional(),
+});
+
+export const discoveryAuditUnitMessageSchema = z.object({
+  ...base,
+  operation: z.literal('DISCOVERY_AUDIT_UNIT'),
+  supplierConnectionId: z.uuid(),
 });
 
 export const evaluateCandidateMessageSchema = z.object({
@@ -91,6 +105,7 @@ export const outboxDispatchMessageSchema = z.object({
 export const queueMessageSchema = z.discriminatedUnion('operation', [
   discoveryCycleStartMessageSchema,
   discoveryPartitionMessageSchema,
+  discoveryAuditUnitMessageSchema,
   evaluateCandidateMessageSchema,
   reconcileProductMessageSchema,
   webhookEventMessageSchema,
@@ -102,6 +117,9 @@ export type DiscoveryCycleStartMessage = z.infer<
 >;
 export type DiscoveryPartitionMessage = z.infer<
   typeof discoveryPartitionMessageSchema
+>;
+export type DiscoveryAuditUnitMessage = z.infer<
+  typeof discoveryAuditUnitMessageSchema
 >;
 export type EvaluateCandidateMessage = z.infer<
   typeof evaluateCandidateMessageSchema

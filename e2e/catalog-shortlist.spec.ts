@@ -170,6 +170,58 @@ test.describe('Product Sourcing screens', () => {
     ).toHaveAttribute('aria-selected', 'true');
   });
 
+  /**
+   * A tab can hold far more candidates than one page - a market policy that
+   * blocks the discovered feed puts the whole feed in Blocked / Rejected -
+   * so the reachable set must be the whole tab, not the first 100 rows. This
+   * walks the real pagination against the real database: page 2 must exist,
+   * must be reachable by link, and must show DIFFERENT rows than page 1.
+   *
+   * The different-rows assertion is the one that catches a broken sort: a
+   * bulk requeue stamps thousands of rows with the same `updatedAt`, and
+   * without the row-id tiebreaker in `PAGE_ORDER`, Postgres may repeat a
+   * page-1 row on page 2 and silently drop another.
+   */
+  test('Blocked / Rejected pages through the whole tab, not just the first page', async ({
+    page,
+  }) => {
+    test.skip(
+      !isDatabaseConfigured(),
+      'DATABASE_URL not configured in this environment',
+    );
+
+    await page.goto('/products/pipeline?tab=blocked');
+    await expect(
+      page.getByRole('heading', { name: 'Product Sourcing', level: 1 }),
+    ).toBeVisible({ timeout: 30_000 });
+
+    const pager = page.getByRole('navigation', {
+      name: 'Candidate pipeline pages',
+    });
+
+    test.skip(
+      (await pager.count()) === 0,
+      'Blocked / Rejected fits on one page in this database',
+    );
+
+    await expect(
+      pager.getByText(/^Page 1 of \d+ · [\d,]+ candidates$/),
+    ).toBeVisible();
+
+    const firstRowOnPageOne = await page
+      .locator('tbody tr')
+      .first()
+      .innerText();
+
+    await pager.getByRole('link', { name: /Next/ }).click();
+
+    await expect(page).toHaveURL(/\/products\/pipeline\?tab=blocked&page=2$/);
+    await expect(pager.getByText(/^Page 2 of \d+/)).toBeVisible();
+    expect(await page.locator('tbody tr').first().innerText()).not.toBe(
+      firstRowOnPageOne,
+    );
+  });
+
   test('Evaluating shows queued/in-progress candidates, not a manual action', async ({
     page,
   }) => {
@@ -186,8 +238,10 @@ test.describe('Product Sourcing screens', () => {
       timeout: 30_000,
     });
     await expect(
-      page.getByRole('tab', { name: /^Evaluating/ }),
+      page.getByRole('tab', { name: /^Queued \/ Evaluating/ }),
     ).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByText(/^Queued \d+/)).toBeVisible();
+    await expect(page.getByText(/^Processing now \d+/)).toBeVisible();
   });
 
   test('the old /products/shortlisted link redirects to Ready instead of 404ing', async ({

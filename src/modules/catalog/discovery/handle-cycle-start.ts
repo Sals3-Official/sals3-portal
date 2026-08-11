@@ -11,6 +11,7 @@ import {
   CYCLE_SWEEP_DELAY_SECONDS,
   discoveryEpochMs,
   FRESHNESS_SWEEP_DELAY_SECONDS,
+  INCREMENTAL_SAFETY_OVERLAP_SECONDS,
   NEXT_CYCLE_DELAY_SECONDS,
   SEED_BATCH_SIZE,
 } from './config';
@@ -20,6 +21,7 @@ import {
   advanceSeedCursor,
   createCycleIfAbsent,
   findActiveCycle,
+  findLatestCompletedCycle,
   heartbeatCycle,
   markSeedingComplete,
   recordCategorySnapshotIfAbsent,
@@ -31,6 +33,7 @@ import {
 import { insertOutboxIntents, type OutboxIntent } from './outbox-repository';
 import { recordDiscoveryFailure } from './failure-repository';
 import { isDiscoveryRunning } from './run-state-repository';
+import { findWatermark } from './lane-repository';
 
 /**
  * DISCOVERY_CYCLE_START: the ensure-and-sweep operation for one connection's
@@ -75,6 +78,7 @@ export function partitionMessageIntent(input: {
 export function cycleStartIntent(input: {
   supplierConnectionId: string;
   cycleId?: string;
+  lane?: DiscoveryLane;
   keySuffix: string;
   delaySeconds?: number;
 }): OutboxIntent {
@@ -84,6 +88,7 @@ export function cycleStartIntent(input: {
       operation: 'DISCOVERY_CYCLE_START',
       idempotencyKey: `cycle-start:${input.supplierConnectionId}:${input.keySuffix}`,
       supplierConnectionId: input.supplierConnectionId,
+      ...(input.lane === undefined ? {} : { lane: input.lane }),
       ...(input.cycleId === undefined ? {} : { cycleId: input.cycleId }),
     },
     delaySeconds: input.delaySeconds,
@@ -91,9 +96,17 @@ export function cycleStartIntent(input: {
 }
 
 /** Root partitions for one leaf category: the pre-epoch sentinel plus the epoch-to-cutoff range. */
+type DiscoveryLane = 'BOOTSTRAP' | 'INCREMENTAL' | 'AUDIT';
+
 function rootPartitionsForLeaf(
   leaf: SupplierCategoryLeaf,
-  input: { cycleId: string; supplierConnectionId: string; cutoffMs: number },
+  input: {
+    cycleId: string;
+    supplierConnectionId: string;
+    cutoffMs: number;
+    lane: DiscoveryLane;
+    windowFromMs: number | null;
+  },
 ): Array<{
   cycleId: string;
   supplierConnectionId: string;
@@ -107,6 +120,16 @@ function rootPartitionsForLeaf(
     supplierConnectionId: input.supplierConnectionId,
     categoryId: leaf.categoryId,
   };
+
+  if (input.lane === 'INCREMENTAL') {
+    return [
+      {
+        ...base,
+        createTimeFromMs: input.windowFromMs,
+        createTimeToMs: input.cutoffMs,
+      },
+    ];
+  }
 
   if (epochMs >= input.cutoffMs) {
     // Degenerate configuration (epoch at/after cutoff): one open-start root
@@ -128,6 +151,52 @@ function rootPartitionsForLeaf(
 const categoryLeavesSchema = (value: unknown): SupplierCategoryLeaf[] =>
   Array.isArray(value) ? (value as SupplierCategoryLeaf[]) : [];
 
+async function resolveNextLane(
+  supplierConnectionId: string,
+  requested?: DiscoveryLane,
+): Promise<{
+  lane: DiscoveryLane;
+  windowFrom: Date | null;
+  safetyOverlapSeconds: number | null;
+  delaySeconds?: number;
+}> {
+  if (requested === 'AUDIT') {
+    return { lane: 'AUDIT', windowFrom: null, safetyOverlapSeconds: null };
+  }
+
+  const db = getDb();
+  const bootstrap = await findLatestCompletedCycle(db, {
+    supplierConnectionId,
+    lane: 'BOOTSTRAP',
+  });
+
+  if (bootstrap === null && requested !== 'INCREMENTAL') {
+    return { lane: 'BOOTSTRAP', windowFrom: null, safetyOverlapSeconds: null };
+  }
+
+  const watermark = await findWatermark(db, supplierConnectionId);
+  const baseFrom =
+    watermark?.nextWindowFrom ??
+    watermark?.provenCutoff ??
+    bootstrap?.cycleCutoff;
+
+  if (baseFrom === undefined || baseFrom === null) {
+    return { lane: 'BOOTSTRAP', windowFrom: null, safetyOverlapSeconds: null };
+  }
+
+  const windowFrom = new Date(
+    baseFrom.getTime() - INCREMENTAL_SAFETY_OVERLAP_SECONDS * 1000,
+  );
+
+  return {
+    lane: 'INCREMENTAL',
+    windowFrom,
+    safetyOverlapSeconds: INCREMENTAL_SAFETY_OVERLAP_SECONDS,
+    delaySeconds:
+      requested === 'INCREMENTAL' ? undefined : NEXT_CYCLE_DELAY_SECONDS,
+  };
+}
+
 export default async function handleCycleStart(
   message: DiscoveryCycleStartMessage,
 ): Promise<void> {
@@ -148,9 +217,13 @@ export default async function handleCycleStart(
 
   await ensureBudgetRow(db, connection.id);
 
+  const lanePlan = await resolveNextLane(connection.id, message.lane);
   const { cycle } = await createCycleIfAbsent(db, {
     supplierConnectionId: connection.id,
     cycleCutoff: new Date(),
+    lane: lanePlan.lane,
+    windowFrom: lanePlan.windowFrom,
+    safetyOverlapSeconds: lanePlan.safetyOverlapSeconds,
   });
 
   await heartbeatCycle(db, cycle.id);
@@ -238,6 +311,7 @@ export default async function handleCycleStart(
       await markSeedingComplete(db, cycle.id);
     } else {
       const cutoffMs = cycle.cycleCutoff.getTime();
+      const windowFromMs = cycle.windowFrom?.getTime() ?? null;
 
       await db
         .transaction(async (tx) => {
@@ -246,6 +320,8 @@ export default async function handleCycleStart(
               cycleId: cycle.id,
               supplierConnectionId: connection.id,
               cutoffMs,
+              lane: cycle.lane,
+              windowFromMs,
             }),
           );
           const inserted = await insertPartitions(tx, rows);
@@ -344,7 +420,30 @@ export function nextCycleIntents(supplierConnectionId: string): OutboxIntent[] {
   return [
     cycleStartIntent({
       supplierConnectionId,
-      keySuffix: `next:${Math.floor(Date.now() / (NEXT_CYCLE_DELAY_SECONDS * 1000))}`,
+      keySuffix: `incremental:${Math.floor(Date.now() / (NEXT_CYCLE_DELAY_SECONDS * 1000))}`,
+      delaySeconds: NEXT_CYCLE_DELAY_SECONDS,
+    }),
+  ];
+}
+
+export function laneContinuationIntents(input: {
+  supplierConnectionId: string;
+  lane: DiscoveryLane;
+  immediate?: boolean;
+}): OutboxIntent[] {
+  if (input.lane === 'BOOTSTRAP') {
+    return [
+      cycleStartIntent({
+        supplierConnectionId: input.supplierConnectionId,
+        keySuffix: `incremental-after-bootstrap:${Date.now()}`,
+      }),
+    ];
+  }
+
+  return [
+    cycleStartIntent({
+      supplierConnectionId: input.supplierConnectionId,
+      keySuffix: `incremental:${Math.floor(Date.now() / (NEXT_CYCLE_DELAY_SECONDS * 1000))}`,
       delaySeconds: NEXT_CYCLE_DELAY_SECONDS,
     }),
   ];

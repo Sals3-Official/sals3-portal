@@ -51,7 +51,7 @@ describe('LoginForm', () => {
     fireEvent.change(screen.getByLabelText('Password'), {
       target: { value: 'correct horse battery staple' },
     });
-    fireEvent.submit(screen.getByRole('button', { name: 'Sign in' }));
+    fireEvent.submit(screen.getByRole('button', { name: 'Log in' }));
 
     await waitFor(() => {
       expect(mocks.signInEmail).toHaveBeenCalledWith({
@@ -82,10 +82,32 @@ describe('LoginForm', () => {
     fireEvent.change(screen.getByLabelText('Password'), {
       target: { value: 'correct horse battery staple' },
     });
-    fireEvent.submit(screen.getByRole('button', { name: 'Sign in' }));
+    fireEvent.submit(screen.getByRole('button', { name: 'Log in' }));
 
     await waitFor(() => {
       expect(mocks.replace).toHaveBeenCalledWith('/two-factor?next=%2Fpayouts');
     });
+  });
+
+  it('lets the password toggle reveal text without submitting the form', () => {
+    render(<LoginForm />);
+
+    const password = screen.getByLabelText('Password') as HTMLInputElement;
+    fireEvent.change(password, { target: { value: 'correct horse battery' } });
+    expect(password.type).toBe('password');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show password' }));
+
+    expect(password.type).toBe('text');
+    expect(password.value).toBe('correct horse battery');
+    expect(mocks.signInEmail).not.toHaveBeenCalled();
+  });
+
+  it('links to password recovery next to the password field', () => {
+    render(<LoginForm />);
+
+    expect(
+      screen.getByRole('link', { name: 'Forgot password?' }),
+    ).toHaveAttribute('href', '/reset-password');
   });
 });

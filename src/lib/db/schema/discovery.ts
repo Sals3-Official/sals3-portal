@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   bigint,
+  boolean,
   check,
   index,
   integer,
@@ -92,6 +93,12 @@ export const discoveryCycleStateEnum = pgEnum('discovery_cycle_state', [
   'COVERAGE_UNRESOLVED',
 ]);
 
+export const discoveryLaneEnum = pgEnum('discovery_lane', [
+  'BOOTSTRAP',
+  'INCREMENTAL',
+  'AUDIT',
+]);
+
 export const discoveryCycles = pgTable(
   'discovery_cycles',
   {
@@ -100,12 +107,16 @@ export const discoveryCycles = pgTable(
     supplierConnectionId: uuid('supplier_connection_id')
       .notNull()
       .references(() => supplierConnections.id, { onDelete: 'restrict' }),
+    lane: discoveryLaneEnum('lane').notNull().default('BOOTSTRAP'),
+    generationKey: text('generation_key').notNull().default('default'),
     /**
      * Immutable snapshot boundary: every partition in this cycle covers only
      * products created at or before this instant. Products created later are
      * intentionally the next cycle's work. Never mutated after insert.
      */
     cycleCutoff: timestamp('cycle_cutoff', { withTimezone: true }).notNull(),
+    windowFrom: timestamp('window_from', { withTimezone: true }),
+    safetyOverlapSeconds: integer('safety_overlap_seconds'),
     state: discoveryCycleStateEnum('state').notNull().default('SEEDING'),
     /**
      * The provider category tree observed at cycle start (leaf id/name/path
@@ -124,6 +135,7 @@ export const discoveryCycles = pgTable(
       .notNull()
       .defaultNow(),
     completedAt: timestamp('completed_at', { withTimezone: true }),
+    proofRecordedAt: timestamp('proof_recorded_at', { withTimezone: true }),
     /** Queue-chain heartbeat, distinct from any HTTP health signal (ADR-010 §12.11). */
     lastHeartbeatAt: timestamp('last_heartbeat_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true })
@@ -147,6 +159,11 @@ export const discoveryCycles = pgTable(
       table.supplierConnectionId,
       table.state,
     ),
+    index('discovery_cycles_connection_lane_idx').on(
+      table.supplierConnectionId,
+      table.lane,
+      table.state,
+    ),
     check(
       'discovery_cycles_terminal_within_total',
       sql`${table.partitionsTerminal} <= ${table.partitionsTotal}`,
@@ -154,6 +171,84 @@ export const discoveryCycles = pgTable(
     check(
       'discovery_cycles_unresolved_within_terminal',
       sql`${table.partitionsUnresolved} <= ${table.partitionsTerminal}`,
+    ),
+  ],
+);
+
+export const discoveryIncrementalWatermarks = pgTable(
+  'discovery_incremental_watermarks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    supplierConnectionId: uuid('supplier_connection_id')
+      .notNull()
+      .references(() => supplierConnections.id, { onDelete: 'restrict' }),
+    generationKey: text('generation_key').notNull().default('default'),
+    bootstrapCutoff: timestamp('bootstrap_cutoff', { withTimezone: true }),
+    provenCutoff: timestamp('proven_cutoff', { withTimezone: true }),
+    nextWindowFrom: timestamp('next_window_from', { withTimezone: true }),
+    safetyOverlapSeconds: integer('safety_overlap_seconds').notNull(),
+    categorySnapshotChecksum: text('category_snapshot_checksum'),
+    stateVersion: integer('state_version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex(
+      'discovery_incremental_watermarks_connection_generation_key',
+    ).on(table.supplierConnectionId, table.generationKey),
+  ],
+);
+
+export const discoveryRangeObligationStateEnum = pgEnum(
+  'discovery_range_obligation_state',
+  ['OPEN', 'RETRYING', 'RESOLVED'],
+);
+
+export const discoveryRangeObligations = pgTable(
+  'discovery_range_obligations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    supplierConnectionId: uuid('supplier_connection_id')
+      .notNull()
+      .references(() => supplierConnections.id, { onDelete: 'restrict' }),
+    lane: discoveryLaneEnum('lane').notNull(),
+    generationKey: text('generation_key').notNull().default('default'),
+    cycleId: uuid('cycle_id').references(() => discoveryCycles.id, {
+      onDelete: 'restrict',
+    }),
+    categoryId: text('category_id'),
+    rangeFrom: timestamp('range_from', { withTimezone: true }),
+    rangeTo: timestamp('range_to', { withTimezone: true }).notNull(),
+    reason: text('reason').notNull(),
+    state: discoveryRangeObligationStateEnum('state').notNull().default('OPEN'),
+    attempts: integer('attempts').notNull().default(0),
+    lastErrorCode: text('last_error_code'),
+    nextRetryAt: timestamp('next_retry_at', { withTimezone: true }),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('discovery_range_obligations_logical_key').on(
+      table.supplierConnectionId,
+      table.lane,
+      table.generationKey,
+      table.categoryId,
+      table.rangeFrom,
+      table.rangeTo,
+      table.reason,
+    ),
+    index('discovery_range_obligations_state_due_idx').on(
+      table.state,
+      table.nextRetryAt,
     ),
   ],
 );
@@ -276,6 +371,7 @@ export const discoveryReconcilePids = pgTable(
 export const queueOperationEnum = pgEnum('queue_operation', [
   'DISCOVERY_CYCLE_START',
   'DISCOVERY_PARTITION',
+  'DISCOVERY_AUDIT_UNIT',
   'EVALUATE_CANDIDATE',
   'RECONCILE_PRODUCT',
   'WEBHOOK_EVENT',
@@ -351,6 +447,95 @@ export const discoveryFailures = pgTable(
   ],
 );
 
+export const discoveryPartitionProofs = pgTable(
+  'discovery_partition_proofs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    supplierConnectionId: uuid('supplier_connection_id')
+      .notNull()
+      .references(() => supplierConnections.id, { onDelete: 'restrict' }),
+    sourcePartitionId: uuid('source_partition_id')
+      .notNull()
+      .references(() => discoveryPartitions.id, { onDelete: 'restrict' }),
+    generationKey: text('generation_key').notNull().default('default'),
+    categoryId: text('category_id').notNull(),
+    createTimeFromMs: bigint('create_time_from_ms', { mode: 'number' }),
+    createTimeToMs: bigint('create_time_to_ms', { mode: 'number' }).notNull(),
+    priceFromCents: integer('price_from_cents'),
+    priceToCents: integer('price_to_cents'),
+    providerTotal: integer('provider_total').notNull(),
+    uniquePidCount: integer('unique_pid_count').notNull(),
+    sortedPidChecksum: text('sorted_pid_checksum').notNull(),
+    lastVerifiedAt: timestamp('last_verified_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastAuditedAt: timestamp('last_audited_at', { withTimezone: true }),
+    nextAuditDueAt: timestamp('next_audit_due_at', { withTimezone: true }),
+    auditRiskReason: text('audit_risk_reason'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('discovery_partition_proofs_source_partition_key').on(
+      table.sourcePartitionId,
+    ),
+    uniqueIndex('discovery_partition_proofs_logical_key').on(
+      table.supplierConnectionId,
+      table.generationKey,
+      table.categoryId,
+      table.createTimeFromMs,
+      table.createTimeToMs,
+      table.priceFromCents,
+      table.priceToCents,
+    ),
+    index('discovery_partition_proofs_audit_due_idx').on(table.nextAuditDueAt),
+  ],
+);
+
+export const discoveryAuditUnitStateEnum = pgEnum(
+  'discovery_audit_unit_state',
+  ['DUE', 'RUNNING', 'STABLE', 'CHANGED', 'UNRESOLVED'],
+);
+
+export const discoveryAuditUnits = pgTable(
+  'discovery_audit_units',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    partitionProofId: uuid('partition_proof_id')
+      .notNull()
+      .references(() => discoveryPartitionProofs.id, { onDelete: 'cascade' }),
+    state: discoveryAuditUnitStateEnum('state').notNull().default('DUE'),
+    observedProviderTotal: integer('observed_provider_total'),
+    observedUniquePidCount: integer('observed_unique_pid_count'),
+    observedChecksum: text('observed_checksum'),
+    addedProductIds: text('added_product_ids').array().notNull().default([]),
+    missingProductIds: text('missing_product_ids')
+      .array()
+      .notNull()
+      .default([]),
+    missingConfirmed: boolean('missing_confirmed').notNull().default(false),
+    lastErrorCode: text('last_error_code'),
+    attempts: integer('attempts').notNull().default(0),
+    nextRetryAt: timestamp('next_retry_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('discovery_audit_units_state_due_idx').on(
+      table.state,
+      table.nextRetryAt,
+    ),
+  ],
+);
+
 // --- Shared supplier request/points budget --------------------------------------
 
 /**
@@ -375,6 +560,14 @@ export const supplierRequestBudgets = pgTable(
     pointsObservedAt: timestamp('points_observed_at', { withTimezone: true }),
     /** Set on HTTP 429 / points exhaustion; background work waits it out via a delayed queue continuation. */
     pausedUntil: timestamp('paused_until', { withTimezone: true }),
+    providerPauseReason: text('provider_pause_reason'),
+    backgroundPointsSpentToday: integer('background_points_spent_today')
+      .notNull()
+      .default(0),
+    criticalHeadroomPoints: integer('critical_headroom_points')
+      .notNull()
+      .default(0),
+    nextSafeRefillAt: timestamp('next_safe_refill_at', { withTimezone: true }),
     /** Observed provider subscription capacity for this account tier, when reported. */
     observedSubscriptionLimit: integer('observed_subscription_limit'),
     stateVersion: integer('state_version').notNull().default(1),
@@ -449,6 +642,11 @@ export const subscriptionObservedStateEnum = pgEnum(
   ['UNKNOWN', 'SUBSCRIBED', 'UNSUBSCRIBED'],
 );
 
+export const subscriptionPriorityClassEnum = pgEnum(
+  'subscription_priority_class',
+  ['ORDER_LINKED', 'LIVE', 'SELECTED_IMPORTING', 'READY', 'NONE'],
+);
+
 /**
  * CJ product-subscription desired/observed state (ADR-013 §4). Only
  * selected/imported/live/accepted-order products are ever desired -
@@ -464,9 +662,14 @@ export const productSubscriptions = pgTable(
       .references(() => supplierConnections.id, { onDelete: 'restrict' }),
     externalProductId: text('external_product_id').notNull(),
     desiredState: subscriptionDesiredStateEnum('desired_state').notNull(),
+    priorityClass: subscriptionPriorityClassEnum('priority_class')
+      .notNull()
+      .default('NONE'),
+    desiredReason: text('desired_reason'),
     observedState: subscriptionObservedStateEnum('observed_state')
       .notNull()
       .default('UNKNOWN'),
+    providerResult: text('provider_result'),
     attempts: integer('attempts').notNull().default(0),
     lastErrorCode: text('last_error_code'),
     lastVerifiedAt: timestamp('last_verified_at', { withTimezone: true }),
@@ -516,8 +719,15 @@ export const supplierWebhookSecrets = pgTable('supplier_webhook_secrets', {
 export type DiscoveryRunStateRow = typeof discoveryRunStates.$inferSelect;
 export type DiscoveryCycleRow = typeof discoveryCycles.$inferSelect;
 export type NewDiscoveryCycleRow = typeof discoveryCycles.$inferInsert;
+export type DiscoveryIncrementalWatermarkRow =
+  typeof discoveryIncrementalWatermarks.$inferSelect;
+export type DiscoveryRangeObligationRow =
+  typeof discoveryRangeObligations.$inferSelect;
 export type DiscoveryPartitionRow = typeof discoveryPartitions.$inferSelect;
 export type NewDiscoveryPartitionRow = typeof discoveryPartitions.$inferInsert;
+export type DiscoveryPartitionProofRow =
+  typeof discoveryPartitionProofs.$inferSelect;
+export type DiscoveryAuditUnitRow = typeof discoveryAuditUnits.$inferSelect;
 export type WorkOutboxRow = typeof workOutbox.$inferSelect;
 export type NewWorkOutboxRow = typeof workOutbox.$inferInsert;
 export type DiscoveryFailureRow = typeof discoveryFailures.$inferSelect;

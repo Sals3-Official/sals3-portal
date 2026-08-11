@@ -5,10 +5,13 @@ import {
   desc,
   eq,
   gte,
+  ilike,
   inArray,
   lt,
   max,
   or,
+  sql,
+  type SQL,
 } from 'drizzle-orm';
 import getDb from '@/lib/db/client';
 import {
@@ -72,6 +75,133 @@ function baseQuery() {
     );
 }
 
+/**
+ * `baseQuery()`'s row count, for the same `WHERE` clause. The joins must
+ * mirror `baseQuery()` exactly - the search predicate reads the snapshot and
+ * feed-snapshot columns, so a missing join would not just change the count,
+ * it would fail to compile the same condition. Neither join can inflate the
+ * count: `supplier_snapshots` is 1:1 per candidate
+ * (`supplier_snapshots_candidate_id_key`) and so is `candidate_evaluations`
+ * (`candidate_evaluations_candidate_id_key`).
+ */
+function countQuery() {
+  return getDb()
+    .select({ total: count() })
+    .from(supplierCandidates)
+    .innerJoin(
+      candidateEvaluations,
+      eq(candidateEvaluations.candidateId, supplierCandidates.id),
+    )
+    .innerJoin(
+      supplierConnections,
+      eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
+    )
+    .leftJoin(
+      supplierSnapshots,
+      eq(supplierSnapshots.candidateId, supplierCandidates.id),
+    );
+}
+
+/** One page of a pipeline tab. Rows past `PIPELINE_PAGE_SIZE` are reached by paging, never by one huge response. */
+export const PIPELINE_PAGE_SIZE = 100;
+
+/**
+ * Hard ceiling on rows in ONE response. Not a ceiling on what a seller can
+ * reach: every tab is paged, so a tab holding tens of thousands of rows is
+ * fully reachable at `PIPELINE_PAGE_SIZE` per request. Rendering a whole tab
+ * in one server-rendered table would be tens of megabytes of HTML.
+ */
+const MAX_ROWS_PER_REQUEST = 200;
+
+function boundedLimit(limit: number | undefined) {
+  return Math.min(
+    Math.max(limit ?? PIPELINE_PAGE_SIZE, 1),
+    MAX_ROWS_PER_REQUEST,
+  );
+}
+
+function boundedOffset(offset: number | undefined) {
+  return Math.max(offset ?? 0, 0);
+}
+
+/** `%` and `_` are LIKE wildcards and `\` escapes them - a seller typing one means the literal character. */
+function escapeLikePattern(term: string) {
+  return term.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
+/**
+ * Case-insensitive substring match, in SQL, over every identifier the search
+ * box advertises ("Product name, ID, or SKU"). It must run in the same
+ * `WHERE` as the tab's own filter: filtering the already-fetched page in JS
+ * instead - the previous behavior - searched only the ~100 rows that page
+ * happened to hold, so a hit sitting at row 5,000 of a 86,605-row tab was
+ * reported as "No matches".
+ *
+ * `feed_snapshot->>'name'` is included because it is the only name a
+ * screening-blocked candidate has: those rows are decided before any CJ
+ * evidence call, so `supplier_snapshots.evidence` is null for every one of
+ * them and a name search would otherwise match nothing at all on the
+ * Blocked / Rejected tab.
+ */
+function matchesSearchTerm(term: string): SQL {
+  const pattern = `%${escapeLikePattern(term)}%`;
+
+  return sql`(${ilike(supplierCandidates.externalProductId, pattern)}
+    OR ${supplierSnapshots.evidence}->>'name' ILIKE ${pattern}
+    OR ${supplierSnapshots.evidence}->>'supplierSku' ILIKE ${pattern}
+    OR ${candidateEvaluations.feedSnapshot}->>'name' ILIKE ${pattern})`;
+}
+
+/**
+ * Exported for `queries.pipeline.test.ts`, which serializes it through the
+ * Postgres dialect to prove the term travels as a bind parameter (never
+ * concatenated into SQL) and that LIKE wildcards inside it are escaped. A
+ * Drizzle condition cannot be evaluated without a real database, but its
+ * generated SQL and params can be.
+ */
+export function searchCondition(search: string | undefined): SQL | undefined {
+  const term = search?.trim() ?? '';
+
+  return term === '' ? undefined : matchesSearchTerm(term);
+}
+
+/**
+ * The `WHERE` clause of one pipeline tab, built once and shared by that
+ * tab's list and count queries so the table and its page count can never
+ * disagree about which rows belong to the tab.
+ */
+function statusScope(
+  sellerAccountId: string,
+  statuses: EvaluationStatus[],
+  search: string | undefined,
+) {
+  return and(
+    eq(supplierConnections.sellerAccountId, sellerAccountId),
+    inArray(candidateEvaluations.status, statuses),
+    searchCondition(search),
+  );
+}
+
+/**
+ * Newest decision first, with the row id as a tiebreaker. The tiebreaker is
+ * load-bearing for paging, not cosmetic: a policy-version requeue or a
+ * discovery cycle stamps thousands of rows with the same `updatedAt`, and
+ * ordering by that column alone leaves their relative order undefined - the
+ * same row could then appear on two pages while another is skipped entirely.
+ */
+const PAGE_ORDER = [
+  desc(candidateEvaluations.updatedAt),
+  asc(candidateEvaluations.id),
+] as const;
+
+export type CandidatePageOptions = {
+  /** Rows in this response, bounded by `MAX_ROWS_PER_REQUEST`. Defaults to `PIPELINE_PAGE_SIZE`. */
+  limit?: number;
+  offset?: number;
+  /** Matched in SQL against the whole tab - see `matchesSearchTerm`. */
+  search?: string;
+};
+
 function asEvidence(value: unknown): CandidateEvidence | null {
   return (value as CandidateEvidence | null) ?? null;
 }
@@ -98,29 +228,62 @@ export function isExhaustedFailure() {
   );
 }
 
+function evaluatingScope(sellerAccountId: string, search: string | undefined) {
+  return and(
+    eq(supplierConnections.sellerAccountId, sellerAccountId),
+    or(
+      eq(candidateEvaluations.status, 'QUEUED'),
+      eq(candidateEvaluations.status, 'EVALUATING'),
+      isPreExhaustionFailure(),
+    ),
+    searchCondition(search),
+  );
+}
+
+function deadLetteredScope(
+  sellerAccountId: string,
+  search: string | undefined,
+) {
+  return and(
+    eq(supplierConnections.sellerAccountId, sellerAccountId),
+    isExhaustedFailure(),
+    searchCondition(search),
+  );
+}
+
 /**
  * Candidates joined with their evaluation (and evidence, when captured),
  * scoped to one seller account and filtered to the given decision statuses
  * - the shared read behind every automated pipeline screen (Ready, Needs
- * Attention, Evaluating, Blocked/Rejected). `limit` is bounded, never an
- * unbounded scan.
+ * Attention, Evaluating, Blocked/Rejected). One page at a time - bounded,
+ * never an unbounded scan - with `countCandidatesByStatus` giving the caller
+ * the total the page is a window into.
  */
 export async function listCandidatesByStatus(
   sellerAccountId: string,
   statuses: EvaluationStatus[],
-  limit = 100,
+  options: CandidatePageOptions = {},
 ): Promise<EvaluatedCandidateRow[]> {
   const rows = await baseQuery()
-    .where(
-      and(
-        eq(supplierConnections.sellerAccountId, sellerAccountId),
-        inArray(candidateEvaluations.status, statuses),
-      ),
-    )
-    .orderBy(desc(candidateEvaluations.updatedAt))
-    .limit(Math.min(Math.max(limit, 1), 200));
+    .where(statusScope(sellerAccountId, statuses, options.search))
+    .orderBy(...PAGE_ORDER)
+    .limit(boundedLimit(options.limit))
+    .offset(boundedOffset(options.offset));
 
   return rows.map((row) => ({ ...row, evidence: asEvidence(row.evidence) }));
+}
+
+/** Total rows behind `listCandidatesByStatus` - the same scope, unpaged. */
+export async function countCandidatesByStatus(
+  sellerAccountId: string,
+  statuses: EvaluationStatus[],
+  search?: string,
+): Promise<number> {
+  const rows = await countQuery().where(
+    statusScope(sellerAccountId, statuses, search),
+  );
+
+  return Number(rows[0]?.total ?? 0);
 }
 
 /**
@@ -133,23 +296,27 @@ export async function listCandidatesByStatus(
  */
 export async function listEvaluatingCandidates(
   sellerAccountId: string,
-  limit = 100,
+  options: CandidatePageOptions = {},
 ): Promise<EvaluatedCandidateRow[]> {
   const rows = await baseQuery()
-    .where(
-      and(
-        eq(supplierConnections.sellerAccountId, sellerAccountId),
-        or(
-          eq(candidateEvaluations.status, 'QUEUED'),
-          eq(candidateEvaluations.status, 'EVALUATING'),
-          isPreExhaustionFailure(),
-        ),
-      ),
-    )
-    .orderBy(desc(candidateEvaluations.updatedAt))
-    .limit(Math.min(Math.max(limit, 1), 200));
+    .where(evaluatingScope(sellerAccountId, options.search))
+    .orderBy(...PAGE_ORDER)
+    .limit(boundedLimit(options.limit))
+    .offset(boundedOffset(options.offset));
 
   return rows.map((row) => ({ ...row, evidence: asEvidence(row.evidence) }));
+}
+
+/** Total rows behind `listEvaluatingCandidates` - the same scope, unpaged. */
+export async function countEvaluatingCandidates(
+  sellerAccountId: string,
+  search?: string,
+): Promise<number> {
+  const rows = await countQuery().where(
+    evaluatingScope(sellerAccountId, search),
+  );
+
+  return Number(rows[0]?.total ?? 0);
 }
 
 /**
@@ -163,19 +330,27 @@ export async function listEvaluatingCandidates(
  */
 export async function listDeadLetteredEvaluations(
   sellerAccountId: string,
-  limit = 100,
+  options: CandidatePageOptions = {},
 ): Promise<EvaluatedCandidateRow[]> {
   const rows = await baseQuery()
-    .where(
-      and(
-        eq(supplierConnections.sellerAccountId, sellerAccountId),
-        isExhaustedFailure(),
-      ),
-    )
-    .orderBy(desc(candidateEvaluations.updatedAt))
-    .limit(Math.min(Math.max(limit, 1), 200));
+    .where(deadLetteredScope(sellerAccountId, options.search))
+    .orderBy(...PAGE_ORDER)
+    .limit(boundedLimit(options.limit))
+    .offset(boundedOffset(options.offset));
 
   return rows.map((row) => ({ ...row, evidence: asEvidence(row.evidence) }));
+}
+
+/** Total rows behind `listDeadLetteredEvaluations` - the same scope, unpaged. */
+export async function countDeadLetteredEvaluations(
+  sellerAccountId: string,
+  search?: string,
+): Promise<number> {
+  const rows = await countQuery().where(
+    deadLetteredScope(sellerAccountId, search),
+  );
+
+  return Number(rows[0]?.total ?? 0);
 }
 
 /**
@@ -308,6 +483,8 @@ export type CandidateStatusCounts = {
   ready: number;
   needsAttention: number;
   evaluating: number;
+  evaluatingQueued: number;
+  evaluatingProcessing: number;
   blockedRejected: number;
   exceptionQueue: number;
 };
@@ -403,13 +580,16 @@ export async function countCandidateStatusSummary(
   );
   const of = (status: EvaluationStatus) => totalByStatus.get(status) ?? 0;
 
+  const evaluatingQueued =
+    of('QUEUED') + Number(preExhaustionRows[0]?.total ?? 0);
+  const evaluatingProcessing = of('EVALUATING');
+
   return {
     ready: of('PASS'),
     needsAttention: of('PASS_WITH_ATTENTION'),
-    evaluating:
-      of('QUEUED') +
-      of('EVALUATING') +
-      Number(preExhaustionRows[0]?.total ?? 0),
+    evaluating: evaluatingQueued + evaluatingProcessing,
+    evaluatingQueued,
+    evaluatingProcessing,
     blockedRejected: of('BLOCKED') + of('TEMPORARILY_INELIGIBLE'),
     exceptionQueue: Number(exceptionRows[0]?.total ?? 0),
   };

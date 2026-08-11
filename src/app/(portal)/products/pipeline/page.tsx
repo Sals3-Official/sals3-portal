@@ -5,29 +5,27 @@ import AllCandidatesTable from '@/components/products/cj/AllCandidatesTable';
 import BlockedCandidatesTable from '@/components/products/cj/BlockedCandidatesTable';
 import EvaluatingCandidatesTable from '@/components/products/cj/EvaluatingCandidatesTable';
 import ExceptionQueueTable from '@/components/products/cj/ExceptionQueueTable';
+import PipelinePagination from '@/components/products/cj/PipelinePagination';
 import PipelineSearchInput from '@/components/products/cj/PipelineSearchInput';
 import PipelineTabs from '@/components/products/cj/PipelineTabs';
 import QualifiedCandidatesTable from '@/components/products/cj/QualifiedCandidatesTable';
 import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
 import SourcingInfoBanner from '@/components/products/cj/SourcingInfoBanner';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
-import { displayName } from '@/components/products/cj/candidate-view';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { isDatabaseConfigured } from '@/lib/db/client';
+import { parsePageParam } from '@/lib/portal/pagination';
+import { EMPTY_STATE_COPY, TAB_DESCRIPTIONS } from '@/lib/portal/pipeline-copy';
 import {
+  countForTab,
   parsePipelineTab,
   PIPELINE_TAB_LABELS,
   type PipelineTab,
 } from '@/lib/portal/pipeline-tabs';
-import {
-  countCandidateStatusSummary,
-  listCandidatesByStatus,
-  listDeadLetteredEvaluations,
-  listEvaluatingCandidates,
-  oldestQueuedAgeMs,
-  type EvaluatedCandidateRow,
-} from '@/modules/catalog/candidates/queries';
-import { EVALUATION_STATUSES } from '@/modules/catalog/candidates/rules/contracts';
+import resolvePipelinePageData, {
+  type PipelinePageData,
+} from '@/modules/catalog/candidates/pipeline-page-data';
+import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
 
 export const metadata: Metadata = { title: 'Product Sourcing · Sals3 Portal' };
 export const dynamic = 'force-dynamic';
@@ -35,157 +33,26 @@ export const dynamic = 'force-dynamic';
 /** ~6 ticks at the default 5-minute GitHub Actions schedule (evaluate-tick.yml). */
 const STALE_QUEUE_THRESHOLD_MS = 30 * 60 * 1000;
 
-const TAB_DESCRIPTIONS: Record<PipelineTab, string> = {
-  all: 'Every candidate the automated pipeline has touched, one status per row.',
-  ready:
-    'Passed automated evaluation with no open issue - safe to customize and list as-is.',
-  'needs-attention':
-    'Passed, but with a warning flagged - still eligible to customize and list.',
-  evaluating:
-    'Being checked right now (pricing, stock, policy). Moves on its own - nothing to do here.',
-  blocked:
-    'Could not qualify - permanently (policy/pricing) or temporarily (e.g. supplier out of stock).',
-  exception:
-    'The pipeline itself failed here after every retry. Needs a person, not a product judgment call.',
-};
-
-const EMPTY_STATE_COPY: Record<
-  PipelineTab,
-  { title: string; description: string }
-> = {
-  all: {
-    title: 'Nothing has been evaluated yet',
-    description:
-      'The automated evaluation pipeline populates this screen on its own as CJ products are discovered.',
-  },
-  ready: {
-    title: 'No candidates are ready yet',
-    description:
-      'The automated evaluation pipeline populates this screen on its own as CJ products pass every check.',
-  },
-  'needs-attention': {
-    title: 'No candidates need attention',
-    description:
-      'Candidates with a warning - but still eligible to customize and list - appear here automatically.',
-  },
-  evaluating: {
-    title: 'Nothing is queued right now',
-    description:
-      'New and changed CJ products are picked up automatically by the ingestion job.',
-  },
-  blocked: {
-    title: 'Nothing is blocked right now',
-    description:
-      'Candidates the automated pipeline could not qualify - permanently or for now - appear here.',
-  },
-  exception: {
-    title: 'No operational exceptions',
-    description:
-      'Ordinary rejected or temporarily unavailable candidates never appear here - only evaluations that failed every automatic retry.',
-  },
-};
-
 const querySchema = z.object({
   tab: z.string().optional(),
   q: z.string().max(120).optional(),
+  page: z.string().max(12).optional(),
 });
 
 type PageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
-type PipelinePageData = {
-  counts: Awaited<ReturnType<typeof countCandidateStatusSummary>> | null;
-  candidates: EvaluatedCandidateRow[];
-  queueAgeMs: number | null;
-};
-
-function safeErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'Unknown error';
-}
-
-function matchesSearch(candidate: EvaluatedCandidateRow, term: string) {
-  const needle = term.toLowerCase();
-  const name = displayName(
-    candidate.externalProductId,
-    candidate.evidence,
-  ).toLowerCase();
-
-  return (
-    name.includes(needle) ||
-    candidate.externalProductId.toLowerCase().includes(needle) ||
-    (candidate.evidence?.supplierSku.toLowerCase().includes(needle) ?? false)
-  );
-}
-
-async function fetchTabCandidates(
-  sellerAccountId: string,
-  tab: PipelineTab,
-): Promise<EvaluatedCandidateRow[]> {
-  switch (tab) {
-    case 'ready':
-      return listCandidatesByStatus(sellerAccountId, ['PASS']);
-    case 'needs-attention':
-      return listCandidatesByStatus(sellerAccountId, ['PASS_WITH_ATTENTION']);
-    case 'evaluating':
-      // Includes a technical evaluation failure still under its automatic
-      // retry cap - see `listEvaluatingCandidates`'s own doc comment for why
-      // a plain QUEUED/EVALUATING status filter used to let that row
-      // disappear from every tab.
-      return listEvaluatingCandidates(sellerAccountId);
-    case 'blocked':
-      return listCandidatesByStatus(sellerAccountId, [
-        'BLOCKED',
-        'TEMPORARILY_INELIGIBLE',
-      ]);
-    case 'exception':
-      return listDeadLetteredEvaluations(sellerAccountId);
-    case 'all':
-      // Every status, unsplit by attemptCount - "all" means literally every
-      // row regardless of which of the other four tabs an
-      // `EVALUATION_FAILED` row currently belongs to.
-      return listCandidatesByStatus(
-        sellerAccountId,
-        [...EVALUATION_STATUSES],
-        200,
-      );
-    default:
-      return [];
-  }
-}
-
-async function resolvePipelinePageData(
-  sellerAccountId: string,
-  tab: PipelineTab,
-): Promise<PipelinePageData> {
-  try {
-    const [counts, candidates, queueAgeMs] = await Promise.all([
-      countCandidateStatusSummary(sellerAccountId),
-      fetchTabCandidates(sellerAccountId, tab),
-      tab === 'exception' ? oldestQueuedAgeMs(sellerAccountId) : null,
-    ]);
-
-    return { counts, candidates, queueAgeMs };
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error(
-      '[portal] CJ pipeline lookup failed',
-      safeErrorMessage(error),
-    );
-
-    return { counts: null, candidates: [], queueAgeMs: null };
-  }
-}
-
 function renderTable(
   tab: PipelineTab,
-  filtered: EvaluatedCandidateRow[],
+  candidates: EvaluatedCandidateRow[],
   tabIsEmpty: boolean,
   search: string,
 ) {
-  if (filtered.length === 0) {
+  if (candidates.length === 0) {
     if (tabIsEmpty) {
       const copy = EMPTY_STATE_COPY[tab];
+
       return (
         <SourcingEmptyState title={copy.title} description={copy.description} />
       );
@@ -202,20 +69,58 @@ function renderTable(
   switch (tab) {
     case 'ready':
       return (
-        <QualifiedCandidatesTable candidates={filtered} showReasons={false} />
+        <QualifiedCandidatesTable candidates={candidates} showReasons={false} />
       );
     case 'needs-attention':
-      return <QualifiedCandidatesTable candidates={filtered} showReasons />;
+      return <QualifiedCandidatesTable candidates={candidates} showReasons />;
     case 'evaluating':
-      return <EvaluatingCandidatesTable candidates={filtered} />;
+      return <EvaluatingCandidatesTable candidates={candidates} />;
     case 'blocked':
-      return <BlockedCandidatesTable candidates={filtered} />;
+      return <BlockedCandidatesTable candidates={candidates} />;
     case 'exception':
-      return <ExceptionQueueTable candidates={filtered} />;
+      return <ExceptionQueueTable candidates={candidates} />;
     case 'all':
     default:
-      return <AllCandidatesTable candidates={filtered} />;
+      return <AllCandidatesTable candidates={candidates} />;
   }
+}
+
+function renderEvaluatingBreakdown(
+  tab: PipelineTab,
+  counts: PipelinePageData['counts'],
+) {
+  if (tab !== 'evaluating' || counts === null) return null;
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <StatusPill
+        label={`Queued ${counts.evaluatingQueued.toLocaleString()}`}
+        tone="neutral"
+        className="w-fit"
+      />
+      <StatusPill
+        label={`Processing now ${counts.evaluatingProcessing.toLocaleString()}`}
+        tone="info"
+        className="w-fit"
+      />
+    </div>
+  );
+}
+
+/**
+ * Counts the rows the tab holds in total, not the ones on this page: the
+ * header used to report the fetched-row count, so a tab holding 86,605
+ * candidates announced "100 candidates" - the page size - as if that were
+ * everything there was.
+ */
+function headerDescription(
+  window: PipelinePageData['window'],
+  search: string,
+): string {
+  const noun = window.total === 1 ? 'candidate' : 'candidates';
+  const scope = search === '' ? '' : ` matching "${search}"`;
+
+  return `${window.total.toLocaleString()} ${noun}${scope}`;
 }
 
 /**
@@ -224,8 +129,8 @@ function renderTable(
  * Queue) - each still exists as a redirect into this page's `?tab=` so an old
  * bookmark or sidebar link keeps working. Each tab is a real link (not
  * client-only tab state) because it queries a different decision status
- * server-side; the search box filters whatever that tab already fetched, no
- * extra round trip.
+ * server-side, is paged server-side through `?page=`, and searches its whole
+ * tab in SQL rather than filtering the page already in hand.
  */
 export default async function ProductSourcingPipelinePage({
   searchParams,
@@ -250,24 +155,25 @@ export default async function ProductSourcingPipelinePage({
   }
 
   const { sellerAccount } = await requireDropshipperAccount();
-  const { counts, candidates, queueAgeMs } = await resolvePipelinePageData(
-    sellerAccount.id,
-    tab,
-  );
-  const filtered =
-    search === ''
-      ? candidates
-      : candidates.filter((candidate) => matchesSearch(candidate, search));
+  const { counts, candidates, queueAgeMs, window } =
+    await resolvePipelinePageData(sellerAccount.id, tab, {
+      search,
+      requestedPage: parsePageParam(query.page),
+    });
   const isStale =
     tab === 'exception' &&
     queueAgeMs !== null &&
     queueAgeMs > STALE_QUEUE_THRESHOLD_MS;
+  const tabParams = {
+    tab,
+    ...(search === '' ? {} : { q: search }),
+  };
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Product Sourcing"
-        description={`${filtered.length} ${filtered.length === 1 ? 'candidate' : 'candidates'}${search === '' ? '' : ` matching "${search}"`}`}
+        description={headerDescription(window, search)}
       />
       <SourcingInfoBanner>{TAB_DESCRIPTIONS[tab]}</SourcingInfoBanner>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -292,7 +198,16 @@ export default async function ProductSourcingPipelinePage({
           className="w-fit whitespace-normal"
         />
       ) : null}
-      {renderTable(tab, filtered, candidates.length === 0, search)}
+      {renderEvaluatingBreakdown(tab, counts)}
+      {renderTable(tab, candidates, countForTab(tab, counts) === 0, search)}
+      {window.totalPages > 1 ? (
+        <PipelinePagination
+          page={window.page}
+          totalPages={window.totalPages}
+          total={window.total}
+          currentParams={tabParams}
+        />
+      ) : null}
     </div>
   );
 }

@@ -166,10 +166,28 @@ export const BUDGET_RETRY_DELAY_SECONDS = envInt(
   15 * 60,
 );
 
-/** Queue delay between a completed cycle and the next cycle's start. */
+/** Conservative incremental overlap until CJ timestamp inclusivity/indexing is owner-probed. */
+export const INCREMENTAL_SAFETY_OVERLAP_SECONDS = envInt(
+  'CATALOG_DISCOVERY_INCREMENTAL_OVERLAP_SECONDS',
+  24 * 60 * 60,
+);
+
+/** Queue delay between completed incremental windows. Bootstrap never uses this to restart history. */
 export const NEXT_CYCLE_DELAY_SECONDS = envInt(
   'CATALOG_DISCOVERY_NEXT_CYCLE_DELAY_SECONDS',
   6 * 60 * 60,
+);
+
+/** Lowest-priority audit continuation delay. */
+export const AUDIT_SWEEP_DELAY_SECONDS = envInt(
+  'CATALOG_DISCOVERY_AUDIT_SWEEP_DELAY_SECONDS',
+  24 * 60 * 60,
+);
+
+/** Operational webhook subscription buffer, held back from ordinary Ready products. */
+export const WEBHOOK_SUBSCRIPTION_BUFFER = envInt(
+  'CJ_WEBHOOK_SUBSCRIPTION_BUFFER',
+  100,
 );
 
 /** Sweep cadence: the active cycle re-enqueues a self-healing sweep at this delay. */
@@ -187,6 +205,30 @@ export const FRESHNESS_SWEEP_DELAY_SECONDS = envInt(
   'CATALOG_FRESHNESS_SWEEP_DELAY_SECONDS',
   60 * 60,
 );
+
+/**
+ * Development-pilot evidence allowance: the maximum number of candidates
+ * that may ever complete a PAID CJ evidence fetch. A TOTAL, not a daily
+ * rate - it never resets, so reaching it stops paid evaluation until the
+ * owner raises it deliberately.
+ *
+ * This is a backstop, not the primary control. The primary control is data:
+ * only candidates whose own `intended_market_codes` was explicitly
+ * backfilled to an enabled destination survive `checkValidMarket`, and that
+ * gate is atomic, race-free, and honored by every execution path. This
+ * counter exists so a mistake in that data can still not run away.
+ *
+ * `CATALOG_PILOT_BASELINE_COUNT` anchors the count to whatever had already
+ * completed a paid fetch before the pilot began; without it, pre-existing
+ * rows silently consume the allowance and a rollback-then-retry starts with
+ * nothing left.
+ *
+ * NOTE: `envInt` rejects 0 and negatives and falls back to the default, so
+ * the cap CANNOT be disabled by setting it to 0. Set it to 1 to freeze paid
+ * evaluation, or raise it to continue.
+ */
+export const PILOT_EVIDENCE_CAP = envInt('CATALOG_PILOT_EVIDENCE_CAP', 2_000);
+export const PILOT_BASELINE_COUNT = envInt('CATALOG_PILOT_BASELINE_COUNT', 0);
 
 /**
  * Neon development-pilot storage guards. The configured allowance defaults

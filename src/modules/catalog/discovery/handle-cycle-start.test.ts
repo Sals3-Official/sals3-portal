@@ -47,6 +47,7 @@ vi.mock('./cycle-repository', () => ({
   advanceSeedCursor: vi.fn(),
   createCycleIfAbsent: vi.fn(),
   findActiveCycle: vi.fn(),
+  findLatestCompletedCycle: vi.fn(),
   heartbeatCycle: vi.fn(),
   markSeedingComplete: vi.fn(),
   recordCategorySnapshotIfAbsent: vi.fn(),
@@ -60,6 +61,7 @@ vi.mock('./partition-repository', () => ({
 vi.mock('./outbox-repository', () => ({ insertOutboxIntents: vi.fn() }));
 vi.mock('./failure-repository', () => ({ recordDiscoveryFailure: vi.fn() }));
 vi.mock('./run-state-repository', () => ({ isDiscoveryRunning: vi.fn() }));
+vi.mock('./lane-repository', () => ({ findWatermark: vi.fn() }));
 
 // eslint-disable-next-line import/first
 import { randomUUID } from 'crypto';
@@ -72,6 +74,7 @@ import {
   advanceSeedCursor,
   createCycleIfAbsent,
   findActiveCycle,
+  findLatestCompletedCycle,
   markSeedingComplete,
   recordCategorySnapshotIfAbsent,
 } from './cycle-repository';
@@ -84,6 +87,8 @@ import {
 import { insertOutboxIntents } from './outbox-repository';
 // eslint-disable-next-line import/first
 import { isDiscoveryRunning } from './run-state-repository';
+// eslint-disable-next-line import/first
+import { findWatermark } from './lane-repository';
 // eslint-disable-next-line import/first
 import handleCycleStart from './handle-cycle-start';
 
@@ -105,6 +110,8 @@ function cycle(overrides: Record<string, unknown> = {}) {
     supplierConnectionId: CONNECTION_ID,
     cycleCutoff: new Date('2026-08-11T00:00:00Z'),
     state: 'SEEDING',
+    lane: 'BOOTSTRAP',
+    generationKey: 'default',
     categorySnapshot: null,
     seedCursor: 0,
     partitionsTotal: 0,
@@ -113,6 +120,9 @@ function cycle(overrides: Record<string, unknown> = {}) {
     stateVersion: 1,
     startedAt: new Date(),
     completedAt: null,
+    windowFrom: null,
+    safetyOverlapSeconds: null,
+    proofRecordedAt: null,
     lastHeartbeatAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -129,6 +139,8 @@ beforeEach(() => {
   asMock(isDiscoveryRunning).mockResolvedValue(true);
   asMock(tryAcquireRequestSlot).mockResolvedValue(true);
   asMock(advanceSeedCursor).mockResolvedValue(true);
+  asMock(findLatestCompletedCycle).mockResolvedValue(null);
+  asMock(findWatermark).mockResolvedValue(null);
   asMock(insertPartitions).mockImplementation((_tx: unknown, rows: unknown[]) =>
     Promise.resolve(rows.map((_, i) => ({ id: `partition-${i}` }))),
   );
@@ -178,6 +190,70 @@ describe('handleCycleStart', () => {
       expect.anything(),
       expect.objectContaining({ fromCursor: 0, toCursor: 2 }),
     );
+  });
+
+  it('after bootstrap exists, an ordinary continuation creates an incremental window from the watermark minus overlap', async () => {
+    const proven = new Date('2026-08-10T00:00:00Z');
+    asMock(findLatestCompletedCycle).mockResolvedValue(
+      cycle({
+        state: 'COMPLETE',
+        completedAt: new Date(),
+        cycleCutoff: proven,
+      }),
+    );
+    asMock(findWatermark).mockResolvedValue({
+      provenCutoff: proven,
+      nextWindowFrom: proven,
+    });
+    asMock(createCycleIfAbsent).mockResolvedValue({
+      cycle: cycle({
+        lane: 'INCREMENTAL',
+        windowFrom: new Date('2026-08-09T00:00:00Z'),
+        categorySnapshot: [
+          { categoryId: 'cat-1', categoryName: 'Cases', path: [] },
+        ],
+      }),
+      created: true,
+    });
+
+    await handleCycleStart(MESSAGE);
+
+    expect(createCycleIfAbsent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        lane: 'INCREMENTAL',
+        windowFrom: new Date('2026-08-09T00:00:00Z'),
+      }),
+    );
+  });
+
+  it('incremental seeding creates only window roots, never open-start or epoch historical roots', async () => {
+    asMock(findLatestCompletedCycle).mockResolvedValue(
+      cycle({ state: 'COMPLETE', completedAt: new Date() }),
+    );
+    asMock(findWatermark).mockResolvedValue({
+      provenCutoff: new Date('2026-08-10T00:00:00Z'),
+      nextWindowFrom: new Date('2026-08-10T00:00:00Z'),
+    });
+    asMock(createCycleIfAbsent).mockResolvedValue({
+      cycle: cycle({
+        lane: 'INCREMENTAL',
+        windowFrom: new Date('2026-08-09T00:00:00Z'),
+        categorySnapshot: [
+          { categoryId: 'cat-1', categoryName: 'Cases', path: [] },
+          { categoryId: 'cat-2', categoryName: 'Chargers', path: [] },
+        ],
+      }),
+      created: false,
+    });
+
+    await handleCycleStart(MESSAGE);
+
+    const rows = asMock(insertPartitions).mock.calls[0]![1] as Array<{
+      createTimeFromMs: number | null;
+    }>;
+    expect(rows).toHaveLength(2);
+    expect(rows.some((row) => row.createTimeFromMs === null)).toBe(false);
   });
 
   it('marks seeding complete once the cursor passes the last leaf', async () => {

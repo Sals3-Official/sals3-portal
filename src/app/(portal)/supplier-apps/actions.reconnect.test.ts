@@ -61,6 +61,14 @@ vi.mock('@/modules/catalog/candidates/repository', () => ({
   requeueConnectionPausedEvaluations: requeueConnectionPausedEvaluationsMock,
 }));
 
+vi.mock('@/modules/catalog/discovery/outbox-repository', () => ({
+  insertOutboxIntents: vi.fn(),
+}));
+
+vi.mock('@/modules/catalog/discovery/outbox-dispatch', () => ({
+  default: vi.fn().mockResolvedValue({ dispatched: 1, failed: 0 }),
+}));
+
 vi.mock('@/lib/secrets/postgres-supplier-secret-store', () => ({
   // eslint-disable-next-line prefer-arrow-callback
   default: vi.fn().mockImplementation(function MockSecretStore() {

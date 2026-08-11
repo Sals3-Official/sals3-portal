@@ -14,6 +14,7 @@ import {
 } from '@/lib/auth/redirect';
 import { loginSchema } from '@/lib/auth/schemas';
 import FieldError from './FieldError';
+import PasswordField from './PasswordField';
 
 type FieldErrors = Partial<Record<'email' | 'password', string>>;
 
@@ -104,32 +105,29 @@ export default function LoginForm() {
           autoComplete="email"
           aria-invalid={fieldErrors.email === undefined ? undefined : true}
           aria-describedby="login-email-error"
+          className="h-11"
           required
         />
         <FieldError id="login-email-error" message={fieldErrors.email} />
       </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="login-password">Password</Label>
-        <Input
-          id="login-password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          aria-invalid={fieldErrors.password === undefined ? undefined : true}
-          aria-describedby="login-password-error"
-          required
-        />
-        <FieldError id="login-password-error" message={fieldErrors.password} />
-      </div>
+      <PasswordField
+        id="login-password"
+        name="password"
+        label="Password"
+        autoComplete="current-password"
+        errorId="login-password-error"
+        errorMessage={fieldErrors.password}
+        forgotPasswordHref="/reset-password"
+      />
       <Button
         type="submit"
-        className="w-full cursor-pointer"
+        className="h-11 w-full cursor-pointer"
         disabled={isPending}
       >
         {isPending ? (
           <Loader2 className="animate-spin" aria-hidden="true" />
         ) : null}
-        Sign in
+        Log in
       </Button>
     </form>
   );

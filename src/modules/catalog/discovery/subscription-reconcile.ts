@@ -4,11 +4,13 @@ import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
 import CjSupplierAdapter from '@/modules/suppliers/providers/cj/cj-adapter';
 import type { SupplierProviderAdapter } from '@/modules/suppliers/contracts';
 import {
+  countObservedSubscribed,
   listDivergentSubscriptions,
   markSubscriptionAttemptFailed,
   markSubscriptionsObserved,
 } from './subscription-repository';
-import { tryAcquireRequestSlot } from './budget-repository';
+import { findBudgetRow, tryAcquireRequestSlot } from './budget-repository';
+import { WEBHOOK_SUBSCRIPTION_BUFFER } from './config';
 
 /**
  * Reconciles desired vs observed CJ product subscriptions for one connection
@@ -22,6 +24,18 @@ import { tryAcquireRequestSlot } from './budget-repository';
 
 const PROVIDER_BATCH_MAX = 100;
 const RETRY_DELAY_MS = 15 * 60 * 1000;
+const DEFAULT_SUBSCRIPTION_LIMIT = 1_000;
+
+async function remainingSubscribeCapacity(
+  supplierConnectionId: string,
+): Promise<number> {
+  const db = getDb();
+  const budget = await findBudgetRow(db, supplierConnectionId);
+  const limit = budget?.observedSubscriptionLimit ?? DEFAULT_SUBSCRIPTION_LIMIT;
+  const observed = await countObservedSubscribed(db, supplierConnectionId);
+
+  return Math.max(0, limit - WEBHOOK_SUBSCRIPTION_BUFFER - observed);
+}
 
 export default async function reconcileSubscriptions(
   supplierConnectionId: string,
@@ -42,9 +56,16 @@ export default async function reconcileSubscriptions(
     adapterOverride ??
     new CjSupplierAdapter(secretStore, new CjTokenManager(secretStore));
 
+  const capacity = await remainingSubscribeCapacity(supplierConnectionId);
   const toSubscribe = divergent
     .filter((row) => row.desiredState === 'SUBSCRIBED')
-    .slice(0, PROVIDER_BATCH_MAX);
+    .filter(
+      (row) =>
+        row.priorityClass !== 'READY' ||
+        capacity > 0 ||
+        row.observedState === 'SUBSCRIBED',
+    )
+    .slice(0, Math.min(PROVIDER_BATCH_MAX, Math.max(0, capacity)));
   const toUnsubscribe = divergent
     .filter((row) => row.desiredState === 'UNSUBSCRIBED')
     .slice(0, PROVIDER_BATCH_MAX);

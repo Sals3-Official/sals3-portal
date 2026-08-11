@@ -30,6 +30,8 @@ const EMPTY_COUNTS: CandidateStatusCounts = {
   ready: 0,
   needsAttention: 0,
   evaluating: 0,
+  evaluatingQueued: 0,
+  evaluatingProcessing: 0,
   blockedRejected: 0,
   exceptionQueue: 0,
 };

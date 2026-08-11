@@ -10,6 +10,8 @@ import { findBudgetRow } from './budget-repository';
 import { summarizeOutbox } from './outbox-repository';
 import { countRecentFailures } from './failure-repository';
 import checkStorageGuard, { type StorageGuardStatus } from './storage-guard';
+import { findWatermark } from './lane-repository';
+import { countSubscriptionsByPriority } from './subscription-repository';
 
 /**
  * Operational status read model for GET /api/internal/catalog/discovery/
@@ -24,7 +26,9 @@ export type ConnectionDiscoveryStatus = {
   cycle: {
     id: string;
     state: string;
+    lane: string;
     cycleCutoff: string;
+    windowFrom: string | null;
     startedAt: string;
     lastHeartbeatAt: string | null;
     partitionsTotal: number;
@@ -40,12 +44,26 @@ export type ConnectionDiscoveryStatus = {
       reportedTotal: number | null;
     }>;
   } | null;
+  incremental: {
+    bootstrapCutoff: string | null;
+    provenCutoff: string | null;
+    nextWindowFrom: string | null;
+    safetyOverlapSeconds: number | null;
+  } | null;
+  subscriptions: {
+    priorityClass: string;
+    desiredState: string;
+    observedState: string;
+    count: number;
+  }[];
   budget: {
     pointsTotal: number | null;
     pointsRemaining: number | null;
     pointsUsedToday: number | null;
     pointsObservedAt: string | null;
     pausedUntil: string | null;
+    providerPauseReason: string | null;
+    nextSafeRefillAt: string | null;
   } | null;
 };
 
@@ -70,6 +88,10 @@ export default async function getDiscoveryStatus(): Promise<DiscoveryStatus> {
     const cycle = await findActiveCycle(db, connection.id);
     // eslint-disable-next-line no-await-in-loop -- sequential status reads.
     const budget = await findBudgetRow(db, connection.id);
+    // eslint-disable-next-line no-await-in-loop -- sequential status reads.
+    const watermark = await findWatermark(db, connection.id);
+    // eslint-disable-next-line no-await-in-loop -- sequential status reads.
+    const subscriptions = await countSubscriptionsByPriority(db, connection.id);
 
     let cycleStatus: ConnectionDiscoveryStatus['cycle'] = null;
 
@@ -85,7 +107,9 @@ export default async function getDiscoveryStatus(): Promise<DiscoveryStatus> {
       cycleStatus = {
         id: cycle.id,
         state: cycle.state,
+        lane: cycle.lane,
         cycleCutoff: cycle.cycleCutoff.toISOString(),
+        windowFrom: cycle.windowFrom?.toISOString() ?? null,
         startedAt: cycle.startedAt.toISOString(),
         lastHeartbeatAt: cycle.lastHeartbeatAt?.toISOString() ?? null,
         partitionsTotal: cycle.partitionsTotal,
@@ -114,6 +138,21 @@ export default async function getDiscoveryStatus(): Promise<DiscoveryStatus> {
       supplierConnectionId: connection.id,
       runState: runStateLabel,
       cycle: cycleStatus,
+      incremental:
+        watermark === null
+          ? null
+          : {
+              bootstrapCutoff: watermark.bootstrapCutoff?.toISOString() ?? null,
+              provenCutoff: watermark.provenCutoff?.toISOString() ?? null,
+              nextWindowFrom: watermark.nextWindowFrom?.toISOString() ?? null,
+              safetyOverlapSeconds: watermark.safetyOverlapSeconds,
+            },
+      subscriptions: subscriptions.map((row) => ({
+        priorityClass: row.priorityClass,
+        desiredState: row.desiredState,
+        observedState: row.observedState,
+        count: row.count,
+      })),
       budget:
         budget === null
           ? null
@@ -123,6 +162,8 @@ export default async function getDiscoveryStatus(): Promise<DiscoveryStatus> {
               pointsUsedToday: budget.pointsUsedToday,
               pointsObservedAt: budget.pointsObservedAt?.toISOString() ?? null,
               pausedUntil: budget.pausedUntil?.toISOString() ?? null,
+              providerPauseReason: budget.providerPauseReason,
+              nextSafeRefillAt: budget.nextSafeRefillAt?.toISOString() ?? null,
             },
     });
   }

@@ -96,6 +96,11 @@ it exists only for manual recovery of a stalled queue chain (ADR-013 §12
 forbids cron/scheduled ticks in the target runtime). Both fail closed with
 `401` when unset.
 
+In production, set `CATALOG_DISCOVERY_SWEEP_DELAY_SECONDS=300` so the
+queue-chain watchdog wakes every five minutes. This does not speed up CJ's own
+rate-limited supplier calls; it only reduces dead air when a partition lease or
+queue delivery needs self-healing.
+
 ## Commands
 
 | Command                                                                           | What it does                                                                  |
@@ -163,12 +168,13 @@ Redis, KV, or paid cache service is used for this path.
 | `/supplier-apps`                         | Connect / disconnect / reconnect the seller's own CJ Dropshipping account (ADR-008)                                                                                                                                                                                                                                                          |
 | `/products`                              | All Supplier Products — the raw supplier feed browser (today: CJdropshipping), through the seller's own connection, with a live AUD reference estimate alongside each USD price (read-only status badges, no click-to-check action)                                                                                                          |
 | `/design-preview/all-supplier-products`  | Design preview of the full multi-supplier layout against isolated fixtures (dynamic supplier/evaluation filters, duplicate detection) - `robots: noindex`, not linked from the sidebar, for review before a second real Supplier App exists                                                                                                  |
-| `/products/qualified/ready`              | Qualified Products · Ready — automated `PASS` candidates, default Product Sourcing screen                                                                                                                                                                                                                                                    |
-| `/products/qualified/needs-attention`    | Qualified Products · Needs Attention — automated `PASS_WITH_ATTENTION` candidates                                                                                                                                                                                                                                                            |
-| `/products/evaluating`                   | Candidates the pipeline has `QUEUED` or is actively `EVALUATING`                                                                                                                                                                                                                                                                             |
-| `/products/blocked`                      | Blocked / Rejected — `BLOCKED` (permanent) and `TEMPORARILY_INELIGIBLE` (retryable) candidates                                                                                                                                                                                                                                               |
-| `/products/exception-queue`              | Dead-lettered evaluation failures only (retries exhausted) — never ordinary rejections                                                                                                                                                                                                                                                       |
-| `/products/shortlisted`                  | Retired — redirects to `/products/qualified/ready`                                                                                                                                                                                                                                                                                           |
+| `/products/pipeline`                     | Product Sourcing — every candidate the automated pipeline has touched, one paged tab per decision status (`?tab=`), 100 rows a page (`?page=`), with `?q=` searching the whole tab in SQL. See [Product Sourcing paging and search](#product-sourcing-paging-and-search)                                                                     |
+| `/products/qualified/ready`              | Retired — redirects to `/products/pipeline?tab=ready` (automated `PASS` candidates)                                                                                                                                                                                                                                                          |
+| `/products/qualified/needs-attention`    | Retired — redirects to `/products/pipeline?tab=needs-attention` (automated `PASS_WITH_ATTENTION` candidates)                                                                                                                                                                                                                                 |
+| `/products/evaluating`                   | Retired — redirects to `/products/pipeline?tab=evaluating` (`QUEUED`, actively `EVALUATING`, or a technical failure still under its retry cap)                                                                                                                                                                                               |
+| `/products/blocked`                      | Retired — redirects to `/products/pipeline?tab=blocked` (`BLOCKED` permanent and `TEMPORARILY_INELIGIBLE` retryable candidates)                                                                                                                                                                                                              |
+| `/products/exception-queue`              | Retired — redirects to `/products/pipeline?tab=exception` (dead-lettered evaluation failures only, never ordinary rejections)                                                                                                                                                                                                                |
+| `/products/shortlisted`                  | Retired — redirects to `/products/pipeline?tab=ready`                                                                                                                                                                                                                                                                                        |
 | `/api/internal/catalog/evaluate-tick`    | Protected (`CRON_SECRET` bearer token) - **break-glass recovery only**: drains the outbox, requeues due retries, evaluates one bounded batch. NOT scheduled; the manual `workflow_dispatch` in `.github/workflows/evaluate-tick.yml` or a direct authenticated call invokes it                                                               |
 | `/api/internal/catalog/discovery/start`  | Protected (`DISCOVERY_CONTROL_SECRET` bearer, constant-time) - idempotent owner Start: creates the durable queue chain once; see [Continuous full-catalogue discovery](#continuous-full-catalogue-discovery)                                                                                                                                 |
 | `/api/internal/catalog/discovery/pause`  | Protected - idempotent pause: no new supplier calls; checkpoints and queue/database state retained                                                                                                                                                                                                                                           |
@@ -179,6 +185,45 @@ Redis, KV, or paid cache service is used for this path.
 | `/api/storefront/products`               | Protected product feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                 |
 | `/api/storefront/products/[id]`          | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                                                                                                                                                                                                                                                                      |
 | `/api/storefront/categories`             | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                |
+
+## Product Sourcing paging and search
+
+`/products/pipeline` is one screen with six tabs (`?tab=all|ready|needs-attention|evaluating|blocked|exception`).
+Every tab is **paged server-side**: `PIPELINE_PAGE_SIZE` (100) rows a request
+via `?page=`, with Previous/Next links and a `Page X of Y · N candidates`
+label. The page header reports the tab's **total**, not the rows in view.
+
+Why paging rather than one big table: a tab routinely holds tens of thousands
+of candidates - a market policy that blocks the discovered feed puts the whole
+feed in Blocked / Rejected - and one server-rendered table of 86,605 rows is
+tens of megabytes of HTML and hundreds of thousands of DOM nodes. A request is
+hard-capped at 200 rows (`MAX_ROWS_PER_REQUEST`); paging, not a bigger cap, is
+how the rest is reached.
+
+Search (`?q=`, the "Product name, ID, or SKU" box) runs **in SQL against the
+whole tab**: CJ product id, captured evidence name, evidence SKU, and the
+ingestion-time `feed_snapshot.name`. It used to re-filter only the rows the
+page had already fetched, which reported "No matches" for a product sitting
+past the first page. The term is a bind parameter and its LIKE wildcards are
+escaped (`searchCondition` in `src/modules/catalog/candidates/queries.ts`,
+asserted in `queries.pipeline.test.ts`).
+
+Two limitations worth knowing:
+
+- **No trigram index.** The name/SKU search is a sequential ILIKE scan over
+  the seller's candidate rows. Fine at ~90k rows; if a seller's pipeline grows
+  by an order of magnitude, add a `pg_trgm` index (needs a migration and the
+  extension) rather than accepting a slow page.
+- **A screening-blocked row shows its CJ product id, not a name.** Those rows
+  are decided before any CJ evidence call, so no `supplier_snapshots.evidence`
+  exists to render a name from. The search does look inside the stored feed
+  name, so a name search finds them - the table just labels them by id.
+
+Verify with:
+
+```bash
+npm run test:run
+```
 
 ## Design system
 
@@ -436,13 +481,13 @@ evidence could not be fetched — never that there is none.
 Discovery of CJ's catalogue runs as a **durable, self-continuing queue
 chain** - Neon PostgreSQL as the authoritative state store plus private
 Vercel Queues as the at-least-once transport (ADR-013 §12). There is **no
-cron and no scheduled GitHub Actions tick**: one owner-authorized
-`POST /api/internal/catalog/discovery/start` creates the chain, and from
-then on each unit of work persists its successor intent in a transactional
-outbox, publishes it, and completed cycles enqueue the next cycle with a
-points/freshness-aware queue delay. **The owner's browser and PC can be
-closed after Start** - Vercel's managed queue infrastructure delivers the
-messages and runs the (air-gapped, platform-invoked) consumer function.
+cron and no scheduled GitHub Actions tick**. When the official CJ connection
+first becomes workable, or an owner-authorized recovery route heals it, the
+app persists a queue intent; every later unit of work persists successor
+intent in the transactional outbox before publishing it. **The owner's
+browser and PC can be closed after the chain starts** - Vercel's managed
+queue infrastructure delivers messages and runs the (air-gapped,
+platform-invoked) consumer function.
 
 Coverage semantics (ADR-010 §12.1, ADR-013 §3):
 
@@ -450,15 +495,24 @@ Coverage semantics (ADR-010 §12.1, ADR-013 §3):
   never `product/listV2`. There is **no 6,000-record assumption anywhere**:
   that cap is documented for listV2 only, and on the legacy endpoint a total
   of exactly 6,000 or greater is ordinary density data.
-- **Immutable cycle cutoff.** Every cycle snapshots `cycleCutoff`; all its
-  partitions cover only products created at or before it. Later products are
-  the next cycle's work, so a moving catalogue never invalidates in-progress
-  coverage.
-- **Category roots from the provider tree.** Cycle start fetches
+- **Three lane semantics.** `BOOTSTRAP` is the one-time historical scan up to
+  an immutable bootstrap cutoff. `INCREMENTAL` scans only creation-time
+  windows after the stored cursor, with a conservative overlap. `AUDIT` is
+  lowest-priority bounded work against persisted bootstrap partition proofs.
+  A completed bootstrap never creates another epoch-to-current historical
+  cycle.
+- **Immutable lane windows.** Every cycle snapshots `cycleCutoff`; incremental
+  cycles also snapshot `windowFrom` and `safetyOverlapSeconds`. An unresolved
+  incremental range is stored as an obligation, while later windows can still
+  continue from the scan cursor; the proven watermark advances only across
+  fully covered ranges.
+- **Category roots from the provider tree.** Bootstrap start fetches
   `GET /product/getCategory` once, persists the leaf snapshot immutably, and
   seeds two roots per leaf: an open-start sentinel (products before the
-  configurable `CJ_DISCOVERY_EPOCH`) and the epoch-to-cutoff range. Identity
-  is the provider category id, never the label.
+  configurable `CJ_DISCOVERY_EPOCH`) and the epoch-to-bootstrap-cutoff range.
+  Incremental cycles seed only window roots; they never recreate open-start
+  or epoch-to-current roots. Identity is the provider category id, never the
+  label.
 - **Density-driven adaptive splitting.** A partition reporting more than one
   full page (200) bisects by time, then by price at provider precision, with
   inclusive-overlap boundaries and global PID deduplication so
@@ -499,42 +553,57 @@ Coverage semantics (ADR-010 §12.1, ADR-013 §3):
   every HTTP call on the same limiter; `pointsInfo` from every response
   (list and evidence alike) is persisted;
   background work may spend at most 80% of known available points (20%
-  reserved for selected/live/order-critical work); HTTP 429 persists a pause
-  aligned with CJ's documented per-minute replenishment / 00:00 UTC reset and
-  continues via a delayed queue message - never a function kept alive
+  reserved for selected/live/order-critical work). Low current `remaining`
+  no longer parks broad work until UTC midnight by default; retry time is
+  projected from current `pointsInfo`, endpoint cost, `total / 1440`
+  per-minute refill, and a safety margin. HTTP 429 persists a bounded pause
+  and continues via a delayed queue message - never a function kept alive
   sleeping.
+- **Webhook freshness.** Product/variant/stock webhook subscriptions are
+  tracked by desired/observed state and priority class. Product IDs are
+  reconciled in documented batches of at most 100, never through
+  `subscribeAll`. Order-linked and live products outrank selected/importing
+  products, which outrank ordinary Ready products; the Ready tier respects a
+  capacity buffer and leaves shortages visible instead of evicting protected
+  products.
 
-Queue operations: `DISCOVERY_CYCLE_START` (ensure/seed/sweep - also the
-self-healing heartbeat), `DISCOVERY_PARTITION`, `EVALUATE_CANDIDATE`,
-`RECONCILE_PRODUCT` (freshness sweep + per-product reconcile),
-`WEBHOOK_EVENT`, `OUTBOX_DISPATCH`. Every handler validates its message with
-Zod, claims work through database leases with exact compare-and-swap
-predicates (state, version, lease token, unexpired lease), performs a bounded
-unit of work, persists successor intent durably, and publishes successors
-before acknowledging - so duplicate and out-of-order at-least-once deliveries
-can delay work but never corrupt state or double-spend a supplier call.
+Queue operations: `DISCOVERY_CYCLE_START` (lane ensure/seed/sweep - also the
+self-healing heartbeat), `DISCOVERY_PARTITION`, `DISCOVERY_AUDIT_UNIT`,
+`EVALUATE_CANDIDATE`, `RECONCILE_PRODUCT` (freshness sweep + per-product
+reconcile), `WEBHOOK_EVENT`, `OUTBOX_DISPATCH`. Every handler validates its
+message with Zod, claims work through database leases with exact
+compare-and-swap predicates (state, version, lease token, unexpired lease),
+performs a bounded unit of work, persists successor intent durably, and
+publishes successors before acknowledging - so duplicate and out-of-order
+at-least-once deliveries can delay work but never corrupt state or
+double-spend a supplier call.
 Failed work lands in PostgreSQL (`discovery_failures`, outbox `FAILED` rows,
 partition `FAILED`/`PROVIDER_COVERAGE_UNRESOLVED` states) because the
 transport has no application dead-letter queue.
 
 Operating it:
 
-1. **Deploy** (owner action; nothing auto-starts). Apply migration `0009`
-   first - `npm run db:migrate` is an owner-run step and has NOT been
-   executed by the implementation.
-2. **Start once**: `POST /api/internal/catalog/discovery/start` with
+1. **Deploy** (owner action). Apply migrations through `0010` first -
+   `npm run db:migrate` is an owner-run step and has NOT been executed by
+   this implementation.
+2. **Automatic start**: the official CJ connect/reconnect path persists and
+   publishes a chain intent after the connection becomes workable. Existing
+   workable official connections get one idempotent heal on the first
+   authorized All Supplier Products server load.
+3. **Recovery start**: `POST /api/internal/catalog/discovery/start` with
    `Authorization: Bearer $DISCOVERY_CONTROL_SECRET`. Idempotent; concurrent
    or repeated calls converge on one chain (a partial unique index allows at
-   most one active cycle per connection). A new deployment does NOT create a
-   second chain for the same reason.
-3. **Pause / resume**: the matching `POST .../pause` and `.../resume` routes.
+   most one active cycle per connection). After bootstrap completes, recovery
+   chooses incremental rather than another historical cycle.
+4. **Pause / resume**: the matching `POST .../pause` and `.../resume` routes.
    Pause stops new supplier work while keeping every checkpoint; in-flight
    work finishes its local transaction only. Resume re-enqueues all parked
    work.
-4. **Inspect**: `GET .../status` reports run states, cycle/partition coverage
-   counts, unresolved partitions with reasons, points budget, outbox depth,
-   recent failures, and the storage guard - and never claims completion
-   while any partition is unproven.
+5. **Inspect**: `GET .../status` reports run states, lane/cycle coverage
+   counts, incremental watermark, unresolved partitions with reasons,
+   subscription priority counts, points/refill state, outbox depth, recent
+   failures, and the storage guard - and never claims completion while any
+   required partition is unproven.
 
 | Piece                           | File                                                      |
 | ------------------------------- | --------------------------------------------------------- |
@@ -547,6 +616,7 @@ Operating it:
 | Adaptive split planning         | `src/modules/catalog/discovery/partition-plan.ts`         |
 | Pagination validation matrix    | `src/modules/catalog/discovery/page-validation.ts`        |
 | Coverage checksums              | `src/modules/catalog/discovery/coverage-checksum.ts`      |
+| Lane/watermark/proof state      | `src/modules/catalog/discovery/lane-repository.ts`        |
 | Rate/points budget              | `src/modules/catalog/discovery/budget-repository.ts`      |
 | Storage guard (Neon pilot)      | `src/modules/catalog/discovery/storage-guard.ts`          |
 | Webhook verification            | `src/modules/catalog/discovery/webhook-verify.ts`         |
@@ -575,6 +645,47 @@ as production-ready full-catalogue capacity. Local tests prove the logic,
 not real coverage: actual full-catalogue completion requires the deployed
 pilot, the contract probe, the owner-run migration, sustained queue
 operation, and zero unresolved coverage partitions.
+
+**Pilot evidence allowance (2000 products, total):** paid CJ evidence
+fetching is bounded twice over, because CJ points are real money and the
+candidate table is far larger than the pilot.
+
+The _primary_ bound is data, not code. `checkValidMarket` blocks any
+candidate whose own `intended_market_codes` is empty, independently of the
+enabled allowlist — so the pilot cohort is defined by backfilling that
+column for exactly the chosen candidates and leaving every other row at
+`'{}'`. Those rows then block for free, before any CJ call, on every
+execution path. That bound is atomic, needs no migration, and is reversed by
+a single `UPDATE`.
+
+The _backstop_ is `discovery/pilot-allowance-repository.ts`, enforced in
+`candidates/evaluate.ts` immediately before the CJ adapter is built. It
+counts `candidate_evaluations.evidence_summary IS NOT NULL` — written only
+after a successful evidence fetch, and never cleared — and refuses further
+paid work at `CATALOG_PILOT_BASELINE_COUNT + CATALOG_PILOT_EVIDENCE_CAP`
+(default `0 + 2000`). It is a _total_, not a daily rate: it never resets.
+
+What consumes the allowance: one candidate completing a paid evidence fetch.
+What does not: a screening-only block, a missing or unworkable connection, or
+a later freshness re-fetch of a product already counted. The gate sits below
+every free exit in `evaluate.ts`, so that separation is structural. It also
+sits in `evaluate.ts` rather than `handle-evaluate.ts` deliberately: the
+break-glass tick calls `evaluateCandidate` directly, and a gate in the queue
+handler alone would leave that route uncapped.
+
+Refusal drops the work — `last_error_code = 'pilot_cap_reached'`,
+`attempt_count` untouched, no retry time — rather than parking a queue
+continuation, because a total cap never refills and a parked message would
+redeliver until the delivery cap and dead-letter as a failure that never
+happened. `CATALOG_PILOT_EVIDENCE_CAP` cannot be disabled by setting it to
+`0`: `envInt` rejects `0` and falls back to the default.
+
+Admission during the pilot is `POST
+/api/internal/catalog/discovery/pilot/admit`, which requeues a bounded set of
+explicitly-scoped, never-paid candidates and publishes their evaluation
+messages. It deliberately does not consult the discovery run state — the
+pilot runs with discovery PAUSED so nothing new is ingested, and pausing
+otherwise silences the freshness sweep that would normally produce this work.
 
 ### Automated candidate evaluation
 
@@ -651,37 +762,52 @@ wired up first (separate task).
   registered and may operate a seller account. Currently `AU`, enabled, per
   Bogs's 2026-08-10 decision.
 - `resolveBuyerDestinationCountryPolicy()` — where customers may purchase and
-  receive delivery. **Currently disabled with an empty allowlist** — no
-  ADR-003 market has been approved, and AU seller registration does not by
-  itself approve AU (or anywhere else) as a buyer destination.
+  receive delivery. **Currently `['AU','PH']`, enabled**, per the owner's
+  2026-08-11 decision. AU appears here because it was approved as a
+  destination in its own right, _not_ because it is the seller operating
+  country — the two lists are separately versioned and neither is derived
+  from the other.
 - `resolvePortalDisplayCurrency()` — Portal's own temporary seller-facing
   display currency (`AUD`), unrelated to either country policy and unrelated
   to the real `sals3-ecommerce` storefront checkout currency (still USD, see
   `src/lib/storefront/fx.ts`).
 
-Because the buyer-destination policy is disabled, `rules/screening.ts`'s
-`checkValidMarket` now fails every new candidate closed with
-`NO_VALID_MARKET` (a recoverable `TEMPORARILY_INELIGIBLE`, not a permanent
-block) before any CJ evidence-fetch call - **no candidate can currently reach
-`Ready` until a real buyer-destination market is approved.** This replaces
-the previous silent assumption that `'PH'` was a real, approved market.
-`checkValidMarket` also checks each candidate's own persisted
+`rules/screening.ts`'s `checkValidMarket` runs before any CJ evidence-fetch
+call and blocks with `NO_VALID_MARKET` (a recoverable
+`TEMPORARILY_INELIGIBLE`, not a permanent block) whenever the market cannot
+be proven. It fails closed in three distinct ways, and **the second one is
+what bounds the pilot**: a candidate whose own `intended_market_codes` is
+empty blocks regardless of the enabled allowlist. Every candidate ingested
+while the policy was disabled stored `'{}'`, so enabling `['AU','PH']` does
+not by itself admit them — each candidate's scope must be backfilled
+explicitly, which is exactly how the pilot cohort is chosen.
+`checkValidMarket` checks each candidate's own persisted
 `intended_market_codes` against the enabled allowlist, not only whether the
 global policy is on: every one of the candidate's destinations must already
 be enabled, or it blocks with a detail that distinguishes "no policy
 enabled," "this candidate has no destination recorded," and "this
-candidate's destination isn't in the enabled set" - so a historical `['PH']`
-candidate never silently passes once `['AU']` is approved; it stays blocked
-until its own stored scope is separately, explicitly migrated. Existing
-historical `PASS`/`PASS_WITH_ATTENTION` rows are untouched; only new
-evaluations are affected. A repository guard
+candidate's destination isn't in the enabled set". The subset check is strict
+but not narrowing: a candidate scoped `['PH']` passes under an `['AU','PH']`
+allowlist, because `PH` is genuinely enabled — approving a destination
+admits every candidate already scoped to it, which is the intended behaviour
+and the reason widening the allowlist is an owner decision rather than a
+configuration tweak. What never happens is the reverse: a candidate is never
+widened to a newly enabled country it never asked for, and an unscoped
+candidate is never admitted at all.
+
+Changing the buyer-destination `policyVersion` re-opens history on purpose:
+the freshness sweep's `requeuePolicyVersionMismatches` requeues every decided
+row whose stored version no longer matches, including `PASS` and `BLOCKED`,
+so no historical decision stays active under a superseded market policy. A
+revert must therefore restore the _exact_ previous version string rather than
+inventing a new one, or every row is requeued a second time. A repository guard
 (`no-scattered-market-literals.test.ts`) fails the build if a bare `'PH'`/
 `'AU'` market-code literal is reintroduced into this module.
 
 The buyer-destination policy is resolved exactly once per evaluation and
 composed with the catalog policy version into one stored identity
 (`candidate_evaluations.policy_version`, e.g.
-`catalog-eval-policy-placeholder-v1+buyer-destination:buyer-destination-country-v1-disabled`)
+`catalog-eval-policy-placeholder-v1+buyer-destination:buyer-destination-country-v2-au-ph`)
 via `composeEvaluationPolicyVersion()`, so a later policy-version change can
 be detected by string comparison alone - no second column. Every screening
 and evaluation audit event also records the catalog policy version, the

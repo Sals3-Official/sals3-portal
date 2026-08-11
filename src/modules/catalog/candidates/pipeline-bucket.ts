@@ -16,6 +16,8 @@ export const PIPELINE_BUCKETS = [
 
 export type PipelineBucket = (typeof PIPELINE_BUCKETS)[number];
 
+export type EvaluatingBreakdownBucket = 'queued' | 'processing' | null;
+
 /**
  * Single source of truth for which bucket one `candidate_evaluations` row
  * belongs to. `queries.ts`'s list/count functions must each return a result
@@ -56,4 +58,20 @@ export function classifyPipelineBucket(
       throw new Error(`Unclassified evaluation status: ${exhaustive}`);
     }
   }
+}
+
+export function classifyEvaluatingBreakdown(
+  status: EvaluationStatus,
+  attemptCount: number,
+): EvaluatingBreakdownBucket {
+  if (status === 'EVALUATING') return 'processing';
+  if (status === 'QUEUED') return 'queued';
+  if (
+    status === 'EVALUATION_FAILED' &&
+    attemptCount < MAX_EVALUATION_ATTEMPTS
+  ) {
+    return 'queued';
+  }
+
+  return null;
 }

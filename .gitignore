@@ -57,3 +57,15 @@ docs/.obsidian/workspace-mobile.json
 # Per-person Claude Code state (local permissions, session scratch). Machine
 # config, not project source - the shared rules live in CLAUDE.md/AGENTS.md.
 .claude/
+
+# Local verify output. Written by an ad-hoc `npm run verify > .verify-local...`
+# run, not by any committed script. These are untracked build noise that a
+# `git add -A` would otherwise sweep into a commit.
+.verify-local.*.log
+
+# Agent turnover/instruction artifacts. These are prompts handed to an agent
+# for one task, not project source - each one says to keep it untracked and
+# out of every PR. Ignoring them makes that safe by default instead of relying
+# on whoever runs `git add`.
+CLAUDE_*.txt
+CODEX_*.txt

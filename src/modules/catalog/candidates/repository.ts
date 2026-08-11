@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt, ne, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import type { DbExecutor, DbTransaction } from '@/lib/db/client';
 import {
   auditEvents,
@@ -62,6 +62,8 @@ export async function insertCandidateIfAbsent(
       supplierConnectionId: input.supplierConnectionId,
       intendedMarketCodes: input.intendedMarketCodes,
       createdBy: input.actorId,
+      providerLastSeenAt: new Date(),
+      providerLastVerifiedAt: new Date(),
     })
     // Connection-scoped as of Migration B (0004): two sellers' own
     // connections can each shortlist the same CJ pid independently.
@@ -74,6 +76,47 @@ export async function insertCandidateIfAbsent(
     .returning();
 
   return inserted[0] ?? null;
+}
+
+export async function markCandidateProviderSeen(
+  executor: Executor,
+  candidateId: string,
+): Promise<void> {
+  await executor
+    .update(supplierCandidates)
+    .set({
+      providerLastSeenAt: new Date(),
+      providerLastVerifiedAt: new Date(),
+      providerRemovalSuspectedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(supplierCandidates.id, candidateId));
+}
+
+export async function markCandidateRemovalSuspected(
+  executor: Executor,
+  input: { candidateId: string; suspectedAt: Date },
+): Promise<void> {
+  await executor
+    .update(supplierCandidates)
+    .set({
+      providerRemovalSuspectedAt: input.suspectedAt,
+      updatedAt: new Date(),
+    })
+    .where(eq(supplierCandidates.id, input.candidateId));
+}
+
+export async function markCandidateRemovalConfirmed(
+  executor: Executor,
+  input: { candidateId: string; confirmedAt: Date },
+): Promise<void> {
+  await executor
+    .update(supplierCandidates)
+    .set({
+      providerRemovalConfirmedAt: input.confirmedAt,
+      updatedAt: new Date(),
+    })
+    .where(eq(supplierCandidates.id, input.candidateId));
 }
 
 export async function findCandidateById(
@@ -781,6 +824,49 @@ export async function listStrandedEvaluations(
             eq(candidateEvaluations.status, 'EVALUATING'),
             lt(candidateEvaluations.leasedUntil, new Date()),
           ),
+        ),
+      ),
+    )
+    .limit(input.limit);
+
+  return rows.map((row) => row.candidateId);
+}
+
+/**
+ * Development-pilot admission: candidates the owner explicitly scoped to a
+ * destination, that are currently requeueable, and that have never completed
+ * a paid evidence fetch.
+ *
+ * "Explicitly scoped" is `cardinality(intended_market_codes) > 0`, NOT a
+ * country literal. Two reasons: this module is guarded against scattered
+ * market literals (see `no-scattered-market-literals.test.ts`), and the
+ * meaning that actually matters here is "the owner deliberately recorded a
+ * destination for this candidate" - which stays correct if the approved
+ * allowlist ever changes.
+ *
+ * `evidence_summary IS NULL` excludes anything already paid for, so a
+ * repeated admission call can never re-spend points on the same product.
+ * Bounded and idempotent: the requeue and the queue claim are both no-ops
+ * for a row that has already moved.
+ */
+export async function listPilotAdmissibleCandidates(
+  executor: Executor,
+  input: { limit: number },
+): Promise<string[]> {
+  const rows = await executor
+    .select({ candidateId: candidateEvaluations.candidateId })
+    .from(candidateEvaluations)
+    .innerJoin(
+      supplierCandidates,
+      eq(supplierCandidates.id, candidateEvaluations.candidateId),
+    )
+    .where(
+      and(
+        sql`cardinality(${supplierCandidates.intendedMarketCodes}) > 0`,
+        isNull(candidateEvaluations.evidenceSummary),
+        or(
+          eq(candidateEvaluations.status, 'TEMPORARILY_INELIGIBLE'),
+          eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
         ),
       ),
     )
