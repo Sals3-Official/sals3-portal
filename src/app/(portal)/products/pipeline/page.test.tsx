@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   countCandidateStatusSummaryMock,
+  countCandidatesByStatusMock,
+  countDeadLetteredEvaluationsMock,
+  countEvaluatingCandidatesMock,
   isDatabaseConfiguredMock,
   listCandidatesByStatusMock,
   listDeadLetteredEvaluationsMock,
@@ -11,6 +14,9 @@ const {
   requireDropshipperAccountMock,
 } = vi.hoisted(() => ({
   countCandidateStatusSummaryMock: vi.fn(),
+  countCandidatesByStatusMock: vi.fn(),
+  countDeadLetteredEvaluationsMock: vi.fn(),
+  countEvaluatingCandidatesMock: vi.fn(),
   isDatabaseConfiguredMock: vi.fn(),
   listCandidatesByStatusMock: vi.fn(),
   listDeadLetteredEvaluationsMock: vi.fn(),
@@ -28,7 +34,11 @@ vi.mock('@/lib/auth/seller-guard', () => ({
 }));
 
 vi.mock('@/modules/catalog/candidates/queries', () => ({
+  PIPELINE_PAGE_SIZE: 100,
   countCandidateStatusSummary: countCandidateStatusSummaryMock,
+  countCandidatesByStatus: countCandidatesByStatusMock,
+  countDeadLetteredEvaluations: countDeadLetteredEvaluationsMock,
+  countEvaluatingCandidates: countEvaluatingCandidatesMock,
   listCandidatesByStatus: listCandidatesByStatusMock,
   listDeadLetteredEvaluations: listDeadLetteredEvaluationsMock,
   listEvaluatingCandidates: listEvaluatingCandidatesMock,
@@ -49,6 +59,24 @@ vi.mock('@/components/products/cj/PipelineTabs', () => ({
     <div data-testid="pipeline-tabs">
       {counts === null ? 'counts:null' : 'counts:present'}
     </div>
+  ),
+}));
+
+vi.mock('@/components/products/cj/PipelinePagination', () => ({
+  default: ({
+    currentParams,
+    page,
+    total,
+    totalPages,
+  }: {
+    currentParams: Record<string, string>;
+    page: number;
+    total: number;
+    totalPages: number;
+  }) => (
+    <nav data-testid="pipeline-pagination">
+      {`page:${page}/${totalPages} total:${total} params:${JSON.stringify(currentParams)}`}
+    </nav>
   ),
 }));
 
@@ -126,10 +154,161 @@ describe('ProductSourcingPipelinePage', () => {
       blockedRejected: 4,
       exceptionQueue: 5,
     });
+    countCandidatesByStatusMock.mockReset().mockResolvedValue(0);
+    countDeadLetteredEvaluationsMock.mockReset().mockResolvedValue(0);
+    countEvaluatingCandidatesMock.mockReset().mockResolvedValue(0);
     listCandidatesByStatusMock.mockReset().mockResolvedValue([]);
     listDeadLetteredEvaluationsMock.mockReset().mockResolvedValue([]);
     listEvaluatingCandidatesMock.mockReset().mockResolvedValue([]);
     oldestQueuedAgeMsMock.mockReset().mockResolvedValue(null);
+  });
+
+  it('reports the tab total in the header, not the rows on this page', async () => {
+    countCandidateStatusSummaryMock.mockResolvedValue({
+      ready: 0,
+      needsAttention: 0,
+      evaluating: 1_361,
+      blockedRejected: 86_605,
+      exceptionQueue: 0,
+    });
+    listCandidatesByStatusMock.mockResolvedValue([{ candidateId: 'c-1' }]);
+
+    render(
+      await ProductSourcingPipelinePage({
+        searchParams: searchParams({ tab: 'blocked' }),
+      }),
+    );
+
+    expect(screen.getByText('86,605 candidates')).toBeInTheDocument();
+    expect(screen.getByTestId('pipeline-pagination')).toHaveTextContent(
+      'page:1/867 total:86605 params:{"tab":"blocked"}',
+    );
+    expect(listCandidatesByStatusMock).toHaveBeenCalledWith(
+      'seller-1',
+      ['BLOCKED', 'TEMPORARILY_INELIGIBLE'],
+      { limit: 100, offset: 0, search: '' },
+    );
+  });
+
+  it('clamps a page past the end onto the last page that has rows', async () => {
+    countCandidateStatusSummaryMock.mockResolvedValue({
+      ready: 0,
+      needsAttention: 0,
+      evaluating: 0,
+      blockedRejected: 250,
+      exceptionQueue: 0,
+    });
+    listCandidatesByStatusMock.mockResolvedValue([{ candidateId: 'c-1' }]);
+
+    render(
+      await ProductSourcingPipelinePage({
+        searchParams: searchParams({ tab: 'blocked', page: '9999' }),
+      }),
+    );
+
+    expect(listCandidatesByStatusMock).toHaveBeenCalledWith(
+      'seller-1',
+      ['BLOCKED', 'TEMPORARILY_INELIGIBLE'],
+      { limit: 100, offset: 200, search: '' },
+    );
+    expect(screen.getByTestId('pipeline-pagination')).toHaveTextContent(
+      'page:3/3 total:250',
+    );
+  });
+
+  it('hides pagination when the tab fits on one page', async () => {
+    listCandidatesByStatusMock.mockResolvedValue([{ candidateId: 'c-1' }]);
+
+    render(
+      await ProductSourcingPipelinePage({
+        searchParams: searchParams({ tab: 'blocked' }),
+      }),
+    );
+
+    expect(screen.queryByTestId('pipeline-pagination')).not.toBeInTheDocument();
+  });
+
+  it('searches the whole tab in SQL and counts the matches, not the page', async () => {
+    countCandidateStatusSummaryMock.mockResolvedValue({
+      ready: 0,
+      needsAttention: 0,
+      evaluating: 0,
+      blockedRejected: 86_605,
+      exceptionQueue: 0,
+    });
+    countCandidatesByStatusMock.mockResolvedValue(3);
+    listCandidatesByStatusMock.mockResolvedValue([{ candidateId: 'c-1' }]);
+
+    render(
+      await ProductSourcingPipelinePage({
+        searchParams: searchParams({ tab: 'blocked', q: '  phone case  ' }),
+      }),
+    );
+
+    expect(countCandidatesByStatusMock).toHaveBeenCalledWith(
+      'seller-1',
+      ['BLOCKED', 'TEMPORARILY_INELIGIBLE'],
+      'phone case',
+    );
+    expect(listCandidatesByStatusMock).toHaveBeenCalledWith(
+      'seller-1',
+      ['BLOCKED', 'TEMPORARILY_INELIGIBLE'],
+      { limit: 100, offset: 0, search: 'phone case' },
+    );
+    expect(
+      screen.getByText('3 candidates matching "phone case"'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('blocked candidates table')).toBeInTheDocument();
+  });
+
+  it('separates a search that matched nothing from a tab that holds nothing', async () => {
+    countCandidateStatusSummaryMock.mockResolvedValue({
+      ready: 0,
+      needsAttention: 0,
+      evaluating: 0,
+      blockedRejected: 86_605,
+      exceptionQueue: 0,
+    });
+    countCandidatesByStatusMock.mockResolvedValue(0);
+
+    render(
+      await ProductSourcingPipelinePage({
+        searchParams: searchParams({ tab: 'blocked', q: 'nothing-matches' }),
+      }),
+    );
+
+    expect(screen.getByText('No matches')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'No candidate in Blocked / Rejected matches "nothing-matches".',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('pages the exception queue through its own dead-letter query', async () => {
+    countCandidateStatusSummaryMock.mockResolvedValue({
+      ready: 0,
+      needsAttention: 0,
+      evaluating: 0,
+      blockedRejected: 0,
+      exceptionQueue: 150,
+    });
+    listDeadLetteredEvaluationsMock.mockResolvedValue([{ candidateId: 'c-1' }]);
+
+    render(
+      await ProductSourcingPipelinePage({
+        searchParams: searchParams({ tab: 'exception', page: '2' }),
+      }),
+    );
+
+    expect(listDeadLetteredEvaluationsMock).toHaveBeenCalledWith('seller-1', {
+      limit: 100,
+      offset: 100,
+      search: '',
+    });
+    expect(screen.getByTestId('pipeline-pagination')).toHaveTextContent(
+      'page:2/2 total:150',
+    );
   });
 
   it('renders an empty pipeline when the candidate list read fails', async () => {

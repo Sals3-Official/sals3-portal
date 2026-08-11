@@ -168,12 +168,13 @@ Redis, KV, or paid cache service is used for this path.
 | `/supplier-apps`                         | Connect / disconnect / reconnect the seller's own CJ Dropshipping account (ADR-008)                                                                                                                                                                                                                                                          |
 | `/products`                              | All Supplier Products — the raw supplier feed browser (today: CJdropshipping), through the seller's own connection, with a live AUD reference estimate alongside each USD price (read-only status badges, no click-to-check action)                                                                                                          |
 | `/design-preview/all-supplier-products`  | Design preview of the full multi-supplier layout against isolated fixtures (dynamic supplier/evaluation filters, duplicate detection) - `robots: noindex`, not linked from the sidebar, for review before a second real Supplier App exists                                                                                                  |
-| `/products/qualified/ready`              | Qualified Products · Ready — automated `PASS` candidates, default Product Sourcing screen                                                                                                                                                                                                                                                    |
-| `/products/qualified/needs-attention`    | Qualified Products · Needs Attention — automated `PASS_WITH_ATTENTION` candidates                                                                                                                                                                                                                                                            |
-| `/products/evaluating`                   | Candidates the pipeline has `QUEUED` or is actively `EVALUATING`                                                                                                                                                                                                                                                                             |
-| `/products/blocked`                      | Blocked / Rejected — `BLOCKED` (permanent) and `TEMPORARILY_INELIGIBLE` (retryable) candidates                                                                                                                                                                                                                                               |
-| `/products/exception-queue`              | Dead-lettered evaluation failures only (retries exhausted) — never ordinary rejections                                                                                                                                                                                                                                                       |
-| `/products/shortlisted`                  | Retired — redirects to `/products/qualified/ready`                                                                                                                                                                                                                                                                                           |
+| `/products/pipeline`                     | Product Sourcing — every candidate the automated pipeline has touched, one paged tab per decision status (`?tab=`), 100 rows a page (`?page=`), with `?q=` searching the whole tab in SQL. See [Product Sourcing paging and search](#product-sourcing-paging-and-search)                                                                     |
+| `/products/qualified/ready`              | Retired — redirects to `/products/pipeline?tab=ready` (automated `PASS` candidates)                                                                                                                                                                                                                                                          |
+| `/products/qualified/needs-attention`    | Retired — redirects to `/products/pipeline?tab=needs-attention` (automated `PASS_WITH_ATTENTION` candidates)                                                                                                                                                                                                                                 |
+| `/products/evaluating`                   | Retired — redirects to `/products/pipeline?tab=evaluating` (`QUEUED`, actively `EVALUATING`, or a technical failure still under its retry cap)                                                                                                                                                                                               |
+| `/products/blocked`                      | Retired — redirects to `/products/pipeline?tab=blocked` (`BLOCKED` permanent and `TEMPORARILY_INELIGIBLE` retryable candidates)                                                                                                                                                                                                              |
+| `/products/exception-queue`              | Retired — redirects to `/products/pipeline?tab=exception` (dead-lettered evaluation failures only, never ordinary rejections)                                                                                                                                                                                                                |
+| `/products/shortlisted`                  | Retired — redirects to `/products/pipeline?tab=ready`                                                                                                                                                                                                                                                                                        |
 | `/api/internal/catalog/evaluate-tick`    | Protected (`CRON_SECRET` bearer token) - **break-glass recovery only**: drains the outbox, requeues due retries, evaluates one bounded batch. NOT scheduled; the manual `workflow_dispatch` in `.github/workflows/evaluate-tick.yml` or a direct authenticated call invokes it                                                               |
 | `/api/internal/catalog/discovery/start`  | Protected (`DISCOVERY_CONTROL_SECRET` bearer, constant-time) - idempotent owner Start: creates the durable queue chain once; see [Continuous full-catalogue discovery](#continuous-full-catalogue-discovery)                                                                                                                                 |
 | `/api/internal/catalog/discovery/pause`  | Protected - idempotent pause: no new supplier calls; checkpoints and queue/database state retained                                                                                                                                                                                                                                           |
@@ -184,6 +185,45 @@ Redis, KV, or paid cache service is used for this path.
 | `/api/storefront/products`               | Protected product feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                 |
 | `/api/storefront/products/[id]`          | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                                                                                                                                                                                                                                                                      |
 | `/api/storefront/categories`             | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                |
+
+## Product Sourcing paging and search
+
+`/products/pipeline` is one screen with six tabs (`?tab=all|ready|needs-attention|evaluating|blocked|exception`).
+Every tab is **paged server-side**: `PIPELINE_PAGE_SIZE` (100) rows a request
+via `?page=`, with Previous/Next links and a `Page X of Y · N candidates`
+label. The page header reports the tab's **total**, not the rows in view.
+
+Why paging rather than one big table: a tab routinely holds tens of thousands
+of candidates - a market policy that blocks the discovered feed puts the whole
+feed in Blocked / Rejected - and one server-rendered table of 86,605 rows is
+tens of megabytes of HTML and hundreds of thousands of DOM nodes. A request is
+hard-capped at 200 rows (`MAX_ROWS_PER_REQUEST`); paging, not a bigger cap, is
+how the rest is reached.
+
+Search (`?q=`, the "Product name, ID, or SKU" box) runs **in SQL against the
+whole tab**: CJ product id, captured evidence name, evidence SKU, and the
+ingestion-time `feed_snapshot.name`. It used to re-filter only the rows the
+page had already fetched, which reported "No matches" for a product sitting
+past the first page. The term is a bind parameter and its LIKE wildcards are
+escaped (`searchCondition` in `src/modules/catalog/candidates/queries.ts`,
+asserted in `queries.pipeline.test.ts`).
+
+Two limitations worth knowing:
+
+- **No trigram index.** The name/SKU search is a sequential ILIKE scan over
+  the seller's candidate rows. Fine at ~90k rows; if a seller's pipeline grows
+  by an order of magnitude, add a `pg_trgm` index (needs a migration and the
+  extension) rather than accepting a slow page.
+- **A screening-blocked row shows its CJ product id, not a name.** Those rows
+  are decided before any CJ evidence call, so no `supplier_snapshots.evidence`
+  exists to render a name from. The search does look inside the stored feed
+  name, so a name search finds them - the table just labels them by id.
+
+Verify with:
+
+```bash
+npm run test:run
+```
 
 ## Design system
 
