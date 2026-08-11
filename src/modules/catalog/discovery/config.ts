@@ -189,6 +189,30 @@ export const FRESHNESS_SWEEP_DELAY_SECONDS = envInt(
 );
 
 /**
+ * Development-pilot evidence allowance: the maximum number of candidates
+ * that may ever complete a PAID CJ evidence fetch. A TOTAL, not a daily
+ * rate - it never resets, so reaching it stops paid evaluation until the
+ * owner raises it deliberately.
+ *
+ * This is a backstop, not the primary control. The primary control is data:
+ * only candidates whose own `intended_market_codes` was explicitly
+ * backfilled to an enabled destination survive `checkValidMarket`, and that
+ * gate is atomic, race-free, and honored by every execution path. This
+ * counter exists so a mistake in that data can still not run away.
+ *
+ * `CATALOG_PILOT_BASELINE_COUNT` anchors the count to whatever had already
+ * completed a paid fetch before the pilot began; without it, pre-existing
+ * rows silently consume the allowance and a rollback-then-retry starts with
+ * nothing left.
+ *
+ * NOTE: `envInt` rejects 0 and negatives and falls back to the default, so
+ * the cap CANNOT be disabled by setting it to 0. Set it to 1 to freeze paid
+ * evaluation, or raise it to continue.
+ */
+export const PILOT_EVIDENCE_CAP = envInt('CATALOG_PILOT_EVIDENCE_CAP', 2_000);
+export const PILOT_BASELINE_COUNT = envInt('CATALOG_PILOT_BASELINE_COUNT', 0);
+
+/**
  * Neon development-pilot storage guards. The configured allowance defaults
  * to Neon Free's 0.5 GB; warn at ~70%, pause new broad discovery at ~80%.
  * Accumulated product/evidence records are never deleted automatically.

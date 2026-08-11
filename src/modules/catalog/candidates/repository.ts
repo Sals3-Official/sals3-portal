@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt, ne, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import type { DbExecutor, DbTransaction } from '@/lib/db/client';
 import {
   auditEvents,
@@ -781,6 +781,49 @@ export async function listStrandedEvaluations(
             eq(candidateEvaluations.status, 'EVALUATING'),
             lt(candidateEvaluations.leasedUntil, new Date()),
           ),
+        ),
+      ),
+    )
+    .limit(input.limit);
+
+  return rows.map((row) => row.candidateId);
+}
+
+/**
+ * Development-pilot admission: candidates the owner explicitly scoped to a
+ * destination, that are currently requeueable, and that have never completed
+ * a paid evidence fetch.
+ *
+ * "Explicitly scoped" is `cardinality(intended_market_codes) > 0`, NOT a
+ * country literal. Two reasons: this module is guarded against scattered
+ * market literals (see `no-scattered-market-literals.test.ts`), and the
+ * meaning that actually matters here is "the owner deliberately recorded a
+ * destination for this candidate" - which stays correct if the approved
+ * allowlist ever changes.
+ *
+ * `evidence_summary IS NULL` excludes anything already paid for, so a
+ * repeated admission call can never re-spend points on the same product.
+ * Bounded and idempotent: the requeue and the queue claim are both no-ops
+ * for a row that has already moved.
+ */
+export async function listPilotAdmissibleCandidates(
+  executor: Executor,
+  input: { limit: number },
+): Promise<string[]> {
+  const rows = await executor
+    .select({ candidateId: candidateEvaluations.candidateId })
+    .from(candidateEvaluations)
+    .innerJoin(
+      supplierCandidates,
+      eq(supplierCandidates.id, candidateEvaluations.candidateId),
+    )
+    .where(
+      and(
+        sql`cardinality(${supplierCandidates.intendedMarketCodes}) > 0`,
+        isNull(candidateEvaluations.evidenceSummary),
+        or(
+          eq(candidateEvaluations.status, 'TEMPORARILY_INELIGIBLE'),
+          eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
         ),
       ),
     )

@@ -22,6 +22,10 @@ vi.mock('@/modules/suppliers/repository', () => ({
     status === 'CONNECTED' || status === 'DEGRADED',
 }));
 
+vi.mock('../discovery/pilot-allowance-repository', () => ({
+  assessPilotAllowance: vi.fn(),
+}));
+
 vi.mock('@/lib/secrets/postgres-supplier-secret-store', () => ({
   // A real `function` is required, not an arrow function - the code under
   // test calls `new PostgresSupplierSecretStore()`, and arrow functions can
@@ -79,6 +83,8 @@ import {
   recordScreeningDecision,
   upsertSnapshot,
 } from './repository';
+// eslint-disable-next-line import/first
+import { assessPilotAllowance } from '../discovery/pilot-allowance-repository';
 // eslint-disable-next-line import/first
 import evaluateCandidate from './evaluate';
 // eslint-disable-next-line import/first
@@ -215,6 +221,9 @@ describe('evaluateCandidate', () => {
       source: 'test-fixture',
       effective: 'ENABLED',
     });
+    asMock(assessPilotAllowance)
+      .mockReset()
+      .mockResolvedValue({ exhausted: false, paidCount: 0, limit: 2_000 });
   });
 
   it('fails closed with NO_VALID_MARKET when no buyer destination-country policy is enabled', async () => {
@@ -400,6 +409,70 @@ describe('evaluateCandidate', () => {
       expect.objectContaining({
         candidateId: 'candidate-1',
         decision: expect.objectContaining({ status: 'BLOCKED' }),
+      }),
+    );
+  });
+
+  it('never consults the pilot allowance for a screening-blocked candidate', async () => {
+    // The load-bearing guarantee of the pilot cap: a decision that costs no
+    // CJ points must never consume a paid slot. The gate sits below every
+    // free exit, so this is true by construction - and this test is what
+    // keeps it that way if the gate is ever moved.
+    await evaluateCandidate(
+      row({
+        feedSnapshot: {
+          name: 'Tobacco pipe',
+          category: 'Tobacco',
+          priceUsdCents: 500,
+          listedCount: 1,
+          shipsFrom: [],
+        },
+      }),
+    );
+
+    expect(assessPilotAllowance).not.toHaveBeenCalled();
+  });
+
+  it('never consults the pilot allowance when the connection is not workable', async () => {
+    asMock(findConnectionById).mockResolvedValue({
+      ...CONNECTION,
+      status: 'DISCONNECTED',
+    });
+
+    await evaluateCandidate(row({}));
+
+    expect(assessPilotAllowance).not.toHaveBeenCalled();
+    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses the evidence fetch once the pilot allowance is exhausted, without burning an attempt', async () => {
+    asMock(assessPilotAllowance).mockResolvedValue({
+      exhausted: true,
+      paidCount: 2_000,
+      limit: 2_000,
+    });
+
+    await evaluateCandidate(row({ attemptCount: 2 }));
+
+    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
+    expect(recordEvaluationFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        candidateId: 'candidate-1',
+        // Unchanged, not incremented: the product did nothing wrong, and an
+        // untouched attempt budget also keeps the row out of the Exception
+        // Queue, whose filter requires an exhausted one.
+        attemptCount: 2,
+        lastErrorCode: 'pilot_cap_reached',
+        // No backoff clock - recovery is the owner raising the cap.
+        nextRetryAt: null,
+      }),
+    );
+    expect(appendAuditEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'CANDIDATE_EVALUATION_REFUSED_PILOT_ALLOWANCE',
+        payload: expect.objectContaining({ paidCount: 2_000, limit: 2_000 }),
       }),
     );
   });

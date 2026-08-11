@@ -1,8 +1,9 @@
 import getDb from '@/lib/db/client';
+import createGovernedFetch from '../discovery/governed-fetch';
 import dispatchOutbox from '../discovery/outbox-dispatch';
 import evaluateCandidate from './evaluate';
 import claimBatch from './lease';
-import { requeueDueRetries } from './repository';
+import { findCandidateById, requeueDueRetries } from './repository';
 import { EVALUATION_BATCH_SIZE } from './rules/policy';
 
 /**
@@ -42,8 +43,22 @@ export default async function runEvaluationTick(): Promise<TickResult> {
 
   // eslint-disable-next-line no-restricted-syntax -- CJ's 1 req/sec limit makes this sequential by necessity.
   for (const row of batch) {
+    // Every supplier call goes through the governed fetch, exactly as the
+    // queue handler does. Without it this route would spend CJ points
+    // outside the shared limiter AND never persist the `pointsInfo` the
+    // responses carry - leaving `supplier_request_budgets` stale, so the
+    // points gate that every concurrent queue worker consults would read a
+    // budget that no longer reflects reality.
     // eslint-disable-next-line no-await-in-loop -- see above.
-    await evaluateCandidate(row);
+    const candidate = await findCandidateById(getDb(), row.candidateId);
+
+    // eslint-disable-next-line no-await-in-loop -- see above.
+    await evaluateCandidate(row, {
+      fetchImpl:
+        candidate === null
+          ? undefined
+          : createGovernedFetch(candidate.supplierConnectionId),
+    });
     evaluated += 1;
   }
 

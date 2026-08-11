@@ -10,6 +10,7 @@ import {
 } from '@/modules/suppliers/repository';
 import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
 import CjSupplierAdapter from '@/modules/suppliers/providers/cj/cj-adapter';
+import { assessPilotAllowance } from '../discovery/pilot-allowance-repository';
 import { CONNECTION_PAUSE_ERROR_CODES } from './connection-pause';
 import { decide } from './rules/decide';
 import { feedSnapshotSchema } from './rules/contracts';
@@ -171,6 +172,50 @@ export default async function evaluateCandidate(
         entityType: 'supplier_candidate',
         entityId: row.candidateId,
         payload: { connectionStatus: connection.status, lastErrorCode },
+      });
+    });
+    return;
+  }
+
+  // Development-pilot evidence allowance. This gate sits HERE, and not in
+  // the queue handler, for two reasons that are both load-bearing:
+  //
+  // 1. Every free exit is above it. A screening block, a missing connection,
+  //    and a connection-health pause all returned already, so a candidate
+  //    that costs nothing can never consume a paid slot - that is true by
+  //    construction here, not by a rule someone has to remember.
+  // 2. It is the only chokepoint both callers share. `run-tick.ts`'s
+  //    break-glass tick calls this function directly, bypassing
+  //    `handle-evaluate.ts` entirely; a gate placed only in the handler
+  //    would leave the authenticated tick route as an uncapped bypass.
+  //
+  // Refusal DROPS the work rather than parking a continuation. The points
+  // budget parks because points refill at UTC midnight; a total pilot cap
+  // never refills, so a parked message would redeliver until the delivery
+  // cap and dead-letter as a failure that never happened. `attemptCount` is
+  // left untouched - the product did nothing wrong - which also keeps these
+  // rows out of the Exception Queue, whose filter needs an exhausted attempt
+  // budget. Recovery is the owner raising the cap and requeueing, not a
+  // backoff clock.
+  const allowance = await assessPilotAllowance(getDb());
+
+  if (allowance.exhausted) {
+    await getDb().transaction(async (tx) => {
+      await recordEvaluationFailure(tx, {
+        candidateId: row.candidateId,
+        attemptCount: row.attemptCount,
+        lastErrorCode: 'pilot_cap_reached',
+        nextRetryAt: null,
+      });
+      await appendAuditEvent(tx, {
+        actorId: 'system:catalog-evaluator',
+        action: 'CANDIDATE_EVALUATION_REFUSED_PILOT_ALLOWANCE',
+        entityType: 'supplier_candidate',
+        entityId: row.candidateId,
+        payload: {
+          paidCount: allowance.paidCount,
+          limit: allowance.limit,
+        },
       });
     });
     return;
