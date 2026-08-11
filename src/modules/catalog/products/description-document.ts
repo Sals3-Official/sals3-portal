@@ -1,0 +1,134 @@
+import { createHash } from 'crypto';
+import { z } from 'zod';
+
+/**
+ * The structured, allow-listed description format
+ * (`cj-candidate-to-sals3-product-draft-implementation-spec.md` §5.1:
+ * *"`descriptionDocument` uses a structured allow-listed document format.
+ * Rendering must not accept unsanitized supplier HTML."*).
+ *
+ * It is an allow list, not a sanitiser. There is no `html` block, no raw
+ * string passthrough, and no link/image block, so there is nothing for a
+ * renderer to interpret as markup even before escaping. That matters
+ * specifically because CJ's `description` **is** supplier HTML: it is fetched
+ * and stored as evidence today but has no sanitiser (spec §26, and the
+ * parked-with-unblock-condition entry that says sanitisation must be designed
+ * *together with* this format rather than bolted on). Until that work
+ * happens, a CJ-sourced draft starts from `emptyDescriptionDocument()` — an
+ * honestly empty document the seller fills in, never a copy of unsafe markup.
+ *
+ * The text rules below reject markup-shaped input rather than escaping it, so
+ * a malformed document fails at the server boundary instead of becoming a
+ * stored-XSS payload waiting for one careless `dangerouslySetInnerHTML`.
+ * `a < b` still passes: the pattern requires a character that could begin a
+ * tag, comment, or processing instruction immediately after the `<`.
+ */
+
+const MAX_BLOCKS = 60;
+const MAX_TEXT_LENGTH = 4_000;
+const MAX_LIST_ITEMS = 40;
+const MAX_LABEL_LENGTH = 120;
+
+/** Matches `<div`, `</p`, `<!--`, `<?xml`. Does not match `a < b` or `5 <10`. */
+const MARKUP_OPENER = /<[a-zA-Z/!?]/;
+/** C0/C1 controls except tab (09) and newline (0A). */
+// eslint-disable-next-line no-control-regex
+const DISALLOWED_CONTROL = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/;
+
+const plainText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(max)
+    .refine((value) => !MARKUP_OPENER.test(value), {
+      message: 'Markup is not allowed in product description content.',
+    })
+    .refine((value) => !DISALLOWED_CONTROL.test(value), {
+      message:
+        'Control characters are not allowed in product description content.',
+    });
+
+const paragraphBlockSchema = z.object({
+  type: z.literal('paragraph'),
+  text: plainText(MAX_TEXT_LENGTH),
+});
+
+const headingBlockSchema = z.object({
+  type: z.literal('heading'),
+  /** Only sub-headings: the product title owns the single `h1` on the page. */
+  level: z.union([z.literal(2), z.literal(3)]),
+  text: plainText(MAX_LABEL_LENGTH),
+});
+
+const bulletListBlockSchema = z.object({
+  type: z.literal('bulletList'),
+  items: z.array(plainText(MAX_TEXT_LENGTH)).min(1).max(MAX_LIST_ITEMS),
+});
+
+/** Materials, care instructions, and similar spec-style content (spec §9.4). */
+const keyValueListBlockSchema = z.object({
+  type: z.literal('keyValueList'),
+  entries: z
+    .array(
+      z.object({
+        label: plainText(MAX_LABEL_LENGTH),
+        value: plainText(MAX_TEXT_LENGTH),
+      }),
+    )
+    .min(1)
+    .max(MAX_LIST_ITEMS),
+});
+
+export const descriptionBlockSchema = z.discriminatedUnion('type', [
+  paragraphBlockSchema,
+  headingBlockSchema,
+  bulletListBlockSchema,
+  keyValueListBlockSchema,
+]);
+
+export const DESCRIPTION_DOCUMENT_VERSION = 1;
+
+export const descriptionDocumentSchema = z.object({
+  version: z.literal(DESCRIPTION_DOCUMENT_VERSION),
+  blocks: z.array(descriptionBlockSchema).max(MAX_BLOCKS),
+});
+
+export type DescriptionDocument = z.infer<typeof descriptionDocumentSchema>;
+
+export function emptyDescriptionDocument(): DescriptionDocument {
+  return { version: DESCRIPTION_DOCUMENT_VERSION, blocks: [] };
+}
+
+/**
+ * Deterministic serialization with sorted keys.
+ *
+ * `JSON.stringify` preserves insertion order, so two documents that differ
+ * only in key order would checksum differently and look like a real edit in
+ * the audit trail. Sorting removes that false signal, which is what makes the
+ * checksum usable as the revision's identity in
+ * `product_revisions.content_checksum`.
+ */
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+
+  if (typeof value === 'object' && value !== null) {
+    const entries = value as Record<string, unknown>;
+
+    return Object.fromEntries(
+      Object.keys(entries)
+        .sort()
+        .map((key) => [key, canonicalize(entries[key])]),
+    );
+  }
+
+  return value;
+}
+
+export function checksumOfDescriptionDocument(
+  document: DescriptionDocument,
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalize(document)))
+    .digest('hex');
+}
