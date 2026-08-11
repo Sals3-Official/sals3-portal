@@ -12,6 +12,7 @@ export const QUEUE_OPERATIONS = [
   'DISCOVERY_CYCLE_START',
   'DISCOVERY_PARTITION',
   'DISCOVERY_AUDIT_UNIT',
+  'DISCOVERY_CURATED_LANE',
   'EVALUATE_CANDIDATE',
   'RECONCILE_PRODUCT',
   'WEBHOOK_EVENT',
@@ -64,6 +65,25 @@ export const discoveryAuditUnitMessageSchema = z.object({
   supplierConnectionId: z.uuid(),
 });
 
+export const curatedLaneSchema = z.enum([
+  'CJ_TRENDING',
+  'CJ_MOST_LISTED',
+  'CJ_NEW_ARRIVALS',
+]);
+
+/**
+ * One bounded run of a curated CJ lane. Carries only the connection and lane
+ * - the resumable page cursor, window bounds, and pause reason all live in
+ * `discovery_curated_lanes`, so a replayed message can never resume from a
+ * stale position embedded in the message body.
+ */
+export const discoveryCuratedLaneMessageSchema = z.object({
+  ...base,
+  operation: z.literal('DISCOVERY_CURATED_LANE'),
+  supplierConnectionId: z.uuid(),
+  lane: curatedLaneSchema,
+});
+
 export const evaluateCandidateMessageSchema = z.object({
   ...base,
   operation: z.literal('EVALUATE_CANDIDATE'),
@@ -106,6 +126,7 @@ export const queueMessageSchema = z.discriminatedUnion('operation', [
   discoveryCycleStartMessageSchema,
   discoveryPartitionMessageSchema,
   discoveryAuditUnitMessageSchema,
+  discoveryCuratedLaneMessageSchema,
   evaluateCandidateMessageSchema,
   reconcileProductMessageSchema,
   webhookEventMessageSchema,
@@ -120,6 +141,9 @@ export type DiscoveryPartitionMessage = z.infer<
 >;
 export type DiscoveryAuditUnitMessage = z.infer<
   typeof discoveryAuditUnitMessageSchema
+>;
+export type DiscoveryCuratedLaneMessage = z.infer<
+  typeof discoveryCuratedLaneMessageSchema
 >;
 export type EvaluateCandidateMessage = z.infer<
   typeof evaluateCandidateMessageSchema

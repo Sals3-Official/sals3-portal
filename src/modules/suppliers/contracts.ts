@@ -67,6 +67,33 @@ export type CatalogPage = {
   pointsInfo: CjPointsInfo;
 };
 
+/**
+ * Curated discovery query: the same legacy `GET /api2.0/v1/product/list`
+ * endpoint, with the owner-approved ranking parameters for the CJ Trending /
+ * Most listed / New arrivals lanes. Never `product/listV2`.
+ *
+ * `searchType` is passed through exactly as the owner specified it
+ * (`searchType=2` for CJ Trending). It is NOT part of the legacy filter set
+ * this repository verified against CJ's documentation on 2026-08-11, so its
+ * response contract is a labelled assumption: a lane whose page fails
+ * validation records an ordinary contract error and never claims coverage.
+ */
+export type CuratedPageQuery = {
+  pageNum: number;
+  /** 1..200. The documented legacy maximum is 200. */
+  pageSize: number;
+  /** Provider curated-set selector, e.g. `2` for CJ Trending. */
+  searchType?: number;
+  /** Documented legacy ordering values. */
+  orderBy?: 'createAt' | 'listedNum';
+  sort?: 'asc' | 'desc';
+  categoryId?: string;
+  createTimeFrom?: string;
+  createTimeTo?: string;
+  minPrice?: number;
+  maxPrice?: number;
+};
+
 export type SupplierCategoryLeaf = {
   /** Provider category id - the identity discovery partitions key on. */
   categoryId: string;
@@ -96,6 +123,17 @@ export interface SupplierProviderAdapter {
   listCatalogPage(
     connectionId: string,
     query: CatalogPageQuery,
+  ): Promise<CatalogPage>;
+
+  /**
+   * Curated discovery page (CJ Trending / Most listed / New arrivals). Uses
+   * the SAME legacy `/product/list` endpoint and therefore the same
+   * documented 50-point cost - a curated lane is an ordinary list request
+   * with ranking parameters, not a separately charged operation.
+   */
+  listCuratedPage(
+    connectionId: string,
+    query: CuratedPageQuery,
   ): Promise<CatalogPage>;
 
   /** Current provider category tree flattened to leaf categories. */

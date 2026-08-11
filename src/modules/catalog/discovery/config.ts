@@ -231,6 +231,97 @@ export const PILOT_EVIDENCE_CAP = envInt('CATALOG_PILOT_EVIDENCE_CAP', 2_000);
 export const PILOT_BASELINE_COUNT = envInt('CATALOG_PILOT_BASELINE_COUNT', 0);
 
 /**
+ * ACTIVE OWNER INTAKE POLICY (2026-08-12): the maximum number of NEW CJ
+ * product PIDs that broad discovery may admit per supplier connection.
+ *
+ * This is a ceiling on unique products, NOT on HTTP requests, and NOT a
+ * temporary test cap. It does not expire, reset, or raise itself; only the
+ * owner changing `CATALOG_NEW_DISCOVERY_PID_LIMIT` changes it, and a raise
+ * resumes from the durable ledger in `discovery_pid_capacities` rather than
+ * restarting or duplicating discovery. No seller/admin UI control may move
+ * it - that was explicitly out of scope for the task that introduced it.
+ *
+ * Validated strictly and lazily: an unset value means the owner-approved
+ * default, while a value that is present but not a positive integer is a
+ * real misconfiguration and throws where discovery can record it, instead of
+ * silently degrading to a different ceiling than the operator intended.
+ */
+export const DEFAULT_NEW_DISCOVERY_PID_LIMIT = 5_000;
+
+export function newDiscoveryPidLimit(): number {
+  const raw = process.env.CATALOG_NEW_DISCOVERY_PID_LIMIT;
+
+  if (raw === undefined || raw.trim() === '') {
+    return DEFAULT_NEW_DISCOVERY_PID_LIMIT;
+  }
+
+  const parsed = Number(raw.trim());
+
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(
+      'CATALOG_NEW_DISCOVERY_PID_LIMIT must be a positive integer.',
+    );
+  }
+
+  return parsed;
+}
+
+/**
+ * Bounded backlog rows re-screened locally per drain invocation, and the
+ * delay before the gate re-checks. The drain spends NO supplier calls - it
+ * re-runs local screening only - so this is purely database pressure.
+ */
+export const BACKLOG_DRAIN_BATCH = envInt('CATALOG_BACKLOG_DRAIN_BATCH', 200);
+export const BACKLOG_DRAIN_RETRY_SECONDS = envInt(
+  'CATALOG_BACKLOG_DRAIN_RETRY_SECONDS',
+  60,
+);
+
+/** Supplier list pages one curated-lane message may spend before re-enqueueing itself. */
+export const CURATED_PAGES_PER_INVOCATION = envInt(
+  'CATALOG_CURATED_PAGES_PER_INVOCATION',
+  3,
+);
+
+/** Bounded total pages per curated lane run - a curated lane is a subset, never a full scan. */
+export const CURATED_MAX_PAGES = envInt('CATALOG_CURATED_MAX_PAGES', 25);
+
+/** Curated-lane page size. Below the documented 200 maximum: these are ranked samples. */
+export const CURATED_PAGE_SIZE = envInt('CATALOG_CURATED_PAGE_SIZE', 100);
+
+/** Delay between curated-lane sweeps. Lowest priority of every discovery lane. */
+export const CURATED_SWEEP_DELAY_SECONDS = envInt(
+  'CATALOG_CURATED_SWEEP_DELAY_SECONDS',
+  24 * 60 * 60,
+);
+
+/** Look-back window for the `New arrivals` curated lane. */
+export const CURATED_NEW_ARRIVAL_WINDOW_DAYS = envInt(
+  'CATALOG_CURATED_NEW_ARRIVAL_WINDOW_DAYS',
+  14,
+);
+
+/**
+ * `listedNum` at or above which a curated `Most listed on CJ` observation
+ * also records the `CJ_HIGH_LISTED` badge. CJ documents `listedNum` as the
+ * number of platform listings - never units sold - so this threshold is a
+ * display cut-off for a ranking signal, never an eligibility or demand claim.
+ */
+export const CURATED_HIGH_LISTED_MIN = envInt(
+  'CATALOG_CURATED_HIGH_LISTED_MIN',
+  50,
+);
+
+/**
+ * Curated-lane lease duration; a crashed worker's lease expires and the lane
+ * is re-claimed from its persisted cursor.
+ */
+export const CURATED_LANE_LEASE_MS = envInt(
+  'CATALOG_CURATED_LANE_LEASE_MS',
+  5 * 60 * 1000,
+);
+
+/**
  * Neon development-pilot storage guards. The configured allowance defaults
  * to Neon Free's 0.5 GB; warn at ~70%, pause new broad discovery at ~80%.
  * Accumulated product/evidence records are never deleted automatically.

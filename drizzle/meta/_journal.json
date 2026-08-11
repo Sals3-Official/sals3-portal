@@ -92,6 +92,13 @@
       "when": 1786471673162,
       "tag": "0012_flashy_penance",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1786485885070,
+      "tag": "0013_lean_supplier_intake",
+      "breakpoints": true
     }
   ]
 }

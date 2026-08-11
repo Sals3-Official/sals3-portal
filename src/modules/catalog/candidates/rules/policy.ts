@@ -154,45 +154,46 @@ export const ABNORMAL_PRICE_CHANGE_PERCENT = envInt(
 );
 
 /**
- * Freshness tiers (ADR-010 §12.2): when a decision's evidence must be
- * reconciled again. Selected/imported/live/order-linked products get
- * webhook-driven updates plus daily reconciliation once that linkage
- * exists; qualified-but-unselected products refresh within 72 hours; other
- * operational nonterminal products within 30 days. Permanent policy blocks
- * return `null` - they re-evaluate only when supplier data or the relevant
- * policy/evidence version changes, never on a clock.
+ * Freshness deadline for a decided raw candidate.
+ *
+ * Under the lean intake policy (ADR-013 §1a, owner decision 2026-08-12) this
+ * is `null` for every status, which retires the old passive 72-hour /
+ * 30-day evidence-refresh timer for raw All Supplier Products rows.
+ *
+ * That is a deliberate narrowing, not a loss of correctness. The refresh
+ * timer existed to re-reconcile CJ EVIDENCE, and raw intake no longer
+ * fetches any: a screening decision reads only the persisted `/product/list`
+ * summary, so re-running it on a clock would re-derive the identical answer
+ * from identical inputs while adding database churn across the whole
+ * catalogue. Both real triggers stay fully event-driven and implemented:
+ *
+ * - the supplier data changed -> `requeueIfFingerprintChanged` at ingestion,
+ *   and the CJ webhook path via `requeueForSourceChange`;
+ * - the policy changed -> `requeuePolicyVersionMismatches` in the sweep,
+ *   which re-evaluates unchanged rows including `BLOCKED`, so no historical
+ *   decision stays active under an obsolete rule pack.
+ *
+ * A future deliberate conversion of a candidate into a real Sals3 draft may
+ * fetch product detail as its own separately budgeted action. That is not
+ * this function's business and must not be reintroduced here.
+ *
+ * The status parameter and every call site are kept so restoring a tier is a
+ * small, local change if a future owner decision reintroduces paid refreshes.
+ * The old `now` parameter is dropped: with no tier to offset, keeping it would
+ * only invite a caller to believe a clock still exists.
  */
-export function nextRefreshAtFor(
-  status:
-    | 'QUEUED'
-    | 'EVALUATING'
-    | 'PASS'
-    | 'PASS_WITH_ATTENTION'
-    | 'TEMPORARILY_INELIGIBLE'
-    | 'BLOCKED'
-    | 'EVALUATION_FAILED',
-  now: Date = new Date(),
-): Date | null {
-  const hours = (n: number) => new Date(now.getTime() + n * 60 * 60 * 1000);
+export type FreshnessStatus =
+  | 'QUEUED'
+  | 'EVALUATING'
+  | 'PASS'
+  | 'PASS_WITH_ATTENTION'
+  | 'TEMPORARILY_INELIGIBLE'
+  | 'BLOCKED'
+  | 'EVALUATION_FAILED';
 
-  switch (status) {
-    case 'PASS':
-    case 'PASS_WITH_ATTENTION':
-      // Qualified but unselected: reconcile at least every 72 hours. (No
-      // selected/imported/live linkage exists yet; once it does, those rows
-      // move to the daily tier.)
-      return hours(72);
-    case 'TEMPORARILY_INELIGIBLE':
-    case 'EVALUATION_FAILED':
-      // Operational nonterminal: retries handle the near term; the 30-day
-      // freshness floor guarantees even an exhausted row is reconciled and
-      // can reopen (ADR-010 §12.7 - a dead letter is not a blind spot).
-      return hours(30 * 24);
-    case 'BLOCKED':
-      return null;
-    default:
-      return null;
-  }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept so every call site still names the status it is deciding for.
+export function nextRefreshAtFor(status: FreshnessStatus): Date | null {
+  return null;
 }
 
 /**

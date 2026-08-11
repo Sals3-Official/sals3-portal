@@ -38,6 +38,15 @@ vi.mock('./outbox-repository', () => ({
   insertOutboxIntents: vi.fn(),
 }));
 
+vi.mock('./intake-gate-repository', () => ({
+  tryConsumeNewPidCapacity: vi.fn(),
+  releaseNewPidCapacity: vi.fn(),
+}));
+
+vi.mock('./signal-repository', () => ({
+  recordDiscoverySignal: vi.fn(),
+}));
+
 // eslint-disable-next-line import/first
 import type { CjProduct } from '@/lib/cj/normalize';
 // eslint-disable-next-line import/first
@@ -53,6 +62,13 @@ import {
 } from '../candidates/repository';
 // eslint-disable-next-line import/first
 import { insertOutboxIntents } from './outbox-repository';
+// eslint-disable-next-line import/first
+import {
+  releaseNewPidCapacity,
+  tryConsumeNewPidCapacity,
+} from './intake-gate-repository';
+// eslint-disable-next-line import/first
+import { recordDiscoverySignal } from './signal-repository';
 // eslint-disable-next-line import/first
 import ingestDiscoveredProduct from './ingest-product';
 
@@ -90,6 +106,10 @@ beforeEach(() => {
     source: 'test',
     effective: 'ENABLED',
   });
+  // Default: the owner's new-PID ceiling has room. Individual tests below
+  // refuse capacity to prove the ceiling is exact and never overshot.
+  asMock(tryConsumeNewPidCapacity).mockResolvedValue(true);
+  asMock(findCandidateByConnectionAndExternalId).mockResolvedValue(null);
 });
 
 describe('ingestDiscoveredProduct', () => {
@@ -234,5 +254,130 @@ describe('ingestDiscoveredProduct', () => {
     expect(insertQueuedEvaluationIfAbsent).not.toHaveBeenCalled();
     expect(insertOutboxIntents).not.toHaveBeenCalled();
     expect(appendAuditEvent).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Owner new-PID intake ceiling and curated-signal recording (2026-08-12).
+ * Capacity is consumed inside the same transaction as the candidate insert,
+ * which is what makes the ceiling exact under at-least-once delivery and
+ * concurrent workers.
+ */
+describe('ingestDiscoveredProduct - new-PID ceiling and CJ signals', () => {
+  it('consumes exactly one capacity unit for a genuinely new PID', async () => {
+    asMock(insertCandidateIfAbsent).mockResolvedValue({ id: 'candidate-1' });
+
+    await ingestDiscoveredProduct(PRODUCT, CONNECTION, CONTEXT);
+
+    expect(tryConsumeNewPidCapacity).toHaveBeenCalledTimes(1);
+    expect(tryConsumeNewPidCapacity).toHaveBeenCalledWith(
+      { tx: true },
+      'connection-1',
+    );
+  });
+
+  it('does NOT consume capacity when the PID is already persisted', async () => {
+    asMock(findCandidateByConnectionAndExternalId).mockResolvedValue({
+      id: 'candidate-1',
+      intendedMarketCodes: ['AU'],
+    });
+    asMock(insertCandidateIfAbsent).mockResolvedValue(null);
+    asMock(requeueIfFingerprintChanged).mockResolvedValue(false);
+
+    await expect(
+      ingestDiscoveredProduct(PRODUCT, CONNECTION, CONTEXT),
+    ).resolves.toBe('unchanged');
+
+    expect(tryConsumeNewPidCapacity).not.toHaveBeenCalled();
+  });
+
+  it('persists NOTHING when the ceiling is reached - never a partial admission', async () => {
+    asMock(tryConsumeNewPidCapacity).mockResolvedValue(false);
+
+    await expect(
+      ingestDiscoveredProduct(PRODUCT, CONNECTION, CONTEXT),
+    ).resolves.toBe('cap-reached');
+
+    expect(insertCandidateIfAbsent).not.toHaveBeenCalled();
+    expect(insertQueuedEvaluationIfAbsent).not.toHaveBeenCalled();
+    expect(insertOutboxIntents).not.toHaveBeenCalled();
+    expect(appendAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it('returns its capacity unit when a concurrent worker won the insert race', async () => {
+    // Existence check saw nothing, so capacity was taken - but the insert
+    // then conflicted. Without the release, one product would spend two units.
+    asMock(insertCandidateIfAbsent).mockResolvedValue(null);
+    asMock(findCandidateByConnectionAndExternalId)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: 'candidate-1', intendedMarketCodes: ['AU'] });
+    asMock(requeueIfFingerprintChanged).mockResolvedValue(false);
+
+    await ingestDiscoveredProduct(PRODUCT, CONNECTION, CONTEXT);
+
+    expect(tryConsumeNewPidCapacity).toHaveBeenCalledTimes(1);
+    expect(releaseNewPidCapacity).toHaveBeenCalledWith(
+      { tx: true },
+      'connection-1',
+    );
+  });
+
+  it('records a curated signal without touching lifecycle or stock state', async () => {
+    asMock(insertCandidateIfAbsent).mockResolvedValue({ id: 'candidate-1' });
+
+    await ingestDiscoveredProduct(PRODUCT, CONNECTION, {
+      ...CONTEXT,
+      signals: [
+        {
+          signal: 'CJ_TRENDING',
+          sourceLane: 'CJ_TRENDING',
+          sourceQuery: 'product/list searchType=2 pageSize=100',
+          observedListedNum: 10,
+        },
+      ],
+    });
+
+    expect(recordDiscoverySignal).toHaveBeenCalledWith(
+      { tx: true },
+      expect.objectContaining({
+        candidateId: 'candidate-1',
+        signal: 'CJ_TRENDING',
+        observedListedNum: 10,
+      }),
+    );
+    // The admission is the ordinary NEW_PRODUCT one - a trending observation
+    // never promotes a product or writes a decision of its own.
+    expect(recordScreeningDecision).not.toHaveBeenCalled();
+    expect(insertQueuedEvaluationIfAbsent).toHaveBeenCalledWith(
+      { tx: true },
+      expect.objectContaining({ candidateId: 'candidate-1' }),
+    );
+  });
+
+  it('records a signal for an already-known PID without consuming capacity', async () => {
+    asMock(findCandidateByConnectionAndExternalId).mockResolvedValue({
+      id: 'candidate-1',
+      intendedMarketCodes: ['AU'],
+    });
+    asMock(insertCandidateIfAbsent).mockResolvedValue(null);
+    asMock(requeueIfFingerprintChanged).mockResolvedValue(false);
+
+    await ingestDiscoveredProduct(PRODUCT, CONNECTION, {
+      ...CONTEXT,
+      signals: [
+        {
+          signal: 'CJ_HIGH_LISTED',
+          sourceLane: 'CJ_MOST_LISTED',
+          sourceQuery: 'product/list orderBy=listedNum sort=desc',
+          observedListedNum: 900,
+        },
+      ],
+    });
+
+    expect(tryConsumeNewPidCapacity).not.toHaveBeenCalled();
+    expect(recordDiscoverySignal).toHaveBeenCalledWith(
+      { tx: true },
+      expect.objectContaining({ signal: 'CJ_HIGH_LISTED' }),
+    );
   });
 });

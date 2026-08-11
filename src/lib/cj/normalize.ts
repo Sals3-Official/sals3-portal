@@ -14,6 +14,18 @@ export type CjProduct = {
   sku: string;
   imageUrl: string | null;
   category: string;
+  /**
+   * Provider category identity from the same legacy `/product/list` row.
+   * Persisted alongside the label so the All Supplier Products Category
+   * filter runs against a stable id in the Sals3 database - a renamed CJ
+   * category must not silently re-bucket a seller's saved view, and applying
+   * the filter must never cost a supplier request.
+   *
+   * Optional so the existing hand-built fixtures and storefront callers keep
+   * compiling; `normalizeCjProduct` always sets it, and every consumer reads
+   * an absent value as "provider category id unknown".
+   */
+  categoryId?: string | null;
   /** Supplier price in US cents. CJ quotes in USD. */
   priceCentsUsd: number | null;
   weight: string;
@@ -122,6 +134,7 @@ export function normalizeCjProduct(raw: RawCjProduct): CjProduct {
     sku: raw.productSku === '' ? '—' : raw.productSku,
     imageUrl: raw.productImage,
     category: raw.categoryName === '' ? '—' : raw.categoryName,
+    categoryId: raw.categoryId === '' ? null : raw.categoryId,
     priceCentsUsd: usdToCents(raw.sellPrice),
     weight: formatWeight(raw.productWeight),
     productType: raw.productType === '' ? '—' : raw.productType,

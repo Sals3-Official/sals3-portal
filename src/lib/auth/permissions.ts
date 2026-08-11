@@ -58,6 +58,12 @@ export const PORTAL_PERMISSIONS = [
   'pricing_policy:manage',
   'catalog.candidate.read',
   'catalog.candidate.shortlist',
+  // Recording a manual CJ/MyCJ stock inspection against a raw supplier
+  // candidate. Separate from `catalog.candidate.read` because an attestation
+  // is a written claim a person is accountable for, and separate from
+  // `inventory:adjust` because it changes no Sals3 inventory - it records
+  // what a human saw on the supplier's own website, and nothing else.
+  'catalog.candidate.stock_attest',
 ] as const;
 
 export type PortalPermission = (typeof PORTAL_PERMISSIONS)[number];
@@ -99,6 +105,7 @@ const ROLE_PERMISSIONS: Record<PortalRole, readonly PortalPermission[]> = {
     'pricing_policy:manage',
     'catalog.candidate.read',
     'catalog.candidate.shortlist',
+    'catalog.candidate.stock_attest',
   ],
   // Seller Center "Staff" — lists, packs, prints, edits stock, replies to
   // buyers. No finance or payout visibility (mirrors the mockup's Staff role:
@@ -117,6 +124,8 @@ const ROLE_PERMISSIONS: Record<PortalRole, readonly PortalPermission[]> = {
     'market_rules:read',
     'catalog.candidate.read',
     'catalog.candidate.shortlist',
+    // Staff already do the hands-on supplier work this records.
+    'catalog.candidate.stock_attest',
   ],
   // Read-only extension of this role's existing "look, don't touch"
   // posture. No financial or payout visibility.

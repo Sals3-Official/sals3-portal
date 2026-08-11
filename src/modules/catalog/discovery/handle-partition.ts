@@ -17,12 +17,15 @@ import type {
   SupplierConnectionRow,
 } from '@/lib/db/schema';
 import {
+  BACKLOG_DRAIN_RETRY_SECONDS,
   BUDGET_RETRY_DELAY_SECONDS,
   DISCOVERY_PAGE_SIZE,
   MAX_RECONCILE_ATTEMPTS,
   PRODUCT_LIST_POINTS_COST,
   RECONCILE_PAGES_PER_INVOCATION,
 } from './config';
+import { assessIntakeGate } from './intake-gate-repository';
+import drainExistingBacklog from './backlog-drain';
 import formatCjCreateTime from './time-format';
 import type { DiscoveryPartitionMessage } from './messages';
 import validateCatalogPage, {
@@ -296,6 +299,47 @@ async function fetchPage(
   pageNum: number,
 ): Promise<{ outcome: 'PAGE'; page: CatalogPage } | { outcome: 'PARKED' }> {
   const db = getDb();
+
+  // Backlog-first, then the owner's new-PID ceiling - BEFORE the supplier
+  // call, never after. `requiredCapacity` is this bounded request's worst
+  // case (one page can bring at most `DISCOVERY_PAGE_SIZE` new PIDs), so the
+  // ceiling is reached exactly or safely underfilled by less than one page,
+  // and a page we could not fully ingest is never requested at all.
+  const intake = await assessIntakeGate(db, {
+    supplierConnectionId: context.connection.id,
+    requiredCapacity: DISCOVERY_PAGE_SIZE,
+  });
+
+  if (!intake.allowed) {
+    if (intake.reason === 'BACKLOG_DRAIN_PENDING') {
+      // Temporary one-time transition: reconcile the pre-existing pipeline
+      // to the lean policy LOCALLY (no supplier calls), then re-check.
+      await drainExistingBacklog(context.connection.id);
+    }
+
+    await recordDiscoveryFailure(db, {
+      scope: 'DISCOVERY_PARTITION',
+      referenceId: lease.row.id,
+      errorCode: intake.reason,
+      detail:
+        intake.reason === 'BACKLOG_DRAIN_PENDING'
+          ? `Deferred: ${intake.backlogCount} actionable Candidate Pipeline rows must drain before a new product/list request.`
+          : `Deferred: ${intake.admittedCount}/${intake.limitValue} new PIDs admitted, ${intake.remainingCapacity} remaining (need ${DISCOVERY_PAGE_SIZE}).`,
+      attempts: lease.row.attempts,
+    });
+    // A pause is a pause: no checkpoint advances, no coverage is claimed,
+    // and the partition stays resumable at exactly this page.
+    await parkAndRetry(lease, context, {
+      errorCode: intake.reason,
+      consumeAttempt: false,
+      delaySeconds:
+        intake.reason === 'BACKLOG_DRAIN_PENDING'
+          ? BACKLOG_DRAIN_RETRY_SECONDS
+          : BUDGET_RETRY_DELAY_SECONDS * 4,
+    });
+    return { outcome: 'PARKED' };
+  }
+
   const budget = await assessBackgroundBudget(db, {
     supplierConnectionId: context.connection.id,
     requiredPoints: PRODUCT_LIST_POINTS_COST,
@@ -385,6 +429,51 @@ async function rejectInvalidPage(
   });
 }
 
+/**
+ * Ingests every product on one validated page. Returns false when the
+ * new-PID ceiling was reached mid-page - only possible when a concurrent
+ * worker drained the capacity the pre-flight had already reserved headroom
+ * for. Nothing is dropped: the caller parks WITHOUT advancing any cursor or
+ * claiming coverage, and the idempotent re-delivery finishes the same page
+ * once the owner raises the ceiling.
+ */
+async function ingestPageProducts(
+  lease: PartitionLease,
+  context: HandlerContext,
+  page: CatalogPage,
+): Promise<boolean> {
+  // eslint-disable-next-line no-restricted-syntax -- sequential keeps DB pressure bounded; page size <= 200.
+  for (const product of page.products) {
+    // eslint-disable-next-line no-await-in-loop -- see above.
+    const outcome = await ingestDiscoveredProduct(product, context.connection, {
+      cycleId: lease.row.cycleId,
+      partitionId: lease.row.id,
+    });
+
+    if (outcome === 'cap-reached') {
+      // eslint-disable-next-line no-await-in-loop -- terminal for this invocation.
+      await recordDiscoveryFailure(getDb(), {
+        scope: 'DISCOVERY_PARTITION',
+        referenceId: lease.row.id,
+        errorCode: 'NEW_PID_CAP_REACHED',
+        detail:
+          'New-PID ceiling reached while ingesting a page; partition parked at its current cursor.',
+        attempts: lease.row.attempts,
+      });
+      // eslint-disable-next-line no-await-in-loop -- terminal for this invocation.
+      await parkAndRetry(lease, context, {
+        errorCode: 'NEW_PID_CAP_REACHED',
+        consumeAttempt: false,
+        delaySeconds: BUDGET_RETRY_DELAY_SECONDS * 4,
+      });
+
+      return false;
+    }
+  }
+
+  return true;
+}
+
 /** First probe of a PENDING partition. */
 async function probePartition(
   lease: PartitionLease,
@@ -427,15 +516,9 @@ async function probePartition(
     }
 
     // Ingest every product (each in its own durable transaction with its
-    // status and evaluation intent), then prove coverage.
-    // eslint-disable-next-line no-restricted-syntax -- sequential keeps DB pressure bounded; page size <= 200.
-    for (const product of page.products) {
-      // eslint-disable-next-line no-await-in-loop -- see above.
-      await ingestDiscoveredProduct(product, context.connection, {
-        cycleId: lease.row.cycleId,
-        partitionId: lease.row.id,
-      });
-    }
+    // status and evaluation intent), then prove coverage. A page that could
+    // not be fully ingested never proves anything.
+    if (!(await ingestPageProducts(lease, context, page))) return;
 
     const uniquePids = [...new Set(page.products.map((p) => p.id))];
 
@@ -460,14 +543,7 @@ async function probePartition(
 
   // Dense partition. Ingest the probe page opportunistically (idempotent;
   // coverage proof still comes from the children), then split or reconcile.
-  // eslint-disable-next-line no-restricted-syntax -- sequential keeps DB pressure bounded.
-  for (const product of page.products) {
-    // eslint-disable-next-line no-await-in-loop -- see above.
-    await ingestDiscoveredProduct(product, context.connection, {
-      cycleId: lease.row.cycleId,
-      partitionId: lease.row.id,
-    });
-  }
+  if (!(await ingestPageProducts(lease, context, page))) return;
 
   const plan = planDensePartition(boundsOf(lease.row));
 
@@ -568,14 +644,8 @@ async function continueReconciliation(
     reportedTotal = page.total;
 
     // Ingest (idempotent) and accumulate this page's PIDs for the pass.
-    // eslint-disable-next-line no-restricted-syntax -- bounded page, sequential DB pressure.
-    for (const product of page.products) {
-      // eslint-disable-next-line no-await-in-loop -- see above.
-      await ingestDiscoveredProduct(product, context.connection, {
-        cycleId: lease.row.cycleId,
-        partitionId: lease.row.id,
-      });
-    }
+    // eslint-disable-next-line no-await-in-loop -- sequential by design.
+    if (!(await ingestPageProducts(lease, context, page))) return;
 
     // eslint-disable-next-line no-await-in-loop -- sequential by design.
     await insertReconcilePids(db, {

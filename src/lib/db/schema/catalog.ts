@@ -47,6 +47,22 @@ export const shortlistStateEnum = pgEnum('shortlist_state', [
 ]);
 
 /**
+ * Manual stock review (ADR-013 §1a, owner decision 2026-08-12). A separate
+ * axis from the candidate's lifecycle decision, and deliberately declared
+ * here rather than in `lean-intake.ts` so the columns that use it and the
+ * attestation-history table that references it both import in one direction.
+ *
+ * `STOCK_NOT_CHECKED` is an honest unknown: never rendered as "in stock",
+ * never rendered as a failure. No automated CJ inventory query may change it.
+ */
+export const stockReviewStateEnum = pgEnum('stock_review_state', [
+  'STOCK_NOT_CHECKED',
+  'MANUALLY_IN_STOCK',
+  'MANUALLY_NO_INVENTORY',
+  'MANUALLY_COULD_NOT_VERIFY',
+]);
+
+/**
  * Spec section 5.3 (phase-1 subset). The unique key on
  * `(supplier, external_product_id)` enforces spec section 4.2 in the
  * database, not just in application code: "Re-importing the same CJ `pid`
@@ -80,6 +96,36 @@ export const supplierCandidates = pgTable(
     shortlistState: shortlistStateEnum('shortlist_state')
       .notNull()
       .default('SHORTLISTED'),
+    /**
+     * Provider category identity/label captured from the legacy
+     * `/product/list` row that discovered this candidate. Persisted as real
+     * columns (not only inside `feed_snapshot`) so the All Supplier Products
+     * Category filter is an indexed Sals3 database read - selecting a
+     * category must never cost a CJ request.
+     */
+    providerCategoryId: text('provider_category_id'),
+    providerCategoryName: text('provider_category_name'),
+    /**
+     * Current manual stock-review state and its denormalized attestation
+     * detail. The record of record is the append-only
+     * `candidate_stock_attestations` table; these columns exist so the
+     * catalogue table renders in one query. `stockReviewVersion` is the
+     * compare-and-set token a concurrent or replayed submit must match.
+     */
+    stockReviewState: stockReviewStateEnum('stock_review_state')
+      .notNull()
+      .default('STOCK_NOT_CHECKED'),
+    stockReviewVersion: integer('stock_review_version').notNull().default(0),
+    stockReviewObservedAt: timestamp('stock_review_observed_at', {
+      withTimezone: true,
+    }),
+    stockReviewRecordedAt: timestamp('stock_review_recorded_at', {
+      withTimezone: true,
+    }),
+    stockReviewActorId: text('stock_review_actor_id'),
+    stockReviewObservedQuantity: integer('stock_review_observed_quantity'),
+    stockReviewObservedOrigin: text('stock_review_observed_origin'),
+    stockReviewNote: text('stock_review_note'),
     providerLastSeenAt: timestamp('provider_last_seen_at', {
       withTimezone: true,
     }),
@@ -120,6 +166,16 @@ export const supplierCandidates = pgTable(
     ),
     index('supplier_candidates_intended_seller_id_idx').on(
       table.intendedSellerId,
+    ),
+    // Supports the All Supplier Products Category quick filter without a scan.
+    index('supplier_candidates_connection_category_idx').on(
+      table.supplierConnectionId,
+      table.providerCategoryId,
+    ),
+    // Supports the "Needs attention" quick view (manual no-stock/unverifiable).
+    index('supplier_candidates_connection_stock_review_idx').on(
+      table.supplierConnectionId,
+      table.stockReviewState,
     ),
   ],
 );

@@ -1,6 +1,6 @@
 import getDb from '@/lib/db/client';
 import type { CjProduct } from '@/lib/cj/normalize';
-import type { SupplierConnectionRow } from '@/lib/db/schema';
+import type { DiscoverySignal, SupplierConnectionRow } from '@/lib/db/schema';
 import resolveBuyerDestinationCountryPolicy from '@/lib/country-policy/buyer-destination-country';
 import { computeFingerprint, toFeedSnapshot } from '../candidates/fingerprint';
 import {
@@ -19,31 +19,52 @@ import {
 import { decide } from '../candidates/rules/decide';
 import { checkValidMarket } from '../candidates/rules/screening';
 import { insertOutboxIntents } from './outbox-repository';
+import {
+  releaseNewPidCapacity,
+  tryConsumeNewPidCapacity,
+} from './intake-gate-repository';
+import { recordDiscoverySignal } from './signal-repository';
 
 /**
  * Ingests one discovered supplier product: candidate row, evaluation row
  * with a non-null persisted status, admission audit event, and the
  * EVALUATE_CANDIDATE successor intent - all in ONE durable transaction, so
  * no discovered product can ever exist without a lifecycle status or lose
- * its evaluation job to a crash (turnover: "Assign a persisted status
- * immediately to every discovered product").
+ * its evaluation job to a crash.
  *
- * Status vocabulary note: the discovered-and-admitted state IS the existing
- * `QUEUED` status - the same transaction that persists the discovery also
- * persists the evaluation admission, so a separate `DISCOVERED` status would
- * be a duplicate synonym of an approved existing value (turnover: "use
- * existing repository vocabulary when an approved equivalent already
- * exists").
+ * Under the lean intake policy (ADR-013 §1a) that successor evaluation is
+ * LOCAL screening only. Nothing on this path calls CJ product detail,
+ * inventory, comments, or freight, and no AI service is involved; the row's
+ * stock-review state starts - and stays - `STOCK_NOT_CHECKED` until a person
+ * records a manual CJ/MyCJ inspection.
+ *
+ * A brand-new PID must also take one unit of the durable new-PID capacity
+ * ledger, in this same transaction. When the owner's ceiling is reached the
+ * product is NOT admitted and the caller is told, so it can defer its unit
+ * with a resumable checkpoint instead of silently dropping products.
  *
  * Idempotent under re-delivery: candidate/evaluation inserts are
  * create-or-nothing on their unique indexes, the fingerprint requeue is a
- * no-op for unchanged data, and the outbox intent deduplicates on its
- * idempotency key.
+ * no-op for unchanged data, signal observations deduplicate on their own
+ * unique index, and the outbox intent deduplicates on its idempotency key. A
+ * re-observed PID never consumes capacity a second time.
  */
 
 const DISCOVERY_ACTOR_ID = 'system:cj-discovery';
 
-export type IngestOutcome = 'created' | 'requeued' | 'unchanged';
+export type IngestOutcome =
+  | 'created'
+  | 'requeued'
+  | 'unchanged'
+  /** Refused: the new-PID ceiling is reached. Nothing was persisted for this product. */
+  | 'cap-reached';
+
+export type IngestSignal = {
+  signal: DiscoverySignal;
+  sourceLane: string;
+  sourceQuery: string | null;
+  observedListedNum: number | null;
+};
 
 function noValidMarketDecision(
   buyerDestinationPolicy: ReturnType<
@@ -61,10 +82,33 @@ function noValidMarketDecision(
   return decide([marketFinding]);
 }
 
+async function recordSignals(
+  tx: Parameters<Parameters<ReturnType<typeof getDb>['transaction']>[0]>[0],
+  candidateId: string,
+  signals: IngestSignal[],
+): Promise<void> {
+  // eslint-disable-next-line no-restricted-syntax -- at most three signals per product.
+  for (const entry of signals) {
+    // eslint-disable-next-line no-await-in-loop -- see above.
+    await recordDiscoverySignal(tx, {
+      candidateId,
+      signal: entry.signal,
+      sourceLane: entry.sourceLane,
+      sourceQuery: entry.sourceQuery,
+      observedListedNum: entry.observedListedNum,
+    });
+  }
+}
+
 export default async function ingestDiscoveredProduct(
   product: CjProduct,
   connection: SupplierConnectionRow,
-  context: { cycleId: string; partitionId: string },
+  context: {
+    cycleId: string | null;
+    partitionId: string | null;
+    /** Curated-lane observation to attach to this PID, when there is one. */
+    signals?: IngestSignal[];
+  },
 ): Promise<IngestOutcome> {
   const fingerprint = computeFingerprint(product);
   const feedSnapshot = toFeedSnapshot(product);
@@ -79,14 +123,33 @@ export default async function ingestDiscoveredProduct(
     buyerDestinationPolicy,
     buyerDestinationPolicy.countryCodes,
   );
+  const signals = context.signals ?? [];
 
   return getDb().transaction(async (tx) => {
+    const existingBefore = await findCandidateByConnectionAndExternalId(
+      tx,
+      connection.id,
+      product.id,
+    );
+    let capacityTaken = false;
+
+    if (existingBefore === null) {
+      // A genuinely new unique PID. Take capacity FIRST: if the ceiling is
+      // reached, this transaction must persist nothing at all, so the unit
+      // of discovery work stays resumable and the count stays exact.
+      capacityTaken = await tryConsumeNewPidCapacity(tx, connection.id);
+
+      if (!capacityTaken) return 'cap-reached';
+    }
+
     const created = await insertCandidateIfAbsent(tx, {
       supplier: 'CJ_DROPSHIPPING',
       externalProductId: product.id,
       intendedSellerId: connection.sellerAccountId,
       supplierConnectionId: connection.id,
       intendedMarketCodes: buyerDestinationPolicy.countryCodes,
+      providerCategoryId: product.categoryId ?? null,
+      providerCategoryName: product.category,
       actorId: DISCOVERY_ACTOR_ID,
     });
 
@@ -107,8 +170,11 @@ export default async function ingestDiscoveredProduct(
           cycleId: context.cycleId,
           partitionId: context.partitionId,
           fingerprint,
+          signals: signals.map((entry) => entry.signal),
         },
       });
+
+      await recordSignals(tx, created.id, signals);
 
       if (newCandidateMarketDecision !== null) {
         await recordScreeningDecision(tx, {
@@ -136,17 +202,27 @@ export default async function ingestDiscoveredProduct(
       return 'created';
     }
 
-    const existing = await findCandidateByConnectionAndExternalId(
-      tx,
-      connection.id,
-      product.id,
-    );
+    // The insert conflicted: a concurrent worker created this candidate
+    // between our existence check and our insert, and its transaction took
+    // its own capacity unit. Give ours back before continuing as an ordinary
+    // re-observation, or one product would consume the ceiling twice.
+    if (capacityTaken) await releaseNewPidCapacity(tx, connection.id);
+
+    const existing =
+      existingBefore ??
+      (await findCandidateByConnectionAndExternalId(
+        tx,
+        connection.id,
+        product.id,
+      ));
 
     if (existing === null) {
       throw new Error(
         'Candidate conflicted on insert but could not be read back.',
       );
     }
+
+    await recordSignals(tx, existing.id, signals);
 
     const existingCandidateMarketDecision = noValidMarketDecision(
       buyerDestinationPolicy,
@@ -180,6 +256,11 @@ export default async function ingestDiscoveredProduct(
           policyVersion: evaluationPolicyVersion,
         });
 
+        await markCandidateProviderSeen(tx, existing.id, {
+          id: product.categoryId ?? null,
+          name: product.category,
+        });
+
         return 'requeued';
       }
 
@@ -197,7 +278,10 @@ export default async function ingestDiscoveredProduct(
       ]);
     }
 
-    await markCandidateProviderSeen(tx, existing.id);
+    await markCandidateProviderSeen(tx, existing.id, {
+      id: product.categoryId ?? null,
+      name: product.category,
+    });
 
     return requeued ? 'requeued' : 'unchanged';
   });

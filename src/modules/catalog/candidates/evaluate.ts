@@ -1,59 +1,64 @@
 import getDb from '@/lib/db/client';
-import { CjApiError } from '@/services/cj/config';
-import { checksumOfEvidence } from '@/lib/cj/evidence';
 import type { CandidateEvaluationRow } from '@/lib/db/schema';
-import PostgresSupplierSecretStore from '@/lib/secrets/postgres-supplier-secret-store';
 import resolveBuyerDestinationCountryPolicy from '@/lib/country-policy/buyer-destination-country';
 import {
   findConnectionById,
   isWorkableConnectionStatus,
 } from '@/modules/suppliers/repository';
-import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
-import CjSupplierAdapter from '@/modules/suppliers/providers/cj/cj-adapter';
-import { assessPilotAllowance } from '../discovery/pilot-allowance-repository';
 import { CONNECTION_PAUSE_ERROR_CODES } from './connection-pause';
 import { decide } from './rules/decide';
 import { feedSnapshotSchema } from './rules/contracts';
-import {
-  composeEvaluationPolicyVersion,
-  EVIDENCE_SCHEMA_VERSION,
-  MAX_EVALUATION_ATTEMPTS,
-  nextRetryDelayMs,
-  POLICY_VERSION,
-  RATE_LIMIT_DEFER_MS,
-} from './rules/policy';
-import { runQualification, summariseEvidence } from './rules/qualification';
+import { composeEvaluationPolicyVersion, POLICY_VERSION } from './rules/policy';
 import { runScreening } from './rules/screening';
 import {
   appendAuditEvent,
   findCandidateById,
-  recordEvaluationDecision,
   recordEvaluationFailure,
   recordScreeningDecision,
-  upsertSnapshot,
 } from './repository';
 
 /**
- * Evaluates one leased candidate: cheap screening first (spec's "cheap
- * automatic screening" step, using only the feed data captured at
- * ingestion), then - for survivors - the existing CJ evidence fetch and the
- * full qualification rules. Every CJ call happens outside a transaction,
- * matching the discipline already established in `capture-evidence.ts`; only
- * the final persistence step is a short transaction.
+ * Evaluates one leased candidate using LOCAL Sals3 screening only.
+ *
+ * ADR-013 §1a (owner decision 2026-08-12) replaced the previous behavior,
+ * which fetched CJ `/product/query`, `/product/stock/getInventoryByPid`, and
+ * `/product/productComments` for every admitted candidate and then requeued
+ * periodic refreshes. Raw All Supplier Products intake is now cheap and
+ * honest: it decides from the `/product/list` summary already persisted at
+ * ingestion, and says plainly that it has not checked stock.
+ *
+ * What this function must NOT do, and no longer does:
+ *
+ * - call product detail, inventory, comments, freight, or any other paid
+ *   supplier-evidence endpoint;
+ * - call Gemini or any other AI service (it never did, and must not start);
+ * - write `evidence_summary`, which would imply supplier evidence that was
+ *   never obtained;
+ * - touch a candidate's manual stock-review state. `STOCK_NOT_CHECKED` is an
+ *   honest unknown and only a person recording a CJ/MyCJ inspection changes
+ *   it.
+ *
+ * Historical `supplier_snapshots` rows and every `audit_events` record from
+ * the previous evidence-based implementation are left untouched and remain
+ * readable. They are history, not current stock.
+ *
+ * A screening-only decision distinguishes source screening from stock
+ * confirmation: `PASS` here means "nothing in the supplier summary
+ * disqualifies this product", never "in stock" and never "ready to publish".
  */
 export type EvaluateCandidateOptions = {
   /**
-   * Governs every supplier HTTP call of this evaluation. The queue handler
-   * passes a shared-limiter + pointsInfo-recording wrapper here (see
-   * `discovery/governed-fetch.ts`) so concurrent evaluation workers cannot
-   * collectively exceed the provider request rate; the break-glass tick uses
-   * the default fetch (single manual invocation, adapter self-spacing).
+   * Retained so the queue handler's call site and the break-glass tick keep
+   * one signature. Local screening performs no HTTP request, so nothing in
+   * this module reads it; it is not removed because doing so would churn
+   * every caller for no behavioral gain.
    */
   fetchImpl?: typeof fetch;
 };
 
 export default async function evaluateCandidate(
   row: CandidateEvaluationRow,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- see EvaluateCandidateOptions.
   options: EvaluateCandidateOptions = {},
 ): Promise<void> {
   const candidate = await findCandidateById(getDb(), row.candidateId);
@@ -66,10 +71,10 @@ export default async function evaluateCandidate(
 
   const feedSnapshot = feedSnapshotSchema.parse(row.feedSnapshot);
 
-  // Resolved exactly once for this evaluation (Codex review fix): every
-  // downstream use - the market rule, the stored policy identity, and the
-  // audit payload - reads this same snapshot, so one evaluation can never
-  // observe two different buyer-destination policy versions.
+  // Resolved exactly once for this evaluation: the market rule, the stored
+  // policy identity, and the audit payload all read this same snapshot, so
+  // one evaluation can never observe two different buyer-destination policy
+  // versions.
   const buyerDestinationPolicy = resolveBuyerDestinationCountryPolicy();
   const evaluationPolicyVersion = composeEvaluationPolicyVersion(
     POLICY_VERSION,
@@ -84,39 +89,9 @@ export default async function evaluateCandidate(
     candidateIntendedDestinationCodes: candidate.intendedMarketCodes,
   };
 
-  const screeningFindings = runScreening(feedSnapshot, {
-    buyerDestinationPolicy,
-    candidateDestinationCodes: candidate.intendedMarketCodes,
-  });
-  const screeningBlocked = screeningFindings.some(
-    (finding) => finding.severity === 'BLOCK',
-  );
-
-  if (screeningBlocked) {
-    const decision = decide(screeningFindings);
-
-    await getDb().transaction(async (tx) => {
-      await recordScreeningDecision(tx, {
-        candidateId: row.candidateId,
-        decision,
-        policyVersion: evaluationPolicyVersion,
-      });
-      await appendAuditEvent(tx, {
-        actorId: 'system:catalog-evaluator',
-        action: 'CANDIDATE_SCREENING_DECIDED',
-        entityType: 'supplier_candidate',
-        entityId: row.candidateId,
-        payload: { decision, screeningOnly: true, ...marketAuditFields },
-      });
-    });
-
-    return;
-  }
-
   if (candidate.supplierConnectionId === null) {
-    // Should not happen after the bootstrap backfill (spec's Migration
-    // A/B sequence) - a candidate with no connection has no credential to
-    // fetch evidence with. Fails safely rather than crashing the tick.
+    // Should not happen after the bootstrap backfill - a candidate with no
+    // connection has no owning seller. Fails safely rather than crashing.
     await getDb().transaction(async (tx) => {
       await recordEvaluationFailure(tx, {
         candidateId: row.candidateId,
@@ -150,13 +125,11 @@ export default async function evaluateCandidate(
   }
 
   if (!isWorkableConnectionStatus(connection.status)) {
-    // The candidate itself did nothing wrong - its seller's own connection
-    // is disconnected, revoked, needs reauth, or still pending verification.
-    // Never burn a technical attempt for that (ADR-007: an intentional
-    // disconnect "does not increment technical attempts"), and never
-    // schedule a time-based retry - recovery is event-driven, via
-    // `requeueConnectionPausedEvaluations` when the connection becomes
-    // workable again, not a backoff clock.
+    // ADR-007: an intentional disconnect is an expected pause, never a
+    // technical failure of this product. Screening spends no supplier call,
+    // but a seller who disconnected has asked Sals3 to stop working their
+    // catalogue, and that intention is honored here too. Recovery stays
+    // event-driven via `requeueConnectionPausedEvaluations`.
     const lastErrorCode = CONNECTION_PAUSE_ERROR_CODES[connection.status];
 
     await getDb().transaction(async (tx) => {
@@ -177,166 +150,29 @@ export default async function evaluateCandidate(
     return;
   }
 
-  // Development-pilot evidence allowance. This gate sits HERE, and not in
-  // the queue handler, for two reasons that are both load-bearing:
-  //
-  // 1. Every free exit is above it. A screening block, a missing connection,
-  //    and a connection-health pause all returned already, so a candidate
-  //    that costs nothing can never consume a paid slot - that is true by
-  //    construction here, not by a rule someone has to remember.
-  // 2. It is the only chokepoint both callers share. `run-tick.ts`'s
-  //    break-glass tick calls this function directly, bypassing
-  //    `handle-evaluate.ts` entirely; a gate placed only in the handler
-  //    would leave the authenticated tick route as an uncapped bypass.
-  //
-  // Refusal DROPS the work rather than parking a continuation. The points
-  // budget parks because points refill at UTC midnight; a total pilot cap
-  // never refills, so a parked message would redeliver until the delivery
-  // cap and dead-letter as a failure that never happened. `attemptCount` is
-  // left untouched - the product did nothing wrong - which also keeps these
-  // rows out of the Exception Queue, whose filter needs an exhausted attempt
-  // budget. Recovery is the owner raising the cap and requeueing, not a
-  // backoff clock.
-  const allowance = await assessPilotAllowance(getDb());
-
-  if (allowance.exhausted) {
-    await getDb().transaction(async (tx) => {
-      await recordEvaluationFailure(tx, {
-        candidateId: row.candidateId,
-        attemptCount: row.attemptCount,
-        lastErrorCode: 'pilot_cap_reached',
-        nextRetryAt: null,
-      });
-      await appendAuditEvent(tx, {
-        actorId: 'system:catalog-evaluator',
-        action: 'CANDIDATE_EVALUATION_REFUSED_PILOT_ALLOWANCE',
-        entityType: 'supplier_candidate',
-        entityId: row.candidateId,
-        payload: {
-          paidCount: allowance.paidCount,
-          limit: allowance.limit,
-        },
-      });
-    });
-    return;
-  }
-
-  const secretStore = new PostgresSupplierSecretStore();
-  const adapter = new CjSupplierAdapter(
-    secretStore,
-    new CjTokenManager(secretStore),
-    options.fetchImpl ?? fetch,
-  );
-
-  let evidence;
-
-  try {
-    evidence = await adapter.getCandidateEvidence(
-      connection.id,
-      candidate.externalProductId,
-    );
-  } catch (error) {
-    const reason =
-      error instanceof CjApiError ? error.reason : 'unexpected-response';
-
-    if (reason === 'rate-limited') {
-      // Rate/points pressure - a real provider 429, or the shared limiter
-      // refusing a slot under concurrency. ADR-013 §5: recoverable
-      // connection health, never a technical failure of THIS product. The
-      // attempt budget stays untouched; the row defers with a retry time,
-      // so healthy products can never dead-letter from load alone.
-      await getDb().transaction(async (tx) => {
-        await recordEvaluationFailure(tx, {
-          candidateId: row.candidateId,
-          attemptCount: row.attemptCount,
-          lastErrorCode: reason,
-          nextRetryAt: new Date(Date.now() + RATE_LIMIT_DEFER_MS),
-        });
-        await appendAuditEvent(tx, {
-          actorId: 'system:catalog-evaluator',
-          action: 'CANDIDATE_EVALUATION_RATE_LIMIT_DEFERRED',
-          entityType: 'supplier_candidate',
-          entityId: row.candidateId,
-          payload: { reason, attemptCount: row.attemptCount },
-        });
-      });
-
-      return;
-    }
-
-    const attemptCount = row.attemptCount + 1;
-    const exhausted = attemptCount >= MAX_EVALUATION_ATTEMPTS;
-
-    // eslint-disable-next-line no-console
-    console.error('[portal] automated candidate evaluation fetch failed', {
-      candidateId: row.candidateId,
-      externalProductId: candidate.externalProductId,
-      reason,
-      attemptCount,
-    });
-
-    await getDb().transaction(async (tx) => {
-      await recordEvaluationFailure(tx, {
-        candidateId: row.candidateId,
-        attemptCount,
-        lastErrorCode: reason,
-        nextRetryAt: exhausted
-          ? null
-          : new Date(Date.now() + nextRetryDelayMs(attemptCount)),
-      });
-      await appendAuditEvent(tx, {
-        actorId: 'system:catalog-evaluator',
-        action: exhausted
-          ? 'CANDIDATE_EVALUATION_DEAD_LETTERED'
-          : 'CANDIDATE_EVALUATION_RETRY_SCHEDULED',
-        entityType: 'supplier_candidate',
-        entityId: row.candidateId,
-        payload: { reason, attemptCount },
-      });
-    });
-
-    return;
-  }
-
-  const qualificationFindings = runQualification(
-    evidence,
-    row.lastKnownPriceUsdCents,
-  );
-  const decision = decide([...screeningFindings, ...qualificationFindings]);
-  const evidenceSummary = summariseEvidence(
-    evidence,
-    row.lastKnownPriceUsdCents,
-  );
-  const currentPriceUsdCents =
-    evidence.supplierPriceUsd === null
-      ? null
-      : Math.round(evidence.supplierPriceUsd * 100);
-
-  const checksum = checksumOfEvidence(evidence);
+  const screeningFindings = runScreening(feedSnapshot, {
+    buyerDestinationPolicy,
+    candidateDestinationCodes: candidate.intendedMarketCodes,
+  });
+  const decision = decide(screeningFindings);
 
   await getDb().transaction(async (tx) => {
-    await upsertSnapshot(tx, {
-      candidateId: row.candidateId,
-      schemaVersion: EVIDENCE_SCHEMA_VERSION,
-      checksum,
-      evidence,
-      capturedAt: new Date(evidence.capturedAt),
-    });
-    await recordEvaluationDecision(tx, {
+    await recordScreeningDecision(tx, {
       candidateId: row.candidateId,
       decision,
-      evidenceSummary,
-      sourceSnapshotChecksum: checksum,
       policyVersion: evaluationPolicyVersion,
-      lastKnownPriceUsdCents: currentPriceUsdCents,
-      attemptCount: row.attemptCount,
     });
     await appendAuditEvent(tx, {
       actorId: 'system:catalog-evaluator',
-      action: 'CANDIDATE_EVALUATION_DECIDED',
+      action: 'CANDIDATE_SCREENING_DECIDED',
       entityType: 'supplier_candidate',
       entityId: row.candidateId,
-      payload: { decision, checksum, ...marketAuditFields },
+      payload: {
+        decision,
+        screeningOnly: true,
+        supplierEvidenceFetched: false,
+        ...marketAuditFields,
+      },
     });
   });
 }

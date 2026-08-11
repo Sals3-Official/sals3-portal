@@ -12,6 +12,8 @@ import { countRecentFailures } from './failure-repository';
 import checkStorageGuard, { type StorageGuardStatus } from './storage-guard';
 import { findWatermark } from './lane-repository';
 import { countSubscriptionsByPriority } from './subscription-repository';
+import { readIntakeGateStatus } from './intake-gate-repository';
+import { listCuratedLanes } from './curated-lane-repository';
 
 /**
  * Operational status read model for GET /api/internal/catalog/discovery/
@@ -56,6 +58,42 @@ export type ConnectionDiscoveryStatus = {
     observedState: string;
     count: number;
   }[];
+  /**
+   * The one-time existing-backlog drain gate. While this is not
+   * `DRAIN_COMPLETE`, no lane may make a new broad `product/list` request.
+   */
+  backlog: {
+    state: string;
+    activationAt: string | null;
+    baselineBacklogCount: number | null;
+    actionableBacklogCount: number | null;
+    drainCompletedAt: string | null;
+  };
+  /**
+   * The owner's active new-unique-PID intake ceiling and how much of it is
+   * spent. `limitValue` is what the durable ledger is enforcing, which is the
+   * number that matters - not whatever the reading process has in its own
+   * environment.
+   */
+  newPidCapacity: {
+    enabled: boolean;
+    limitValue: number | null;
+    admittedCount: number | null;
+    remainingCapacity: number | null;
+    capReachedAt: string | null;
+  };
+  /** Curated CJ lanes: cursor, counters, and the exact current pause reason. */
+  curatedLanes: {
+    lane: string;
+    state: string;
+    nextPage: number;
+    pagesFetched: number;
+    newPidsAdmitted: number;
+    signalsRecorded: number;
+    lastPauseReason: string | null;
+    lastErrorCode: string | null;
+    lastRunAt: string | null;
+  }[];
   budget: {
     pointsTotal: number | null;
     pointsRemaining: number | null;
@@ -92,6 +130,10 @@ export default async function getDiscoveryStatus(): Promise<DiscoveryStatus> {
     const watermark = await findWatermark(db, connection.id);
     // eslint-disable-next-line no-await-in-loop -- sequential status reads.
     const subscriptions = await countSubscriptionsByPriority(db, connection.id);
+    // eslint-disable-next-line no-await-in-loop -- sequential status reads.
+    const intake = await readIntakeGateStatus(db, connection.id);
+    // eslint-disable-next-line no-await-in-loop -- sequential status reads.
+    const curatedLanes = await listCuratedLanes(db, connection.id);
 
     let cycleStatus: ConnectionDiscoveryStatus['cycle'] = null;
 
@@ -147,6 +189,19 @@ export default async function getDiscoveryStatus(): Promise<DiscoveryStatus> {
               nextWindowFrom: watermark.nextWindowFrom?.toISOString() ?? null,
               safetyOverlapSeconds: watermark.safetyOverlapSeconds,
             },
+      backlog: intake.backlog,
+      newPidCapacity: intake.newPidCapacity,
+      curatedLanes: curatedLanes.map((row) => ({
+        lane: row.lane,
+        state: row.state,
+        nextPage: row.nextPage,
+        pagesFetched: row.pagesFetched,
+        newPidsAdmitted: row.newPidsAdmitted,
+        signalsRecorded: row.signalsRecorded,
+        lastPauseReason: row.lastPauseReason,
+        lastErrorCode: row.lastErrorCode,
+        lastRunAt: row.lastRunAt?.toISOString() ?? null,
+      })),
       subscriptions: subscriptions.map((row) => ({
         priorityClass: row.priorityClass,
         desiredState: row.desiredState,

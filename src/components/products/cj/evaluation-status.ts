@@ -11,38 +11,47 @@ export type EvaluationStatusPresentation = {
 /**
  * Single source of truth for how an automated evaluation status reads to a
  * human - shared by every row badge and drawer so they cannot drift apart.
- * The system performs the evaluation, not the seller (spec's UI
- * corrections): there is no click-to-check action anywhere this is used.
+ * The system performs the screening, not the seller: there is no
+ * click-to-check action anywhere this is used.
+ *
+ * Copy corrected 2026-08-12 for the lean intake policy (ADR-013 §1a). Raw
+ * catalogue screening decides from the persisted supplier listing summary
+ * and makes no CJ detail/inventory/comments call, so the old wording
+ * ("fetching fresh CJ evidence", "CJ evidence could not be fetched") would
+ * now describe work that does not happen. Just as importantly, a screening
+ * pass is NOT a stock confirmation: stock lives on its own manual review
+ * axis and every label below is careful not to imply otherwise.
  */
 const STATUS_TEXT: Record<EvaluationStatus, EvaluationStatusPresentation> = {
   QUEUED: {
     label: 'Queued',
     tone: 'neutral',
     description:
-      'Waiting for the automated evaluation pipeline to pick this up.',
+      'Waiting for the automated screening pipeline to pick this up.',
   },
   EVALUATING: {
-    label: 'Evaluating',
+    label: 'Screening',
     tone: 'info',
     description:
-      'The pipeline is fetching fresh CJ evidence for this candidate now.',
+      'Local Sals3 screening is running against the persisted supplier listing summary. No supplier call is made.',
   },
   PASS: {
-    label: 'Ready',
+    label: 'Screening passed',
     tone: 'success',
-    description: 'Passed automated evaluation with no open issues.',
+    description:
+      'Nothing in the supplier listing summary disqualifies this product. Stock has not been checked, and this is not a freight or publication confirmation.',
   },
   PASS_WITH_ATTENTION: {
     label: 'Needs attention',
     tone: 'warning',
     description:
-      'Passed with one or more warnings - still eligible to customize and list.',
+      'Screening passed with one or more warnings. Stock is still unconfirmed until someone records a manual check.',
   },
   TEMPORARILY_INELIGIBLE: {
     label: 'Temporarily unavailable',
     tone: 'warning',
     description:
-      'A retryable issue (stock, shipping, or price) is blocking this candidate for now.',
+      'A recoverable screening issue (market, price) blocks this candidate for now. It re-opens when the supplier data or the policy changes.',
   },
   BLOCKED: {
     label: 'Blocked',
@@ -50,10 +59,10 @@ const STATUS_TEXT: Record<EvaluationStatus, EvaluationStatusPresentation> = {
     description: 'A permanent policy issue blocks this candidate. No override.',
   },
   EVALUATION_FAILED: {
-    label: 'Evaluation failed',
+    label: 'Screening failed',
     tone: 'danger',
     description:
-      'CJ evidence could not be fetched. The pipeline will retry automatically.',
+      'Local screening could not complete for this candidate. The pipeline will retry automatically.',
   },
 };
 
@@ -68,7 +77,7 @@ const EXHAUSTED_EVALUATION_FAILED: EvaluationStatusPresentation = {
   label: 'Needs a person',
   tone: 'danger',
   description:
-    'CJ evidence could not be fetched after every automatic retry. This needs manual review, not another automatic attempt.',
+    'Local screening could not complete after every automatic retry. This needs manual review, not another automatic attempt.',
 };
 
 /**
