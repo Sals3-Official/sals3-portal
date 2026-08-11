@@ -3,6 +3,7 @@ import { MAX_QUEUE_DELIVERIES } from './config';
 import { queueMessageSchema } from './messages';
 import handleCycleStart from './handle-cycle-start';
 import handlePartition from './handle-partition';
+import handleAuditUnit from './handle-audit-unit';
 import handleEvaluateCandidate from './handle-evaluate';
 import handleReconcileProduct from './handle-reconcile';
 import handleWebhookEvent from './handle-webhook-event';
@@ -65,6 +66,9 @@ export default async function handleQueueMessage(
       break;
     case 'DISCOVERY_PARTITION':
       await handlePartition(message);
+      break;
+    case 'DISCOVERY_AUDIT_UNIT':
+      await handleAuditUnit(message);
       break;
     case 'EVALUATE_CANDIDATE':
       await handleEvaluateCandidate(message);

@@ -15,6 +15,7 @@ import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
 import CjSupplierAdapter from '@/modules/suppliers/providers/cj/cj-adapter';
 import { CjApiError } from '@/services/cj/config';
 import type { ProductsPageQuery } from '@/lib/cj/schemas';
+import { ensureDiscoveryChainOnAuthorizedLoad } from '@/modules/catalog/discovery/control';
 import CjErrorPanel from './CjErrorPanel';
 import CjPagination from './CjPagination';
 import CjProductGrid from './CjProductGrid';
@@ -123,6 +124,8 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
     status: connection.status,
     lastVerifiedAt: connection.lastVerifiedAt?.toISOString() ?? null,
   };
+
+  await ensureDiscoveryChainOnAuthorizedLoad(connection.id);
 
   let page;
   let usdToAudMidRate;

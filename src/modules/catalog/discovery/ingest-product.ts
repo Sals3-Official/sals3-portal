@@ -8,6 +8,7 @@ import {
   findCandidateByConnectionAndExternalId,
   insertCandidateIfAbsent,
   insertQueuedEvaluationIfAbsent,
+  markCandidateProviderSeen,
   recordScreeningDecision,
   requeueIfFingerprintChanged,
 } from '../candidates/repository';
@@ -195,6 +196,8 @@ export default async function ingestDiscoveredProduct(
         },
       ]);
     }
+
+    await markCandidateProviderSeen(tx, existing.id);
 
     return requeued ? 'requeued' : 'unchanged';
   });

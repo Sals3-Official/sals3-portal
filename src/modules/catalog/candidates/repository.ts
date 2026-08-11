@@ -62,6 +62,8 @@ export async function insertCandidateIfAbsent(
       supplierConnectionId: input.supplierConnectionId,
       intendedMarketCodes: input.intendedMarketCodes,
       createdBy: input.actorId,
+      providerLastSeenAt: new Date(),
+      providerLastVerifiedAt: new Date(),
     })
     // Connection-scoped as of Migration B (0004): two sellers' own
     // connections can each shortlist the same CJ pid independently.
@@ -74,6 +76,47 @@ export async function insertCandidateIfAbsent(
     .returning();
 
   return inserted[0] ?? null;
+}
+
+export async function markCandidateProviderSeen(
+  executor: Executor,
+  candidateId: string,
+): Promise<void> {
+  await executor
+    .update(supplierCandidates)
+    .set({
+      providerLastSeenAt: new Date(),
+      providerLastVerifiedAt: new Date(),
+      providerRemovalSuspectedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(supplierCandidates.id, candidateId));
+}
+
+export async function markCandidateRemovalSuspected(
+  executor: Executor,
+  input: { candidateId: string; suspectedAt: Date },
+): Promise<void> {
+  await executor
+    .update(supplierCandidates)
+    .set({
+      providerRemovalSuspectedAt: input.suspectedAt,
+      updatedAt: new Date(),
+    })
+    .where(eq(supplierCandidates.id, input.candidateId));
+}
+
+export async function markCandidateRemovalConfirmed(
+  executor: Executor,
+  input: { candidateId: string; confirmedAt: Date },
+): Promise<void> {
+  await executor
+    .update(supplierCandidates)
+    .set({
+      providerRemovalConfirmedAt: input.confirmedAt,
+      updatedAt: new Date(),
+    })
+    .where(eq(supplierCandidates.id, input.candidateId));
 }
 
 export async function findCandidateById(

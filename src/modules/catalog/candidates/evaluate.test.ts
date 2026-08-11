@@ -109,6 +109,10 @@ const CANDIDATE: SupplierCandidateRow = {
   // exercised end-to-end below.
   intendedMarketCodes: ['TEST'],
   shortlistState: 'SHORTLISTED',
+  providerLastSeenAt: null,
+  providerLastVerifiedAt: null,
+  providerRemovalSuspectedAt: null,
+  providerRemovalConfirmedAt: null,
   createdAt: new Date(),
   createdBy: 'system:cj-ingestion',
   updatedAt: new Date(),

@@ -13,16 +13,19 @@ vi.mock('./run-state-repository', () => ({ setDesiredRunState: vi.fn() }));
 vi.mock('./cycle-repository', () => ({
   createCycleIfAbsent: vi.fn(),
   findActiveCycle: vi.fn(),
+  findLatestCompletedCycle: vi.fn(),
 }));
 vi.mock('./budget-repository', () => ({ ensureBudgetRow: vi.fn() }));
 vi.mock('./outbox-repository', () => ({ insertOutboxIntents: vi.fn() }));
 vi.mock('./outbox-dispatch', () => ({ default: vi.fn() }));
+vi.mock('./lane-repository', () => ({ findWatermark: vi.fn() }));
 vi.mock('./handle-cycle-start', () => ({
-  cycleStartIntent: (input: { keySuffix: string }) => ({
+  cycleStartIntent: (input: { keySuffix: string; lane?: string }) => ({
     message: {
       v: 1,
       operation: 'DISCOVERY_CYCLE_START',
       idempotencyKey: `cycle-start:${input.keySuffix}`,
+      lane: input.lane,
     },
   }),
 }));
@@ -32,9 +35,15 @@ import { listWorkableConnections } from '@/modules/suppliers/repository';
 // eslint-disable-next-line import/first
 import { setDesiredRunState } from './run-state-repository';
 // eslint-disable-next-line import/first
-import { createCycleIfAbsent, findActiveCycle } from './cycle-repository';
+import {
+  createCycleIfAbsent,
+  findActiveCycle,
+  findLatestCompletedCycle,
+} from './cycle-repository';
 // eslint-disable-next-line import/first
 import dispatchOutbox from './outbox-dispatch';
+// eslint-disable-next-line import/first
+import { findWatermark } from './lane-repository';
 // eslint-disable-next-line import/first
 import applyDiscoveryControl from './control';
 
@@ -52,6 +61,8 @@ beforeEach(() => {
     created: false,
   });
   asMock(findActiveCycle).mockResolvedValue(CYCLE);
+  asMock(findLatestCompletedCycle).mockResolvedValue(null);
+  asMock(findWatermark).mockResolvedValue(null);
   asMock(dispatchOutbox).mockResolvedValue({ dispatched: 1, failed: 0 });
 });
 
@@ -85,6 +96,25 @@ describe('applyDiscoveryControl', () => {
 
     expect(results[0]).toEqual(
       expect.objectContaining({ cycleId: 'cycle-1', cycleCreated: false }),
+    );
+  });
+
+  it('START chooses incremental recovery when bootstrap already completed', async () => {
+    const proven = new Date('2026-08-10T00:00:00Z');
+    asMock(findLatestCompletedCycle).mockResolvedValue({
+      id: 'bootstrap-cycle',
+      cycleCutoff: proven,
+    });
+    asMock(findWatermark).mockResolvedValue({
+      provenCutoff: proven,
+      nextWindowFrom: proven,
+    });
+
+    await applyDiscoveryControl({ action: 'START' });
+
+    expect(createCycleIfAbsent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ lane: 'INCREMENTAL' }),
     );
   });
 
