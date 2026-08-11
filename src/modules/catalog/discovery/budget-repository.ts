@@ -7,7 +7,6 @@ import {
 import type { CjPointsInfo } from '@/lib/cj/primitives';
 import {
   BACKGROUND_POINTS_MAX_PERCENT,
-  nextUtcMidnight,
   POINTS_DAILY_PLANNING_TOTAL,
   REQUEST_MIN_INTERVAL_MS,
 } from './config';
@@ -87,6 +86,26 @@ export type BudgetAssessment =
   | { allowed: true }
   | { allowed: false; reason: 'PAUSED' | 'POINTS_RESERVE'; retryAt: Date };
 
+const SAFETY_MARGIN_POINTS = 10;
+
+function nextRefillAt(input: {
+  total: number;
+  remaining: number;
+  requiredPoints: number;
+  reserve: number;
+  now: Date;
+}): Date {
+  const needed =
+    input.reserve +
+    input.requiredPoints +
+    SAFETY_MARGIN_POINTS -
+    input.remaining;
+  const refillPerMinute = Math.max(1, input.total / 1_440);
+  const minutes = Math.max(1, Math.ceil(needed / refillPerMinute));
+
+  return new Date(input.now.getTime() + minutes * 60_000);
+}
+
 /**
  * Whether BACKGROUND work may spend `requiredPoints` now. Background
  * discovery/evaluation may consume at most `BACKGROUND_POINTS_MAX_PERCENT`
@@ -115,12 +134,16 @@ export async function assessBackgroundBudget(
   const remaining = row.pointsRemaining;
 
   if (remaining !== null && remaining - input.requiredPoints < reserve) {
-    // The reserve is exhausted for today; documented reset is 00:00 UTC,
-    // with per-minute replenishment before that - wait for the next window.
     return {
       allowed: false,
       reason: 'POINTS_RESERVE',
-      retryAt: nextUtcMidnight(now),
+      retryAt: nextRefillAt({
+        total,
+        remaining,
+        requiredPoints: input.requiredPoints,
+        reserve,
+        now,
+      }),
     };
   }
 
@@ -167,6 +190,8 @@ export async function recordRateLimitPause(
     .update(supplierRequestBudgets)
     .set({
       pausedUntil,
+      providerPauseReason: 'HTTP_429',
+      nextSafeRefillAt: pausedUntil,
       stateVersion: sql`${supplierRequestBudgets.stateVersion} + 1`,
       updatedAt: new Date(),
     })

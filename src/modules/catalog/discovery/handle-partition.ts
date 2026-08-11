@@ -20,7 +20,6 @@ import {
   BUDGET_RETRY_DELAY_SECONDS,
   DISCOVERY_PAGE_SIZE,
   MAX_RECONCILE_ATTEMPTS,
-  nextUtcMidnight,
   PRODUCT_LIST_POINTS_COST,
   RECONCILE_PAGES_PER_INVOCATION,
 } from './config';
@@ -60,6 +59,7 @@ import {
 } from './partition-repository';
 import {
   heartbeatCycle,
+  findCycleById,
   recordPartitionSplit,
   recordPartitionTerminal,
   tryFinishCycle,
@@ -68,7 +68,16 @@ import { insertOutboxIntents } from './outbox-repository';
 import { recordDiscoveryFailure } from './failure-repository';
 import { isDiscoveryRunning } from './run-state-repository';
 import checkStorageGuard from './storage-guard';
-import { nextCycleIntents, partitionMessageIntent } from './handle-cycle-start';
+import {
+  laneContinuationIntents,
+  partitionMessageIntent,
+} from './handle-cycle-start';
+import {
+  recordBootstrapComplete,
+  recordCoveredPartitionProof,
+  recordCycleObligation,
+  recordIncrementalWindowTerminal,
+} from './lane-repository';
 
 /**
  * DISCOVERY_PARTITION: proves (or refuses to claim) coverage for exactly one
@@ -218,6 +227,9 @@ async function finishTerminal(
       cycleId: lease.row.cycleId,
       unresolved: input.kind !== 'COVERED',
     });
+    if (input.kind === 'COVERED') {
+      await recordCoveredPartitionProof(tx, lease.row.id);
+    }
 
     const states = await countPartitionsByState(tx, lease.row.cycleId);
     const blockedPartitions =
@@ -228,10 +240,37 @@ async function finishTerminal(
     });
 
     if (outcome !== 'STILL_RUNNING') {
-      await insertOutboxIntents(
-        tx,
-        nextCycleIntents(lease.row.supplierConnectionId),
-      );
+      const finishedCycle = await findCycleById(tx, lease.row.cycleId);
+
+      if (finishedCycle !== null) {
+        if (finishedCycle.lane === 'BOOTSTRAP' && outcome === 'COMPLETE') {
+          await recordBootstrapComplete(tx, finishedCycle);
+        }
+
+        if (finishedCycle.lane === 'INCREMENTAL') {
+          await recordIncrementalWindowTerminal(tx, {
+            cycle: finishedCycle,
+            complete: outcome === 'COMPLETE',
+          });
+        }
+
+        if (outcome !== 'COMPLETE') {
+          await recordCycleObligation(tx, {
+            cycle: finishedCycle,
+            reason: outcome,
+          });
+        }
+
+        if (finishedCycle.lane !== 'BOOTSTRAP' || outcome === 'COMPLETE') {
+          await insertOutboxIntents(
+            tx,
+            laneContinuationIntents({
+              supplierConnectionId: lease.row.supplierConnectionId,
+              lane: finishedCycle.lane,
+            }),
+          );
+        }
+      }
     }
 
     if (input.kind !== 'COVERED') {
@@ -305,12 +344,7 @@ async function fetchPage(
     if (error instanceof CjApiError && error.reason === 'rate-limited') {
       // HTTP 429: no aggressive retries - persist the pause aligned with
       // the documented refill/reset behavior and continue via queue delay.
-      const resumeAt = new Date(
-        Math.min(
-          nextUtcMidnight(new Date()).getTime(),
-          Date.now() + BUDGET_RETRY_DELAY_SECONDS * 1000,
-        ),
-      );
+      const resumeAt = new Date(Date.now() + BUDGET_RETRY_DELAY_SECONDS * 1000);
 
       await recordRateLimitPause(db, context.connection.id, resumeAt);
       await parkAndRetry(lease, context, {

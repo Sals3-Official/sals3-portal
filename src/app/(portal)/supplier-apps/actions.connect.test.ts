@@ -57,6 +57,14 @@ vi.mock('@/modules/catalog/candidates/repository', () => ({
   requeueConnectionPausedEvaluations: vi.fn(),
 }));
 
+vi.mock('@/modules/catalog/discovery/outbox-repository', () => ({
+  insertOutboxIntents: vi.fn(),
+}));
+
+vi.mock('@/modules/catalog/discovery/outbox-dispatch', () => ({
+  default: vi.fn().mockResolvedValue({ dispatched: 1, failed: 0 }),
+}));
+
 const { secretWriteMock } = vi.hoisted(() => ({ secretWriteMock: vi.fn() }));
 
 vi.mock('@/lib/secrets/postgres-supplier-secret-store', () => ({

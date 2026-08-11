@@ -1,4 +1,15 @@
-import { and, asc, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  lte,
+  ne,
+  or,
+  sql,
+} from 'drizzle-orm';
 import type { DbExecutor } from '@/lib/db/client';
 import {
   productSubscriptions,
@@ -19,6 +30,9 @@ export async function upsertDesiredSubscription(
     supplierConnectionId: string;
     externalProductId: string;
     desiredState: 'SUBSCRIBED' | 'UNSUBSCRIBED';
+    priorityClass?:
+      'ORDER_LINKED' | 'LIVE' | 'SELECTED_IMPORTING' | 'READY' | 'NONE';
+    desiredReason?: string | null;
   },
 ): Promise<void> {
   await executor
@@ -27,6 +41,8 @@ export async function upsertDesiredSubscription(
       supplierConnectionId: input.supplierConnectionId,
       externalProductId: input.externalProductId,
       desiredState: input.desiredState,
+      priorityClass: input.priorityClass ?? 'NONE',
+      desiredReason: input.desiredReason ?? null,
     })
     .onConflictDoUpdate({
       target: [
@@ -35,6 +51,8 @@ export async function upsertDesiredSubscription(
       ],
       set: {
         desiredState: input.desiredState,
+        priorityClass: input.priorityClass ?? 'NONE',
+        desiredReason: input.desiredReason ?? null,
         nextRetryAt: null,
         updatedAt: new Date(),
       },
@@ -70,8 +88,63 @@ export async function listDivergentSubscriptions(
         ),
       ),
     )
-    .orderBy(asc(productSubscriptions.updatedAt))
+    .orderBy(
+      sql`case ${productSubscriptions.priorityClass}
+        when 'ORDER_LINKED' then 4
+        when 'LIVE' then 3
+        when 'SELECTED_IMPORTING' then 2
+        when 'READY' then 1
+        else 0
+      end desc`,
+      asc(productSubscriptions.updatedAt),
+    )
     .limit(input.limit);
+}
+
+export async function countSubscriptionsByPriority(
+  executor: DbExecutor,
+  supplierConnectionId: string,
+): Promise<
+  Array<{
+    priorityClass: ProductSubscriptionRow['priorityClass'];
+    desiredState: ProductSubscriptionRow['desiredState'];
+    observedState: ProductSubscriptionRow['observedState'];
+    count: number;
+  }>
+> {
+  return executor
+    .select({
+      priorityClass: productSubscriptions.priorityClass,
+      desiredState: productSubscriptions.desiredState,
+      observedState: productSubscriptions.observedState,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(productSubscriptions)
+    .where(eq(productSubscriptions.supplierConnectionId, supplierConnectionId))
+    .groupBy(
+      productSubscriptions.priorityClass,
+      productSubscriptions.desiredState,
+      productSubscriptions.observedState,
+    )
+    .orderBy(desc(sql`count(*)`));
+}
+
+export async function countObservedSubscribed(
+  executor: DbExecutor,
+  supplierConnectionId: string,
+): Promise<number> {
+  const rows = await executor
+    .select({ count: sql<number>`count(*)::int` })
+    .from(productSubscriptions)
+    .where(
+      and(
+        eq(productSubscriptions.supplierConnectionId, supplierConnectionId),
+        eq(productSubscriptions.observedState, 'SUBSCRIBED'),
+      ),
+    )
+    .limit(1);
+
+  return rows[0]?.count ?? 0;
 }
 
 export async function markSubscriptionsObserved(
@@ -90,6 +163,7 @@ export async function markSubscriptionsObserved(
       lastVerifiedAt: new Date(),
       lastErrorCode: null,
       nextRetryAt: null,
+      providerResult: 'OK',
       updatedAt: new Date(),
     })
     .where(inArray(productSubscriptions.id, input.ids));

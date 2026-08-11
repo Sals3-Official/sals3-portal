@@ -20,23 +20,28 @@ vi.mock('@/modules/suppliers/providers/cj/cj-auth', () => ({
 }));
 
 vi.mock('./subscription-repository', () => ({
+  countObservedSubscribed: vi.fn(),
   listDivergentSubscriptions: vi.fn(),
   markSubscriptionAttemptFailed: vi.fn(),
   markSubscriptionsObserved: vi.fn(),
 }));
 
-vi.mock('./budget-repository', () => ({ tryAcquireRequestSlot: vi.fn() }));
+vi.mock('./budget-repository', () => ({
+  findBudgetRow: vi.fn(),
+  tryAcquireRequestSlot: vi.fn(),
+}));
 
 // eslint-disable-next-line import/first
 import type { SupplierProviderAdapter } from '@/modules/suppliers/contracts';
 // eslint-disable-next-line import/first
 import {
+  countObservedSubscribed,
   listDivergentSubscriptions,
   markSubscriptionAttemptFailed,
   markSubscriptionsObserved,
 } from './subscription-repository';
 // eslint-disable-next-line import/first
-import { tryAcquireRequestSlot } from './budget-repository';
+import { findBudgetRow, tryAcquireRequestSlot } from './budget-repository';
 // eslint-disable-next-line import/first
 import reconcileSubscriptions from './subscription-reconcile';
 
@@ -48,6 +53,8 @@ function subscriptionRow(index: number, desiredState: string) {
     supplierConnectionId: 'connection-1',
     externalProductId: `pid-${index}`,
     desiredState,
+    priorityClass: 'READY',
+    desiredReason: 'test',
     observedState: 'UNKNOWN',
     attempts: 0,
   };
@@ -64,6 +71,8 @@ function fakeAdapter(overrides: Partial<SupplierProviderAdapter> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   asMock(tryAcquireRequestSlot).mockResolvedValue(true);
+  asMock(findBudgetRow).mockResolvedValue({ observedSubscriptionLimit: 1_000 });
+  asMock(countObservedSubscribed).mockResolvedValue(0);
 });
 
 describe('reconcileSubscriptions', () => {

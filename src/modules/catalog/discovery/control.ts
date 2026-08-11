@@ -1,11 +1,17 @@
 import getDb from '@/lib/db/client';
 import { listWorkableConnections } from '@/modules/suppliers/repository';
-import { setDesiredRunState } from './run-state-repository';
-import { createCycleIfAbsent, findActiveCycle } from './cycle-repository';
+import { findRunState, setDesiredRunState } from './run-state-repository';
+import {
+  createCycleIfAbsent,
+  findActiveCycle,
+  findLatestCompletedCycle,
+} from './cycle-repository';
 import { ensureBudgetRow } from './budget-repository';
 import { insertOutboxIntents } from './outbox-repository';
 import { cycleStartIntent } from './handle-cycle-start';
 import dispatchOutbox from './outbox-dispatch';
+import { findWatermark } from './lane-repository';
+import { INCREMENTAL_SAFETY_OVERLAP_SECONDS } from './config';
 
 /**
  * Owner control actions behind the protected internal routes. Start and
@@ -46,9 +52,28 @@ async function startOrResumeConnection(
   });
   await ensureBudgetRow(db, connectionId);
 
+  const completedBootstrap = await findLatestCompletedCycle(db, {
+    supplierConnectionId: connectionId,
+    lane: 'BOOTSTRAP',
+  });
+  const watermark = await findWatermark(db, connectionId);
+  const lane = completedBootstrap === null ? 'BOOTSTRAP' : 'INCREMENTAL';
+  const baseFrom =
+    watermark?.nextWindowFrom ??
+    watermark?.provenCutoff ??
+    completedBootstrap?.cycleCutoff;
+  const windowFrom =
+    lane === 'INCREMENTAL' && baseFrom !== undefined && baseFrom !== null
+      ? new Date(baseFrom.getTime() - INCREMENTAL_SAFETY_OVERLAP_SECONDS * 1000)
+      : null;
+
   const { cycle, created } = await createCycleIfAbsent(db, {
     supplierConnectionId: connectionId,
     cycleCutoff: new Date(),
+    lane,
+    windowFrom,
+    safetyOverlapSeconds:
+      lane === 'INCREMENTAL' ? INCREMENTAL_SAFETY_OVERLAP_SECONDS : null,
   });
 
   // The kick-off/sweep message: idempotent ensure-and-sweep, so calling
@@ -57,6 +82,7 @@ async function startOrResumeConnection(
     cycleStartIntent({
       supplierConnectionId: connectionId,
       cycleId: cycle.id,
+      lane,
       keySuffix: `${action.toLowerCase()}:${cycle.id}:${Date.now()}`,
     }),
   ]);
@@ -130,4 +156,26 @@ export default async function applyDiscoveryControl(input: {
   }
 
   return results;
+}
+
+export async function ensureDiscoveryChainOnAuthorizedLoad(
+  supplierConnectionId: string,
+): Promise<void> {
+  const db = getDb();
+  const existingRunState = await findRunState(db, supplierConnectionId);
+  if (existingRunState !== null) return;
+
+  await setDesiredRunState(db, {
+    supplierConnectionId,
+    desiredState: 'RUNNING',
+    action: 'START',
+  });
+  await ensureBudgetRow(db, supplierConnectionId);
+  await insertOutboxIntents(db, [
+    cycleStartIntent({
+      supplierConnectionId,
+      keySuffix: `authorized-load:${supplierConnectionId}`,
+    }),
+  ]);
+  await dispatchOutbox();
 }

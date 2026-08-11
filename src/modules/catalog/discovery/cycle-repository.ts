@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { DbExecutor } from '@/lib/db/client';
 import { discoveryCycles, type DiscoveryCycleRow } from '@/lib/db/schema';
 import type { SupplierCategoryLeaf } from '@/modules/suppliers/contracts';
+import { generationKey } from './lane-repository';
 
 /**
  * Discovery cycle persistence. A cycle's `cycleCutoff` and category snapshot
@@ -52,7 +53,13 @@ export async function findCycleById(
  */
 export async function createCycleIfAbsent(
   executor: DbExecutor,
-  input: { supplierConnectionId: string; cycleCutoff: Date },
+  input: {
+    supplierConnectionId: string;
+    cycleCutoff: Date;
+    lane?: 'BOOTSTRAP' | 'INCREMENTAL' | 'AUDIT';
+    windowFrom?: Date | null;
+    safetyOverlapSeconds?: number | null;
+  },
 ): Promise<{ cycle: DiscoveryCycleRow; created: boolean }> {
   const existing = await findActiveCycle(executor, input.supplierConnectionId);
 
@@ -63,6 +70,10 @@ export async function createCycleIfAbsent(
     .values({
       supplierConnectionId: input.supplierConnectionId,
       cycleCutoff: input.cycleCutoff,
+      lane: input.lane ?? 'BOOTSTRAP',
+      generationKey: generationKey(),
+      windowFrom: input.windowFrom ?? null,
+      safetyOverlapSeconds: input.safetyOverlapSeconds ?? null,
       state: 'SEEDING',
     })
     // No conflict target: the guarding constraint is the partial unique
@@ -80,6 +91,29 @@ export async function createCycleIfAbsent(
   }
 
   return { cycle: raced, created: false };
+}
+
+export async function findLatestCompletedCycle(
+  executor: DbExecutor,
+  input: {
+    supplierConnectionId: string;
+    lane: 'BOOTSTRAP' | 'INCREMENTAL' | 'AUDIT';
+  },
+): Promise<DiscoveryCycleRow | null> {
+  const rows = await executor
+    .select()
+    .from(discoveryCycles)
+    .where(
+      and(
+        eq(discoveryCycles.supplierConnectionId, input.supplierConnectionId),
+        eq(discoveryCycles.lane, input.lane),
+        eq(discoveryCycles.state, 'COMPLETE'),
+      ),
+    )
+    .orderBy(sql`${discoveryCycles.completedAt} DESC NULLS LAST`)
+    .limit(1);
+
+  return rows[0] ?? null;
 }
 
 /**

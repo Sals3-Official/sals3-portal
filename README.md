@@ -481,13 +481,13 @@ evidence could not be fetched — never that there is none.
 Discovery of CJ's catalogue runs as a **durable, self-continuing queue
 chain** - Neon PostgreSQL as the authoritative state store plus private
 Vercel Queues as the at-least-once transport (ADR-013 §12). There is **no
-cron and no scheduled GitHub Actions tick**: one owner-authorized
-`POST /api/internal/catalog/discovery/start` creates the chain, and from
-then on each unit of work persists its successor intent in a transactional
-outbox, publishes it, and completed cycles enqueue the next cycle with a
-points/freshness-aware queue delay. **The owner's browser and PC can be
-closed after Start** - Vercel's managed queue infrastructure delivers the
-messages and runs the (air-gapped, platform-invoked) consumer function.
+cron and no scheduled GitHub Actions tick**. When the official CJ connection
+first becomes workable, or an owner-authorized recovery route heals it, the
+app persists a queue intent; every later unit of work persists successor
+intent in the transactional outbox before publishing it. **The owner's
+browser and PC can be closed after the chain starts** - Vercel's managed
+queue infrastructure delivers messages and runs the (air-gapped,
+platform-invoked) consumer function.
 
 Coverage semantics (ADR-010 §12.1, ADR-013 §3):
 
@@ -495,15 +495,24 @@ Coverage semantics (ADR-010 §12.1, ADR-013 §3):
   never `product/listV2`. There is **no 6,000-record assumption anywhere**:
   that cap is documented for listV2 only, and on the legacy endpoint a total
   of exactly 6,000 or greater is ordinary density data.
-- **Immutable cycle cutoff.** Every cycle snapshots `cycleCutoff`; all its
-  partitions cover only products created at or before it. Later products are
-  the next cycle's work, so a moving catalogue never invalidates in-progress
-  coverage.
-- **Category roots from the provider tree.** Cycle start fetches
+- **Three lane semantics.** `BOOTSTRAP` is the one-time historical scan up to
+  an immutable bootstrap cutoff. `INCREMENTAL` scans only creation-time
+  windows after the stored cursor, with a conservative overlap. `AUDIT` is
+  lowest-priority bounded work against persisted bootstrap partition proofs.
+  A completed bootstrap never creates another epoch-to-current historical
+  cycle.
+- **Immutable lane windows.** Every cycle snapshots `cycleCutoff`; incremental
+  cycles also snapshot `windowFrom` and `safetyOverlapSeconds`. An unresolved
+  incremental range is stored as an obligation, while later windows can still
+  continue from the scan cursor; the proven watermark advances only across
+  fully covered ranges.
+- **Category roots from the provider tree.** Bootstrap start fetches
   `GET /product/getCategory` once, persists the leaf snapshot immutably, and
   seeds two roots per leaf: an open-start sentinel (products before the
-  configurable `CJ_DISCOVERY_EPOCH`) and the epoch-to-cutoff range. Identity
-  is the provider category id, never the label.
+  configurable `CJ_DISCOVERY_EPOCH`) and the epoch-to-bootstrap-cutoff range.
+  Incremental cycles seed only window roots; they never recreate open-start
+  or epoch-to-current roots. Identity is the provider category id, never the
+  label.
 - **Density-driven adaptive splitting.** A partition reporting more than one
   full page (200) bisects by time, then by price at provider precision, with
   inclusive-overlap boundaries and global PID deduplication so
@@ -544,42 +553,57 @@ Coverage semantics (ADR-010 §12.1, ADR-013 §3):
   every HTTP call on the same limiter; `pointsInfo` from every response
   (list and evidence alike) is persisted;
   background work may spend at most 80% of known available points (20%
-  reserved for selected/live/order-critical work); HTTP 429 persists a pause
-  aligned with CJ's documented per-minute replenishment / 00:00 UTC reset and
-  continues via a delayed queue message - never a function kept alive
+  reserved for selected/live/order-critical work). Low current `remaining`
+  no longer parks broad work until UTC midnight by default; retry time is
+  projected from current `pointsInfo`, endpoint cost, `total / 1440`
+  per-minute refill, and a safety margin. HTTP 429 persists a bounded pause
+  and continues via a delayed queue message - never a function kept alive
   sleeping.
+- **Webhook freshness.** Product/variant/stock webhook subscriptions are
+  tracked by desired/observed state and priority class. Product IDs are
+  reconciled in documented batches of at most 100, never through
+  `subscribeAll`. Order-linked and live products outrank selected/importing
+  products, which outrank ordinary Ready products; the Ready tier respects a
+  capacity buffer and leaves shortages visible instead of evicting protected
+  products.
 
-Queue operations: `DISCOVERY_CYCLE_START` (ensure/seed/sweep - also the
-self-healing heartbeat), `DISCOVERY_PARTITION`, `EVALUATE_CANDIDATE`,
-`RECONCILE_PRODUCT` (freshness sweep + per-product reconcile),
-`WEBHOOK_EVENT`, `OUTBOX_DISPATCH`. Every handler validates its message with
-Zod, claims work through database leases with exact compare-and-swap
-predicates (state, version, lease token, unexpired lease), performs a bounded
-unit of work, persists successor intent durably, and publishes successors
-before acknowledging - so duplicate and out-of-order at-least-once deliveries
-can delay work but never corrupt state or double-spend a supplier call.
+Queue operations: `DISCOVERY_CYCLE_START` (lane ensure/seed/sweep - also the
+self-healing heartbeat), `DISCOVERY_PARTITION`, `DISCOVERY_AUDIT_UNIT`,
+`EVALUATE_CANDIDATE`, `RECONCILE_PRODUCT` (freshness sweep + per-product
+reconcile), `WEBHOOK_EVENT`, `OUTBOX_DISPATCH`. Every handler validates its
+message with Zod, claims work through database leases with exact
+compare-and-swap predicates (state, version, lease token, unexpired lease),
+performs a bounded unit of work, persists successor intent durably, and
+publishes successors before acknowledging - so duplicate and out-of-order
+at-least-once deliveries can delay work but never corrupt state or
+double-spend a supplier call.
 Failed work lands in PostgreSQL (`discovery_failures`, outbox `FAILED` rows,
 partition `FAILED`/`PROVIDER_COVERAGE_UNRESOLVED` states) because the
 transport has no application dead-letter queue.
 
 Operating it:
 
-1. **Deploy** (owner action; nothing auto-starts). Apply migration `0009`
-   first - `npm run db:migrate` is an owner-run step and has NOT been
-   executed by the implementation.
-2. **Start once**: `POST /api/internal/catalog/discovery/start` with
+1. **Deploy** (owner action). Apply migrations through `0010` first -
+   `npm run db:migrate` is an owner-run step and has NOT been executed by
+   this implementation.
+2. **Automatic start**: the official CJ connect/reconnect path persists and
+   publishes a chain intent after the connection becomes workable. Existing
+   workable official connections get one idempotent heal on the first
+   authorized All Supplier Products server load.
+3. **Recovery start**: `POST /api/internal/catalog/discovery/start` with
    `Authorization: Bearer $DISCOVERY_CONTROL_SECRET`. Idempotent; concurrent
    or repeated calls converge on one chain (a partial unique index allows at
-   most one active cycle per connection). A new deployment does NOT create a
-   second chain for the same reason.
-3. **Pause / resume**: the matching `POST .../pause` and `.../resume` routes.
+   most one active cycle per connection). After bootstrap completes, recovery
+   chooses incremental rather than another historical cycle.
+4. **Pause / resume**: the matching `POST .../pause` and `.../resume` routes.
    Pause stops new supplier work while keeping every checkpoint; in-flight
    work finishes its local transaction only. Resume re-enqueues all parked
    work.
-4. **Inspect**: `GET .../status` reports run states, cycle/partition coverage
-   counts, unresolved partitions with reasons, points budget, outbox depth,
-   recent failures, and the storage guard - and never claims completion
-   while any partition is unproven.
+5. **Inspect**: `GET .../status` reports run states, lane/cycle coverage
+   counts, incremental watermark, unresolved partitions with reasons,
+   subscription priority counts, points/refill state, outbox depth, recent
+   failures, and the storage guard - and never claims completion while any
+   required partition is unproven.
 
 | Piece                           | File                                                      |
 | ------------------------------- | --------------------------------------------------------- |
@@ -592,6 +616,7 @@ Operating it:
 | Adaptive split planning         | `src/modules/catalog/discovery/partition-plan.ts`         |
 | Pagination validation matrix    | `src/modules/catalog/discovery/page-validation.ts`        |
 | Coverage checksums              | `src/modules/catalog/discovery/coverage-checksum.ts`      |
+| Lane/watermark/proof state      | `src/modules/catalog/discovery/lane-repository.ts`        |
 | Rate/points budget              | `src/modules/catalog/discovery/budget-repository.ts`      |
 | Storage guard (Neon pilot)      | `src/modules/catalog/discovery/storage-guard.ts`          |
 | Webhook verification            | `src/modules/catalog/discovery/webhook-verify.ts`         |

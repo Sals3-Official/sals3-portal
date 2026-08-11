@@ -166,10 +166,28 @@ export const BUDGET_RETRY_DELAY_SECONDS = envInt(
   15 * 60,
 );
 
-/** Queue delay between a completed cycle and the next cycle's start. */
+/** Conservative incremental overlap until CJ timestamp inclusivity/indexing is owner-probed. */
+export const INCREMENTAL_SAFETY_OVERLAP_SECONDS = envInt(
+  'CATALOG_DISCOVERY_INCREMENTAL_OVERLAP_SECONDS',
+  24 * 60 * 60,
+);
+
+/** Queue delay between completed incremental windows. Bootstrap never uses this to restart history. */
 export const NEXT_CYCLE_DELAY_SECONDS = envInt(
   'CATALOG_DISCOVERY_NEXT_CYCLE_DELAY_SECONDS',
   6 * 60 * 60,
+);
+
+/** Lowest-priority audit continuation delay. */
+export const AUDIT_SWEEP_DELAY_SECONDS = envInt(
+  'CATALOG_DISCOVERY_AUDIT_SWEEP_DELAY_SECONDS',
+  24 * 60 * 60,
+);
+
+/** Operational webhook subscription buffer, held back from ordinary Ready products. */
+export const WEBHOOK_SUBSCRIPTION_BUFFER = envInt(
+  'CJ_WEBHOOK_SUBSCRIPTION_BUFFER',
+  100,
 );
 
 /** Sweep cadence: the active cycle re-enqueues a self-healing sweep at this delay. */

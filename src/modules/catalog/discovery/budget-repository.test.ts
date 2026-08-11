@@ -64,7 +64,7 @@ describe('assessBackgroundBudget - points exhaustion and the priority reserve', 
     ).resolves.toEqual({ allowed: true });
   });
 
-  it('refuses once spending would dip into the reserved share, with a retry at the documented UTC reset', async () => {
+  it('refuses once spending would dip into the reserved share, using minute refill instead of parking until midnight', async () => {
     const total = 50_000;
     const reserve = Math.ceil(
       (total * (100 - BACKGROUND_POINTS_MAX_PERCENT)) / 100,
@@ -81,8 +81,8 @@ describe('assessBackgroundBudget - points exhaustion and the priority reserve', 
     expect(result.allowed).toBe(false);
     if (result.allowed) return;
     expect(result.reason).toBe('POINTS_RESERVE');
-    expect(result.retryAt.getUTCHours()).toBe(0);
-    expect(result.retryAt.getUTCMinutes()).toBe(0);
+    expect(result.retryAt.getTime()).toBeGreaterThan(Date.now());
+    expect(result.retryAt.getTime()).toBeLessThan(Date.now() + 60 * 60 * 1000);
   });
 
   it('honors a 429 pause window with a delayed retry, never an aggressive retry', async () => {

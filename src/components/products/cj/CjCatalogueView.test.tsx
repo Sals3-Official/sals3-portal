@@ -38,6 +38,10 @@ vi.mock('@/modules/catalog/candidates/queries', () => ({
   findEvaluationsByExternalIds: findEvaluationsByExternalIdsMock,
 }));
 
+vi.mock('@/modules/catalog/discovery/control', () => ({
+  ensureDiscoveryChainOnAuthorizedLoad: vi.fn(),
+}));
+
 vi.mock('@/modules/suppliers/repository', () => ({
   findConnectionBySellerAndProvider: findConnectionBySellerAndProviderMock,
   findProviderByCode: findProviderByCodeMock,

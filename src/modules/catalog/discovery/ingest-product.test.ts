@@ -29,6 +29,7 @@ vi.mock('../candidates/repository', () => ({
   findCandidateByConnectionAndExternalId: vi.fn(),
   insertCandidateIfAbsent: vi.fn(),
   insertQueuedEvaluationIfAbsent: vi.fn(),
+  markCandidateProviderSeen: vi.fn(),
   recordScreeningDecision: vi.fn(),
   requeueIfFingerprintChanged: vi.fn(),
 }));

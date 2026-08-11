@@ -71,6 +71,7 @@ vi.mock('./partition-repository', async (importOriginal) => {
 });
 
 vi.mock('./cycle-repository', () => ({
+  findCycleById: vi.fn(),
   heartbeatCycle: vi.fn(),
   recordPartitionSplit: vi.fn(),
   recordPartitionTerminal: vi.fn(),
@@ -111,15 +112,22 @@ vi.mock('./handle-cycle-start', () => ({
     delaySeconds: input.delaySeconds,
   }),
   cycleStartIntent: vi.fn(),
-  nextCycleIntents: (connectionId: string) => [
+  laneContinuationIntents: (input: { supplierConnectionId: string }) => [
     {
       message: {
         v: 1,
         operation: 'DISCOVERY_CYCLE_START',
-        idempotencyKey: `cycle-start:${connectionId}:next`,
+        idempotencyKey: `cycle-start:${input.supplierConnectionId}:next`,
       },
     },
   ],
+}));
+
+vi.mock('./lane-repository', () => ({
+  recordBootstrapComplete: vi.fn(),
+  recordCoveredPartitionProof: vi.fn(),
+  recordCycleObligation: vi.fn(),
+  recordIncrementalWindowTerminal: vi.fn(),
 }));
 
 // eslint-disable-next-line import/first
@@ -152,7 +160,11 @@ import {
   splitPartition,
 } from './partition-repository';
 // eslint-disable-next-line import/first
-import { recordPartitionSplit, tryFinishCycle } from './cycle-repository';
+import {
+  findCycleById,
+  recordPartitionSplit,
+  tryFinishCycle,
+} from './cycle-repository';
 // eslint-disable-next-line import/first
 import { insertOutboxIntents } from './outbox-repository';
 // eslint-disable-next-line import/first
@@ -277,6 +289,15 @@ beforeEach(() => {
   asMock(advanceReconciliation).mockResolvedValue(true);
   asMock(completeReconcilePass).mockResolvedValue(true);
   asMock(countPartitionsByState).mockResolvedValue({});
+  asMock(findCycleById).mockResolvedValue({
+    id: CYCLE_ID,
+    supplierConnectionId: CONNECTION_ID,
+    lane: 'BOOTSTRAP',
+    generationKey: 'default',
+    cycleCutoff: new Date('2026-08-11T00:00:00Z'),
+    windowFrom: null,
+    state: 'COMPLETE',
+  });
   asMock(tryFinishCycle).mockResolvedValue('STILL_RUNNING');
   asMock(insertPartitions).mockResolvedValue([
     { id: 'child-1' },

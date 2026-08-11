@@ -34,6 +34,7 @@ import {
   appendAuditEvent,
   requeueConnectionPausedEvaluations,
 } from '@/modules/catalog/candidates/repository';
+import { insertOutboxIntents } from '@/modules/catalog/discovery/outbox-repository';
 
 /**
  * "Connect CJ" (ADR-008 Supplier Apps). The browser sends only an API key
@@ -395,8 +396,23 @@ export async function connectCjSupplier(
         },
       });
 
+      await insertOutboxIntents(tx, [
+        {
+          message: {
+            v: 1,
+            operation: 'DISCOVERY_CYCLE_START',
+            idempotencyKey: `cycle-start:${row.id}:connection-workable`,
+            supplierConnectionId: row.id,
+          },
+        },
+      ]);
+
       return row;
     });
+
+    const { default: dispatchOutbox } =
+      await import('@/modules/catalog/discovery/outbox-dispatch');
+    await dispatchOutbox();
 
     revalidatePath('/supplier-apps');
 
