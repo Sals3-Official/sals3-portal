@@ -7,7 +7,10 @@ import type { SellerOperatingCountryPolicy } from './types';
  * and authorized to operate — it never implies, and must never populate,
  * buyer destination-country eligibility. See
  * `buyer-destination-country.ts`, which is independently versioned and
- * currently disabled.
+ * currently ENABLED for AU and PH as a bounded catalogue-evaluation pilot.
+ * That AU appears in both lists is a coincidence of two separate owner
+ * decisions, not a derivation: neither list may ever be computed from the
+ * other.
  *
  * Temporary Portal-owned configuration provider, not a seller-editable
  * setting and not an Admin Portal UI. ADR-014's future Admin Portal replaces

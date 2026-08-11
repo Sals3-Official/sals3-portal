@@ -12,3 +12,4 @@ export * from './supplier-account-bindings';
 export * from './supplier-secrets';
 export * from './discovery';
 export * from './pricing-policy';
+export * from './seller-market-profile';

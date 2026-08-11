@@ -47,6 +47,13 @@ export const PORTAL_PERMISSIONS = [
   'payout:read',
   'payout:manage',
   'market_rules:read',
+  // Setting up / activating / suspending the seller's own operating-market
+  // profile. Separate from `market_rules:read` because that permission is
+  // deliberately broad (staff and viewer both hold it, so they can see which
+  // rules apply to them), while changing which destinations an account is
+  // configured for is an owner-level commercial decision — the same split
+  // this codebase already draws between `payout:read` and `payout:manage`.
+  'market_profile:manage',
   'pricing_policy:read',
   'pricing_policy:manage',
   'catalog.candidate.read',
@@ -87,6 +94,7 @@ const ROLE_PERMISSIONS: Record<PortalRole, readonly PortalPermission[]> = {
     'payout:read',
     'payout:manage',
     'market_rules:read',
+    'market_profile:manage',
     'pricing_policy:read',
     'pricing_policy:manage',
     'catalog.candidate.read',
