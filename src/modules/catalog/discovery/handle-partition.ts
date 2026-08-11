@@ -127,21 +127,33 @@ type HandlerContext = {
 async function parkAndRetry(
   lease: PartitionLease,
   context: HandlerContext,
-  input: { errorCode: string; delaySeconds: number },
+  input: {
+    errorCode: string;
+    delaySeconds: number;
+    consumeAttempt?: boolean;
+  },
 ): Promise<void> {
   const db = getDb();
+  const retryWindow = Math.floor(
+    Date.now() / Math.max(1, input.delaySeconds * 1000),
+  );
+  const keySuffix =
+    input.consumeAttempt === false
+      ? `retry:${input.errorCode}:${retryWindow}`
+      : `retry:${lease.row.attempts}:${input.errorCode}`;
 
   await releasePartitionLease(db, {
     partitionId: lease.row.id,
     leaseToken: lease.leaseToken,
     errorCode: input.errorCode,
+    consumeAttempt: input.consumeAttempt,
   });
   await insertOutboxIntents(db, [
     partitionMessageIntent({
       supplierConnectionId: context.connection.id,
       cycleId: lease.row.cycleId,
       partitionId: lease.row.id,
-      keySuffix: `retry:${lease.row.attempts}:${input.errorCode}`,
+      keySuffix,
       delaySeconds: input.delaySeconds,
     }),
   ]);
@@ -253,6 +265,7 @@ async function fetchPage(
   if (!budget.allowed) {
     await parkAndRetry(lease, context, {
       errorCode: `BUDGET_${budget.reason}`,
+      consumeAttempt: false,
       delaySeconds: Math.max(
         60,
         Math.min(
@@ -267,6 +280,7 @@ async function fetchPage(
   if (!(await tryAcquireRequestSlot(db, context.connection.id))) {
     await parkAndRetry(lease, context, {
       errorCode: 'RATE_SLOT_UNAVAILABLE',
+      consumeAttempt: false,
       delaySeconds: 10,
     });
     return { outcome: 'PARKED' };
@@ -301,6 +315,7 @@ async function fetchPage(
       await recordRateLimitPause(db, context.connection.id, resumeAt);
       await parkAndRetry(lease, context, {
         errorCode: 'PROVIDER_RATE_LIMITED',
+        consumeAttempt: false,
         delaySeconds: Math.max(
           60,
           Math.ceil((resumeAt.getTime() - Date.now()) / 1000),

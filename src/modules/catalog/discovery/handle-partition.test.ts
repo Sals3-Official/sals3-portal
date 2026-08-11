@@ -418,9 +418,42 @@ describe('handlePartition - probe outcomes', () => {
     expect(listCatalogPageMock).not.toHaveBeenCalled();
     expect(releasePartitionLease).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ errorCode: 'BUDGET_POINTS_RESERVE' }),
+      expect.objectContaining({
+        errorCode: 'BUDGET_POINTS_RESERVE',
+        consumeAttempt: false,
+      }),
     );
     expect(insertOutboxIntents).toHaveBeenCalled();
+  });
+
+  it('parks without consuming a partition attempt when the shared request slot is busy', async () => {
+    const row = partitionRow({ attempts: 3 });
+
+    asMock(findPartitionById).mockResolvedValue(row);
+    asMock(leasePartition).mockResolvedValue({ row, leaseToken: 'lease-1' });
+    asMock(tryAcquireRequestSlot).mockResolvedValue(false);
+
+    await handlePartition(MESSAGE);
+
+    expect(listCatalogPageMock).not.toHaveBeenCalled();
+    expect(releasePartitionLease).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        errorCode: 'RATE_SLOT_UNAVAILABLE',
+        consumeAttempt: false,
+      }),
+    );
+    expect(insertOutboxIntents).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.arrayContaining([
+        expect.objectContaining({
+          delaySeconds: 10,
+          message: expect.objectContaining({
+            operation: 'DISCOVERY_PARTITION',
+          }),
+        }),
+      ]),
+    );
   });
 
   it('handles HTTP 429 by pausing the budget and scheduling a delayed continuation - no aggressive retry', async () => {
@@ -435,7 +468,10 @@ describe('handlePartition - probe outcomes', () => {
     expect(recordRateLimitPause).toHaveBeenCalled();
     expect(releasePartitionLease).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ errorCode: 'PROVIDER_RATE_LIMITED' }),
+      expect.objectContaining({
+        errorCode: 'PROVIDER_RATE_LIMITED',
+        consumeAttempt: false,
+      }),
     );
   });
 

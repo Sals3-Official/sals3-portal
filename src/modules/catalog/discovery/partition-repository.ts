@@ -177,11 +177,20 @@ function heldLease(partitionId: string, leaseToken: string) {
  */
 export async function releasePartitionLease(
   executor: DbExecutor,
-  input: { partitionId: string; leaseToken: string; errorCode: string },
+  input: {
+    partitionId: string;
+    leaseToken: string;
+    errorCode: string;
+    consumeAttempt?: boolean;
+  },
 ): Promise<void> {
   await executor
     .update(discoveryPartitions)
     .set({
+      attempts:
+        input.consumeAttempt === false
+          ? sql`greatest(${discoveryPartitions.attempts} - 1, 0)`
+          : undefined,
       leaseToken: null,
       leasedUntil: null,
       lastErrorCode: input.errorCode,

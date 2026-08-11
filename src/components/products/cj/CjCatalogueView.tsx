@@ -1,7 +1,10 @@
 import getDb, { isDatabaseConfigured } from '@/lib/db/client';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { resolveUsdToAudMidRate } from '@/lib/products/catalog-fx';
-import { findEvaluationsByExternalIds } from '@/modules/catalog/candidates/queries';
+import {
+  findEvaluationsByExternalIds,
+  type EvaluatedCandidateRow,
+} from '@/modules/catalog/candidates/queries';
 import {
   findConnectionBySellerAndProvider,
   findProviderByCode,
@@ -34,6 +37,26 @@ function formatFxAge(fetchedAt: Date): string {
   return ageMinutes < 60
     ? `${ageMinutes}m ago`
     : `${Math.round(ageMinutes / 60)}h ago`;
+}
+
+async function resolveEvaluationsForPage(
+  sellerAccountId: string,
+  externalProductIds: string[],
+): Promise<Map<string, EvaluatedCandidateRow>> {
+  try {
+    return await findEvaluationsByExternalIds(
+      sellerAccountId,
+      externalProductIds,
+    );
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error(
+      '[portal] CJ evaluation lookup failed',
+      error instanceof Error ? error.message : error,
+    );
+
+    return new Map();
+  }
 }
 
 /**
@@ -131,7 +154,7 @@ export default async function CjCatalogueView({ query }: CjCatalogueViewProps) {
     view: query.view,
   };
 
-  const evaluations = await findEvaluationsByExternalIds(
+  const evaluations = await resolveEvaluationsForPage(
     sellerAccount.id,
     page.products.map((product) => product.id),
   );

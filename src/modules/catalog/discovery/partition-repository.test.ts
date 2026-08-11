@@ -248,6 +248,23 @@ describe('guarded transitions - the exact-lease CAS predicate', () => {
     expect('reconcilePass' in set).toBe(false);
   });
 
+  it('releasePartitionLease can undo the lease-time attempt increment for local pacing parks', async () => {
+    const { db, calls } = fakeDb([[]]);
+
+    await releasePartitionLease(db, {
+      partitionId: 'partition-1',
+      leaseToken: 'worker-1',
+      errorCode: 'RATE_SLOT_UNAVAILABLE',
+      consumeAttempt: false,
+    });
+
+    const set = lastCallArgs(calls, 'set')[0] as Record<string, unknown>;
+    const rendered = renderSql(set.attempts);
+    expect(rendered.sql).toContain('greatest');
+    expect(rendered.sql).toContain('"attempts" - ');
+    expect(rendered.sql).toContain('1');
+  });
+
   it('advanceReconciliation returns false when the lease was lost - the cursor can never advance twice', async () => {
     const { db } = fakeDb([[]]);
 
