@@ -655,6 +655,11 @@ constrained shared operational resource**, reserved first for real
 customer- and order-critical work. Discovery, browsing, review, and refresh
 must conserve them.
 
+The lean-intake tables and controls are created by
+`0014_lean_supplier_intake.sql`. It follows the canonical catalog migration
+`0013_cold_timeslip.sql`; apply both through the normal `npm run db:migrate`
+flow on a fresh or correctly migrated database.
+
 ### What no longer calls CJ
 
 | Action                                 | Before                                  | Now                     |
@@ -1056,6 +1061,153 @@ statement about the account — and offers no setup control. Apply it with:
 ```bash
 npm run db:migrate
 ```
+
+## Canonical product catalog (Product / Revision / Variant / Offer)
+
+The durable Sals3-owned product lifecycle behind a supplier candidate. Before
+this, `supplier_candidates` / `candidate_evaluations` / `supplier_snapshots`
+were the only persisted catalog state, and they are discovery and screening
+records — not products. This section adds the tables, the domain module, and
+the protected Server Actions that turn an already-screened candidate into a
+real, tenant-safe, auditable **draft**.
+
+Nothing here publishes, prices, sells, confirms stock, or reaches a customer.
+Every record it creates is explicitly unpublished, and the flow reports what is
+still missing instead of rounding up to "ready".
+
+### Tables
+
+| Table                           | What it owns                                                                      |
+| ------------------------------- | --------------------------------------------------------------------------------- |
+| `products`                      | Canonical product identity, editorial columns, publication state, ADR-016 columns |
+| `product_revisions`             | One editorial version; mutable only while `DRAFT`, frozen once settled            |
+| `product_options`               | Sals3-owned option axes (Colour, Size) with normalized names and positions        |
+| `product_option_values`         | Values on an axis, normalized and ordered                                         |
+| `product_variants`              | The stable sellable identity plus its Sals3 SKU and Merchant API identifiers      |
+| `product_variant_option_values` | Which value each variant carries on each axis                                     |
+| `provider_product_references`   | One canonical link to one provider product (`(provider, external id)` unique)     |
+| `provider_variant_references`   | The exact provider variant behind one Sals3 variant, with its raw CJ option label |
+| `product_offers`                | One seller's offer for one variant, in one market, under one fulfillment mode     |
+| `offer_supplier_bindings`       | The exact fulfillment authority: which seller connection, which provider variant  |
+| `product_media_sources`         | Media provenance (source, checksum, rights basis, review state). No writer yet.   |
+
+Migration `0013_cold_timeslip.sql` creates all eleven. **It has not been
+applied to any database.** Apply it with:
+
+```bash
+npm run db:migrate
+```
+
+### Three ownership scopes, deliberately separate
+
+ADR-006 settles what looks like a contradiction between "one provider product
+reference per `(provider, external id)`" and "a seller cannot touch another
+seller's records": _two Dropshipper accounts may source the same global
+provider product while using separate credentials, wallets, orders, and
+account-specific availability._ So:
+
+- **canonical / platform-scoped** — product identity, options, variants, and
+  both provider references. Re-importing the same CJ `pid` reuses them rather
+  than forking a second catalog identity;
+- **steward-scoped** — `product_revisions` and the editorial columns on
+  `products`. Exactly one seller account (`steward_seller_account_id`) may read
+  or edit that draft;
+- **seller-scoped** — offers and supplier bindings.
+
+### Invariants the database enforces, not the application
+
+Each of these would otherwise be a read-then-write race two concurrent Server
+Actions could both pass:
+
+- a variant cannot be `ACTIVE` without a resolved option combination, and two
+  active variants of one product cannot share one — a partial unique index on a
+  normalized combination key, plus a check constraint that closes the hole SQL's
+  NULL-ignoring unique semantics would otherwise leave open;
+- one variant cannot carry the same option twice;
+- at most one open `DRAFT` revision per product, so a fork cannot double;
+- an `APPROVED`/`SUPERSEDED` revision must carry its frozen content snapshot;
+- a `PUBLISHED` product needs a published revision and a slug; a `PUBLISHED`
+  offer needs a price;
+- a compare-at price cannot exist without price-history evidence;
+- a supplier-dropship offer has at most one `ACTIVE` binding.
+
+### The draft flow
+
+`createProductDraftAction` (`src/app/(portal)/listings/product-draft-actions.ts`)
+takes exactly two inputs: a candidate id and an idempotency key. Seller and
+actor come from the session — no action has a field for either — and candidate
+ownership is re-derived server-side through the supplier connection that owns
+it, so an unknown candidate, another tenant's candidate, and a candidate
+reached through someone else's connection all return one indistinguishable
+`not_found`.
+
+It makes **zero supplier calls**. Everything is read from the
+`supplier_snapshots` row a previous, separately budgeted evidence fetch already
+wrote, which is why a saved snapshot can be opened without spending CJ points
+(ADR-013 §1a). A test walks the static import graph to prove no supplier
+adapter is reachable from the flow at all, so a future helper cannot quietly
+reintroduce one.
+
+Writes and the idempotency record commit in one transaction. The same key with
+the same canonical request replays the stored result; the same key with a
+different request is a conflict, and the rejection is itself audited.
+
+### What the flow reports as missing, and why
+
+A draft is real even when it is incomplete. Rather than implying readiness, the
+result carries explicit codes:
+
+| Code                                           | Because                                                                                                                               |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `NO_PERSISTED_SUPPLIER_EVIDENCE`               | A screening-stage block never reached the evidence fetch, so there is no `vid` to build a variant from — and none is invented         |
+| `NO_SUPPLIER_VARIANTS_IN_EVIDENCE`             | Evidence exists but lists no variants                                                                                                 |
+| `CATEGORY_MAPPING_REQUIRED`                    | No CJ-to-Sals3 taxonomy crosswalk exists                                                                                              |
+| `PRODUCT_OPTIONS_UNMAPPED`                     | CJ supplies one combined label per variant (`"Black-1XL"`), which is preserved verbatim and never split into option axes by guesswork |
+| `PRICING_UNRESOLVED`                           | The ADR-015 resolver declined; its exact reason is recorded on the offer                                                              |
+| `NO_ACTIVE_MARKET_PROFILE`                     | No active profile for a currently authorized destination, so no offer                                                                 |
+| `SUPPLIER_CONNECTION_UNHEALTHY`                | The connection is not workable, so no fulfillment binding is truthful                                                                 |
+| `MEDIA_SOURCE_NOT_RECORDED`                    | Stored evidence records a usable-image count, never the image URLs                                                                    |
+| `STRUCTURED_DESCRIPTION_REQUIRED`              | Supplier description HTML is never copied into a Sals3 product                                                                        |
+| `EDITORIAL_RECORD_STEWARDED_BY_ANOTHER_SELLER` | The canonical product exists and another account owns its editorial record                                                            |
+
+### Pricing and market boundaries
+
+Offers are created only when there is something sellable to point at **and** the
+seller has an `ACTIVE` market profile whose destination
+`modules/market-config/capabilities.ts` still authorizes. Narrowing the global
+buyer-destination policy therefore narrows offer creation immediately, without
+editing a single seller row. No market code is hardcoded anywhere in the flow.
+
+Price is delegated to the existing ADR-015 resolver rather than recomputed, so
+no second pricing formula can drift from it. Today it always declines — a
+CJ-sourced product has no mapped Sals3 category and the resolver refuses to
+price an unmapped one — and that refusal is stored on the offer as
+`pricing_state = 'UNRESOLVED'` with the resolver's own reason. A check
+constraint makes "unresolved with no reason" impossible to store.
+
+### Editing a draft
+
+`saveProductDraftAction` writes title and a structured description onto an open
+draft. The update names the revision id, the product id, `workflow_state =
+'DRAFT'`, and the expected version in one `WHERE` clause, so a stale editor, a
+replayed submit, and an attempt to rewrite an already-approved revision all
+match zero rows. A rejected stale write is audited rather than dropped.
+
+The description is a structured allow-listed block format
+(`paragraph`, `heading`, `bulletList`, `keyValueList`) with no raw-HTML block
+and no string passthrough. Markup-shaped text is rejected at the server
+boundary instead of being stored and escaped later; `a < b` still passes.
+
+### Not wired to any screen yet
+
+The Product Editor and `/listings` remain fixture screens. Pointing their
+existing controls at partial real persistence would make unsaved fields look
+saved, so this ships as a protected contract plus tests and no UI change. No
+navigation item was added.
+
+Also still absent, and not faked anywhere: publication, approval, media
+storage, freight, checkout, supplier synchronization, attention issues, and any
+storefront read of a Sals3 revision.
 
 ## Supplier Apps (multi-tenant provider connections)
 
