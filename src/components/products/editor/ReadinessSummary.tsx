@@ -1,14 +1,9 @@
-import presentEvaluationStatus from '@/components/products/cj/evaluation-status';
-import { Progress } from '@/components/ui/progress';
 import { formatDateTime } from '@/lib/seller-center/product-editor/format';
-import type { EvaluationStatus } from '@/modules/catalog/candidates/rules/contracts';
 import type { IssueSeverity } from '@/lib/seller-center/product-editor/types';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
 import { SEVERITY_PRESENTATION } from './presentation';
 
 type ReadinessSummaryProps = {
-  status: EvaluationStatus;
-  completionPercent: number;
   blockerCount: number;
   warningCount: number;
   suggestionCount: number;
@@ -47,39 +42,34 @@ function CountChip({ severity, value }: CountChipProps) {
 }
 
 /**
- * The one-glance answer to "can I publish this, and what is in my way".
+ * What is in the way, by severity, and when that was last established.
  *
- * The status label is `presentEvaluationStatus`, the same wording the
- * sourcing tables and the evaluation drawer already use - the editor does
- * not invent a second vocabulary for the same seven decision states.
+ * Overall status and completion moved up into `ReadinessStatusHeader`, above
+ * the tab strip, because they describe the listing rather than this tab. What
+ * remains is the breakdown the issue list immediately below expands on, so
+ * the two read as one block instead of two competing cards - the previous
+ * `border-t` above the chips is gone for that reason.
  */
 export default function ReadinessSummary({
-  status,
-  completionPercent,
   blockerCount,
   warningCount,
   suggestionCount,
   lastValidatedAt,
 }: ReadinessSummaryProps) {
-  const presentation = presentEvaluationStatus(status);
-
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <StatusPill label={presentation.label} tone={presentation.tone} />
-        <span className="text-xs text-muted-foreground tabular-nums">
-          {completionPercent}% complete
-        </span>
-      </div>
-
-      <Progress value={completionPercent} aria-label="Listing completeness" />
-
-      <div className="flex flex-wrap gap-1.5 border-t border-border pt-3">
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap gap-1.5">
         <CountChip severity="BLOCKER" value={blockerCount} />
         <CountChip severity="WARNING" value={warningCount} />
         <CountChip severity="SUGGESTION" value={suggestionCount} />
       </div>
 
+      {/*
+        Supporting metadata, subdued by size and weight rather than by a
+        lighter ink: `text-ink-faint` (#8a9196) would read as more clearly
+        secondary but lands on 3.20:1 against the card, under the 4.5:1 AA
+        floor. `text-muted-foreground` clears it at 5.85:1.
+      */}
       <p className="text-xs text-muted-foreground">
         Last automated check {formatDateTime(lastValidatedAt)}
       </p>

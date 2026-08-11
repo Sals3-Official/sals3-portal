@@ -174,3 +174,110 @@ test.describe('Add Product on a phone', () => {
     ).toBeVisible();
   });
 });
+
+/**
+ * Layout assertions for the Listing Readiness panel. These belong in a real
+ * browser rather than jsdom: the panel switches its tab labels on a CSS
+ * container query, and jsdom loads no stylesheet, so a unit test cannot see
+ * which label is painted or whether anything overflows.
+ */
+test.describe('Listing Readiness - layout', () => {
+  /** Wide enough for the three-column grid, so the 272px rail is visible. */
+  const WIDE = { width: 1800, height: 1100 };
+
+  async function probeTabs(scope: import('@playwright/test').Locator) {
+    return scope.evaluate((root: HTMLElement) => {
+      const tabs = Array.from(root.querySelectorAll('[role="tab"]'));
+
+      return {
+        overflowX: root.scrollWidth > root.clientWidth + 1,
+        tabs: tabs.map((tab) => {
+          const label = tab.querySelector('.truncate') as HTMLElement;
+
+          return {
+            text: (tab as HTMLElement).innerText.replace(/\s+/g, ' ').trim(),
+            clipped: label.scrollWidth > label.clientWidth + 1,
+          };
+        }),
+      };
+    });
+  }
+
+  test('the rail shows both tabs whole, with no clipping or overflow', async ({
+    page,
+  }) => {
+    await page.setViewportSize(WIDE);
+    await page.goto(EDITOR_URL);
+
+    const panel = page.locator('aside .rounded-lg').first();
+
+    await expect(panel).toBeVisible();
+
+    const probe = await probeTabs(panel);
+
+    expect(probe.overflowX).toBe(false);
+    expect(probe.tabs.map((tab) => tab.clipped)).toEqual([false, false]);
+    // Below the 19rem threshold the labels shorten rather than ellipsize.
+    expect(probe.tabs.map((tab) => tab.text)).toEqual([
+      'Issues (4)',
+      'Changes (0)',
+    ]);
+  });
+
+  test('the header states status, percentage and progress above the tabs', async ({
+    page,
+  }) => {
+    await page.setViewportSize(WIDE);
+    await page.goto(EDITOR_URL);
+
+    const panel = page.locator('aside .rounded-lg').first();
+    const progress = panel.getByRole('progressbar', {
+      name: 'Listing completeness',
+    });
+
+    await expect(panel.getByText('Needs attention')).toBeVisible();
+    await expect(panel.getByText('78% complete')).toBeVisible();
+    await expect(progress).toHaveAttribute('aria-valuenow', '78');
+
+    const [progressTop, tablistTop] = await Promise.all([
+      progress.evaluate((el) => el.getBoundingClientRect().top),
+      panel
+        .getByRole('tablist')
+        .evaluate((el) => el.getBoundingClientRect().top),
+    ]);
+
+    expect(progressTop).toBeLessThan(tablistTop);
+
+    // The status and the percentage describe the listing, not the issues
+    // tab, so they must survive a tab change - they used to disappear.
+    await panel.getByRole('tab', { name: /Changes/ }).click();
+    await expect(panel.getByText('78% complete')).toBeVisible();
+    await expect(progress).toBeVisible();
+  });
+
+  test('the readiness sheet fits a 320px phone without clipping', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.goto(EDITOR_URL);
+
+    await page.getByRole('button', { name: 'Readiness' }).click();
+
+    const sheet = page.getByRole('dialog', { name: 'Listing Readiness' });
+
+    await expect(sheet).toBeVisible();
+
+    const probe = await probeTabs(sheet);
+
+    expect(probe.overflowX).toBe(false);
+    expect(probe.tabs.map((tab) => tab.clipped)).toEqual([false, false]);
+
+    const documentOverflows = await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth,
+    );
+
+    expect(documentOverflows).toBe(false);
+  });
+});
