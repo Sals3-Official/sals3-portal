@@ -220,6 +220,45 @@ describe('checkValidMarket', () => {
     expect(result?.detail).toContain('PH');
   });
 
+  it('passes both destinations under the currently approved AU+PH allowlist', () => {
+    // Locks in the live policy shape: a candidate scoped to both approved
+    // destinations, and one scoped to a single member of the pair, must both
+    // clear the market rule. Anything else means the pilot cohort cannot be
+    // evaluated at all.
+    const auPhEnabled = buyerPolicy({
+      countryCodes: ['AU', 'PH'],
+      effective: 'ENABLED',
+    });
+
+    expect(
+      checkValidMarket(
+        marketInput({
+          buyerDestinationPolicy: auPhEnabled,
+          candidateDestinationCodes: ['AU', 'PH'],
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      checkValidMarket(
+        marketInput({
+          buyerDestinationPolicy: auPhEnabled,
+          candidateDestinationCodes: ['PH'],
+        }),
+      ),
+    ).toBeNull();
+
+    // An unscoped candidate still blocks under the same enabled policy -
+    // this is the guard the pilot's data cap relies on.
+    expect(
+      checkValidMarket(
+        marketInput({
+          buyerDestinationPolicy: auPhEnabled,
+          candidateDestinationCodes: [],
+        }),
+      ),
+    ).toMatchObject({ reasonCode: 'NO_VALID_MARKET', severity: 'BLOCK' });
+  });
+
   it('does not widen a candidate to a newly enabled country it never asked for', () => {
     // Enabling AU and SG must not retroactively qualify a PH-only candidate.
     expect(

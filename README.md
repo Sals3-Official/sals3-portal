@@ -581,6 +581,47 @@ not real coverage: actual full-catalogue completion requires the deployed
 pilot, the contract probe, the owner-run migration, sustained queue
 operation, and zero unresolved coverage partitions.
 
+**Pilot evidence allowance (2000 products, total):** paid CJ evidence
+fetching is bounded twice over, because CJ points are real money and the
+candidate table is far larger than the pilot.
+
+The _primary_ bound is data, not code. `checkValidMarket` blocks any
+candidate whose own `intended_market_codes` is empty, independently of the
+enabled allowlist — so the pilot cohort is defined by backfilling that
+column for exactly the chosen candidates and leaving every other row at
+`'{}'`. Those rows then block for free, before any CJ call, on every
+execution path. That bound is atomic, needs no migration, and is reversed by
+a single `UPDATE`.
+
+The _backstop_ is `discovery/pilot-allowance-repository.ts`, enforced in
+`candidates/evaluate.ts` immediately before the CJ adapter is built. It
+counts `candidate_evaluations.evidence_summary IS NOT NULL` — written only
+after a successful evidence fetch, and never cleared — and refuses further
+paid work at `CATALOG_PILOT_BASELINE_COUNT + CATALOG_PILOT_EVIDENCE_CAP`
+(default `0 + 2000`). It is a _total_, not a daily rate: it never resets.
+
+What consumes the allowance: one candidate completing a paid evidence fetch.
+What does not: a screening-only block, a missing or unworkable connection, or
+a later freshness re-fetch of a product already counted. The gate sits below
+every free exit in `evaluate.ts`, so that separation is structural. It also
+sits in `evaluate.ts` rather than `handle-evaluate.ts` deliberately: the
+break-glass tick calls `evaluateCandidate` directly, and a gate in the queue
+handler alone would leave that route uncapped.
+
+Refusal drops the work — `last_error_code = 'pilot_cap_reached'`,
+`attempt_count` untouched, no retry time — rather than parking a queue
+continuation, because a total cap never refills and a parked message would
+redeliver until the delivery cap and dead-letter as a failure that never
+happened. `CATALOG_PILOT_EVIDENCE_CAP` cannot be disabled by setting it to
+`0`: `envInt` rejects `0` and falls back to the default.
+
+Admission during the pilot is `POST
+/api/internal/catalog/discovery/pilot/admit`, which requeues a bounded set of
+explicitly-scoped, never-paid candidates and publishes their evaluation
+messages. It deliberately does not consult the discovery run state — the
+pilot runs with discovery PAUSED so nothing new is ingested, and pausing
+otherwise silences the freshness sweep that would normally produce this work.
+
 ### Automated candidate evaluation
 
 Candidates are never shortlisted by clicking a row - discovery admits them
@@ -656,37 +697,52 @@ wired up first (separate task).
   registered and may operate a seller account. Currently `AU`, enabled, per
   Bogs's 2026-08-10 decision.
 - `resolveBuyerDestinationCountryPolicy()` — where customers may purchase and
-  receive delivery. **Currently disabled with an empty allowlist** — no
-  ADR-003 market has been approved, and AU seller registration does not by
-  itself approve AU (or anywhere else) as a buyer destination.
+  receive delivery. **Currently `['AU','PH']`, enabled**, per the owner's
+  2026-08-11 decision. AU appears here because it was approved as a
+  destination in its own right, _not_ because it is the seller operating
+  country — the two lists are separately versioned and neither is derived
+  from the other.
 - `resolvePortalDisplayCurrency()` — Portal's own temporary seller-facing
   display currency (`AUD`), unrelated to either country policy and unrelated
   to the real `sals3-ecommerce` storefront checkout currency (still USD, see
   `src/lib/storefront/fx.ts`).
 
-Because the buyer-destination policy is disabled, `rules/screening.ts`'s
-`checkValidMarket` now fails every new candidate closed with
-`NO_VALID_MARKET` (a recoverable `TEMPORARILY_INELIGIBLE`, not a permanent
-block) before any CJ evidence-fetch call - **no candidate can currently reach
-`Ready` until a real buyer-destination market is approved.** This replaces
-the previous silent assumption that `'PH'` was a real, approved market.
-`checkValidMarket` also checks each candidate's own persisted
+`rules/screening.ts`'s `checkValidMarket` runs before any CJ evidence-fetch
+call and blocks with `NO_VALID_MARKET` (a recoverable
+`TEMPORARILY_INELIGIBLE`, not a permanent block) whenever the market cannot
+be proven. It fails closed in three distinct ways, and **the second one is
+what bounds the pilot**: a candidate whose own `intended_market_codes` is
+empty blocks regardless of the enabled allowlist. Every candidate ingested
+while the policy was disabled stored `'{}'`, so enabling `['AU','PH']` does
+not by itself admit them — each candidate's scope must be backfilled
+explicitly, which is exactly how the pilot cohort is chosen.
+`checkValidMarket` checks each candidate's own persisted
 `intended_market_codes` against the enabled allowlist, not only whether the
 global policy is on: every one of the candidate's destinations must already
 be enabled, or it blocks with a detail that distinguishes "no policy
 enabled," "this candidate has no destination recorded," and "this
-candidate's destination isn't in the enabled set" - so a historical `['PH']`
-candidate never silently passes once `['AU']` is approved; it stays blocked
-until its own stored scope is separately, explicitly migrated. Existing
-historical `PASS`/`PASS_WITH_ATTENTION` rows are untouched; only new
-evaluations are affected. A repository guard
+candidate's destination isn't in the enabled set". The subset check is strict
+but not narrowing: a candidate scoped `['PH']` passes under an `['AU','PH']`
+allowlist, because `PH` is genuinely enabled — approving a destination
+admits every candidate already scoped to it, which is the intended behaviour
+and the reason widening the allowlist is an owner decision rather than a
+configuration tweak. What never happens is the reverse: a candidate is never
+widened to a newly enabled country it never asked for, and an unscoped
+candidate is never admitted at all.
+
+Changing the buyer-destination `policyVersion` re-opens history on purpose:
+the freshness sweep's `requeuePolicyVersionMismatches` requeues every decided
+row whose stored version no longer matches, including `PASS` and `BLOCKED`,
+so no historical decision stays active under a superseded market policy. A
+revert must therefore restore the _exact_ previous version string rather than
+inventing a new one, or every row is requeued a second time. A repository guard
 (`no-scattered-market-literals.test.ts`) fails the build if a bare `'PH'`/
 `'AU'` market-code literal is reintroduced into this module.
 
 The buyer-destination policy is resolved exactly once per evaluation and
 composed with the catalog policy version into one stored identity
 (`candidate_evaluations.policy_version`, e.g.
-`catalog-eval-policy-placeholder-v1+buyer-destination:buyer-destination-country-v1-disabled`)
+`catalog-eval-policy-placeholder-v1+buyer-destination:buyer-destination-country-v2-au-ph`)
 via `composeEvaluationPolicyVersion()`, so a later policy-version change can
 be detected by string comparison alone - no second column. Every screening
 and evaluation audit event also records the catalog policy version, the
