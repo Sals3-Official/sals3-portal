@@ -20,6 +20,7 @@ import type {
   CatalogPage,
   CatalogPageQuery,
   ConnectionHealth,
+  CuratedPageQuery,
   SupplierCategoryLeaf,
   SupplierProviderAdapter,
   WebhookTopicSetting,
@@ -261,6 +262,84 @@ export default class CjSupplierAdapter implements SupplierProviderAdapter {
       sort: CATALOG_SORT,
     });
 
+    if (query.categoryId !== undefined && query.categoryId !== '') {
+      params.set('categoryId', query.categoryId);
+    }
+    if (query.createTimeFrom !== undefined) {
+      params.set('createTimeFrom', query.createTimeFrom);
+    }
+    if (query.createTimeTo !== undefined) {
+      params.set('createTimeTo', query.createTimeTo);
+    }
+    if (query.minPrice !== undefined) {
+      params.set('minPrice', query.minPrice.toFixed(2));
+    }
+    if (query.maxPrice !== undefined) {
+      params.set('maxPrice', query.maxPrice.toFixed(2));
+    }
+
+    const parsed = cjProductListSchema.safeParse(
+      await this.getJson(connectionId, `/product/list?${params.toString()}`),
+    );
+
+    if (!parsed.success) throw new CjApiError('unexpected-response');
+    if (parsed.data.code !== 200) {
+      throw new CjApiError(
+        parsed.data.code === 401
+          ? 'authentication-failed'
+          : 'unexpected-response',
+      );
+    }
+
+    const data = parsed.data.data ?? null;
+    const total = data?.total ?? 0;
+    const pageSize = data?.pageSize ?? query.pageSize;
+
+    return {
+      products: (data?.list ?? []).map(normalizeCjProduct),
+      requestedPageNum: query.pageNum,
+      pageNum: data?.pageNum ?? -1,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / Math.max(pageSize, 1))),
+      pointsInfo: parsed.data.pointsInfo ?? null,
+    };
+  }
+
+  /**
+   * Curated discovery page (CJ Trending / Most listed / New arrivals).
+   *
+   * Same legacy `/product/list` endpoint, same documented 50-point cost, and
+   * the same tolerant schema/normalisation as every other list read - only
+   * the ranking parameters differ. There is deliberately no separate
+   * "curated" provider route, no `product/listV2` call, and no result-cap
+   * constant: a curated lane is intentionally a SUBSET of the catalogue and
+   * proves nothing about coverage.
+   */
+  async listCuratedPage(
+    connectionId: string,
+    query: CuratedPageQuery,
+  ): Promise<CatalogPage> {
+    if (
+      !Number.isInteger(query.pageNum) ||
+      query.pageNum < 1 ||
+      !Number.isInteger(query.pageSize) ||
+      query.pageSize < 1 ||
+      query.pageSize > CATALOG_PAGE_SIZE_MAX
+    ) {
+      throw new CjApiError('unexpected-response');
+    }
+
+    const params = new URLSearchParams({
+      pageNum: String(query.pageNum),
+      pageSize: String(query.pageSize),
+    });
+
+    if (query.searchType !== undefined) {
+      params.set('searchType', String(query.searchType));
+    }
+    if (query.orderBy !== undefined) params.set('orderBy', query.orderBy);
+    if (query.sort !== undefined) params.set('sort', query.sort);
     if (query.categoryId !== undefined && query.categoryId !== '') {
       params.set('categoryId', query.categoryId);
     }

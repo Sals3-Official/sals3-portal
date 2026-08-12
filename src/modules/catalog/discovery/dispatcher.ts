@@ -4,6 +4,7 @@ import { queueMessageSchema } from './messages';
 import handleCycleStart from './handle-cycle-start';
 import handlePartition from './handle-partition';
 import handleAuditUnit from './handle-audit-unit';
+import handleCuratedLane from './handle-curated-lane';
 import handleEvaluateCandidate from './handle-evaluate';
 import handleReconcileProduct from './handle-reconcile';
 import handleWebhookEvent from './handle-webhook-event';
@@ -69,6 +70,9 @@ export default async function handleQueueMessage(
       break;
     case 'DISCOVERY_AUDIT_UNIT':
       await handleAuditUnit(message);
+      break;
+    case 'DISCOVERY_CURATED_LANE':
+      await handleCuratedLane(message);
       break;
     case 'EVALUATE_CANDIDATE':
       await handleEvaluateCandidate(message);

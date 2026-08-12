@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import PageHeader from '@/components/portal/PageHeader';
-import CjCatalogueView from '@/components/products/cj/CjCatalogueView';
 import CjTableSkeleton from '@/components/products/cj/CjTableSkeleton';
-import { productsPageQuerySchema } from '@/lib/cj/schemas';
+import SupplierProductsWorkspace from '@/components/products/supplier-products/SupplierProductsWorkspace';
+import { supplierProductsQuerySchema } from '@/lib/products/supplier-products-params';
 
 export const metadata: Metadata = {
   title: 'All Supplier Products · Sals3 Portal',
@@ -14,35 +14,37 @@ type ProductsPageProps = {
 };
 
 /**
- * All Supplier Products - the optional raw CJ browser (nav label; formerly
- * "CJ Candidate Explorer"). A Server Component that parses the URL and
- * composes the CJdropshipping supplier feed - the portal's only product
- * source. No list logic lives here. Unknown query keys (like the old
- * ?source=cj) are stripped by the schema, so old links keep working.
+ * All Supplier Products - the raw supplier catalogue browser.
+ *
+ * A Server Component that parses the URL and composes the local workspace.
+ * Unknown query keys (the retired `?source=cj`, `?cjPage`, `?cjSearch`) are
+ * stripped by the schema, so old links keep working and simply land on the
+ * default view.
  *
  * The route stays `/products` on purpose: renaming it would break existing
- * links and the storefront feed's own references for a cosmetic gain. The
- * automated pipeline (`src/modules/catalog/candidates/run-tick.ts`) ingests
- * from this same feed on its own; this page is for browsing, not driving
- * that pipeline.
+ * links and the storefront feed's own references for a cosmetic gain.
+ *
+ * Rebuilt 2026-08-12 (ADR-013 §1a): this page used to call CJ
+ * `/product/list` on every render. It now reads only what discovery has
+ * already persisted, so browsing the catalogue costs no CJ API points.
  */
 export default async function ProductsPage({
   searchParams,
 }: ProductsPageProps) {
   const params = await searchParams;
-  const cjQuery = productsPageQuerySchema.parse(params);
+  const query = supplierProductsQuerySchema.parse(params);
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="All Supplier Products"
-        description="Browse products from your connected supplier apps. Automated evaluation runs in the background."
+        description="Everything discovery has found through your connected supplier apps. Screening runs automatically from saved supplier data; stock is confirmed only by a manual CJ/MyCJ check you record here."
       />
       <Suspense
-        key={`${cjQuery.cjPage}-${cjQuery.cjSearch}`}
+        key={`${query.view}-${query.signal}-${query.category}-${query.q}-${query.page}-${query.source}`}
         fallback={<CjTableSkeleton />}
       >
-        <CjCatalogueView query={cjQuery} />
+        <SupplierProductsWorkspace query={query} />
       </Suspense>
     </div>
   );

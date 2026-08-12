@@ -103,6 +103,25 @@ export const feedSnapshotSchema = z.object({
   priceUsdCents: z.number().nullable(),
   listedCount: z.number().nullable(),
   shipsFrom: z.array(z.string()),
+  /**
+   * Display fields added 2026-08-12 for the lean All Supplier Products
+   * catalogue, which now renders from persisted Sals3 data instead of a live
+   * CJ `/product/list` call on every page view, search, and pagination.
+   *
+   * All are optional with a null/false default so rows written before this
+   * change stay readable and render a neutral placeholder for the field they
+   * never captured - no backfill and no supplier call is needed to read an
+   * old row.
+   */
+  categoryId: z.string().nullish(),
+  sku: z.string().nullish(),
+  imageUrl: z.string().nullish(),
+  weight: z.string().nullish(),
+  productType: z.string().nullish(),
+  supplierName: z.string().nullish(),
+  freeShipping: z.boolean().nullish(),
+  /** Provider creation date (ISO `yyyy-mm-dd`), as the feed reported it. */
+  providerCreatedAt: z.string().nullish(),
 });
 
 export type FeedSnapshot = z.infer<typeof feedSnapshotSchema>;

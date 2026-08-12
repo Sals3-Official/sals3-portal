@@ -8,6 +8,7 @@ import {
 } from '@/modules/suppliers/repository';
 import type { SupplierCategoryLeaf } from '@/modules/suppliers/contracts';
 import {
+  CURATED_SWEEP_DELAY_SECONDS,
   CYCLE_SWEEP_DELAY_SECONDS,
   discoveryEpochMs,
   FRESHNESS_SWEEP_DELAY_SECONDS,
@@ -34,6 +35,8 @@ import { insertOutboxIntents, type OutboxIntent } from './outbox-repository';
 import { recordDiscoveryFailure } from './failure-repository';
 import { isDiscoveryRunning } from './run-state-repository';
 import { findWatermark } from './lane-repository';
+import { CURATED_LANES } from './curated-lanes';
+import { curatedLaneIntent } from './handle-curated-lane';
 
 /**
  * DISCOVERY_CYCLE_START: the ensure-and-sweep operation for one connection's
@@ -412,6 +415,19 @@ export default async function handleCycleStart(
         supplierConnectionId: connection.id,
       },
     },
+    // Keep the curated CJ lanes alive on their own low-priority cadence.
+    // They share this connection's backlog gate, new-PID ledger, request
+    // limiter, and points reserve, so they can only ever run in the gaps the
+    // canonical scanner leaves.
+    ...CURATED_LANES.map((lane) =>
+      curatedLaneIntent({
+        supplierConnectionId: connection.id,
+        lane,
+        keySuffix: `sweep:${Math.floor(
+          Date.now() / (CURATED_SWEEP_DELAY_SECONDS * 1000),
+        )}`,
+      }),
+    ),
   ]);
 }
 

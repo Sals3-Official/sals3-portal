@@ -51,6 +51,9 @@ export async function insertCandidateIfAbsent(
     supplierConnectionId: string;
     intendedMarketCodes: string[];
     actorId: string;
+    /** Provider category identity/label from the discovering feed row. */
+    providerCategoryId?: string | null;
+    providerCategoryName?: string | null;
   },
 ): Promise<SupplierCandidateRow | null> {
   const inserted = await executor
@@ -61,6 +64,8 @@ export async function insertCandidateIfAbsent(
       intendedSellerId: input.intendedSellerId,
       supplierConnectionId: input.supplierConnectionId,
       intendedMarketCodes: input.intendedMarketCodes,
+      providerCategoryId: input.providerCategoryId ?? null,
+      providerCategoryName: input.providerCategoryName ?? null,
       createdBy: input.actorId,
       providerLastSeenAt: new Date(),
       providerLastVerifiedAt: new Date(),
@@ -81,6 +86,12 @@ export async function insertCandidateIfAbsent(
 export async function markCandidateProviderSeen(
   executor: Executor,
   candidateId: string,
+  /**
+   * Re-observed provider category. Refreshed on every sighting so the local
+   * Category filter tracks CJ's current taxonomy without a separate call;
+   * omitted (or null) leaves the stored value alone rather than erasing it.
+   */
+  category?: { id: string | null; name: string | null },
 ): Promise<void> {
   await executor
     .update(supplierCandidates)
@@ -88,6 +99,10 @@ export async function markCandidateProviderSeen(
       providerLastSeenAt: new Date(),
       providerLastVerifiedAt: new Date(),
       providerRemovalSuspectedAt: null,
+      ...(category?.id == null ? {} : { providerCategoryId: category.id }),
+      ...(category?.name == null
+        ? {}
+        : { providerCategoryName: category.name }),
       updatedAt: new Date(),
     })
     .where(eq(supplierCandidates.id, candidateId));

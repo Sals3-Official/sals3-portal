@@ -10,10 +10,8 @@ vi.mock('@/lib/db/client', () => ({
 vi.mock('./repository', () => ({
   appendAuditEvent: vi.fn(),
   findCandidateById: vi.fn(),
-  recordEvaluationDecision: vi.fn(),
   recordEvaluationFailure: vi.fn(),
   recordScreeningDecision: vi.fn(),
-  upsertSnapshot: vi.fn(),
 }));
 
 vi.mock('@/modules/suppliers/repository', () => ({
@@ -22,50 +20,14 @@ vi.mock('@/modules/suppliers/repository', () => ({
     status === 'CONNECTED' || status === 'DEGRADED',
 }));
 
-vi.mock('../discovery/pilot-allowance-repository', () => ({
-  assessPilotAllowance: vi.fn(),
+const { resolveBuyerDestinationCountryPolicyMock } = vi.hoisted(() => ({
+  resolveBuyerDestinationCountryPolicyMock: vi.fn(),
 }));
 
-vi.mock('@/lib/secrets/postgres-supplier-secret-store', () => ({
-  // A real `function` is required, not an arrow function - the code under
-  // test calls `new PostgresSupplierSecretStore()`, and arrow functions can
-  // never be constructors.
-  // eslint-disable-next-line prefer-arrow-callback
-  default: vi.fn().mockImplementation(function MockClass() {
-    return {};
-  }),
-}));
-
-vi.mock('@/modules/suppliers/providers/cj/cj-auth', () => ({
-  // eslint-disable-next-line prefer-arrow-callback
-  default: vi.fn().mockImplementation(function MockClass() {
-    return {};
-  }),
-}));
-
-const { getCandidateEvidenceMock, resolveBuyerDestinationCountryPolicyMock } =
-  vi.hoisted(() => ({
-    getCandidateEvidenceMock: vi.fn(),
-    resolveBuyerDestinationCountryPolicyMock: vi.fn(),
-  }));
-
-// This suite tests orchestration (evidence fetch, retry, connection pause),
-// not the market-policy rule itself (see `rules/screening.test.ts`), so an
-// enabled policy is the default here - one dedicated test below overrides it
-// back to disabled to prove the real fail-closed integration.
 vi.mock('@/lib/country-policy/buyer-destination-country', () => ({
   default: resolveBuyerDestinationCountryPolicyMock,
 }));
 
-vi.mock('@/modules/suppliers/providers/cj/cj-adapter', () => ({
-  // eslint-disable-next-line prefer-arrow-callback
-  default: vi.fn().mockImplementation(function MockCjSupplierAdapter() {
-    return { getCandidateEvidence: getCandidateEvidenceMock };
-  }),
-}));
-
-// eslint-disable-next-line import/first
-import { CjApiError } from '@/services/cj/config';
 // eslint-disable-next-line import/first
 import { findConnectionById } from '@/modules/suppliers/repository';
 // eslint-disable-next-line import/first
@@ -78,21 +40,24 @@ import type {
 import {
   appendAuditEvent,
   findCandidateById,
-  recordEvaluationDecision,
   recordEvaluationFailure,
   recordScreeningDecision,
-  upsertSnapshot,
 } from './repository';
-// eslint-disable-next-line import/first
-import { assessPilotAllowance } from '../discovery/pilot-allowance-repository';
 // eslint-disable-next-line import/first
 import evaluateCandidate from './evaluate';
 // eslint-disable-next-line import/first
-import {
-  composeEvaluationPolicyVersion,
-  MAX_EVALUATION_ATTEMPTS,
-  POLICY_VERSION,
-} from './rules/policy';
+import { composeEvaluationPolicyVersion, POLICY_VERSION } from './rules/policy';
+
+/**
+ * Lean intake policy (ADR-013 §1a): raw All Supplier Products evaluation is
+ * LOCAL screening only.
+ *
+ * The load-bearing assertion in this suite is a negative one, and it is
+ * enforced structurally rather than by mocking the supplier client away: no
+ * supplier adapter, token manager, or secret store is mocked here at all, so
+ * if `evaluate.ts` ever reintroduces an evidence fetch, these tests fail on a
+ * real unmocked import rather than silently passing against a stub.
+ */
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
@@ -102,63 +67,57 @@ const CANDIDATE: SupplierCandidateRow = {
   externalProductId: 'CJLY1',
   supplierConnectionId: 'connection-1',
   intendedSellerId: 'seller-account-1',
-  // Matches the beforeEach's default enabled buyer-destination mock
-  // (['TEST']) so the orchestration tests below reach the full evidence-
-  // fetch path. The market-scope rule itself (candidate destination vs.
-  // enabled allowlist) is unit-tested in `rules/screening.test.ts` and
-  // exercised end-to-end below.
   intendedMarketCodes: ['TEST'],
   shortlistState: 'SHORTLISTED',
+  providerCategoryId: 'cat-1',
+  providerCategoryName: 'Home',
+  stockReviewState: 'STOCK_NOT_CHECKED',
+  stockReviewVersion: 0,
+  stockReviewObservedAt: null,
+  stockReviewRecordedAt: null,
+  stockReviewActorId: null,
+  stockReviewObservedQuantity: null,
+  stockReviewObservedOrigin: null,
+  stockReviewNote: null,
   providerLastSeenAt: null,
   providerLastVerifiedAt: null,
   providerRemovalSuspectedAt: null,
   providerRemovalConfirmedAt: null,
   createdAt: new Date(),
-  createdBy: 'system:cj-ingestion',
+  createdBy: 'system:cj-discovery',
   updatedAt: new Date(),
 };
 
-const CONNECTION: SupplierConnectionRow = {
+const CONNECTION = {
   id: 'connection-1',
-  sellerAccountId: 'seller-account-1',
-  providerId: 'provider-1',
-  displayName: 'CJ Dropshipping',
-  externalAccountLookupHash: 'hash',
-  externalAccountMasked: 'CJ...1234',
   status: 'CONNECTED',
-  accessTokenExpiresAt: null,
-  refreshTokenExpiresAt: null,
-  lastVerifiedAt: null,
-  lastErrorCode: null,
-  createdAt: new Date(),
-  updatedAt: new Date(),
-  disconnectedAt: null,
-};
+  sellerAccountId: 'seller-account-1',
+} as unknown as SupplierConnectionRow;
 
-function row(
-  overrides: Partial<CandidateEvaluationRow>,
+function evaluationRow(
+  overrides: Partial<CandidateEvaluationRow> = {},
 ): CandidateEvaluationRow {
   return {
-    id: 'eval-1',
+    id: 'evaluation-1',
     candidateId: 'candidate-1',
-    status: 'EVALUATING',
-    admissionReason: null,
+    status: 'QUEUED',
+    admissionReason: 'NEW_PRODUCT',
     reasonCodes: [],
     evidenceSummary: null,
     sourceSnapshotChecksum: null,
-    policyVersion: 'catalog-eval-policy-placeholder-v1',
+    policyVersion: POLICY_VERSION,
     score: null,
     lastKnownPriceUsdCents: null,
     lastSeenFingerprint: 'fingerprint-1',
     feedSnapshot: {
-      name: 'Plain phone case',
-      category: 'Phone accessories',
-      priceUsdCents: 500,
-      listedCount: 10,
+      name: 'Ceramic mug',
+      category: 'Home & Kitchen',
+      priceUsdCents: 1_250,
+      listedCount: 12,
       shipsFrom: ['CN'],
     },
-    leasedBy: 'worker-1',
-    leasedUntil: new Date(),
+    leasedBy: null,
+    leasedUntil: null,
     attemptCount: 0,
     lastErrorCode: null,
     nextRetryAt: null,
@@ -167,494 +126,107 @@ function row(
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
-  };
+  } as CandidateEvaluationRow;
 }
 
-const CLEAN_EVIDENCE = {
-  externalProductId: 'CJLY1',
-  name: 'Plain phone case',
-  supplierSku: 'SKU-1',
-  categoryName: 'Phone accessories',
-  entryCode: '3926909090',
-  supplierPriceUsd: 5,
-  packedWeight: '100',
-  sourceStatusRaw: '3',
-  isTestProduct: false,
-  listedCount: 10,
-  usableImageCount: 3,
-  variants: [
-    {
-      vid: 'v1',
-      sku: 'v1-sku',
-      optionLabel: 'Black',
-      priceUsd: 5,
-      weightGrams: 100,
-      stockByOrigin: [
-        {
-          countryCode: 'CN',
-          totalInventory: 10,
-          cjInventory: 10,
-          factoryInventory: 0,
-          verifiedWarehouse: 'VERIFIED',
-        },
-      ],
-      totalInventory: 10,
-      stockEvidence: 'CJ_WAREHOUSE_STOCK',
-    },
-  ],
-  warehouses: [
-    { countryCode: 'CN', name: 'China warehouse', totalInventory: 10 },
-  ],
-  reviews: { totalCount: 5, sampledCount: 5, sampledAverageScore: 4.5 },
-  capturedAt: new Date('2026-08-07T00:00:00Z').toISOString(),
-};
-
-describe('evaluateCandidate', () => {
-  beforeEach(() => {
-    asMock(findCandidateById).mockReset().mockResolvedValue(CANDIDATE);
-    asMock(findConnectionById).mockReset().mockResolvedValue(CONNECTION);
-    getCandidateEvidenceMock.mockReset();
-    asMock(recordScreeningDecision).mockReset().mockResolvedValue(undefined);
-    asMock(recordEvaluationDecision).mockReset().mockResolvedValue(undefined);
-    asMock(recordEvaluationFailure).mockReset().mockResolvedValue(undefined);
-    asMock(upsertSnapshot).mockReset().mockResolvedValue(undefined);
-    asMock(appendAuditEvent).mockReset().mockResolvedValue(undefined);
-    resolveBuyerDestinationCountryPolicyMock.mockReset().mockReturnValue({
-      countryCodes: ['TEST'],
-      policyVersion: 'test-buyer-destination-v1',
-      source: 'test-fixture',
-      effective: 'ENABLED',
-    });
-    asMock(assessPilotAllowance)
-      .mockReset()
-      .mockResolvedValue({ exhausted: false, paidCount: 0, limit: 2_000 });
+beforeEach(() => {
+  vi.clearAllMocks();
+  asMock(findCandidateById).mockResolvedValue(CANDIDATE);
+  asMock(findConnectionById).mockResolvedValue(CONNECTION);
+  resolveBuyerDestinationCountryPolicyMock.mockReturnValue({
+    countryCodes: ['TEST'],
+    effective: 'ENABLED',
+    policyVersion: 'buyer-destination-test-v1',
+    source: 'test',
   });
+});
 
-  it('fails closed with NO_VALID_MARKET when no buyer destination-country policy is enabled', async () => {
-    resolveBuyerDestinationCountryPolicyMock.mockReturnValue({
-      countryCodes: [],
-      policyVersion: 'buyer-destination-country-v1-disabled',
-      source: 'no-adr-003-market-approved-yet',
-      effective: 'DISABLED',
-    });
+describe('evaluateCandidate under the lean intake policy', () => {
+  it('decides from the persisted feed summary alone and records a screening-only decision', async () => {
+    await evaluateCandidate(evaluationRow());
 
-    await evaluateCandidate(row({}));
+    expect(asMock(recordScreeningDecision)).toHaveBeenCalledTimes(1);
 
-    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
-    expect(recordScreeningDecision).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        candidateId: 'candidate-1',
-        decision: expect.objectContaining({
-          status: 'TEMPORARILY_INELIGIBLE',
-          reasonCodes: ['NO_VALID_MARKET'],
-        }),
-      }),
-    );
-  });
+    const [, decisionInput] = asMock(recordScreeningDecision).mock.calls[0];
 
-  it("blocks closed when the candidate's own intended destination is not in the enabled policy (historical PH under an AU-only policy)", async () => {
-    asMock(findCandidateById).mockResolvedValue({
-      ...CANDIDATE,
-      intendedMarketCodes: ['PH'],
-    });
-    resolveBuyerDestinationCountryPolicyMock.mockReturnValue({
-      countryCodes: ['AU'],
-      policyVersion: 'buyer-destination-country-v1',
-      source: 'owner-decision-2026-08-10-au-business-registration',
-      effective: 'ENABLED',
-    });
-
-    await evaluateCandidate(row({}));
-
-    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
-    expect(recordScreeningDecision).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        decision: expect.objectContaining({
-          status: 'TEMPORARILY_INELIGIBLE',
-          reasonCodes: ['NO_VALID_MARKET'],
-        }),
-      }),
-    );
-  });
-
-  it('blocks closed when the candidate has no intended destination at all, even under an enabled policy', async () => {
-    asMock(findCandidateById).mockResolvedValue({
-      ...CANDIDATE,
-      intendedMarketCodes: [],
-    });
-
-    await evaluateCandidate(row({}));
-
-    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
-    expect(recordScreeningDecision).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        decision: expect.objectContaining({
-          status: 'TEMPORARILY_INELIGIBLE',
-          reasonCodes: ['NO_VALID_MARKET'],
-        }),
-      }),
-    );
-  });
-
-  it('resolves the buyer-destination policy exactly once per evaluation and reuses that same snapshot everywhere', async () => {
-    getCandidateEvidenceMock.mockResolvedValue(CLEAN_EVIDENCE);
-
-    await evaluateCandidate(row({}));
-
-    // Not "at least once" - exactly once, so the market rule, the stored
-    // policy identity, and the audit payload can never disagree because
-    // they observed two different resolver calls.
-    expect(resolveBuyerDestinationCountryPolicyMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('persists a stored policy identity that composes the catalog and buyer-destination versions, and changes deterministically when the buyer version changes', async () => {
-    getCandidateEvidenceMock.mockResolvedValue(CLEAN_EVIDENCE);
-
-    await evaluateCandidate(row({}));
-
-    const firstPolicyVersion = asMock(recordEvaluationDecision).mock
-      .calls[0]?.[1]?.policyVersion;
-
-    expect(firstPolicyVersion).toBe(
+    expect(decisionInput.decision.status).toBe('PASS');
+    expect(decisionInput.policyVersion).toBe(
       composeEvaluationPolicyVersion(
         POLICY_VERSION,
-        'test-buyer-destination-v1',
+        'buyer-destination-test-v1',
       ),
-    );
-
-    asMock(recordEvaluationDecision).mockReset().mockResolvedValue(undefined);
-    resolveBuyerDestinationCountryPolicyMock.mockReturnValue({
-      countryCodes: ['TEST'],
-      policyVersion: 'test-buyer-destination-v2',
-      source: 'test-fixture',
-      effective: 'ENABLED',
-    });
-
-    await evaluateCandidate(row({}));
-
-    const secondPolicyVersion = asMock(recordEvaluationDecision).mock
-      .calls[0]?.[1]?.policyVersion;
-
-    expect(secondPolicyVersion).toBe(
-      composeEvaluationPolicyVersion(
-        POLICY_VERSION,
-        'test-buyer-destination-v2',
-      ),
-    );
-    expect(secondPolicyVersion).not.toBe(firstPolicyVersion);
-  });
-
-  it('records the buyer-destination policy version, source, effective state, enabled codes, and the candidate scope in the audit payload', async () => {
-    getCandidateEvidenceMock.mockResolvedValue(CLEAN_EVIDENCE);
-
-    await evaluateCandidate(row({}));
-
-    expect(appendAuditEvent).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        action: 'CANDIDATE_EVALUATION_DECIDED',
-        payload: expect.objectContaining({
-          catalogPolicyVersion: POLICY_VERSION,
-          buyerDestinationPolicyVersion: 'test-buyer-destination-v1',
-          buyerDestinationPolicySource: 'test-fixture',
-          buyerDestinationPolicyEffective: 'ENABLED',
-          buyerDestinationEnabledCountryCodes: ['TEST'],
-          candidateIntendedDestinationCodes: ['TEST'],
-        }),
-      }),
     );
   });
 
-  it('records the same market audit fields on a screening-blocked decision', async () => {
+  it('audits the decision as screening-only with no supplier evidence fetched', async () => {
+    await evaluateCandidate(evaluationRow());
+
+    const [, auditInput] = asMock(appendAuditEvent).mock.calls[0];
+
+    expect(auditInput.action).toBe('CANDIDATE_SCREENING_DECIDED');
+    expect(auditInput.payload.screeningOnly).toBe(true);
+    expect(auditInput.payload.supplierEvidenceFetched).toBe(false);
+  });
+
+  it('blocks on a screening rule without any supplier call', async () => {
+    await evaluateCandidate(
+      evaluationRow({
+        feedSnapshot: {
+          name: 'Nike running shoe replica',
+          category: 'Shoes',
+          priceUsdCents: 3_000,
+          listedCount: 4,
+          shipsFrom: ['CN'],
+        },
+      } as Partial<CandidateEvaluationRow>),
+    );
+
+    const [, decisionInput] = asMock(recordScreeningDecision).mock.calls[0];
+
+    expect(decisionInput.decision.status).toBe('BLOCKED');
+    expect(decisionInput.decision.reasonCodes).toContain(
+      'COUNTERFEIT_HIGH_CONFIDENCE',
+    );
+  });
+
+  it('fails closed with NO_VALID_MARKET when no buyer destination is enabled', async () => {
     resolveBuyerDestinationCountryPolicyMock.mockReturnValue({
       countryCodes: [],
-      policyVersion: 'buyer-destination-country-v1-disabled',
-      source: 'no-adr-003-market-approved-yet',
       effective: 'DISABLED',
+      policyVersion: 'buyer-destination-disabled-v1',
+      source: 'test',
     });
 
-    await evaluateCandidate(row({}));
+    await evaluateCandidate(evaluationRow());
 
-    expect(appendAuditEvent).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        action: 'CANDIDATE_SCREENING_DECIDED',
-        payload: expect.objectContaining({
-          catalogPolicyVersion: POLICY_VERSION,
-          buyerDestinationPolicyVersion:
-            'buyer-destination-country-v1-disabled',
-          buyerDestinationPolicyEffective: 'DISABLED',
-          buyerDestinationEnabledCountryCodes: [],
-          candidateIntendedDestinationCodes: ['TEST'],
-        }),
-      }),
-    );
+    const [, decisionInput] = asMock(recordScreeningDecision).mock.calls[0];
+
+    expect(decisionInput.decision.reasonCodes).toContain('NO_VALID_MARKET');
+    expect(decisionInput.decision.status).toBe('TEMPORARILY_INELIGIBLE');
   });
 
-  it('decides at the screening stage without ever calling CJ (saves evidence-fetch points)', async () => {
-    await evaluateCandidate(
-      row({
-        feedSnapshot: {
-          name: 'Tobacco pipe',
-          category: 'Tobacco',
-          priceUsdCents: 500,
-          listedCount: 1,
-          shipsFrom: [],
-        },
-      }),
-    );
-
-    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
-    expect(recordScreeningDecision).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        candidateId: 'candidate-1',
-        decision: expect.objectContaining({ status: 'BLOCKED' }),
-      }),
-    );
-  });
-
-  it('never consults the pilot allowance for a screening-blocked candidate', async () => {
-    // The load-bearing guarantee of the pilot cap: a decision that costs no
-    // CJ points must never consume a paid slot. The gate sits below every
-    // free exit, so this is true by construction - and this test is what
-    // keeps it that way if the gate is ever moved.
-    await evaluateCandidate(
-      row({
-        feedSnapshot: {
-          name: 'Tobacco pipe',
-          category: 'Tobacco',
-          priceUsdCents: 500,
-          listedCount: 1,
-          shipsFrom: [],
-        },
-      }),
-    );
-
-    expect(assessPilotAllowance).not.toHaveBeenCalled();
-  });
-
-  it('never consults the pilot allowance when the connection is not workable', async () => {
+  it('pauses without burning an attempt when the seller disconnected their connection', async () => {
     asMock(findConnectionById).mockResolvedValue({
       ...CONNECTION,
       status: 'DISCONNECTED',
     });
 
-    await evaluateCandidate(row({}));
+    await evaluateCandidate(evaluationRow({ attemptCount: 2 }));
 
-    expect(assessPilotAllowance).not.toHaveBeenCalled();
-    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
+    expect(asMock(recordScreeningDecision)).not.toHaveBeenCalled();
+
+    const [, failureInput] = asMock(recordEvaluationFailure).mock.calls[0];
+
+    expect(failureInput.attemptCount).toBe(2);
+    expect(failureInput.nextRetryAt).toBeNull();
   });
 
-  it('refuses the evidence fetch once the pilot allowance is exhausted, without burning an attempt', async () => {
-    asMock(assessPilotAllowance).mockResolvedValue({
-      exhausted: true,
-      paidCount: 2_000,
-      limit: 2_000,
-    });
+  it('does nothing when the candidate row is gone', async () => {
+    asMock(findCandidateById).mockResolvedValue(null);
 
-    await evaluateCandidate(row({ attemptCount: 2 }));
+    await evaluateCandidate(evaluationRow());
 
-    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
-    expect(recordEvaluationFailure).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        candidateId: 'candidate-1',
-        // Unchanged, not incremented: the product did nothing wrong, and an
-        // untouched attempt budget also keeps the row out of the Exception
-        // Queue, whose filter requires an exhausted one.
-        attemptCount: 2,
-        lastErrorCode: 'pilot_cap_reached',
-        // No backoff clock - recovery is the owner raising the cap.
-        nextRetryAt: null,
-      }),
-    );
-    expect(appendAuditEvent).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        action: 'CANDIDATE_EVALUATION_REFUSED_PILOT_ALLOWANCE',
-        payload: expect.objectContaining({ paidCount: 2_000, limit: 2_000 }),
-      }),
-    );
-  });
-
-  it('fails safely when the candidate has no supplier connection', async () => {
-    asMock(findCandidateById).mockResolvedValue({
-      ...CANDIDATE,
-      supplierConnectionId: null,
-    });
-
-    await evaluateCandidate(row({}));
-
-    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
-    expect(recordEvaluationFailure).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ lastErrorCode: 'no_supplier_connection' }),
-    );
-  });
-
-  it('fails safely when the connection object itself is missing (dangling reference)', async () => {
-    asMock(findConnectionById).mockResolvedValue(null);
-
-    await evaluateCandidate(row({ attemptCount: 0 }));
-
-    expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
-    expect(recordEvaluationFailure).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        // A genuine data anomaly, not a seller-caused pause - still burns a
-        // technical attempt like any other unexpected failure.
-        attemptCount: 1,
-        lastErrorCode: 'connection_unavailable',
-      }),
-    );
-  });
-
-  it.each([
-    ['DISCONNECTED', 'SUPPLIER_CONNECTION_DISCONNECTED'],
-    ['REVOKED', 'SUPPLIER_CONNECTION_REVOKED'],
-    ['REAUTH_REQUIRED', 'SUPPLIER_CONNECTION_REAUTH_REQUIRED'],
-    ['PENDING', 'SUPPLIER_CONNECTION_PENDING'],
-  ] as const)(
-    'pauses without a technical attempt or CJ call when the connection is %s',
-    async (status, expectedErrorCode) => {
-      asMock(findConnectionById).mockResolvedValue({
-        ...CONNECTION,
-        status,
-      });
-
-      await evaluateCandidate(row({ attemptCount: 2 }));
-
-      expect(getCandidateEvidenceMock).not.toHaveBeenCalled();
-      expect(recordEvaluationFailure).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          // Never incremented - the candidate did nothing wrong, and
-          // recovery is event-driven (reconnect), not a backoff clock.
-          attemptCount: 2,
-          lastErrorCode: expectedErrorCode,
-          nextRetryAt: null,
-        }),
-      );
-      expect(appendAuditEvent).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          action: 'CANDIDATE_EVALUATION_PAUSED_CONNECTION_UNAVAILABLE',
-          payload: expect.objectContaining({
-            connectionStatus: status,
-            lastErrorCode: expectedErrorCode,
-          }),
-        }),
-      );
-    },
-  );
-
-  it('still evaluates through a DEGRADED connection (stays workable by design)', async () => {
-    asMock(findConnectionById).mockResolvedValue({
-      ...CONNECTION,
-      status: 'DEGRADED',
-    });
-    getCandidateEvidenceMock.mockResolvedValue(CLEAN_EVIDENCE);
-
-    await evaluateCandidate(row({}));
-
-    expect(getCandidateEvidenceMock).toHaveBeenCalled();
-    expect(recordEvaluationFailure).not.toHaveBeenCalled();
-  });
-
-  it('schedules a retry on a CJ fetch failure, never fabricating a decision', async () => {
-    getCandidateEvidenceMock.mockRejectedValue(
-      new CjApiError('upstream-unavailable'),
-    );
-
-    await evaluateCandidate(row({ attemptCount: 0 }));
-
-    expect(recordEvaluationFailure).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        candidateId: 'candidate-1',
-        attemptCount: 1,
-        lastErrorCode: 'upstream-unavailable',
-        nextRetryAt: expect.any(Date),
-      }),
-    );
-    expect(recordEvaluationDecision).not.toHaveBeenCalled();
-  });
-
-  it('defers a rate-limited fetch WITHOUT burning an attempt - load pressure can never dead-letter a healthy product', async () => {
-    getCandidateEvidenceMock.mockRejectedValue(new CjApiError('rate-limited'));
-
-    await evaluateCandidate(row({ attemptCount: 2 }));
-
-    expect(recordEvaluationFailure).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        candidateId: 'candidate-1',
-        // Attempt budget untouched (ADR-013 §5: recoverable connection
-        // health, not a technical failure of the product).
-        attemptCount: 2,
-        lastErrorCode: 'rate-limited',
-        nextRetryAt: expect.any(Date),
-      }),
-    );
-    expect(appendAuditEvent).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        action: 'CANDIDATE_EVALUATION_RATE_LIMIT_DEFERRED',
-      }),
-    );
-    expect(recordEvaluationDecision).not.toHaveBeenCalled();
-  });
-
-  it('never dead-letters from rate limiting even at the attempt ceiling - the defer keeps a retry time', async () => {
-    getCandidateEvidenceMock.mockRejectedValue(new CjApiError('rate-limited'));
-
-    await evaluateCandidate(row({ attemptCount: MAX_EVALUATION_ATTEMPTS - 1 }));
-
-    expect(recordEvaluationFailure).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        attemptCount: MAX_EVALUATION_ATTEMPTS - 1,
-        nextRetryAt: expect.any(Date),
-      }),
-    );
-  });
-
-  it('dead-letters once the max attempt count is reached (nextRetryAt is null)', async () => {
-    getCandidateEvidenceMock.mockRejectedValue(
-      new CjApiError('upstream-unavailable'),
-    );
-
-    await evaluateCandidate(row({ attemptCount: MAX_EVALUATION_ATTEMPTS - 1 }));
-
-    expect(recordEvaluationFailure).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        attemptCount: MAX_EVALUATION_ATTEMPTS,
-        nextRetryAt: null,
-      }),
-    );
-  });
-
-  it("persists both the snapshot and the decision for a survivor, fetched through the candidate's own connection", async () => {
-    getCandidateEvidenceMock.mockResolvedValue(CLEAN_EVIDENCE);
-
-    await evaluateCandidate(row({}));
-
-    expect(getCandidateEvidenceMock).toHaveBeenCalledWith(
-      'connection-1',
-      'CJLY1',
-    );
-    expect(upsertSnapshot).toHaveBeenCalled();
-    expect(recordEvaluationDecision).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        candidateId: 'candidate-1',
-        decision: { status: 'PASS', reasonCodes: [] },
-      }),
-    );
+    expect(asMock(recordScreeningDecision)).not.toHaveBeenCalled();
+    expect(asMock(recordEvaluationFailure)).not.toHaveBeenCalled();
   });
 });

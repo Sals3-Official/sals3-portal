@@ -98,6 +98,14 @@ vi.mock('./ingest-product', () => ({
   default: vi.fn(),
 }));
 
+vi.mock('./intake-gate-repository', () => ({
+  assessIntakeGate: vi.fn(),
+}));
+
+vi.mock('./backlog-drain', () => ({
+  default: vi.fn(),
+}));
+
 vi.mock('./handle-cycle-start', () => ({
   partitionMessageIntent: (input: {
     partitionId: string;
@@ -175,6 +183,10 @@ import { isDiscoveryRunning } from './run-state-repository';
 import checkStorageGuard from './storage-guard';
 // eslint-disable-next-line import/first
 import ingestDiscoveredProduct from './ingest-product';
+// eslint-disable-next-line import/first
+import { assessIntakeGate } from './intake-gate-repository';
+// eslint-disable-next-line import/first
+import drainExistingBacklog from './backlog-drain';
 // eslint-disable-next-line import/first
 import coverageChecksum from './coverage-checksum';
 // eslint-disable-next-line import/first
@@ -304,6 +316,16 @@ beforeEach(() => {
     { id: 'child-2' },
   ]);
   asMock(ingestDiscoveredProduct).mockResolvedValue('created');
+  // Default: the one-time backlog drain is complete and the owner's new-PID
+  // ceiling has room. Individual tests below override this to prove the gate.
+  asMock(assessIntakeGate).mockResolvedValue({
+    allowed: true,
+    remainingCapacity: 5_000,
+  });
+  asMock(drainExistingBacklog).mockResolvedValue({
+    requeued: 0,
+    remaining: 0,
+  });
 });
 
 describe('handlePartition - probe outcomes', () => {
@@ -685,5 +707,154 @@ describe('handlePartition - atomic bucket reconciliation', () => {
         }),
       ]),
     );
+  });
+});
+
+/**
+ * Owner intake controls (2026-08-12): the one-time existing-backlog drain
+ * gate and the 5,000 new-unique-PID ceiling. Both are consulted BEFORE the
+ * supplier call, and both are pauses - never a completed catalogue cycle.
+ */
+describe('handlePartition - backlog-first gate and new-PID ceiling', () => {
+  it('makes no product/list request while actionable backlog remains, and drains it locally instead', async () => {
+    const row = partitionRow();
+
+    asMock(findPartitionById).mockResolvedValue(row);
+    asMock(leasePartition).mockResolvedValue({ row, leaseToken: 'lease-1' });
+    asMock(assessIntakeGate).mockResolvedValue({
+      allowed: false,
+      reason: 'BACKLOG_DRAIN_PENDING',
+      backlogCount: 42,
+      remainingCapacity: 5_000,
+      limitValue: 5_000,
+      admittedCount: 0,
+    });
+
+    await handlePartition(MESSAGE);
+
+    expect(listCatalogPageMock).not.toHaveBeenCalled();
+    expect(ingestDiscoveredProduct).not.toHaveBeenCalled();
+    expect(drainExistingBacklog).toHaveBeenCalledWith(CONNECTION_ID);
+  });
+
+  it('records the backlog pause with its count and leaves the partition resumable', async () => {
+    const row = partitionRow();
+
+    asMock(findPartitionById).mockResolvedValue(row);
+    asMock(leasePartition).mockResolvedValue({ row, leaseToken: 'lease-1' });
+    asMock(assessIntakeGate).mockResolvedValue({
+      allowed: false,
+      reason: 'BACKLOG_DRAIN_PENDING',
+      backlogCount: 42,
+      remainingCapacity: 5_000,
+      limitValue: 5_000,
+      admittedCount: 0,
+    });
+
+    await handlePartition(MESSAGE);
+
+    expect(recordDiscoveryFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        errorCode: 'BACKLOG_DRAIN_PENDING',
+        detail: expect.stringContaining('42'),
+      }),
+    );
+    // A pause never advances a checkpoint or claims coverage.
+    expect(coverPartition).not.toHaveBeenCalled();
+    expect(splitPartition).not.toHaveBeenCalled();
+    expect(advanceReconciliation).not.toHaveBeenCalled();
+    // The attempt budget is untouched: the product did nothing wrong.
+    expect(releasePartitionLease).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ consumeAttempt: false }),
+    );
+    // ...and the unit is re-enqueued so it resumes when the drain finishes.
+    expect(insertOutboxIntents).toHaveBeenCalled();
+  });
+
+  it('resumes discovery once the actionable backlog is drained', async () => {
+    const row = partitionRow();
+
+    asMock(findPartitionById).mockResolvedValue(row);
+    asMock(leasePartition).mockResolvedValue({ row, leaseToken: 'lease-1' });
+    asMock(assessIntakeGate).mockResolvedValue({
+      allowed: true,
+      remainingCapacity: 5_000,
+    });
+    listCatalogPageMock.mockResolvedValue(catalogPage([product('p1')]));
+
+    await handlePartition(MESSAGE);
+
+    expect(listCatalogPageMock).toHaveBeenCalledTimes(1);
+    expect(coverPartition).toHaveBeenCalled();
+  });
+
+  it('never calls the supplier when remaining capacity cannot cover a whole page', async () => {
+    const row = partitionRow();
+
+    asMock(findPartitionById).mockResolvedValue(row);
+    asMock(leasePartition).mockResolvedValue({ row, leaseToken: 'lease-1' });
+    asMock(assessIntakeGate).mockResolvedValue({
+      allowed: false,
+      reason: 'NEW_PID_CAP_REACHED',
+      backlogCount: 0,
+      remainingCapacity: 12,
+      limitValue: 5_000,
+      admittedCount: 4_988,
+    });
+
+    await handlePartition(MESSAGE);
+
+    expect(listCatalogPageMock).not.toHaveBeenCalled();
+    expect(recordDiscoveryFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        errorCode: 'NEW_PID_CAP_REACHED',
+        detail: expect.stringContaining('4988/5000'),
+      }),
+    );
+    expect(coverPartition).not.toHaveBeenCalled();
+  });
+
+  it('parks without proving coverage when the ceiling is reached mid-page under concurrency', async () => {
+    const row = partitionRow();
+
+    asMock(findPartitionById).mockResolvedValue(row);
+    asMock(leasePartition).mockResolvedValue({ row, leaseToken: 'lease-1' });
+    listCatalogPageMock.mockResolvedValue(
+      catalogPage([product('p1'), product('p2'), product('p3')]),
+    );
+    asMock(ingestDiscoveredProduct)
+      .mockResolvedValueOnce('created')
+      .mockResolvedValueOnce('cap-reached');
+
+    await handlePartition(MESSAGE);
+
+    // Stopped at the refusal - no further products were attempted.
+    expect(ingestDiscoveredProduct).toHaveBeenCalledTimes(2);
+    // No false completeness, and the cursor did not move.
+    expect(coverPartition).not.toHaveBeenCalled();
+    expect(recordDiscoveryFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ errorCode: 'NEW_PID_CAP_REACHED' }),
+    );
+  });
+
+  it('treats a legacy total at or over 6,000 as ordinary density even under the ceiling', async () => {
+    const row = partitionRow();
+
+    asMock(findPartitionById).mockResolvedValue(row);
+    asMock(leasePartition).mockResolvedValue({ row, leaseToken: 'lease-1' });
+    listCatalogPageMock.mockResolvedValue(
+      catalogPage([product('p1')], { total: 6_000 }),
+    );
+
+    await handlePartition(MESSAGE);
+
+    // Density -> split (or reconcile), never a cap rule and never a failure.
+    expect(splitPartition).toHaveBeenCalled();
+    expect(markPartitionUnresolved).not.toHaveBeenCalled();
+    expect(failPartition).not.toHaveBeenCalled();
   });
 });

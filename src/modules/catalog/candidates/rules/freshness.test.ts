@@ -1,34 +1,40 @@
 import { describe, expect, it } from 'vitest';
 import { nextRefreshAtFor } from './policy';
 
-const NOW = new Date('2026-08-11T00:00:00Z');
-const HOUR_MS = 60 * 60 * 1000;
-
-describe('nextRefreshAtFor - freshness tiers (ADR-010 §12.2)', () => {
-  it('qualified-but-unselected decisions refresh within 72 hours', () => {
-    (['PASS', 'PASS_WITH_ATTENTION'] as const).forEach((status) => {
-      expect(nextRefreshAtFor(status, NOW)?.getTime()).toBe(
-        NOW.getTime() + 72 * HOUR_MS,
-      );
+/**
+ * Lean intake policy (ADR-013 §1a, owner decision 2026-08-12): the passive
+ * evidence-refresh clock is retired for raw All Supplier Products rows.
+ *
+ * The 72-hour and 30-day tiers existed to re-reconcile CJ EVIDENCE, and raw
+ * intake no longer fetches any. Re-running local screening on a timer would
+ * re-derive the identical answer from identical inputs, for the whole
+ * catalogue, forever. Both real triggers stay event-driven and implemented:
+ * a supplier data change (fingerprint requeue at ingestion, and the webhook
+ * source-change path) and a policy version change (the sweep's
+ * `requeuePolicyVersionMismatches`, which re-evaluates unchanged rows
+ * including `BLOCKED`).
+ */
+describe('nextRefreshAtFor under the lean intake policy', () => {
+  it('sets no passive refresh clock for any decided status', () => {
+    (
+      [
+        'PASS',
+        'PASS_WITH_ATTENTION',
+        'TEMPORARILY_INELIGIBLE',
+        'EVALUATION_FAILED',
+        'BLOCKED',
+      ] as const
+    ).forEach((status) => {
+      expect(nextRefreshAtFor(status)).toBeNull();
     });
   });
 
-  it('operational nonterminal decisions reconcile within 30 days - even an exhausted dead letter keeps a floor', () => {
-    (['TEMPORARILY_INELIGIBLE', 'EVALUATION_FAILED'] as const).forEach(
-      (status) => {
-        expect(nextRefreshAtFor(status, NOW)?.getTime()).toBe(
-          NOW.getTime() + 30 * 24 * HOUR_MS,
-        );
-      },
-    );
+  it('sets no refresh deadline for in-flight states either', () => {
+    expect(nextRefreshAtFor('QUEUED')).toBeNull();
+    expect(nextRefreshAtFor('EVALUATING')).toBeNull();
   });
 
-  it('permanent policy blocks carry NO clock - they re-evaluate only on a supplier data or policy/evidence version change', () => {
-    expect(nextRefreshAtFor('BLOCKED', NOW)).toBeNull();
-  });
-
-  it('in-flight states carry no refresh deadline of their own', () => {
-    expect(nextRefreshAtFor('QUEUED', NOW)).toBeNull();
-    expect(nextRefreshAtFor('EVALUATING', NOW)).toBeNull();
+  it('takes no clock argument at all - there is no timer left to offset', () => {
+    expect(nextRefreshAtFor.length).toBe(1);
   });
 });

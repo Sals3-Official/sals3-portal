@@ -7,6 +7,10 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('./handle-cycle-start', () => ({ default: vi.fn() }));
 vi.mock('./handle-partition', () => ({ default: vi.fn() }));
+vi.mock('./handle-curated-lane', () => ({
+  default: vi.fn(),
+  curatedLaneIntent: vi.fn(),
+}));
 vi.mock('./handle-evaluate', () => ({ default: vi.fn() }));
 vi.mock('./handle-reconcile', () => ({ default: vi.fn() }));
 vi.mock('./handle-webhook-event', () => ({ default: vi.fn() }));
