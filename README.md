@@ -1277,12 +1277,12 @@ screens above are still fixture-only and have not been migrated; each needs
 its own product decision about what to show when an account has no active
 destination.
 
-`/orders` is the exception: it reads the signed-in seller's own active profile
-from `seller_market_profiles`, scoped by `session.sellerId`. An active profile
-unlocks the parcel workspace; no active profile keeps the honest not-configured
-notice. The current profile intentionally has no currency, carrier, tax,
-payout, or cutoff contract, so orders labels its parcel data as illustrative
-and keeps handoff setup unavailable instead of borrowing those fixture values.
+`/orders` is a temporary exception: it is permission-gated but deliberately
+does not read or require a seller market profile, so the illustrative parcel
+workspace stays available while account setup is in progress. It labels its
+parcel data as illustrative and keeps currency, carrier, tax, payout, and
+cutoff setup unavailable instead of borrowing fixture values. Restore the
+tenant-scoped active-profile gate when the real orders backend lands.
 `/finances` and `/payouts` remain deliberate follow-up work because their
 fixture-ledger and fixture-payout displays require those unconfigured
 commercial fields.

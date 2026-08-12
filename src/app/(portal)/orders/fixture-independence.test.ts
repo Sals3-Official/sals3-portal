@@ -3,10 +3,9 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * A fixture gate that looks fine in development collapses in production, where
- * `getActiveMarket()` correctly returns null. Keep both sides of `/orders`
- * structurally independent from that fixture, not merely visually correct in
- * a local dev render.
+ * Temporary preview mode must remain independent of both market configuration
+ * systems. It is intentionally visible before an account has any active
+ * profile, but must not borrow values from the old market fixture.
  */
 const ORDERS_DIR = join(process.cwd(), 'src/app/(portal)/orders');
 
@@ -21,18 +20,17 @@ const PRODUCTION_SOURCES = [
   read(ORDERS_DIR, '[parcelId]', 'page.tsx'),
 ];
 
-describe('Orders fixture independence', () => {
-  it('imports nothing from the illustrative market fixture', () => {
+describe('Orders preview independence', () => {
+  it('does not use either market configuration system as a gate', () => {
     PRODUCTION_SOURCES.forEach((source) => {
       expect(source).not.toMatch(/from '@\/lib\/seller-center\/market-config'/);
+      expect(source).not.toContain('findActiveProfileForSeller');
     });
   });
 
-  it('uses the tenant-scoped active-profile read', () => {
+  it('retains the server-side order permission check', () => {
     PRODUCTION_SOURCES.forEach((source) => {
-      expect(source).toContain('findActiveProfileForSeller');
-      expect(source).toContain('session.sellerId');
-      expect(source).toContain("readOrUnavailable('orders'");
+      expect(source).toContain("requirePermission('order:read')");
     });
   });
 });

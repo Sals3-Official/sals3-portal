@@ -1,61 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('Seller Center orders never falls through to the fixture without a real workspace gate', async ({
-  page,
-}) => {
-  await page.goto('/orders');
-
-  const noProfile = page.getByRole('heading', {
-    name: 'No active market profile',
-  });
-  const databaseUnavailable = page.getByText(
-    'Orders cannot be checked right now because the database is unavailable.',
-  );
-
-  if (await noProfile.isVisible()) {
-    await expect(noProfile).toBeVisible();
-    await expect(
-      page.getByText(
-        'No real per-seller market (currency, carrier, tax, payout rail) is configured for this account yet.',
-      ),
-    ).toBeVisible();
-    await expect(page.getByRole('article')).toHaveCount(0);
-    return;
-  }
-
-  if (await databaseUnavailable.isVisible()) {
-    await expect(databaseUnavailable).toBeVisible();
-    await expect(page.getByRole('article')).toHaveCount(0);
-    return;
-  }
-
-  test.skip(true, 'The configured test account has an active profile.');
-});
-
 test.describe('Seller Center orders', () => {
-  // The parcel workspace itself is an active-profile surface. These fixture
-  // interaction checks stay useful for environments seeded with one. A local
-  // profile-less account and CI's intentionally database-free environment
-  // must not receive a made-up profile just to make the old UI assertions pass.
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/orders');
-
-    const noProfile = page.getByRole('heading', {
-      name: 'No active market profile',
-    });
-    const databaseUnavailable = page.getByText(
-      'Orders cannot be checked right now because the database is unavailable.',
-    );
-
-    if (await noProfile.isVisible()) {
-      test.skip(true, 'Requires an active seller market profile.');
-    }
-
-    if (await databaseUnavailable.isVisible()) {
-      test.skip(true, 'Requires the database-backed active profile read.');
-    }
-  });
-
   test('a parcel the seller never handles cannot be selected', async ({
     page,
   }) => {

@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import MarketNotConfiguredNotice from '@/components/seller-center/shared/MarketNotConfiguredNotice';
 import OrderHistoryTimeline from '@/components/seller-center/orders/OrderHistoryTimeline';
 import OrdersViewToggle from '@/components/seller-center/orders/OrdersViewToggle';
 import ParcelBuyerCard from '@/components/seller-center/orders/ParcelBuyerCard';
@@ -14,9 +13,6 @@ import SiblingParcelCard from '@/components/seller-center/orders/SiblingParcelCa
 import TrackingEventFeed from '@/components/seller-center/orders/TrackingEventFeed';
 import { can } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
-import getDb, { isDatabaseConfigured } from '@/lib/db/client';
-import { readOrUnavailable } from '@/lib/db/availability';
-import { findActiveProfileForSeller } from '@/modules/market-config/repository';
 import getOrdersRepository from '@/modules/orders/repository';
 import revealParcelContactAction from './actions';
 
@@ -25,19 +21,6 @@ export const metadata: Metadata = { title: 'Parcel · Seller Center' };
 type ParcelDetailPageProps = {
   params: Promise<{ parcelId: string }>;
 };
-
-function OrdersUnavailable() {
-  return (
-    <div className="mx-auto flex max-w-[1440px] flex-col gap-[18px] px-7 pt-6 pb-15">
-      <p className="rounded-lg border border-dashed border-border bg-muted/40 px-6 py-10 text-sm text-muted-foreground">
-        Orders cannot be checked right now because the database is unavailable.
-        No order or market configuration was changed. Check that Postgres is
-        running and that DATABASE_URL points at an existing database, then
-        reload.
-      </p>
-    </div>
-  );
-}
 
 /**
  * One parcel's detail.
@@ -49,30 +32,7 @@ function OrdersUnavailable() {
 export default async function ParcelDetailPage({
   params,
 }: ParcelDetailPageProps) {
-  if (!isDatabaseConfigured()) {
-    return <OrdersUnavailable />;
-  }
-
-  const resolved = await readOrUnavailable('orders', async () => {
-    const session = await requirePermission('order:read');
-    const profile = await findActiveProfileForSeller(getDb(), session.sellerId);
-
-    return { session, profile };
-  });
-
-  if (!resolved.ok) {
-    return <OrdersUnavailable />;
-  }
-
-  if (resolved.data.profile === null) {
-    return (
-      <div className="mx-auto flex max-w-[1440px] flex-col gap-[18px] px-7 pt-6 pb-15">
-        <MarketNotConfiguredNotice title="No active market profile" />
-      </div>
-    );
-  }
-
-  const { session } = resolved.data;
+  const session = await requirePermission('order:read');
   // Decides whether the *button* renders. The action re-checks server-side,
   // because hiding a control is never the authorization boundary.
   const canReveal = can(session.role, 'order:fulfill');
