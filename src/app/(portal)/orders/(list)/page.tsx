@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import PageHeader from '@/components/portal/PageHeader';
 import DisclosureBanner from '@/components/seller-center/shared/DisclosureBanner';
-import MarketNotConfiguredNotice from '@/components/seller-center/shared/MarketNotConfiguredNotice';
 import OrdersChipRow from '@/components/seller-center/orders/OrdersChipRow';
 import OrdersHandoffPanel from '@/components/seller-center/orders/OrdersHandoffPanel';
 import OrdersLaneTabs from '@/components/seller-center/orders/OrdersLaneTabs';
@@ -12,10 +11,7 @@ import OrdersSortSelect from '@/components/seller-center/orders/OrdersSortSelect
 import OrdersViewToggle from '@/components/seller-center/orders/OrdersViewToggle';
 import OrdersWorkspace from '@/components/seller-center/orders/OrdersWorkspace';
 import { requirePermission } from '@/lib/auth/session';
-import getDb, { isDatabaseConfigured } from '@/lib/db/client';
-import { readOrUnavailable } from '@/lib/db/availability';
 import { buildHref } from '@/lib/portal/search-params';
-import { findActiveProfileForSeller } from '@/modules/market-config/repository';
 import getOrdersRepository from '@/modules/orders/repository';
 import {
   ORDER_SEARCH_FIELDS,
@@ -60,61 +56,20 @@ const DROPSHIPPER_STAGE_CHIPS = [
   { key: 'supplier-preparing', label: 'Supplier preparing' },
 ];
 
-function OrdersDatabaseUnavailable() {
-  return (
-    <div className="flex flex-col gap-4">
-      <PageHeader title="Orders" description="Batch fulfillment" />
-      <p className="rounded-lg border border-dashed border-border bg-muted/40 px-6 py-10 text-sm text-muted-foreground">
-        Orders cannot be checked right now because the database is unavailable.
-        No order or market configuration was changed. Check that Postgres is
-        running and that DATABASE_URL points at an existing database, then
-        reload.
-      </p>
-    </div>
-  );
-}
-
 /**
  * The orders list. A Server Component: it parses the view out of the URL,
  * shapes the parcels, and hands selection to the client workspace.
  *
- * The parcel data remains an interface fixture, but the workspace gate is the
- * authenticated seller's real `seller_market_profiles` record. The profile
- * carries no currency, carrier, tax, payout, or cutoff contract yet, so none
- * of those fixture values may be used to decorate a real seller's account.
+ * This temporary interface preview is deliberately independent from market
+ * setup. It preserves the real permission gate but makes no claim that its
+ * illustrative parcels, money labels, or handoff controls are configured for
+ * the account.
  */
 export default async function OrdersPage({ searchParams }: OrdersPageProps) {
-  if (!isDatabaseConfigured()) {
-    return <OrdersDatabaseUnavailable />;
-  }
-
-  // `requirePermission()` resolves the seller account through the database.
-  // Keeping it inside this guard means an outage renders an honest recovery
-  // state instead of failing before the profile lookup is reached.
-  const resolved = await readOrUnavailable('orders', async () => {
-    const session = await requirePermission('order:read');
-    const profile = await findActiveProfileForSeller(getDb(), session.sellerId);
-
-    return { session, profile };
-  });
-
-  if (!resolved.ok) {
-    return <OrdersDatabaseUnavailable />;
-  }
-
-  const { session, profile } = resolved.data;
+  const session = await requirePermission('order:read');
 
   const rawParams = await searchParams;
   const query = ordersQuerySchema.parse(rawParams);
-
-  if (profile === null) {
-    return (
-      <div className="flex flex-col gap-4">
-        <PageHeader title="Orders" description="Batch fulfillment" />
-        <MarketNotConfiguredNotice title="No active market profile" />
-      </div>
-    );
-  }
 
   const allParcels = await getOrdersRepository().listParcels(session.sellerId);
   const counts = new Map(
@@ -288,10 +243,9 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
       />
 
       <DisclosureBanner tone="info">
-        This account has an active market profile for{' '}
-        {profile.destinationCountryCode}. Currency, carrier, tax, payout, and
-        cutoff details are not configured yet. The parcel rows below remain an
-        interface preview until the orders backend exists.
+        Temporary interface preview: the parcel rows below are illustrative
+        until the orders backend exists. Currency, carrier, tax, payout, and
+        cutoff details are not configured here.
       </DisclosureBanner>
 
       <OrdersWorkspace parcels={parcels} />
