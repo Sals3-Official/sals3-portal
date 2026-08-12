@@ -62,7 +62,7 @@ export default function ParcelLogisticsBlock({
           <p className="text-xs text-ink-subtle">Assigned courier</p>
           <p className="text-sm">{courierContactLabel}</p>
           <p className="mt-1 text-xs text-ink-faint">
-            Shown for own-stock parcels only. Sals3 holds the carrier
+            Shown for In-House parcels only. Sals3 holds the carrier
             relationship directly.
           </p>
         </div>

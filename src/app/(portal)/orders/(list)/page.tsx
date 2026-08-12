@@ -112,7 +112,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
     { key: 'all', label: 'All' },
     ...[...routes].map((route) => ({
       key: route,
-      label: route === 'own-stock' ? 'My stock' : route,
+      label: route === 'own-stock' ? 'In-House' : route,
     })),
   ];
 

@@ -18,20 +18,30 @@ type OrderParcelCardProps = {
 };
 
 /**
- * The card header carries the status tone as a wash.
+ * The card header carries the status tone as a wash, so a long list is
+ * scannable by colour before a word is read.
  *
- * A parcel in trouble is recognisable from the header alone, before reading a
- * word, which is what makes a long list scannable. Only the two tones that
- * mean "something is wrong" get a wash - tinting the ordinary states as well
- * would leave nothing standing out.
+ * The hue maps to what the seller has to do, not to the lane:
  *
- * Selection overrides it. A selected row has to read as selected first: the
- * bulk bar acts on that set, so which rows are in it must never be ambiguous.
+ * - blue  - yours to act on now (to process)
+ * - grey  - in flight or closed, nothing to do (unpaid, shipping, returns)
+ * - green - finished well (delivered)
+ * - amber - anomaly being reconciled, watch it (tracking conflict)
+ * - red   - blocked, and only you can unblock it (awaiting supplier funds)
+ *
+ * Every wash reuses a `StatusPill` surface token, so the header and the pill
+ * inside it are the same hue rather than two colour systems on one card. All
+ * five clear 4.5:1 against `text-ink-subtle`, and the status label always
+ * states the state in words - colour is never the only signal.
+ *
+ * Selection overrides the wash. A selected row has to read as selected first:
+ * the bulk bar acts on that set, so which rows are in it must never be
+ * ambiguous.
  */
 const HEADER_TONE_STYLES: Record<ParcelStatusTone, string> = {
-  neutral: 'bg-surface',
-  info: 'bg-surface',
-  success: 'bg-surface',
+  neutral: 'bg-muted',
+  info: 'bg-brand-100',
+  success: 'bg-success-surface',
   warning: 'bg-warning-surface',
   danger: 'bg-danger-surface',
 };
@@ -117,7 +127,7 @@ export default function OrderParcelCard({
         </span>
         <span>{parcel.buyerLabel}</span>
         <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[11.5px] font-medium text-ink-muted">
-          {route.kind === 'OWN_STOCK' ? 'My stock' : route.supplierLabel}
+          {route.kind === 'OWN_STOCK' ? 'In-House' : route.supplierLabel}
         </span>
       </header>
 

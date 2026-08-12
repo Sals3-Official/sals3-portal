@@ -46,30 +46,58 @@ test.describe('Seller Center orders', () => {
     ).toHaveCount(2);
   });
 
+  // Asserted as "has rows", not as an exact count. A lane reading zero forever
+  // is the defect worth catching; pinning the number just means every fixture
+  // added later breaks a test that was never about arithmetic.
   test('the shipping lane has content, not a permanent zero', async ({
     page,
   }) => {
     await page.goto('/orders?lane=shipping');
 
-    await expect(page.getByText('1 parcel', { exact: false })).toBeVisible();
+    await expect(page.getByRole('article').first()).toBeVisible();
   });
 
   test('the completed lane has content', async ({ page }) => {
     await page.goto('/orders?lane=completed');
 
-    await expect(page.getByText('1 parcel', { exact: false })).toBeVisible();
+    await expect(page.getByRole('article').first()).toBeVisible();
   });
 
   test('the returns lane has content', async ({ page }) => {
     await page.goto('/orders?lane=returns');
 
-    await expect(page.getByText('1 parcel', { exact: false })).toBeVisible();
+    await expect(page.getByRole('article').first()).toBeVisible();
+  });
+
+  test('every attention reason chip has a parcel behind it', async ({
+    page,
+  }) => {
+    // A chip that filters to nothing reads as broken, so each reason needs at
+    // least one parcel carrying it.
+    await page.goto('/orders?lane=attention&reason=funding');
+    await expect(page.getByRole('article').first()).toBeVisible();
+
+    await page.goto('/orders?lane=attention&reason=supplier-failure');
+    await expect(page.getByRole('article').first()).toBeVisible();
+
+    await page.goto('/orders?lane=attention&reason=delivery-exception');
+    await expect(page.getByRole('article').first()).toBeVisible();
+
+    await page.goto('/orders?lane=attention&reason=tracking-conflict');
+    await expect(page.getByRole('article').first()).toBeVisible();
   });
 
   test('the channel filter narrows the list', async ({ page }) => {
-    await page.goto('/orders?channel=Sals3+AU');
+    // Compared against the unfiltered list rather than pinned to a number, so
+    // the assertion stays about filtering and not about fixture volume.
+    await page.goto('/orders');
+    const all = await page.getByRole('article').count();
 
-    await expect(page.getByText('3 parcels')).toBeVisible();
+    await page.goto('/orders?channel=Sals3+AU');
+    const filtered = await page.getByRole('article').count();
+
+    expect(filtered).toBeGreaterThan(0);
+    expect(filtered).toBeLessThan(all);
   });
 
   test('route and stage filters are available in every lane', async ({
@@ -111,9 +139,12 @@ test.describe('Seller Center orders', () => {
   test('an unrecognised lane falls back to All rather than erroring', async ({
     page,
   }) => {
+    await page.goto('/orders');
+    const all = await page.getByRole('article').count();
+
     await page.goto('/orders?lane=not-a-lane');
 
-    await expect(page.getByText('9 parcels')).toBeVisible();
+    expect(await page.getByRole('article').count()).toBe(all);
   });
 
   test('the detail view separates the two money rails', async ({ page }) => {
