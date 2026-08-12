@@ -30,6 +30,7 @@ import type {
   SupplierSpend,
   TrackingEvent,
   LifecycleEvent,
+  RevealedContact,
 } from '@/modules/orders/contracts';
 
 /**
@@ -1363,9 +1364,29 @@ const LIFECYCLE_EVENTS: LifecycleEvent[] = [
  * Detail for one parcel. Returns `null` for an unknown id so the route can
  * render a real 404 rather than an empty page that looks like a loading state.
  */
+/**
+ * The real buyer contact for one parcel.
+ *
+ * Server-only by construction: it is never reachable from `buildParcelDetail`,
+ * so there is no path by which these strings end up in a page payload. The
+ * caller is the reveal server action, which checks `order:fulfill` first.
+ */
+export function revealBuyerContact(parcelId: string): RevealedContact | null {
+  const exists = ALL_FIXTURES.some((fixture) => fixture.id === parcelId);
+
+  if (!exists) return null;
+
+  return {
+    name: 'Maria Mendez',
+    phone: '+63 917 220 4471',
+    address: '4F Cituhall Bldg, 88 Kalayaan Ave, Makati, 1209 Metro Manila',
+  };
+}
+
 export function buildParcelDetail(
   parcelId: string,
   market: SellerCenterMarket,
+  canReveal: boolean,
 ): ParcelDetail | null {
   const parcel = buildOrderParcels(market).find(
     (candidate) => candidate.id === parcelId,
@@ -1382,13 +1403,7 @@ export function buildParcelDetail(
       maskedName: parcel.buyerLabel,
       maskedPhone: 'Phone hidden',
       maskedAddress: '•••• Kalayaan Ave, Makati, 1209 Metro Manila',
-      // Illustrative. A real implementation gates this on `order:fulfill`
-      // and hands `null` to anyone who only holds `order:read`.
-      revealed: {
-        name: 'Maria Mendez',
-        phone: '+63 917 220 4471',
-        address: '4F Cituhall Bldg, 88 Kalayaan Ave, Makati, 1209 Metro Manila',
-      },
+      canReveal,
       addressLabel: 'Work address',
     },
     riskFacts: [

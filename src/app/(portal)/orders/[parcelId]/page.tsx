@@ -12,9 +12,11 @@ import ParcelRiskFacts from '@/components/seller-center/orders/ParcelRiskFacts';
 import ParcelStatusCard from '@/components/seller-center/orders/ParcelStatusCard';
 import SiblingParcelCard from '@/components/seller-center/orders/SiblingParcelCard';
 import TrackingEventFeed from '@/components/seller-center/orders/TrackingEventFeed';
+import { can } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { getActiveMarket } from '@/lib/seller-center/market-config';
 import { buildParcelDetail } from '@/lib/seller-center/mock-data/orders';
+import revealParcelContactAction from './actions';
 
 export const metadata: Metadata = { title: 'Parcel · Seller Center' };
 
@@ -32,7 +34,10 @@ type ParcelDetailPageProps = {
 export default async function ParcelDetailPage({
   params,
 }: ParcelDetailPageProps) {
-  await requirePermission('order:read');
+  const session = await requirePermission('order:read');
+  // Decides whether the *button* renders. The action re-checks server-side,
+  // because hiding a control is never the authorization boundary.
+  const canReveal = can(session.role, 'order:fulfill');
 
   const { parcelId } = await params;
   const market = getActiveMarket();
@@ -45,7 +50,7 @@ export default async function ParcelDetailPage({
     );
   }
 
-  const detail = buildParcelDetail(parcelId, market);
+  const detail = buildParcelDetail(parcelId, market, canReveal);
 
   if (detail === null) notFound();
 
@@ -107,7 +112,15 @@ export default async function ParcelDetailPage({
             }
           />
 
-          <ParcelBuyerCard buyer={detail.buyer} route={parcel.route} />
+          <ParcelBuyerCard
+            buyer={detail.buyer}
+            route={parcel.route}
+            onReveal={async () => {
+              'use server';
+
+              return revealParcelContactAction(parcelId);
+            }}
+          />
 
           <ParcelContentsCard
             lines={parcel.lines}

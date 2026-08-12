@@ -90,10 +90,15 @@ test.describe('Seller Center orders', () => {
   test('the channel filter narrows the list', async ({ page }) => {
     // Compared against the unfiltered list rather than pinned to a number, so
     // the assertion stays about filtering and not about fixture volume.
+    // `.count()` does not auto-wait, so each list is settled by waiting on its
+    // first card before counting. Without that this races the render and reads
+    // zero, which looks like a broken filter.
     await page.goto('/orders');
+    await expect(page.getByRole('article').first()).toBeVisible();
     const all = await page.getByRole('article').count();
 
     await page.goto('/orders?channel=Sals3+AU');
+    await expect(page.getByRole('article').first()).toBeVisible();
     const filtered = await page.getByRole('article').count();
 
     expect(filtered).toBeGreaterThan(0);
@@ -140,9 +145,11 @@ test.describe('Seller Center orders', () => {
     page,
   }) => {
     await page.goto('/orders');
+    await expect(page.getByRole('article').first()).toBeVisible();
     const all = await page.getByRole('article').count();
 
     await page.goto('/orders?lane=not-a-lane');
+    await expect(page.getByRole('article').first()).toBeVisible();
 
     expect(await page.getByRole('article').count()).toBe(all);
   });

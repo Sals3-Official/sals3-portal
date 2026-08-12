@@ -384,8 +384,26 @@ export type BuyerIdentity = {
   maskedName: string;
   maskedPhone: string;
   maskedAddress: string;
-  revealed: { name: string; phone: string; address: string } | null;
+  /**
+   * Whether this viewer may ask for the real values - not the values
+   * themselves.
+   *
+   * Shipping the plaintext alongside the mask and hiding it in the client
+   * makes the masking cosmetic: the name, phone and full address sit in the
+   * page payload where view-source reads them without anyone clicking, and the
+   * permission check becomes decoration. Measured on the rendered page, which
+   * is how this was caught. The real values come from a server action instead,
+   * so the gate is on the server where it means something.
+   */
+  canReveal: boolean;
   addressLabel: string | null;
+};
+
+/** Returned by the reveal action. Never part of the page payload. */
+export type RevealedContact = {
+  name: string;
+  phone: string;
+  address: string;
 };
 
 /**
