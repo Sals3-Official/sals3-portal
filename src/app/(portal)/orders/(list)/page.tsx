@@ -9,6 +9,7 @@ import OrdersReprintHistoryPanel from '@/components/seller-center/orders/OrdersR
 import OrdersResultBar from '@/components/seller-center/orders/OrdersResultBar';
 import OrdersSearchBar from '@/components/seller-center/orders/OrdersSearchBar';
 import OrdersSortSelect from '@/components/seller-center/orders/OrdersSortSelect';
+import OrdersViewToggle from '@/components/seller-center/orders/OrdersViewToggle';
 import OrdersWorkspace from '@/components/seller-center/orders/OrdersWorkspace';
 import { requirePermission } from '@/lib/auth/session';
 import { buildHref } from '@/lib/portal/search-params';
@@ -127,6 +128,17 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
       <PageHeader
         title="Orders"
         description="One row is one parcel. Prepaid orders only."
+        actions={
+          <OrdersViewToggle
+            active="list"
+            listHref={buildHref('/orders', currentParams, {})}
+            // Opens the first parcel in the list the seller is actually
+            // looking at, so the switch respects their filters.
+            detailHref={
+              parcels.length === 0 ? null : `/orders/${parcels[0].id}`
+            }
+          />
+        }
       />
 
       <OrdersLaneTabs

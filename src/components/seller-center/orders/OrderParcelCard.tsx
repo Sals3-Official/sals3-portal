@@ -4,13 +4,36 @@ import type { ReactNode } from 'react';
 import Link from 'next/link';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
 import { cn } from '@/lib/utils';
-import type { OrderParcel, ParcelRoute } from '@/modules/orders/contracts';
+import type {
+  OrderParcel,
+  ParcelRoute,
+  ParcelStatusTone,
+} from '@/modules/orders/contracts';
 
 type OrderParcelCardProps = {
   parcel: OrderParcel;
   selected: boolean;
   onToggle: (id: string) => void;
   actionsSlot: ReactNode;
+};
+
+/**
+ * The card header carries the status tone as a wash.
+ *
+ * A parcel in trouble is recognisable from the header alone, before reading a
+ * word, which is what makes a long list scannable. Only the two tones that
+ * mean "something is wrong" get a wash - tinting the ordinary states as well
+ * would leave nothing standing out.
+ *
+ * Selection overrides it. A selected row has to read as selected first: the
+ * bulk bar acts on that set, so which rows are in it must never be ambiguous.
+ */
+const HEADER_TONE_STYLES: Record<ParcelStatusTone, string> = {
+  neutral: 'bg-card',
+  info: 'bg-card',
+  success: 'bg-card',
+  warning: 'bg-warning-surface',
+  danger: 'bg-danger-surface',
 };
 
 const HANDOVER_LABELS: Record<
@@ -72,7 +95,7 @@ export default function OrderParcelCard({
       <header
         className={cn(
           'flex flex-wrap items-center gap-3 border-b border-border px-4 py-2.5 text-[12.5px] text-ink-subtle',
-          selected ? 'bg-accent' : 'bg-card',
+          selected ? 'bg-accent' : HEADER_TONE_STYLES[parcel.status.tone],
         )}
       >
         <input

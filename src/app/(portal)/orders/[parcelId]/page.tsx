@@ -5,6 +5,7 @@ import MarketNotConfiguredNotice from '@/components/seller-center/shared/MarketN
 import OrderHistoryTimeline from '@/components/seller-center/orders/OrderHistoryTimeline';
 import ParcelDetailActions from '@/components/seller-center/orders/ParcelDetailActions';
 import ParcelLogisticsBlock from '@/components/seller-center/orders/ParcelLogisticsBlock';
+import OrdersViewToggle from '@/components/seller-center/orders/OrdersViewToggle';
 import ParcelStatusCard from '@/components/seller-center/orders/ParcelStatusCard';
 import SettlementStatement from '@/components/seller-center/orders/SettlementStatement';
 import SupplierSpendPanel from '@/components/seller-center/orders/SupplierSpendPanel';
@@ -50,18 +51,25 @@ export default async function ParcelDetailPage({
 
   return (
     <div className="flex flex-col gap-4">
-      <nav className="flex items-center gap-1 text-sm text-ink-muted">
-        <Link href="/orders" className="hover:text-primary hover:underline">
-          Orders
-        </Link>
-        <span aria-hidden="true">/</span>
-        <span className="text-ink">{parcel.orderRef}</span>
-        {parcel.parcelCount > 1 ? (
-          <span className="text-ink-faint">
-            · parcel {parcel.parcelIndex} of {parcel.parcelCount}
-          </span>
-        ) : null}
-      </nav>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <nav className="flex items-center gap-1 text-sm text-ink-muted">
+          <Link href="/orders" className="hover:text-primary hover:underline">
+            Orders
+          </Link>
+          <span aria-hidden="true">/</span>
+          <span className="text-ink">{parcel.orderRef}</span>
+          {parcel.parcelCount > 1 ? (
+            <span className="text-ink-faint">
+              · parcel {parcel.parcelIndex} of {parcel.parcelCount}
+            </span>
+          ) : null}
+        </nav>
+        <OrdersViewToggle
+          active="detail"
+          listHref="/orders"
+          detailHref={`/orders/${parcel.id}`}
+        />
+      </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <div className="flex flex-col gap-4">
