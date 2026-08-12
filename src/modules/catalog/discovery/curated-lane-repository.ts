@@ -117,7 +117,16 @@ export async function leaseCuratedLane(
 /** Advances the resumable cursor. A pause never calls this. */
 /**
  * The curated lanes that can still contribute to the current 600-PID wave, in
- * owner intake-priority order.
+ * owner intake-priority order, each with the `stateVersion` its row currently
+ * holds.
+ *
+ * The version is what lets a seed key stay revivable. Outbox idempotency keys
+ * are consumed permanently, so a key built from the wave edge alone can be
+ * spent exactly once per wave - and if the worker holding a lane's lease dies
+ * mid-run, nothing can ever re-enqueue that lane for the rest of the wave,
+ * which strands the intake floor and blocks every producer behind it.
+ * `stateVersion` increments on every lease, pause, and advance, so a lane that
+ * has moved at all yields a fresh key while an untouched one de-duplicates.
  *
  * Ranking comes from `CURATED_LANES`, which is already ordered
  * Trending -> Most listed -> New arrivals; restating that order anywhere else
@@ -131,11 +140,12 @@ export async function leaseCuratedLane(
 export async function listEligibleCuratedLanes(
   executor: DbExecutor,
   input: { supplierConnectionId: string; waveLimit: number },
-): Promise<CuratedLane[]> {
+): Promise<Array<{ lane: CuratedLane; stateVersion: number }>> {
   const rows = await executor
     .select({
       lane: discoveryCuratedLanes.lane,
       exhaustedAtWaveLimit: discoveryCuratedLanes.exhaustedAtWaveLimit,
+      stateVersion: discoveryCuratedLanes.stateVersion,
     })
     .from(discoveryCuratedLanes)
     .where(
@@ -145,13 +155,15 @@ export async function listEligibleCuratedLanes(
       ),
     );
 
-  const exhausted = new Set(
-    rows
-      .filter((row) => row.exhaustedAtWaveLimit === input.waveLimit)
-      .map((row) => row.lane),
-  );
+  const byLane = new Map(rows.map((row) => [row.lane, row]));
 
-  return CURATED_LANES.filter((lane) => !exhausted.has(lane));
+  return CURATED_LANES.filter(
+    (lane) => byLane.get(lane)?.exhaustedAtWaveLimit !== input.waveLimit,
+  ).map((lane) => ({
+    lane,
+    // A lane with no row yet has not moved, so version 0 is a stable key.
+    stateVersion: byLane.get(lane)?.stateVersion ?? 0,
+  }));
 }
 
 export async function advanceCuratedLane(

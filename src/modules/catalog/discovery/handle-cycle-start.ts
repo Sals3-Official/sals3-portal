@@ -34,10 +34,10 @@ import { insertOutboxIntents, type OutboxIntent } from './outbox-repository';
 import { recordDiscoveryFailure } from './failure-repository';
 import { isDiscoveryRunning } from './run-state-repository';
 import { findWatermark } from './lane-repository';
-import { CURATED_LANES } from './curated-lanes';
 import { curatedLaneIntent } from './handle-curated-lane';
 import { freshnessSweepIntent } from './handle-reconcile';
 import { findPidCapacity } from './intake-gate-repository';
+import { listEligibleCuratedLanes } from './curated-lane-repository';
 
 /**
  * DISCOVERY_CYCLE_START: the ensure-and-sweep operation for one connection's
@@ -394,22 +394,40 @@ export default async function handleCycleStart(
   // sweep once the row is there.
   const capacity = await findPidCapacity(db, connection.id);
   const waveLimit = capacity?.limitValue ?? null;
+  // Only lanes that can still contribute to this wave, each with the
+  // `stateVersion` that makes its seed key revivable.
+  const eligibleLanes =
+    waveLimit === null
+      ? []
+      : await listEligibleCuratedLanes(db, {
+          supplierConnectionId: connection.id,
+          waveLimit,
+        });
 
   await insertOutboxIntents(db, [
     // Owner intake priority inside each rolling 600-PID wave:
     // `searchType=2`, then `listedNum desc`, then bounded `createAt desc`,
     // before ordinary partition coverage resumes.
-    // Wave-scoped, not day-scoped. Outbox idempotency keys are consumed
+    // Wave-scoped, not day-scoped: outbox idempotency keys are consumed
     // permanently, so a day bucket allowed exactly one run per lane per day
     // while the partition scanner ran thousands of times - the curated lanes
-    // could never fill a wave before it. Keying on the wave edge gives each
-    // wave its own seed, and the lane's own mid-run continuation carries it to
-    // completion from there.
-    ...CURATED_LANES.map((lane) =>
+    // could never fill a wave before it.
+    //
+    // The lane's `stateVersion` is in the key as well, and that part is not
+    // cosmetic. A wave-only key is spendable exactly once per wave, so a worker
+    // that died holding a lane's lease left NOTHING able to re-enqueue that
+    // lane for the rest of the wave - and because the lane still held the
+    // intake floor, every producer behind it stalled too. Observed in
+    // production 2026-08-12: CJ_TRENDING sat RUNNING with 0 pages fetched, its
+    // only `wave:600` key already DISPATCHED, while both other lanes and the
+    // partition scanner reported HIGHER_PRIORITY_INTAKE_PENDING. `stateVersion`
+    // moves on every lease, pause, and advance, so a lane that has done
+    // anything at all yields a fresh key; an untouched one still de-duplicates.
+    ...eligibleLanes.map((entry) =>
       curatedLaneIntent({
         supplierConnectionId: connection.id,
-        lane,
-        keySuffix: `wave:${waveLimit ?? 'unknown'}`,
+        lane: entry.lane,
+        keySuffix: `wave:${waveLimit}:v${entry.stateVersion}`,
       }),
     ),
     ...resumable.map((partition) =>

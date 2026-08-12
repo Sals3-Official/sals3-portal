@@ -926,11 +926,21 @@ complete during a wave; and a parked partition is expected — its
 `discovery_failures` detail names the lane holding the floor, so a quiet
 partition chain is explicable rather than mysterious.
 
-The curated seed key is scoped to the wave edge (`wave:{limitValue}`), not a day
-bucket. Because outbox idempotency keys are consumed permanently, a day bucket
-allowed exactly one run per lane per day while the partition scanner ran
-thousands of times — measured 2026-08-12 at 609 `DISCOVERY_PARTITION` messages
-per 20 minutes — so the curated lanes could never fill a wave before it.
+The curated seed key carries the wave edge **and the lane's `stateVersion`**
+(`wave:{limitValue}:v{stateVersion}`), not a day bucket. The day bucket allowed
+exactly one run per lane per day while the partition scanner ran thousands of
+times — measured 2026-08-12 at 609 `DISCOVERY_PARTITION` messages per 20
+minutes — so the curated lanes could never fill a wave before it.
+
+The version half is not cosmetic. A wave-only key is spendable exactly once per
+wave, so a worker that died holding a lane's lease left **nothing** able to
+re-enqueue that lane for the rest of the wave — and because the lane still held
+the intake floor, every producer behind it stalled too. Seen in production the
+same day: `CJ_TRENDING` sat `RUNNING` with 0 pages fetched, its only `wave:600`
+key already `DISPATCHED`, while both other lanes and the partition scanner
+reported `HIGHER_PRIORITY_INTAKE_PENDING`. `stateVersion` moves on every lease,
+pause, and advance, so a lane that has done anything at all yields a fresh key
+while an untouched one still de-duplicates. Only eligible lanes are seeded.
 
 `claimDispatchableOutbox` also orders claims by operation, curated lanes ahead of
 partitions and evaluation/reconcile ahead of both. That is a useful tie-breaker

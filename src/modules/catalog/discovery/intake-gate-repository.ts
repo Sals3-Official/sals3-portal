@@ -507,9 +507,9 @@ export async function assessIntakeGate(
     intent === 'PARTITION'
       ? CURATED_LANES.length
       : CURATED_LANES.indexOf(intent);
-  const blockingLanes = eligibleLanes.filter(
-    (lane) => CURATED_LANES.indexOf(lane) < ownRank,
-  );
+  const blockingLanes = eligibleLanes
+    .map((entry) => entry.lane)
+    .filter((lane) => CURATED_LANES.indexOf(lane) < ownRank);
 
   if (blockingLanes.length > 0) {
     return {

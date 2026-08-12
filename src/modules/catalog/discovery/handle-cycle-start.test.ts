@@ -63,6 +63,9 @@ vi.mock('./failure-repository', () => ({ recordDiscoveryFailure: vi.fn() }));
 vi.mock('./run-state-repository', () => ({ isDiscoveryRunning: vi.fn() }));
 vi.mock('./lane-repository', () => ({ findWatermark: vi.fn() }));
 vi.mock('./intake-gate-repository', () => ({ findPidCapacity: vi.fn() }));
+vi.mock('./curated-lane-repository', () => ({
+  listEligibleCuratedLanes: vi.fn(),
+}));
 
 // eslint-disable-next-line import/first
 import { randomUUID } from 'crypto';
@@ -92,6 +95,8 @@ import { isDiscoveryRunning } from './run-state-repository';
 import { findWatermark } from './lane-repository';
 // eslint-disable-next-line import/first
 import { findPidCapacity } from './intake-gate-repository';
+// eslint-disable-next-line import/first
+import { listEligibleCuratedLanes } from './curated-lane-repository';
 // eslint-disable-next-line import/first
 import handleCycleStart from './handle-cycle-start';
 
@@ -145,6 +150,11 @@ beforeEach(() => {
   asMock(findLatestCompletedCycle).mockResolvedValue(null);
   asMock(findWatermark).mockResolvedValue(null);
   asMock(findPidCapacity).mockResolvedValue({ limitValue: 600 });
+  asMock(listEligibleCuratedLanes).mockResolvedValue([
+    { lane: 'CJ_TRENDING', stateVersion: 1 },
+    { lane: 'CJ_MOST_LISTED', stateVersion: 1 },
+    { lane: 'CJ_NEW_ARRIVALS', stateVersion: 1 },
+  ]);
   asMock(insertPartitions).mockImplementation((_tx: unknown, rows: unknown[]) =>
     Promise.resolve(rows.map((_, i) => ({ id: `partition-${i}` }))),
   );
@@ -319,6 +329,9 @@ describe('handleCycleStart', () => {
     );
     asMock(listResumablePartitions).mockResolvedValue([]);
     asMock(findPidCapacity).mockResolvedValue({ limitValue: 1200 });
+    asMock(listEligibleCuratedLanes).mockResolvedValue([
+      { lane: 'CJ_TRENDING', stateVersion: 7 },
+    ]);
 
     await handleCycleStart(MESSAGE);
 
@@ -329,8 +342,51 @@ describe('handleCycleStart', () => {
       .map((intent) => intent.message.idempotencyKey)
       .filter((key) => key.startsWith('curated:'));
 
-    expect(keys).toHaveLength(3);
-    keys.forEach((key) => expect(key).toContain('wave:1200'));
+    // Wave edge AND lane version. The version is what keeps the key revivable:
+    // a wave-only key is spendable once per wave, so a worker that died holding
+    // the lane's lease left nothing able to re-enqueue it, stranding the intake
+    // floor and every producer behind it.
+    expect(keys).toEqual([expect.stringContaining('CJ_TRENDING:wave:1200:v7')]);
+  });
+
+  it('re-seeds a lane on a fresh key once its state version moves, so a dead worker cannot strand the floor', async () => {
+    asMock(listResumablePartitions).mockResolvedValue([]);
+    asMock(findPidCapacity).mockResolvedValue({ limitValue: 600 });
+
+    const keyFor = async (stateVersion: number) => {
+      asMock(insertOutboxIntents).mockClear();
+      asMock(listEligibleCuratedLanes).mockResolvedValue([
+        { lane: 'CJ_TRENDING', stateVersion },
+      ]);
+      await handleCycleStart(MESSAGE);
+
+      return asMock(insertOutboxIntents)
+        .mock.calls.flatMap(
+          (call) => call[1] as Array<{ message: { idempotencyKey: string } }>,
+        )
+        .map((intent) => intent.message.idempotencyKey)
+        .find((key) => key.startsWith('curated:'))!;
+    };
+
+    // Same wave, same version - the same logical seed, correctly de-duplicated.
+    expect(await keyFor(12)).toBe(await keyFor(12));
+    // The lane moved (leased, paused, or advanced), so it is seedable again.
+    expect(await keyFor(13)).not.toBe(await keyFor(12));
+  });
+
+  it('does not seed a lane that is already exhausted for this wave', async () => {
+    asMock(listResumablePartitions).mockResolvedValue([]);
+    asMock(listEligibleCuratedLanes).mockResolvedValue([]);
+
+    await handleCycleStart(MESSAGE);
+
+    const curated = asMock(insertOutboxIntents)
+      .mock.calls.flatMap(
+        (call) => call[1] as Array<{ message: { idempotencyKey: string } }>,
+      )
+      .filter((intent) => intent.message.idempotencyKey.startsWith('curated:'));
+
+    expect(curated).toEqual([]);
   });
 
   it('prioritizes curated product/list lanes before partition product/list scans in each sweep', async () => {
