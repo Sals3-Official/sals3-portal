@@ -2,44 +2,36 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { formatMarketMoney } from '@/lib/seller-center/money';
 import type { SellerCenterMarket } from '@/lib/seller-center/market-config';
-import type { Order } from '@/lib/seller-center/mock-data/orders';
+import type { OrderParcel } from '@/modules/orders/contracts';
 import OrdersBulkActionBar from './OrdersBulkActionBar';
-import OrdersRow from './OrdersRow';
+import OrderParcelCard from './OrderParcelCard';
+import ParcelActions from './ParcelActions';
 
 type OrdersWorkspaceProps = {
-  orders: Order[];
+  parcels: OrderParcel[];
   market: SellerCenterMarket;
 };
 
 /**
- * Owns row selection so the sticky bulk-action bar and the checkbox column
- * stay in sync. Locked rows (failed sync, unconfirmed address) can never be
- * selected - excluding them from a batch is a safety rule, not a UI quirk.
+ * Owns parcel selection so the sticky bulk-action bar and the checkboxes stay
+ * in sync.
+ *
+ * A parcel with `selectable: false` can never enter a batch. That covers both
+ * the old locked-row cases and a new one: a dropship parcel has no label for
+ * the seller to print, because the seller never handles it. Excluding it is a
+ * correctness rule, not a styling choice.
  */
 export default function OrdersWorkspace({
-  orders,
+  parcels,
   market,
 }: OrdersWorkspaceProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const selectableOrders = orders.filter((order) => !order.locked);
-  const allSelected =
-    selectableOrders.length > 0 &&
-    selectableOrders.every((order) => selected.has(order.id));
-  const selectedOrders = orders.filter((order) => selected.has(order.id));
-  const proceedsMinor = selectedOrders.reduce(
-    (sum, order) => sum + order.amountMinor,
+  const selectedParcels = parcels.filter((parcel) => selected.has(parcel.id));
+  const proceedsMinor = selectedParcels.reduce(
+    (sum, parcel) => sum + parcel.proceedsMinor,
     0,
   );
 
@@ -57,12 +49,12 @@ export default function OrdersWorkspace({
     });
   };
 
-  const toggleAll = () => {
-    setSelected(
-      allSelected
-        ? new Set()
-        : new Set(selectableOrders.map((order) => order.id)),
-    );
+  const handleAction = (parcelId: string, actionId: string) => {
+    // Nothing in this slice performs a real fulfillment effect. The toast
+    // states that plainly rather than implying a courier was contacted.
+    toast(`"${actionId}" on ${parcelId} is not wired to a backend yet.`, {
+      duration: 5000,
+    });
   };
 
   const handlePrint = () => {
@@ -85,49 +77,30 @@ export default function OrdersWorkspace({
     );
   };
 
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="overflow-hidden rounded-lg border border-border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-10">
-                <Checkbox
-                  checked={allSelected}
-                  onCheckedChange={toggleAll}
-                  aria-label="Select all selectable orders"
-                />
-              </TableHead>
-              <TableHead>Order</TableHead>
-              <TableHead className="hidden md:table-cell">Items</TableHead>
-              <TableHead className="hidden md:table-cell">Cutoff</TableHead>
-              <TableHead>Sync</TableHead>
-              <TableHead className="text-right">Est. proceeds</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {orders.map((order) => (
-              <OrdersRow
-                key={order.id}
-                order={order}
-                selected={selected.has(order.id)}
-                onToggle={toggleOne}
-                amountLabel={formatMarketMoney(order.amountMinor, market)}
-              />
-            ))}
-            {orders.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="py-10 text-center text-sm text-muted-foreground"
-                >
-                  No orders match this filter.
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
+  if (parcels.length === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-card py-10 text-center text-sm text-muted-foreground">
+        No parcels match this view.
       </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {parcels.map((parcel) => (
+        <OrderParcelCard
+          key={parcel.id}
+          parcel={parcel}
+          selected={selected.has(parcel.id)}
+          onToggle={toggleOne}
+          actionsSlot={
+            <ParcelActions
+              actions={parcel.actions}
+              onAction={(actionId) => handleAction(parcel.id, actionId)}
+            />
+          }
+        />
+      ))}
 
       {selected.size > 0 ? (
         <OrdersBulkActionBar
