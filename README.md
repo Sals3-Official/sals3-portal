@@ -230,9 +230,22 @@ Two limitations worth knowing:
   feed-snapshot name, and 87,947 rows changed from an id to a name with no
   backfill and no supplier call.
 
-  `Available stock` and `Stocked origins` still legitimately read `—` without
-  evidence - those come from per-variant inventory, which the feed row does
-  not carry, and must not be guessed from it.
+  `Supplier price` had the same defect and the same fix (`supplierPriceUsd`,
+  2026-08-12): the column read `evidence.supplierPriceUsd`, while screening
+  decides `INVALID_PRICE` from `feed_snapshot.priceUsdCents` - so the evaluator
+  was rejecting rows on a price the table would not show. 87,966 of 87,966
+  evaluations carry a feed price and 87,947 rows changed from `—` to a real
+  figure. Mind the unit: evidence stores USD, the feed snapshot stores cents.
+
+  What still legitimately reads `—` without evidence, and must not be guessed:
+
+  - `Available stock` and `Stocked origins` come from per-variant inventory,
+    which the feed row does not carry at all.
+  - `Weight`, `SKU`, `imageUrl` and `providerCreatedAt` were added to
+    `feedSnapshotSchema` as optional fields on 2026-08-12, so **every** row
+    written before that carries `null` for them - measured: 0 of 87,966. They
+    populate for newly discovered candidates only; there is no backfill,
+    because the `/product/list` rows those decisions came from are gone.
 
 Verify with:
 
