@@ -3,10 +3,19 @@ import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import type { SupplierConnectionRow } from '@/lib/db/schema';
 
-export type ConnectionSummary = {
-  status: SupplierConnectionRow['status'];
-  providerDisplayName: string;
-} | null;
+/**
+ * Three genuinely different things, kept apart on purpose.
+ *
+ * A connection row is one answer. `null` is "you have no supplier connected",
+ * which is a real, actionable fact. `'UNREADABLE'` is "we could not find
+ * out" - and collapsing that into `null` is what made the rail tell a seller
+ * with a healthy CJ connection to go and connect one, purely because the
+ * database was down.
+ */
+export type ConnectionSummary =
+  | { status: SupplierConnectionRow['status']; providerDisplayName: string }
+  | 'UNREADABLE'
+  | null;
 
 /** Mirrors `catalog-presentation.ts`'s wording, but for real connection rows - that module is a design-preview fixture and is not wired to production data. */
 const CONNECTION_STATUS_TEXT: Record<
@@ -53,18 +62,32 @@ type PortalSidebarFooterProps = {
 export default function PortalSidebarFooter({
   connectionSummary,
 }: PortalSidebarFooterProps) {
-  const tone =
-    connectionSummary === null
-      ? {
-          label: 'No supplier connected',
-          dotClassName: 'bg-sidebar-foreground/50',
-          textClassName: 'text-sidebar-foreground/70',
-        }
-      : CONNECTION_STATUS_TEXT[connectionSummary.status];
-  const summary =
-    connectionSummary === null
-      ? 'Connect a Supplier App to start sourcing'
-      : `${connectionSummary.providerDisplayName} · ${tone.label}`;
+  // Unknown is styled muted rather than amber. Amber is this rail's
+  // "degraded connection" colour, and borrowing it here would assert a
+  // supplier problem when the only known problem is our own read.
+  const unknownTone = {
+    label: 'Status unavailable',
+    dotClassName: 'bg-sidebar-foreground/30',
+    textClassName: 'text-sidebar-foreground/70',
+  };
+
+  let tone;
+  let summary;
+
+  if (connectionSummary === 'UNREADABLE') {
+    tone = unknownTone;
+    summary = 'Cannot check supplier connections right now';
+  } else if (connectionSummary === null) {
+    tone = {
+      label: 'No supplier connected',
+      dotClassName: 'bg-sidebar-foreground/50',
+      textClassName: 'text-sidebar-foreground/70',
+    };
+    summary = 'Connect a Supplier App to start sourcing';
+  } else {
+    tone = CONNECTION_STATUS_TEXT[connectionSummary.status];
+    summary = `${connectionSummary.providerDisplayName} · ${tone.label}`;
+  }
 
   return (
     <div className="overflow-hidden border-t border-sidebar-border p-1.5">

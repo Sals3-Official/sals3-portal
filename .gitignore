@@ -63,6 +63,10 @@ docs/.obsidian/workspace-mobile.json
 # `git add -A` would otherwise sweep into a commit.
 .verify-local.*.log
 
+# scripts/backup-local-db.mts's timestamped pg_dump output. A developer's own
+# local database backup, not project source.
+/.backups/
+
 # Agent turnover/instruction artifacts. These are prompts handed to an agent
 # for one task, not project source - each one says to keep it untracked and
 # out of every PR. Ignoring them makes that safe by default instead of relying

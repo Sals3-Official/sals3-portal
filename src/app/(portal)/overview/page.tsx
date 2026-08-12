@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import getDb, { isDatabaseConfigured } from '@/lib/db/client';
+import { readOrUnavailable } from '@/lib/db/availability';
 import PageHeader from '@/components/portal/PageHeader';
 import LinkButton from '@/components/portal/LinkButton';
 import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
@@ -65,47 +66,89 @@ export default async function OverviewPage() {
     );
   }
 
-  const db = getDb();
-  const sellerAccount = await findSellerAccountByIdentityId(db, session.userId);
-  const isEligibleSeller =
-    sellerAccount !== null &&
-    sellerAccount.accountState === 'ACTIVE' &&
-    sellerAccount.verificationState === 'VERIFIED' &&
-    sellerAccount.businessModel === 'DROPSHIPPER';
+  // Overview is the portal's landing page, so an unreachable database here is
+  // the first thing a seller hits. It must explain itself rather than throw.
+  const resolved = await readOrUnavailable('overview', async () => {
+    const db = getDb();
+    const sellerAccount = await findSellerAccountByIdentityId(
+      db,
+      session.userId,
+    );
+    const isEligibleSeller =
+      sellerAccount !== null &&
+      sellerAccount.accountState === 'ACTIVE' &&
+      sellerAccount.verificationState === 'VERIFIED' &&
+      sellerAccount.businessModel === 'DROPSHIPPER';
 
-  const [sourcingCounts, providers, connections] = isEligibleSeller
-    ? await Promise.all([
-        countCandidateStatusSummary(sellerAccount.id),
-        listActiveProviders(db),
-        listConnectionsBySeller(db, sellerAccount.id),
-      ])
-    : [EMPTY_COUNTS, [], []];
+    const [sourcingCounts, providers, connections] = isEligibleSeller
+      ? await Promise.all([
+          countCandidateStatusSummary(sellerAccount.id),
+          listActiveProviders(db),
+          listConnectionsBySeller(db, sellerAccount.id),
+        ])
+      : [EMPTY_COUNTS, [], []];
 
-  const [
+    const [
+      oldestReadyAgeMs,
+      oldestNeedsAttentionAgeMs,
+      oldestEvaluatingAgeMs,
+      oldestBlockedRejectedAgeMs,
+      exceptionAgeMs,
+    ] = isEligibleSeller
+      ? await Promise.all([
+          oldestInStatusAgeMs(sellerAccount.id, ['PASS']),
+          oldestInStatusAgeMs(sellerAccount.id, ['PASS_WITH_ATTENTION']),
+          oldestInStatusAgeMs(sellerAccount.id, ['QUEUED', 'EVALUATING']),
+          oldestInStatusAgeMs(sellerAccount.id, [
+            'BLOCKED',
+            'TEMPORARILY_INELIGIBLE',
+          ]),
+          oldestExceptionAgeMs(sellerAccount.id),
+        ])
+      : [null, null, null, null, null];
+
+    const connectionRows: OverviewConnectionHealthRow[] = connections
+      .map((connection) => {
+        const provider = providers.find((p) => p.id === connection.providerId);
+        return provider === undefined ? null : { provider, connection };
+      })
+      .filter((row): row is OverviewConnectionHealthRow => row !== null);
+
+    return {
+      sourcingCounts,
+      connectionRows,
+      oldestReadyAgeMs,
+      oldestNeedsAttentionAgeMs,
+      oldestEvaluatingAgeMs,
+      oldestBlockedRejectedAgeMs,
+      exceptionAgeMs,
+    };
+  });
+
+  if (!resolved.ok) {
+    return (
+      <div className="flex flex-col gap-4">
+        <PageHeader
+          title="Overview"
+          description="What needs you now, and what the money looks like"
+        />
+        <SourcingEmptyState
+          title="Cannot reach the database right now"
+          description="Your sourcing queues and supplier health could not be read because the database did not respond. Nothing has been changed. Check that Postgres is running and that DATABASE_URL points at an existing database, then reload."
+        />
+      </div>
+    );
+  }
+
+  const {
+    sourcingCounts,
+    connectionRows,
     oldestReadyAgeMs,
     oldestNeedsAttentionAgeMs,
     oldestEvaluatingAgeMs,
     oldestBlockedRejectedAgeMs,
     exceptionAgeMs,
-  ] = isEligibleSeller
-    ? await Promise.all([
-        oldestInStatusAgeMs(sellerAccount.id, ['PASS']),
-        oldestInStatusAgeMs(sellerAccount.id, ['PASS_WITH_ATTENTION']),
-        oldestInStatusAgeMs(sellerAccount.id, ['QUEUED', 'EVALUATING']),
-        oldestInStatusAgeMs(sellerAccount.id, [
-          'BLOCKED',
-          'TEMPORARILY_INELIGIBLE',
-        ]),
-        oldestExceptionAgeMs(sellerAccount.id),
-      ])
-    : [null, null, null, null, null];
-
-  const connectionRows: OverviewConnectionHealthRow[] = connections
-    .map((connection) => {
-      const provider = providers.find((p) => p.id === connection.providerId);
-      return provider === undefined ? null : { provider, connection };
-    })
-    .filter((row): row is OverviewConnectionHealthRow => row !== null);
+  } = resolved.data;
 
   return (
     <div className="flex flex-col gap-4">
