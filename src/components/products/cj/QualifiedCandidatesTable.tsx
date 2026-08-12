@@ -7,10 +7,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
+import { candidateDrawerHref } from '@/lib/portal/pipeline-params';
 import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
 import type { ReasonCode } from '@/modules/catalog/candidates/rules/contracts';
 import Image from 'next/image';
 import { Package } from 'lucide-react';
+import CandidateRow from './CandidateRow';
 import {
   displayName,
   formatUsd,
@@ -21,6 +23,11 @@ import CustomizeAndListButton from './CustomizeAndListButton';
 
 type QualifiedCandidatesTableProps = {
   candidates: EvaluatedCandidateRow[];
+  /**
+   * The page's current `?tab=`/`?q=`/`?page=`, so a row click adds
+   * `?candidate=` without losing the view behind the drawer.
+   */
+  currentParams: Record<string, string>;
   /** Whether to show the "Attention reasons" column (Needs Attention only). */
   showReasons: boolean;
 };
@@ -35,6 +42,7 @@ const SHARED_COLUMNS = ['Product', 'CJ product ID', 'Supplier price'];
  */
 export default function QualifiedCandidatesTable({
   candidates,
+  currentParams,
   showReasons,
 }: QualifiedCandidatesTableProps) {
   const columns = [
@@ -62,7 +70,11 @@ export default function QualifiedCandidatesTable({
               .reasonCodes as ReasonCode[];
 
             return (
-              <TableRow key={candidate.candidateId}>
+              <CandidateRow
+                key={candidate.candidateId}
+                href={candidateDrawerHref(currentParams, candidate.candidateId)}
+                label={`Open candidate detail for ${name}`}
+              >
                 <TableCell className="max-w-64 font-medium">
                   <div className="flex items-center gap-3">
                     {image === null ? (
@@ -122,7 +134,7 @@ export default function QualifiedCandidatesTable({
                 <TableCell>
                   <CustomizeAndListButton productName={name} />
                 </TableCell>
-              </TableRow>
+              </CandidateRow>
             );
           })}
         </TableBody>

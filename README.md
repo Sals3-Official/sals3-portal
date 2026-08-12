@@ -232,6 +232,70 @@ Redis, KV, or paid cache service is used for this path.
 | `/api/storefront/products/[id]`                            | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `/api/storefront/categories`                               | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
+## Candidate detail drawer
+
+Clicking any row on `/products/pipeline`, in any tab, opens a read-only detail
+drawer at 85% of the viewport width showing everything the database holds for
+that candidate.
+
+The open drawer lives in the URL as `?candidate=<uuid>`, alongside the page's
+existing `?tab=`/`?q=`/`?page=`, so the view is shareable and the back button
+behaves (`MASTER.md` §6 rule 9). It is validated with
+`z.string().trim().uuid().catch('')`, so a hand-typed value degrades to "no
+drawer" instead of reaching a uuid database predicate.
+
+Five tabs, grouped by the question a reviewer is asking rather than by the table
+a field lives in: **Overview** (identity, decision, reason codes, price),
+**Stock** (manual attestation, inspection history, per-origin CJ inventory),
+**Supplier evidence** (feed snapshot, CJ detail evidence, snapshot provenance),
+**Screening & queue** (screening findings, retry/lease mechanics, discovery
+signals, provider freshness), and **History** (audit trail, pricing overrides,
+whether it was ever drafted into a Sals3 product).
+
+### Three absences that must never look alike
+
+Only **19 of 87,966** candidates have a captured `supplier_snapshots` row
+(measured 2026-08-12). So most sections a reviewer opens are empty, and
+`CandidateAbsentSection` keeps three different reasons structurally distinct:
+
+| Kind             | Means                                | Treatment                                                 |
+| ---------------- | ------------------------------------ | --------------------------------------------------------- |
+| `not-fetched`    | We never called CJ for this          | Dashed border, `role="note"`, **no timestamp**            |
+| `reported-zero`  | CJ answered, and the answer was none | Solid border, warning pill, **capture time always shown** |
+| `never-recorded` | An append-only table has no rows     | Plain text, no pill                                       |
+
+The timestamp is the discriminator: a real observation has one, a fetch that
+never happened cannot. A zero from CJ is a fact about the product; an absent
+fetch is a fact about our pipeline. Conflating them is how a reviewer concludes
+"this has no stock" when nobody ever looked.
+
+Two related rules: a missing scalar inside a populated section renders
+`Not captured`, never `—` (a dash reads as "the value is empty"); and
+`candidate_evaluations.score` is never rendered as a value at all, because the
+column is reserved and always null - a `—` beside a label called "Score" reads
+as "scored zero".
+
+### Notes for whoever changes this
+
+- **The drawer is strictly read-only.** No Customize & List, no Recheck now, no
+  stock attestation. Controls that already live inside a row keep working: the
+  row's click handler ignores events from `a`/`button`/`input`/`select`/
+  `[role=menuitem]` descendants.
+- **`resolveCandidateDetail` is the authorization boundary.** Its seller filter
+  is in the same `WHERE` as the lookup, and a cross-tenant or unknown id costs
+  exactly one statement, so no child table - including `audit_events`, which has
+  no tenant column - is ever read for an id that is not the seller's.
+- **`audit_events.payload` is now rendered to a seller.** Safe today by audit,
+  not by construction: every candidate-scoped writer records shallow,
+  credential-free scalars. Check any new audit payload against this surface.
+- **Every row click re-runs the whole page render** (`force-dynamic` plus a URL
+  change), so opening the drawer re-executes the tab's count and page queries as
+  well as the seven detail statements. If that latency bites, the escape hatch
+  is a parallel route slot so only the drawer re-renders.
+- **Middle-click and open-in-new-tab do not work on a row.** A `<tr>` cannot
+  hold an anchor spanning every cell without breaking table semantics, so the
+  row navigates via `router.push`. The resulting URL is still shareable.
+
 ## Product Sourcing paging and search
 
 `/products/pipeline` is one screen with six tabs (`?tab=all|ready|needs-attention|evaluating|blocked|exception`).

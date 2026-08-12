@@ -7,16 +7,23 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
+import { candidateDrawerHref } from '@/lib/portal/pipeline-params';
 import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
 import {
   REASON_CODE_EXPLANATIONS,
   type ReasonCode,
 } from '@/modules/catalog/candidates/rules/contracts';
+import CandidateRow from './CandidateRow';
 import RecheckNowButton from './RecheckNowButton';
 import { displayName } from './candidate-view';
 
 type BlockedCandidatesTableProps = {
   candidates: EvaluatedCandidateRow[];
+  /**
+   * The page's current `?tab=`/`?q=`/`?page=`, so a row click adds
+   * `?candidate=` without losing the view behind the drawer.
+   */
+  currentParams: Record<string, string>;
 };
 
 const COLUMNS = [
@@ -40,6 +47,7 @@ const COLUMNS = [
  */
 export default function BlockedCandidatesTable({
   candidates,
+  currentParams,
 }: BlockedCandidatesTableProps) {
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -59,7 +67,11 @@ export default function BlockedCandidatesTable({
             const isPermanent = candidate.evaluation.status === 'BLOCKED';
 
             return (
-              <TableRow key={candidate.candidateId}>
+              <CandidateRow
+                key={candidate.candidateId}
+                href={candidateDrawerHref(currentParams, candidate.candidateId)}
+                label={`Open candidate detail for ${name}`}
+              >
                 <TableCell
                   className="max-w-64 truncate font-medium"
                   title={name}
@@ -112,7 +124,7 @@ export default function BlockedCandidatesTable({
                     <RecheckNowButton candidateId={candidate.candidateId} />
                   )}
                 </TableCell>
-              </TableRow>
+              </CandidateRow>
             );
           })}
         </TableBody>

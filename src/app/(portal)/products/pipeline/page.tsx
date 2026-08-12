@@ -1,32 +1,28 @@
 import type { Metadata } from 'next';
-import { z } from 'zod';
 import PageHeader from '@/components/portal/PageHeader';
-import AllCandidatesTable from '@/components/products/cj/AllCandidatesTable';
-import BlockedCandidatesTable from '@/components/products/cj/BlockedCandidatesTable';
-import EvaluatingCandidatesTable from '@/components/products/cj/EvaluatingCandidatesTable';
-import ExceptionQueueTable from '@/components/products/cj/ExceptionQueueTable';
+import CandidateDetailDrawer from '@/components/products/cj/CandidateDetailDrawer';
+import EvaluatingBreakdown from '@/components/products/cj/EvaluatingBreakdown';
 import PipelinePagination from '@/components/products/cj/PipelinePagination';
 import PipelineSearchInput from '@/components/products/cj/PipelineSearchInput';
 import PipelineTabs from '@/components/products/cj/PipelineTabs';
-import QualifiedCandidatesTable from '@/components/products/cj/QualifiedCandidatesTable';
-import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
+import PipelineTabTable from '@/components/products/cj/PipelineTabTable';
+import PipelineUnavailable from '@/components/products/cj/PipelineUnavailable';
 import SourcingInfoBanner from '@/components/products/cj/SourcingInfoBanner';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { readOrUnavailable } from '@/lib/db/availability';
 import { parsePageParam } from '@/lib/portal/pagination';
-import { EMPTY_STATE_COPY, TAB_DESCRIPTIONS } from '@/lib/portal/pipeline-copy';
 import {
-  countForTab,
-  parsePipelineTab,
-  PIPELINE_TAB_LABELS,
-  type PipelineTab,
-} from '@/lib/portal/pipeline-tabs';
-import resolvePipelinePageData, {
-  type PipelinePageData,
-} from '@/modules/catalog/candidates/pipeline-page-data';
-import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
+  pipelineHeaderDescription,
+  TAB_DESCRIPTIONS,
+} from '@/lib/portal/pipeline-copy';
+import {
+  pipelineCurrentParams,
+  pipelinePageQuerySchema,
+} from '@/lib/portal/pipeline-params';
+import { countForTab, parsePipelineTab } from '@/lib/portal/pipeline-tabs';
+import resolvePipelinePageData from '@/modules/catalog/candidates/pipeline-page-data';
 
 export const metadata: Metadata = { title: 'Product Sourcing · Sals3 Portal' };
 export const dynamic = 'force-dynamic';
@@ -34,95 +30,9 @@ export const dynamic = 'force-dynamic';
 /** ~6 ticks at the default 5-minute GitHub Actions schedule (evaluate-tick.yml). */
 const STALE_QUEUE_THRESHOLD_MS = 30 * 60 * 1000;
 
-const querySchema = z.object({
-  tab: z.string().optional(),
-  q: z.string().max(120).optional(),
-  page: z.string().max(12).optional(),
-});
-
 type PageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
-
-function renderTable(
-  tab: PipelineTab,
-  candidates: EvaluatedCandidateRow[],
-  tabIsEmpty: boolean,
-  search: string,
-) {
-  if (candidates.length === 0) {
-    if (tabIsEmpty) {
-      const copy = EMPTY_STATE_COPY[tab];
-
-      return (
-        <SourcingEmptyState title={copy.title} description={copy.description} />
-      );
-    }
-
-    return (
-      <SourcingEmptyState
-        title="No matches"
-        description={`No candidate in ${PIPELINE_TAB_LABELS[tab]} matches "${search}".`}
-      />
-    );
-  }
-
-  switch (tab) {
-    case 'ready':
-      return (
-        <QualifiedCandidatesTable candidates={candidates} showReasons={false} />
-      );
-    case 'needs-attention':
-      return <QualifiedCandidatesTable candidates={candidates} showReasons />;
-    case 'evaluating':
-      return <EvaluatingCandidatesTable candidates={candidates} />;
-    case 'blocked':
-      return <BlockedCandidatesTable candidates={candidates} />;
-    case 'exception':
-      return <ExceptionQueueTable candidates={candidates} />;
-    case 'all':
-    default:
-      return <AllCandidatesTable candidates={candidates} />;
-  }
-}
-
-function renderEvaluatingBreakdown(
-  tab: PipelineTab,
-  counts: PipelinePageData['counts'],
-) {
-  if (tab !== 'evaluating' || counts === null) return null;
-
-  return (
-    <div className="flex flex-wrap gap-2">
-      <StatusPill
-        label={`Queued ${counts.evaluatingQueued.toLocaleString()}`}
-        tone="neutral"
-        className="w-fit"
-      />
-      <StatusPill
-        label={`Processing now ${counts.evaluatingProcessing.toLocaleString()}`}
-        tone="info"
-        className="w-fit"
-      />
-    </div>
-  );
-}
-
-/**
- * Counts the rows the tab holds in total, not the ones on this page: the
- * header used to report the fetched-row count, so a tab holding 86,605
- * candidates announced "100 candidates" - the page size - as if that were
- * everything there was.
- */
-function headerDescription(
-  window: PipelinePageData['window'],
-  search: string,
-): string {
-  const noun = window.total === 1 ? 'candidate' : 'candidates';
-  const scope = search === '' ? '' : ` matching "${search}"`;
-
-  return `${window.total.toLocaleString()} ${noun}${scope}`;
-}
 
 /**
  * Product Sourcing, one window. Was five separate routes (Qualified
@@ -136,53 +46,38 @@ function headerDescription(
 export default async function ProductSourcingPipelinePage({
   searchParams,
 }: PageProps) {
-  const query = querySchema.parse(await searchParams);
+  const query = pipelinePageQuerySchema.parse(await searchParams);
   const tab = parsePipelineTab(query.tab);
   const search = query.q?.trim() ?? '';
 
   if (!isDatabaseConfigured()) {
-    return (
-      <div className="flex flex-col gap-4">
-        <PageHeader
-          title="Product Sourcing"
-          description={PIPELINE_TAB_LABELS[tab]}
-        />
-        <SourcingEmptyState
-          title="No database configured in this environment"
-          description="DATABASE_URL is not set here, so evaluated candidates cannot be read. This page works against a configured Postgres database - see the README."
-        />
-      </div>
-    );
+    return <PipelineUnavailable reason="not-configured" tab={tab} />;
   }
 
   // `resolvePipelinePageData` already tolerates a read failure, but resolving
   // the seller account happens before it and is itself a query - so an
   // unreachable database still crashed this page ahead of that guard.
+  // The seller account id is returned alongside the page data because the
+  // detail drawer needs it to scope its own read - resolving it a second time
+  // would be a second auth query per row click.
   const resolved = await readOrUnavailable('candidate pipeline', async () => {
     const { sellerAccount } = await requireDropshipperAccount();
 
-    return resolvePipelinePageData(sellerAccount.id, tab, {
-      search,
-      requestedPage: parsePageParam(query.page),
-    });
+    return {
+      sellerAccountId: sellerAccount.id,
+      pageData: await resolvePipelinePageData(sellerAccount.id, tab, {
+        search,
+        requestedPage: parsePageParam(query.page),
+      }),
+    };
   });
 
   if (!resolved.ok) {
-    return (
-      <div className="flex flex-col gap-4">
-        <PageHeader
-          title="Product Sourcing"
-          description={PIPELINE_TAB_LABELS[tab]}
-        />
-        <SourcingEmptyState
-          title="Cannot reach the database right now"
-          description="Evaluated candidates could not be loaded because the database did not respond. No candidate, decision, or evidence has been changed. Check that Postgres is running and that DATABASE_URL points at an existing database, then reload."
-        />
-      </div>
-    );
+    return <PipelineUnavailable reason="unreachable" tab={tab} />;
   }
 
-  const { counts, candidates, queueAgeMs, window } = resolved.data;
+  const { sellerAccountId, pageData } = resolved.data;
+  const { counts, candidates, queueAgeMs, window } = pageData;
   const isStale =
     tab === 'exception' &&
     queueAgeMs !== null &&
@@ -191,12 +86,16 @@ export default async function ProductSourcingPipelinePage({
     tab,
     ...(search === '' ? {} : { q: search }),
   };
+  // Carries `page` too, so opening the drawer does not reset the list. Paging
+  // and switching tabs keep using `tabParams`, which has no `candidate` - so
+  // both correctly close the drawer.
+  const currentParams = pipelineCurrentParams({ ...query, tab });
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Product Sourcing"
-        description={headerDescription(window, search)}
+        description={pipelineHeaderDescription(window, search)}
       />
       <SourcingInfoBanner>{TAB_DESCRIPTIONS[tab]}</SourcingInfoBanner>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -221,8 +120,14 @@ export default async function ProductSourcingPipelinePage({
           className="w-fit whitespace-normal"
         />
       ) : null}
-      {renderEvaluatingBreakdown(tab, counts)}
-      {renderTable(tab, candidates, countForTab(tab, counts) === 0, search)}
+      {tab === 'evaluating' ? <EvaluatingBreakdown counts={counts} /> : null}
+      <PipelineTabTable
+        tab={tab}
+        candidates={candidates}
+        tabIsEmpty={countForTab(tab, counts) === 0}
+        search={search}
+        currentParams={currentParams}
+      />
       {window.totalPages > 1 ? (
         <PipelinePagination
           page={window.page}
@@ -231,6 +136,13 @@ export default async function ProductSourcingPipelinePage({
           currentParams={tabParams}
         />
       ) : null}
+      {query.candidate === '' ? null : (
+        <CandidateDetailDrawer
+          sellerAccountId={sellerAccountId}
+          candidateId={query.candidate}
+          currentParams={currentParams}
+        />
+      )}
     </div>
   );
 }

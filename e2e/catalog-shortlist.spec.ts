@@ -328,3 +328,122 @@ test.describe('automated pipeline on a phone', () => {
     expect(overflow).toBeLessThanOrEqual(1);
   });
 });
+
+test.describe('candidate detail drawer', () => {
+  /**
+   * The two cases below need no database: they prove the `?candidate=` contract
+   * degrades instead of throwing. A malformed value must not reach a uuid
+   * predicate, and an unknown-but-valid uuid must not 500.
+   */
+  test('a malformed candidate id renders the page with no drawer', async ({
+    page,
+  }) => {
+    const response = await page.goto('/products/pipeline?candidate=not-a-uuid');
+
+    expect(response?.status()).toBe(200);
+    await page
+      .getByRole('heading', { name: 'Product Sourcing', level: 1 })
+      .waitFor({ timeout: 30_000 });
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+
+  /**
+   * Asserts the drawer's own content, NOT the page heading behind it. When a
+   * database is configured this url opens the drawer, and the drawer is modal -
+   * base-ui makes everything behind it inert, so the `<h1>` is correctly no
+   * longer visible to a role query. Waiting on that heading is what an earlier
+   * version of this test did, and it timed out for exactly that reason.
+   */
+  test('an unknown candidate id renders the page rather than failing', async ({
+    page,
+  }) => {
+    const response = await page.goto(
+      '/products/pipeline?candidate=00000000-0000-4000-8000-000000000000',
+    );
+
+    expect(response?.status()).toBe(200);
+
+    if (isDatabaseConfigured()) {
+      // The candidate genuinely does not exist, so the drawer must say so -
+      // with one message that cannot distinguish "no such id" from "another
+      // seller's id", matching what the query itself refuses to reveal.
+      await expect(
+        page.getByRole('dialog').getByText('Not in your pipeline'),
+      ).toBeVisible({ timeout: 30_000 });
+    } else {
+      await page
+        .getByRole('heading', { name: 'Product Sourcing', level: 1 })
+        .waitFor({ timeout: 30_000 });
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+    }
+  });
+
+  test('a row opens a shareable drawer that closes on Escape', async ({
+    page,
+  }) => {
+    test.skip(
+      !isDatabaseConfigured(),
+      'DATABASE_URL not configured in this environment',
+    );
+
+    await page.goto('/products/pipeline?tab=all');
+    await page
+      .getByRole('heading', { name: 'Product Sourcing', level: 1 })
+      .waitFor({ timeout: 30_000 });
+
+    const rows = page.locator('tbody tr');
+
+    test.skip(
+      (await rows.count()) === 0,
+      'no candidates in this database to open',
+    );
+
+    await rows.first().click();
+
+    // The existing view must survive: `buildQueryString` drops `page` on any
+    // other change, so the href helper has to re-assert it.
+    await expect(page).toHaveURL(/[?&]tab=all/);
+    await expect(page).toHaveURL(/[?&]candidate=[0-9a-f-]{36}/);
+
+    const drawer = page.getByRole('dialog');
+
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByRole('tab')).toHaveCount(5);
+    // Same negative property the product-editor drawer asserts: a read-only
+    // supplier surface must never render a credential.
+    await expect(drawer).not.toContainText(/api[_-]?key|access[_-]?token/i);
+
+    const shared = page.url();
+
+    await page.keyboard.press('Escape');
+    await expect(drawer).toBeHidden();
+    await expect(page).not.toHaveURL(/[?&]candidate=/);
+
+    // Shareability: the captured URL must reopen the same drawer.
+    await page.goto(shared);
+    await expect(page.getByRole('dialog')).toBeVisible();
+  });
+
+  test('a control inside a row does not open the drawer', async ({ page }) => {
+    test.skip(
+      !isDatabaseConfigured(),
+      'DATABASE_URL not configured in this environment',
+    );
+
+    await page.goto('/products/pipeline?tab=blocked');
+    await page
+      .getByRole('heading', { name: 'Product Sourcing', level: 1 })
+      .waitFor({ timeout: 30_000 });
+
+    const recheck = page.getByRole('button', { name: /Recheck now/i }).first();
+
+    test.skip(
+      (await recheck.count()) === 0,
+      'no blocked candidate with a recheck control',
+    );
+
+    await recheck.click();
+
+    await expect(page).not.toHaveURL(/[?&]candidate=/);
+  });
+});

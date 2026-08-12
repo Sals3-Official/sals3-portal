@@ -1,4 +1,4 @@
-import { and, eq, ilike, or } from 'drizzle-orm';
+import { and, desc, eq, ilike, or } from 'drizzle-orm';
 import type { Executor } from '@/modules/catalog/candidates/repository';
 import {
   pricingCategoryPolicies,
@@ -207,6 +207,30 @@ export async function findActiveProductOverride(
   return rows[0] ?? null;
 }
 
+/**
+ * Every override ever recorded for one candidate, newest first - not just the
+ * `ACTIVE` one `findActiveProductOverride` returns.
+ *
+ * The read-only candidate detail drawer shows supersession history, so a
+ * reviewer can see that a margin was revised and why. Pricing-override *audit*
+ * events are keyed by the override id (`entityType: 'PricingProductOverride'`),
+ * not the candidate, so these rows are the only per-candidate record of that
+ * history.
+ *
+ * Caller must already have proven the candidate belongs to the reading seller:
+ * this table has no tenant column.
+ */
+export async function listProductOverridesForCandidate(
+  executor: Executor,
+  supplierCandidateId: string,
+): Promise<PricingProductOverrideRow[]> {
+  return executor
+    .select()
+    .from(pricingProductOverrides)
+    .where(eq(pricingProductOverrides.supplierCandidateId, supplierCandidateId))
+    .orderBy(desc(pricingProductOverrides.createdAt));
+}
+
 export async function createProductOverride(
   executor: Executor,
   input: {
@@ -254,6 +278,18 @@ export async function findActiveVariantOverride(
     .limit(1);
 
   return rows[0] ?? null;
+}
+
+/** Every variant override ever recorded for one candidate. See `listProductOverridesForCandidate` for the scoping contract. */
+export async function listVariantOverridesForCandidate(
+  executor: Executor,
+  supplierCandidateId: string,
+): Promise<PricingVariantOverrideRow[]> {
+  return executor
+    .select()
+    .from(pricingVariantOverrides)
+    .where(eq(pricingVariantOverrides.supplierCandidateId, supplierCandidateId))
+    .orderBy(desc(pricingVariantOverrides.createdAt));
 }
 
 export async function createVariantOverride(
