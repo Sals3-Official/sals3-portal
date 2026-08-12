@@ -35,6 +35,42 @@ export function displayName(candidate: {
   return candidate.externalProductId;
 }
 
+/**
+ * Supplier price in USD for one candidate row: the CJ evidence price, else the
+ * discovery feed snapshot's price, else unknown.
+ *
+ * Same shape as `displayName`, and for the same reason - the price the table
+ * showed came from `evidence`, which exists for a tiny fraction of candidates,
+ * so almost every row rendered a dash. The price was never missing: screening
+ * decides `INVALID_PRICE` from `feed.priceUsdCents` (see
+ * `rules/screening.ts`), so the evaluator was rejecting rows on a price the
+ * table would not display. Measured against production 2026-08-12: 87,966 of
+ * 87,966 evaluations carry a feed price, and on the one row where both sources
+ * existed they agreed exactly (evidence `4.04`, feed `404` cents).
+ *
+ * Note the unit change: evidence stores USD, the feed snapshot stores cents.
+ */
+export function supplierPriceUsd(candidate: {
+  evidence: CandidateEvidence | null;
+  evaluation: { feedSnapshot: unknown };
+}): number | null {
+  if (
+    candidate.evidence !== null &&
+    candidate.evidence.supplierPriceUsd !== null
+  ) {
+    return candidate.evidence.supplierPriceUsd;
+  }
+
+  // `feed_snapshot` is `jsonb`, so it reaches here untyped - parse, never cast.
+  const feed = feedSnapshotSchema.safeParse(candidate.evaluation.feedSnapshot);
+
+  if (feed.success && feed.data.priceUsdCents !== null) {
+    return feed.data.priceUsdCents / 100;
+  }
+
+  return null;
+}
+
 export function totalStock(evidence: CandidateEvidence | null): number | null {
   if (evidence === null) return null;
 

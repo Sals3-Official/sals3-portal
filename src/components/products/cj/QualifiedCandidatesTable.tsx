@@ -14,6 +14,7 @@ import {
   formatUsd,
   formatStock,
   stockedOrigins,
+  supplierPriceUsd,
   totalStock,
 } from './candidate-view';
 import CustomizeAndListButton from './CustomizeAndListButton';
@@ -78,7 +79,7 @@ export default function QualifiedCandidatesTable({
                   {candidate.externalProductId}
                 </TableCell>
                 <TableCell className="tabular-nums">
-                  {formatUsd(candidate.evidence?.supplierPriceUsd ?? null)}
+                  {formatUsd(supplierPriceUsd(candidate))}
                 </TableCell>
                 <TableCell>
                   {candidate.evidence?.packedWeight
