@@ -49,10 +49,7 @@ export default function ExceptionQueueTable({
         </TableHeader>
         <TableBody>
           {candidates.map((candidate) => {
-            const name = displayName(
-              candidate.externalProductId,
-              candidate.evidence,
-            );
+            const name = displayName(candidate);
 
             return (
               <TableRow key={candidate.candidateId}>

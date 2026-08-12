@@ -53,10 +53,7 @@ export default function EvaluatingCandidatesTable({
         </TableHeader>
         <TableBody>
           {candidates.map((candidate) => {
-            const name = displayName(
-              candidate.externalProductId,
-              candidate.evidence,
-            );
+            const name = displayName(candidate);
             const presentation =
               STATUS_PRESENTATION[candidate.evaluation.status] ??
               STATUS_PRESENTATION.QUEUED;

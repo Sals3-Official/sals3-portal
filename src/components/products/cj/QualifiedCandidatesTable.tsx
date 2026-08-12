@@ -62,10 +62,7 @@ export default function QualifiedCandidatesTable({
         </TableHeader>
         <TableBody>
           {candidates.map((candidate) => {
-            const name = displayName(
-              candidate.externalProductId,
-              candidate.evidence,
-            );
+            const name = displayName(candidate);
             const reasonCodes = candidate.evaluation
               .reasonCodes as ReasonCode[];
 
