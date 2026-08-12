@@ -59,11 +59,18 @@ type ParcelFixture = {
   route: ParcelRoute;
   actions: ParcelAction[];
   selectable: boolean;
+  channel: string;
+  /** ISO dates so sorting needs no parsing and no timezone. */
+  orderedAt: string;
+  shipBy: string | null;
 };
 
 const PARCEL_FIXTURES: ParcelFixture[] = [
   {
     id: 'A-88214-1',
+    channel: 'Sals3 PH',
+    orderedAt: '2026-08-12',
+    shipBy: '2026-08-13',
     orderRef: 'A-88214',
     parcelIndex: 1,
     parcelCount: 1,
@@ -127,6 +134,9 @@ const PARCEL_FIXTURES: ParcelFixture[] = [
   },
   {
     id: 'A-88218-1',
+    channel: 'Sals3 PH',
+    orderedAt: '2026-08-11',
+    shipBy: '2026-08-13',
     orderRef: 'A-88218',
     parcelIndex: 1,
     parcelCount: 1,
@@ -182,6 +192,9 @@ const PARCEL_FIXTURES: ParcelFixture[] = [
   },
   {
     id: 'A-88217-1',
+    channel: 'Sals3 AU',
+    orderedAt: '2026-08-12',
+    shipBy: '2026-08-13',
     orderRef: 'A-88217',
     parcelIndex: 1,
     parcelCount: 2,
@@ -238,6 +251,9 @@ const PARCEL_FIXTURES: ParcelFixture[] = [
   },
   {
     id: 'A-88217-2',
+    channel: 'Sals3 AU',
+    orderedAt: '2026-08-12',
+    shipBy: null,
     orderRef: 'A-88217',
     parcelIndex: 2,
     parcelCount: 2,
@@ -289,6 +305,9 @@ const PARCEL_FIXTURES: ParcelFixture[] = [
   },
   {
     id: 'A-88219-1',
+    channel: 'Sals3 PH',
+    orderedAt: '2026-08-12',
+    shipBy: null,
     orderRef: 'A-88219',
     parcelIndex: 1,
     parcelCount: 1,
@@ -345,6 +364,9 @@ const PARCEL_FIXTURES: ParcelFixture[] = [
   },
   {
     id: 'A-88216-1',
+    channel: 'Sals3 PH',
+    orderedAt: '2026-08-09',
+    shipBy: null,
     orderRef: 'A-88216',
     parcelIndex: 1,
     parcelCount: 1,
@@ -399,6 +421,165 @@ const PARCEL_FIXTURES: ParcelFixture[] = [
     ],
     selectable: false,
   },
+  // The three below exist so every lane has something in it. A tab reading
+  // zero forever is indistinguishable from a tab that is broken.
+  {
+    id: 'A-88211-1',
+    channel: 'Sals3 PH',
+    orderedAt: '2026-08-10',
+    shipBy: null,
+    orderRef: 'A-88211',
+    parcelIndex: 1,
+    parcelCount: 1,
+    buyerLabel: 'A****z · Cebu',
+    buyerMessage: null,
+    lines: [
+      {
+        id: 'A-88211-1-l1',
+        title: 'Packing tape 48mm',
+        variation: 'Clear · 6 rolls',
+        quantity: 1,
+        imageUrl: null,
+        acceptedOnLabel: 'as ordered on 10 Aug 2026',
+      },
+    ],
+    buyerPaidMinor: 64200,
+    commissionMinor: -6420,
+    proceedsMinor: 57780,
+    supplierCostMinor: null,
+    supplierCostNote: null,
+    coversWholeOrder: false,
+    status: {
+      label: 'Shipping',
+      detail:
+        'In transit with Ninja Van. Last scan 11 Aug 2026 at the Cebu sorting hub.',
+      tone: 'info',
+    },
+    state: 'SHIPPED',
+    attentionReason: null,
+    stage: null,
+    route: {
+      kind: 'OWN_STOCK',
+      serviceLevel: 'Standard delivery',
+      carrier: 'Ninja Van',
+      handover: 'PICK_UP',
+      trackingNumber: 'NVPH0042177018',
+    },
+    actions: [
+      {
+        id: 'details',
+        label: 'Check details',
+        variant: 'secondary',
+        blockedReason: null,
+      },
+    ],
+    selectable: false,
+  },
+  {
+    id: 'A-88204-1',
+    channel: 'Sals3 PH',
+    orderedAt: '2026-08-06',
+    shipBy: null,
+    orderRef: 'A-88204',
+    parcelIndex: 1,
+    parcelCount: 1,
+    buyerLabel: 'D****a · Bacolod',
+    buyerMessage: null,
+    lines: [
+      {
+        id: 'A-88204-1-l1',
+        title: 'Fragile stickers 50mm',
+        variation: 'Red · 200 pcs',
+        quantity: 1,
+        imageUrl: null,
+        acceptedOnLabel: 'as ordered on 06 Aug 2026',
+      },
+    ],
+    buyerPaidMinor: 38000,
+    commissionMinor: -3800,
+    proceedsMinor: 34200,
+    supplierCostMinor: 19400,
+    supplierCostNote: 'paid from your CJ account',
+    coversWholeOrder: false,
+    status: {
+      label: 'Completed',
+      detail:
+        'Delivered on 09 Aug 2026. Both the carrier and your supplier report the same outcome.',
+      tone: 'success',
+    },
+    state: 'DELIVERED',
+    attentionReason: null,
+    stage: null,
+    route: {
+      kind: 'SUPPLIER_DROPSHIP',
+      serviceLevel: 'Standard delivery',
+      carrier: 'J&T Express',
+      supplierLabel: 'CJ',
+      supplierOrderRef: 'CJ-77098220',
+      trackingNumber: 'JT2260774091',
+    },
+    actions: [
+      {
+        id: 'details',
+        label: 'Check details',
+        variant: 'secondary',
+        blockedReason: null,
+      },
+    ],
+    selectable: false,
+  },
+  {
+    id: 'A-88196-1',
+    channel: 'Sals3 AU',
+    orderedAt: '2026-08-04',
+    shipBy: null,
+    orderRef: 'A-88196',
+    parcelIndex: 1,
+    parcelCount: 1,
+    buyerLabel: 'L****n · Davao',
+    buyerMessage: null,
+    lines: [
+      {
+        id: 'A-88196-1-l1',
+        title: 'Kraft mailer 22cm',
+        variation: 'Brown · 50 pcs',
+        quantity: 1,
+        imageUrl: null,
+        acceptedOnLabel: 'as ordered on 04 Aug 2026',
+      },
+    ],
+    buyerPaidMinor: 91000,
+    commissionMinor: -9100,
+    proceedsMinor: 81900,
+    supplierCostMinor: null,
+    supplierCostNote: null,
+    coversWholeOrder: false,
+    status: {
+      label: 'Return in progress',
+      detail:
+        'The buyer is returning this parcel. It reaches you by 16 Aug 2026 and the refund is held until it arrives.',
+      tone: 'warning',
+    },
+    state: 'RETURN_IN_PROGRESS',
+    attentionReason: null,
+    stage: null,
+    route: {
+      kind: 'OWN_STOCK',
+      serviceLevel: 'Standard delivery',
+      carrier: 'Ninja Van',
+      handover: 'PICK_UP',
+      trackingNumber: 'NVPH0042166204',
+    },
+    actions: [
+      {
+        id: 'details',
+        label: 'Check details',
+        variant: 'secondary',
+        blockedReason: null,
+      },
+    ],
+    selectable: false,
+  },
 ];
 
 export function buildOrderParcels(market: SellerCenterMarket): OrderParcel[] {
@@ -431,6 +612,9 @@ export function buildOrderParcels(market: SellerCenterMarket): OrderParcel[] {
     actions: fixture.actions,
     selectable: fixture.selectable,
     proceedsMinor: fixture.proceedsMinor,
+    channel: fixture.channel,
+    orderedAt: fixture.orderedAt,
+    shipBy: fixture.shipBy,
   }));
 }
 

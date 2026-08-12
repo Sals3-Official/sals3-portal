@@ -11,6 +11,7 @@ import {
   describeResultCount,
   filterParcels,
   laneOf,
+  sortParcels,
 } from './lanes';
 
 /**
@@ -60,6 +61,9 @@ function parcelWith(overrides: Partial<OrderParcel>): OrderParcel {
     actions: [],
     selectable: true,
     proceedsMinor: 115560,
+    channel: 'Sals3 PH',
+    orderedAt: '2026-08-12',
+    shipBy: '2026-08-13',
     ...overrides,
   };
 }
@@ -69,6 +73,7 @@ const EMPTY_FILTER = {
   route: 'all',
   stage: 'all',
   reason: 'all',
+  channel: 'all',
   field: 'order',
   q: '',
 };
@@ -257,6 +262,75 @@ describe('filterParcels', () => {
         q: '88214',
       }),
     ).toEqual([]);
+  });
+});
+
+describe('channel filter', () => {
+  it('narrows to one sales channel', () => {
+    const mixed = [
+      parcelWith({ id: 'ph', channel: 'Sals3 PH' }),
+      parcelWith({ id: 'au', channel: 'Sals3 AU' }),
+    ];
+
+    expect(
+      filterParcels(mixed, { ...EMPTY_FILTER, channel: 'Sals3 AU' }).map(
+        (parcel) => parcel.id,
+      ),
+    ).toEqual(['au']);
+    expect(filterParcels(mixed, EMPTY_FILTER)).toHaveLength(2);
+  });
+});
+
+describe('sortParcels', () => {
+  it('defaults to newest order date first', () => {
+    const result = sortParcels(
+      [
+        parcelWith({ id: 'old', orderedAt: '2026-08-09' }),
+        parcelWith({ id: 'new', orderedAt: '2026-08-12' }),
+        parcelWith({ id: 'mid', orderedAt: '2026-08-11' }),
+      ],
+      'order-date-desc',
+    );
+
+    expect(result.map((parcel) => parcel.id)).toEqual(['new', 'mid', 'old']);
+  });
+
+  it('orders by soonest ship-by', () => {
+    const result = sortParcels(
+      [
+        parcelWith({ id: 'later', shipBy: '2026-08-15' }),
+        parcelWith({ id: 'sooner', shipBy: '2026-08-13' }),
+      ],
+      'ship-by-asc',
+    );
+
+    expect(result.map((parcel) => parcel.id)).toEqual(['sooner', 'later']);
+  });
+
+  it('sorts a parcel with no ship-by promise last, not first', () => {
+    // A missing deadline is not an urgent one. Letting null float to the top
+    // would put the least time-critical parcel in front of someone packing
+    // against a cutoff.
+    const result = sortParcels(
+      [
+        parcelWith({ id: 'none', shipBy: null }),
+        parcelWith({ id: 'dated', shipBy: '2026-08-15' }),
+      ],
+      'ship-by-asc',
+    );
+
+    expect(result.map((parcel) => parcel.id)).toEqual(['dated', 'none']);
+  });
+
+  it('does not mutate the input', () => {
+    const input = [
+      parcelWith({ id: 'a', orderedAt: '2026-08-09' }),
+      parcelWith({ id: 'b', orderedAt: '2026-08-12' }),
+    ];
+
+    sortParcels(input, 'order-date-desc');
+
+    expect(input.map((parcel) => parcel.id)).toEqual(['a', 'b']);
   });
 });
 

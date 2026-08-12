@@ -4,8 +4,7 @@ type OrdersResultBarProps = {
   /** Caller decides the unit - "6 parcels" here, "2 orders" elsewhere. */
   countLabel: string;
   contextLabel: string | null;
-  sortLabel: string;
-  bulkSlot?: ReactNode;
+  sortSlot: ReactNode;
 };
 
 /**
@@ -19,23 +18,17 @@ type OrdersResultBarProps = {
 export default function OrdersResultBar({
   countLabel,
   contextLabel,
-  sortLabel,
-  bulkSlot,
+  sortSlot,
 }: OrdersResultBarProps) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <p className="text-sm font-medium">
-        {countLabel}
+    <div className="flex flex-wrap items-center justify-between gap-4 px-0.5">
+      <div className="flex items-center gap-3.5">
+        <span className="text-[13px] font-semibold text-ink">{countLabel}</span>
         {contextLabel === null ? null : (
-          <span className="ml-1 font-normal text-ink-muted">
-            {contextLabel}
-          </span>
+          <span className="text-[12.5px] text-ink-faint">{contextLabel}</span>
         )}
-      </p>
-      <div className="flex items-center gap-3">
-        <p className="text-xs text-ink-muted">Sort: {sortLabel}</p>
-        {bulkSlot}
       </div>
+      {sortSlot}
     </div>
   );
 }

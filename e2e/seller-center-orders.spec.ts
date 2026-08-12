@@ -46,6 +46,32 @@ test.describe('Seller Center orders', () => {
     ).toHaveCount(2);
   });
 
+  test('the shipping lane has content, not a permanent zero', async ({
+    page,
+  }) => {
+    await page.goto('/orders?lane=shipping');
+
+    await expect(page.getByText('1 parcel', { exact: false })).toBeVisible();
+  });
+
+  test('the completed lane has content', async ({ page }) => {
+    await page.goto('/orders?lane=completed');
+
+    await expect(page.getByText('1 parcel', { exact: false })).toBeVisible();
+  });
+
+  test('the returns lane has content', async ({ page }) => {
+    await page.goto('/orders?lane=returns');
+
+    await expect(page.getByText('1 parcel', { exact: false })).toBeVisible();
+  });
+
+  test('the channel filter narrows the list', async ({ page }) => {
+    await page.goto('/orders?channel=Sals3+AU');
+
+    await expect(page.getByText('3 parcels')).toBeVisible();
+  });
+
   test('chips render only in the lanes that have a decision to make', async ({
     page,
   }) => {
@@ -81,7 +107,7 @@ test.describe('Seller Center orders', () => {
   }) => {
     await page.goto('/orders?lane=not-a-lane');
 
-    await expect(page.getByText('6 parcels')).toBeVisible();
+    await expect(page.getByText('9 parcels')).toBeVisible();
   });
 
   test('the detail view separates the two money rails', async ({ page }) => {

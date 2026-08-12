@@ -285,6 +285,12 @@ export type OrderParcel = {
   route: ParcelRoute;
   actions: ParcelAction[];
   selectable: boolean;
+  /** Sales channel this parcel came through, e.g. `Sals3 PH`. */
+  channel: string;
+  /** ISO date the order was accepted. Sorting key; never rendered directly. */
+  orderedAt: string;
+  /** ISO date the parcel must leave by, or `null` when nothing is promised. */
+  shipBy: string | null;
   /**
    * This parcel's own allocated Rail A proceeds, in minor units.
    *

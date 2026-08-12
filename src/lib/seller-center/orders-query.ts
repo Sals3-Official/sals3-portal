@@ -46,6 +46,8 @@ export const ordersQuerySchema = z.object({
   route: z.string().catch('all'),
   stage: z.string().catch('all'),
   reason: z.string().catch('all'),
+  /** Sales channel label, or `all`. Same free-string reasoning as `route`. */
+  channel: z.string().catch('all'),
   field: z.enum(ORDER_SEARCH_FIELDS).catch('order'),
   q: z.string().catch(''),
   sort: z.enum(ORDER_SORTS).catch('order-date-desc'),
@@ -69,6 +71,7 @@ export function currentOrdersParams(
   if (query.route !== 'all') params.route = query.route;
   if (query.stage !== 'all') params.stage = query.stage;
   if (query.reason !== 'all') params.reason = query.reason;
+  if (query.channel !== 'all') params.channel = query.channel;
   if (query.field !== 'order') params.field = query.field;
   if (query.q !== '') params.q = query.q;
   if (query.sort !== 'order-date-desc') params.sort = query.sort;

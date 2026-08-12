@@ -70,9 +70,41 @@ export type ParcelFilter = {
   route: string;
   stage: string;
   reason: string;
+  channel: string;
   field: string;
   q: string;
 };
+
+/**
+ * Sorts a filtered list.
+ *
+ * Both keys are ISO strings, compared as strings on purpose - ISO-8601 sorts
+ * lexicographically in date order, so this needs no `Date` parsing and cannot
+ * drift with the server's timezone.
+ *
+ * A parcel with no ship-by promise sorts last under `ship-by-asc` rather than
+ * first. An absent deadline is not an urgent one, and `null` coercing to the
+ * top is exactly the sort of quiet wrongness that puts the wrong parcel in
+ * front of someone packing against a cutoff.
+ */
+export function sortParcels(
+  parcels: readonly OrderParcel[],
+  sort: string,
+): OrderParcel[] {
+  const sorted = [...parcels];
+
+  if (sort === 'ship-by-asc') {
+    return sorted.sort((a, b) => {
+      if (a.shipBy === null && b.shipBy === null) return 0;
+      if (a.shipBy === null) return 1;
+      if (b.shipBy === null) return -1;
+
+      return a.shipBy.localeCompare(b.shipBy);
+    });
+  }
+
+  return sorted.sort((a, b) => b.orderedAt.localeCompare(a.orderedAt));
+}
 
 function matchesRoute(parcel: OrderParcel, route: string): boolean {
   if (route === 'all') return true;
@@ -115,6 +147,9 @@ export function filterParcels(
   return parcels.filter((parcel) => {
     if (!isInLane(parcel, filter.lane)) return false;
     if (!matchesRoute(parcel, filter.route)) return false;
+    if (filter.channel !== 'all' && parcel.channel !== filter.channel) {
+      return false;
+    }
 
     if (
       filter.lane === 'to-process' &&

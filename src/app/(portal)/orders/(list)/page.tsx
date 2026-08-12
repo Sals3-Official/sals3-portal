@@ -8,6 +8,7 @@ import OrdersLaneTabs from '@/components/seller-center/orders/OrdersLaneTabs';
 import OrdersReprintHistoryPanel from '@/components/seller-center/orders/OrdersReprintHistoryPanel';
 import OrdersResultBar from '@/components/seller-center/orders/OrdersResultBar';
 import OrdersSearchBar from '@/components/seller-center/orders/OrdersSearchBar';
+import OrdersSortSelect from '@/components/seller-center/orders/OrdersSortSelect';
 import OrdersWorkspace from '@/components/seller-center/orders/OrdersWorkspace';
 import { requirePermission } from '@/lib/auth/session';
 import { buildHref } from '@/lib/portal/search-params';
@@ -16,6 +17,7 @@ import { buildOrderParcels } from '@/lib/seller-center/mock-data/orders';
 import {
   ORDER_SEARCH_FIELDS,
   ORDER_SEARCH_FIELD_LABELS,
+  ORDER_SORTS,
   ORDER_SORT_LABELS,
   currentOrdersParams,
   ordersQuerySchema,
@@ -25,6 +27,7 @@ import {
   countByLane,
   describeResultCount,
   filterParcels,
+  sortParcels,
 } from '@/modules/orders/lanes';
 
 export const metadata: Metadata = { title: 'Orders · Seller Center' };
@@ -84,8 +87,14 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   const counts = new Map(
     countByLane(allParcels).map((entry) => [entry.key, entry.count]),
   );
-  const parcels = filterParcels(allParcels, query);
+  const parcels = sortParcels(filterParcels(allParcels, query), query.sort);
   const { countLabel, orderRefLabel } = describeResultCount(parcels);
+  const channelChips = [
+    { key: 'all', label: 'All channels' },
+    ...[...new Set(allParcels.map((parcel) => parcel.channel))].map(
+      (channel) => ({ key: channel, label: channel }),
+    ),
+  ];
   const currentParams = currentOrdersParams(query);
 
   // A route chip row only earns its place once the account actually has more
@@ -117,7 +126,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Orders"
-        description={`One row is one parcel · prepaid only · ${market.carrierName}`}
+        description="One row is one parcel. Prepaid orders only."
       />
 
       <OrdersLaneTabs
@@ -147,9 +156,12 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
         </DisclosureBanner>
       ) : null}
 
-      {query.lane === 'to-process' ? (
-        <>
-          {routeChips.length > 2 ? (
+      {/* Chip rows sit in their own card so a lane with filters reads as a
+          distinct control surface, and a lane without them loses the card
+          entirely rather than leaving an empty strip. */}
+      {query.lane === 'to-process' || query.lane === 'attention' ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3.5">
+          {query.lane === 'to-process' && routeChips.length > 2 ? (
             <OrdersChipRow
               label="Route"
               chips={routeChips}
@@ -161,30 +173,31 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
               }
             />
           ) : null}
-          <OrdersChipRow
-            label="Stage"
-            chips={stageChips}
-            active={query.stage}
-            hrefFor={(key) =>
-              buildHref('/orders', currentParams, {
-                stage: key === 'all' ? null : key,
-              })
-            }
-          />
-        </>
-      ) : null}
-
-      {query.lane === 'attention' ? (
-        <OrdersChipRow
-          label="Reason"
-          chips={ATTENTION_CHIPS}
-          active={query.reason}
-          hrefFor={(key) =>
-            buildHref('/orders', currentParams, {
-              reason: key === 'all' ? null : key,
-            })
-          }
-        />
+          {query.lane === 'to-process' ? (
+            <OrdersChipRow
+              label="Stage"
+              chips={stageChips}
+              active={query.stage}
+              hrefFor={(key) =>
+                buildHref('/orders', currentParams, {
+                  stage: key === 'all' ? null : key,
+                })
+              }
+            />
+          ) : null}
+          {query.lane === 'attention' ? (
+            <OrdersChipRow
+              label="Reason"
+              chips={ATTENTION_CHIPS}
+              active={query.reason}
+              hrefFor={(key) =>
+                buildHref('/orders', currentParams, {
+                  reason: key === 'all' ? null : key,
+                })
+              }
+            />
+          ) : null}
+        </div>
       ) : null}
 
       <OrdersSearchBar
@@ -193,10 +206,12 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
           label: ORDER_SEARCH_FIELD_LABELS[field],
         }))}
         activeField={query.field}
+        channels={channelChips}
+        activeChannel={query.channel}
         query={query.q}
         preservedParams={Object.fromEntries(
           Object.entries(currentParams).filter(
-            ([key]) => key !== 'q' && key !== 'field',
+            ([key]) => key !== 'q' && key !== 'field' && key !== 'channel',
           ),
         )}
         resetHref="/orders"
@@ -205,7 +220,16 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
       <OrdersResultBar
         countLabel={countLabel}
         contextLabel={orderRefLabel}
-        sortLabel={ORDER_SORT_LABELS[query.sort]}
+        sortSlot={
+          <OrdersSortSelect
+            options={ORDER_SORTS.map((sort) => ({
+              key: sort,
+              label: ORDER_SORT_LABELS[sort],
+            }))}
+            active={query.sort}
+            defaultKey="order-date-desc"
+          />
+        }
       />
 
       <OrdersWorkspace parcels={parcels} market={market} />
