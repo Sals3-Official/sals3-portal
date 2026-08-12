@@ -350,7 +350,16 @@ export async function tryConsumeNewPidCapacity(
     .set({
       admittedCount: sql`${discoveryPidCapacities.admittedCount} + 1`,
       lastAdmittedAt: now,
-      capReachedAt: sql`CASE WHEN ${discoveryPidCapacities.admittedCount} + 1 >= ${discoveryPidCapacities.limitValue} THEN ${now} ELSE ${discoveryPidCapacities.capReachedAt} END`,
+      // `now.toISOString()`, never the Date itself. A plain column assignment
+      // (`lastAdmittedAt: now` above) serializes through the column's type
+      // mapping, but a value interpolated into a raw `sql` template goes to
+      // the driver as an untyped bind - and postgres.js throws
+      // ERR_INVALID_ARG_TYPE on a raw Date there. This is exactly the first
+      // statement a genuinely NEW product reaches, so the bug admitted
+      // nothing while every fake-db test passed (mocks never serialize).
+      // Production 2026-08-12: the whole ingest transaction rolled back on
+      // this line, the queue redelivered forever, and the wave stayed at 0.
+      capReachedAt: sql`CASE WHEN ${discoveryPidCapacities.admittedCount} + 1 >= ${discoveryPidCapacities.limitValue} THEN ${now.toISOString()} ELSE ${discoveryPidCapacities.capReachedAt} END`,
       updatedAt: now,
     })
     .where(

@@ -4,6 +4,7 @@ import {
   advancePidCapacityWave,
   assessIntakeGate,
   countActiveEvaluationWork,
+  tryConsumeNewPidCapacity,
 } from './intake-gate-repository';
 
 const CONNECTION_ID = '6aa82ace-e1bb-42cb-88b0-af5e0917d0f5';
@@ -306,5 +307,46 @@ describe('assessIntakeGate - strict curated intake priority', () => {
       reason: 'HIGHER_PRIORITY_INTAKE_PENDING',
       blockedBy: 'CJ_TRENDING',
     });
+  });
+});
+
+describe('tryConsumeNewPidCapacity - driver-safe binds', () => {
+  /**
+   * Any raw `Date` nested inside a drizzle `sql` template reaches postgres.js
+   * as an untyped bind and throws ERR_INVALID_ARG_TYPE - a plain column
+   * assignment is fine, because it serializes through the column's type
+   * mapping. Walked recursively because the SQL object holds its params in
+   * nested chunk arrays (and cycles).
+   */
+  function sqlChunkHoldsRawDate(
+    value: unknown,
+    seen = new Set<unknown>(),
+  ): boolean {
+    if (value instanceof Date) return true;
+    if (typeof value !== 'object' || value === null) return false;
+    if (seen.has(value)) return false;
+    seen.add(value);
+
+    return Object.values(value).some((inner) =>
+      sqlChunkHoldsRawDate(inner, seen),
+    );
+  }
+
+  it('never hands the driver a raw Date inside the cap_reached_at CASE', async () => {
+    // Production 2026-08-12: the first genuinely new PID of the wave hit this
+    // UPDATE, postgres.js threw on the Date bound inside the raw CASE, the
+    // whole ingest transaction rolled back, and the queue redelivered forever
+    // while the wave sat at 0. Fake executors never serialize binds, which is
+    // why every other test passed - this one inspects the bind itself.
+    const { db, calls } = fakeDb([[{ id: 'capacity-1' }]]);
+
+    await tryConsumeNewPidCapacity(db, CONNECTION_ID);
+
+    const set = lastCallArgs(calls, 'set')[0] as Record<string, unknown>;
+
+    expect(sqlChunkHoldsRawDate(set.capReachedAt)).toBe(false);
+    // The plain column assignments legitimately stay Dates - the column type
+    // mapping serializes those - so the guard must not overreach.
+    expect(set.lastAdmittedAt).toBeInstanceOf(Date);
   });
 });
