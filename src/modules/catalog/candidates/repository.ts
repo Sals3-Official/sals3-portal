@@ -953,6 +953,41 @@ export async function requeuePolicyVersionMismatches(
 }
 
 /**
+ * How many decided rows are still on an obsolete policy version - the same
+ * predicate `requeuePolicyVersionMismatches` selects on, without the bound.
+ * Kept beside it so the two can never drift: a bounded requeue is only
+ * useful if the caller can see what is left to do.
+ */
+export async function countPolicyVersionMismatches(
+  executor: Executor,
+  supplierConnectionId: string,
+  input: { currentPolicyVersion: string },
+): Promise<number> {
+  const [row] = await executor
+    .select({ total: sql<number>`count(*)` })
+    .from(candidateEvaluations)
+    .innerJoin(
+      supplierCandidates,
+      eq(supplierCandidates.id, candidateEvaluations.candidateId),
+    )
+    .where(
+      and(
+        eq(supplierCandidates.supplierConnectionId, supplierConnectionId),
+        ne(candidateEvaluations.policyVersion, input.currentPolicyVersion),
+        or(
+          eq(candidateEvaluations.status, 'PASS'),
+          eq(candidateEvaluations.status, 'PASS_WITH_ATTENTION'),
+          eq(candidateEvaluations.status, 'BLOCKED'),
+          eq(candidateEvaluations.status, 'TEMPORARILY_INELIGIBLE'),
+          eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
+        ),
+      ),
+    );
+
+  return Number(row?.total ?? 0);
+}
+
+/**
  * Webhook-driven requeue (PRODUCT/VARIANT/STOCK change events): a decided
  * candidate returns to `QUEUED` with admission `MATERIAL_SOURCE_CHANGE`.
  * In-flight rows are left alone (never interrupt work); the change is

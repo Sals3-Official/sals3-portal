@@ -52,7 +52,12 @@ const ACCELERATED_SWEEP_DELAY_SECONDS = 60;
  *   (admission `MATERIAL_SOURCE_CHANGE`), used by the webhook handler.
  */
 
-function evaluationIntent(input: {
+/**
+ * Exported so the owner-triggered bounded recheck (`recheck-control.ts`)
+ * enqueues byte-identical evaluation intents to the ones this sweep emits,
+ * rather than keeping a second copy of the message shape in step by hand.
+ */
+export function evaluationIntent(input: {
   candidateId: string;
   policyVersion: string;
   admissionReason:
