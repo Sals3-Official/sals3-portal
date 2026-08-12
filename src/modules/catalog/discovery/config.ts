@@ -51,6 +51,17 @@ export function nextUtcMidnight(now: Date): Date {
   return next;
 }
 
+/**
+ * The most recent points reset boundary. A quota observation taken before
+ * this instant describes yesterday's allowance and says nothing about what
+ * is available now.
+ */
+export function lastUtcMidnight(now: Date): Date {
+  const last = new Date(now);
+  last.setUTCHours(0, 0, 0, 0);
+  return last;
+}
+
 // --- Undocumented provider details (class 2 - rollout blockers) --------------
 
 /**

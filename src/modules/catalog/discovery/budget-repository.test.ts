@@ -100,6 +100,79 @@ describe('assessBackgroundBudget - points exhaustion and the priority reserve', 
     expect(result.retryAt).toEqual(pausedUntil);
   });
 
+  it('ignores an exhausted reading taken before the last reset, so the ledger can never deadlock itself', async () => {
+    // Every path that could refresh the ledger gates on this function first.
+    // If a pre-reset "almost exhausted" reading were trusted, it would
+    // refuse the very calls whose responses would correct it, and nothing
+    // would recover until someone intervened by hand.
+    const total = 56_107;
+    const reserve = Math.ceil(
+      (total * (100 - BACKGROUND_POINTS_MAX_PERCENT)) / 100,
+    );
+    const beforeLastReset = new Date();
+    beforeLastReset.setUTCHours(-1, 0, 0, 0);
+
+    const { db } = fakeDb([
+      [
+        budgetRow({
+          pointsTotal: total,
+          pointsRemaining: reserve,
+          pointsObservedAt: beforeLastReset,
+        }),
+      ],
+    ]);
+
+    await expect(
+      assessBackgroundBudget(db, {
+        supplierConnectionId: 'connection-1',
+        requiredPoints: 20,
+      }),
+    ).resolves.toEqual({ allowed: true });
+  });
+
+  it('still refuses an exhausted reading taken since the last reset', async () => {
+    const total = 56_107;
+    const reserve = Math.ceil(
+      (total * (100 - BACKGROUND_POINTS_MAX_PERCENT)) / 100,
+    );
+    const sinceLastReset = new Date();
+    sinceLastReset.setUTCHours(sinceLastReset.getUTCHours(), 0, 0, 0);
+
+    const { db } = fakeDb([
+      [
+        budgetRow({
+          pointsTotal: total,
+          pointsRemaining: reserve,
+          pointsObservedAt: sinceLastReset,
+        }),
+      ],
+    ]);
+
+    const result = await assessBackgroundBudget(db, {
+      supplierConnectionId: 'connection-1',
+      requiredPoints: 20,
+    });
+
+    expect(result.allowed).toBe(false);
+  });
+
+  it('treats a stored zero total as "never observed", not as an empty quota', async () => {
+    // Defence in depth against the same zero-quota trap: `?? PLANNING_TOTAL`
+    // does not catch 0, so a 0 total would make the reserve 0 and refuse
+    // every request forever. A non-positive total means no real quota has
+    // been observed, exactly like null.
+    const { db } = fakeDb([
+      [budgetRow({ pointsTotal: 0, pointsRemaining: 40_000 })],
+    ]);
+
+    await expect(
+      assessBackgroundBudget(db, {
+        supplierConnectionId: 'connection-1',
+        requiredPoints: 20,
+      }),
+    ).resolves.toEqual({ allowed: true });
+  });
+
   it('lets bootstrap proceed before any real pointsInfo was observed (planning assumption)', async () => {
     const { db } = fakeDb([
       [budgetRow({ pointsTotal: null, pointsRemaining: null })],
@@ -134,6 +207,24 @@ describe('recordPointsInfo', () => {
     const { db, calls } = fakeDb([[]]);
 
     await recordPointsInfo(db, 'connection-1', null);
+
+    expect(calls).toHaveLength(0);
+  });
+
+  it('ignores the all-zero quota that a points-free endpoint reports', async () => {
+    // Verified live 2026-08-11: /product/productComments is outside the
+    // points system and answers {total: 0, usedToday: 0, remaining: 0}
+    // rather than omitting pointsInfo. Since getCandidateEvidence calls
+    // comments LAST, writing those zeros overwrote the real ledger on every
+    // successful evidence fetch - and assessBackgroundBudget then refused
+    // all background work until the next UTC midnight.
+    const { db, calls } = fakeDb([[]]);
+
+    await recordPointsInfo(db, 'connection-1', {
+      total: 0,
+      usedToday: 0,
+      remaining: 0,
+    });
 
     expect(calls).toHaveLength(0);
   });

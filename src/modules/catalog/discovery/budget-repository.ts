@@ -7,6 +7,7 @@ import {
 import type { CjPointsInfo } from '@/lib/cj/primitives';
 import {
   BACKGROUND_POINTS_MAX_PERCENT,
+  lastUtcMidnight,
   POINTS_DAILY_PLANNING_TOTAL,
   REQUEST_MIN_INTERVAL_MS,
 } from './config';
@@ -127,11 +128,32 @@ export async function assessBackgroundBudget(
     return { allowed: false, reason: 'PAUSED', retryAt: row.pausedUntil };
   }
 
-  const total = row.pointsTotal ?? POINTS_DAILY_PLANNING_TOTAL;
+  // A stored total of 0 is not a real quota - it means no meaningful
+  // `pointsInfo` has been observed. `??` alone would let that 0 through and
+  // make the reserve 0 and every comparison fail closed forever, so the
+  // planning assumption applies to a non-positive total exactly as it does
+  // to a null one.
+  const total =
+    row.pointsTotal === null || row.pointsTotal <= 0
+      ? POINTS_DAILY_PLANNING_TOTAL
+      : row.pointsTotal;
   const reserve = Math.ceil(
     (total * (100 - BACKGROUND_POINTS_MAX_PERCENT)) / 100,
   );
-  const remaining = row.pointsRemaining;
+
+  // An observation taken before the most recent 00:00 UTC reset describes
+  // YESTERDAY's allowance. Trusting it is not merely inaccurate, it
+  // deadlocks: every path that could refresh the ledger gates on this
+  // function first, so a stale "almost exhausted" reading refuses the very
+  // calls whose responses would correct it, and nothing recovers on its
+  // own. Treating a pre-reset observation as unknown restores the
+  // bootstrap behaviour - make the first call, let its real `pointsInfo`
+  // repopulate the ledger - once per day, automatically.
+  const observedAt = row.pointsObservedAt;
+  const remaining =
+    observedAt === null || observedAt < lastUtcMidnight(now)
+      ? null
+      : row.pointsRemaining;
 
   if (remaining !== null && remaining - input.requiredPoints < reserve) {
     return {
@@ -150,13 +172,29 @@ export async function assessBackgroundBudget(
   return { allowed: true };
 }
 
-/** Persists provider-reported quota state from one real response. */
+/**
+ * Persists provider-reported quota state from one real response.
+ *
+ * Ignores a report whose `total` is missing or non-positive. Verified live
+ * 2026-08-11: CJ attaches `pointsInfo` to EVERY response, but endpoints that
+ * are outside the points system - `/product/productComments`, which the
+ * documented cost table does not list - return `{total: 0, usedToday: 0,
+ * remaining: 0}` rather than omitting it. Those zeros are "this endpoint has
+ * no quota to report", never "the account has no points left".
+ *
+ * Writing them was actively harmful. `getCandidateEvidence` calls comments
+ * LAST, so every successful evidence fetch overwrote the ledger with zeros;
+ * `assessBackgroundBudget` then read `remaining = 0` and refused all further
+ * background work until the next UTC midnight. One completed evaluation
+ * would park every candidate behind it.
+ */
 export async function recordPointsInfo(
   executor: DbExecutor,
   supplierConnectionId: string,
   pointsInfo: CjPointsInfo,
 ): Promise<void> {
   if (pointsInfo === null || pointsInfo === undefined) return;
+  if (pointsInfo.total === null || pointsInfo.total <= 0) return;
 
   await executor
     .update(supplierRequestBudgets)
