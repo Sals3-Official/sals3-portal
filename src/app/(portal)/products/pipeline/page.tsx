@@ -14,6 +14,7 @@ import SourcingInfoBanner from '@/components/products/cj/SourcingInfoBanner';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { isDatabaseConfigured } from '@/lib/db/client';
+import { readOrUnavailable } from '@/lib/db/availability';
 import { parsePageParam } from '@/lib/portal/pagination';
 import { EMPTY_STATE_COPY, TAB_DESCRIPTIONS } from '@/lib/portal/pipeline-copy';
 import {
@@ -154,12 +155,34 @@ export default async function ProductSourcingPipelinePage({
     );
   }
 
-  const { sellerAccount } = await requireDropshipperAccount();
-  const { counts, candidates, queueAgeMs, window } =
-    await resolvePipelinePageData(sellerAccount.id, tab, {
+  // `resolvePipelinePageData` already tolerates a read failure, but resolving
+  // the seller account happens before it and is itself a query - so an
+  // unreachable database still crashed this page ahead of that guard.
+  const resolved = await readOrUnavailable('candidate pipeline', async () => {
+    const { sellerAccount } = await requireDropshipperAccount();
+
+    return resolvePipelinePageData(sellerAccount.id, tab, {
       search,
       requestedPage: parsePageParam(query.page),
     });
+  });
+
+  if (!resolved.ok) {
+    return (
+      <div className="flex flex-col gap-4">
+        <PageHeader
+          title="Product Sourcing"
+          description={PIPELINE_TAB_LABELS[tab]}
+        />
+        <SourcingEmptyState
+          title="Cannot reach the database right now"
+          description="Evaluated candidates could not be loaded because the database did not respond. No candidate, decision, or evidence has been changed. Check that Postgres is running and that DATABASE_URL points at an existing database, then reload."
+        />
+      </div>
+    );
+  }
+
+  const { counts, candidates, queueAgeMs, window } = resolved.data;
   const isStale =
     tab === 'exception' &&
     queueAgeMs !== null &&

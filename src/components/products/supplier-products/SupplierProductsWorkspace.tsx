@@ -1,4 +1,5 @@
 import getDb, { isDatabaseConfigured } from '@/lib/db/client';
+import { readOrUnavailable } from '@/lib/db/availability';
 import { can } from '@/lib/auth/permissions';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
@@ -54,33 +55,55 @@ export default async function SupplierProductsWorkspace({
     );
   }
 
-  const { session, sellerAccount } = await requireDropshipperAccount();
+  // Authorization and reads share one guard on purpose. Resolving the seller
+  // account is itself a query, so protecting only the reads below still leaves
+  // the page crashing one line earlier - which is exactly what a dropped local
+  // database did to it. `readOrUnavailable` rethrows anything that is not
+  // genuine unavailability, so a PermissionError still denies access and a
+  // missing table still surfaces as the migration bug it is.
+  const resolved = await readOrUnavailable('supplier products', async () => {
+    const { session, sellerAccount } = await requireDropshipperAccount();
 
-  const filters = {
-    quickView: query.view,
-    signal: query.signal,
-    categoryId: query.category === '' ? null : query.category,
-    search: query.q,
-    page: query.page,
-  } as const;
+    const filters = {
+      quickView: query.view,
+      signal: query.signal,
+      categoryId: query.category === '' ? null : query.category,
+      search: query.q,
+      page: query.page,
+    } as const;
 
-  const [page, categories, summary] = await Promise.all([
-    listSupplierProducts(sellerAccount.id, filters),
-    listSupplierProductCategories(sellerAccount.id),
-    summariseSupplierProducts(sellerAccount.id),
-  ]);
+    const [page, categories, summary] = await Promise.all([
+      listSupplierProducts(sellerAccount.id, filters),
+      listSupplierProductCategories(sellerAccount.id),
+      summariseSupplierProducts(sellerAccount.id),
+    ]);
 
-  const openProduct =
-    query.source === ''
-      ? null
-      : await findSupplierProductForSeller(sellerAccount.id, query.source);
-  const attestations =
-    openProduct === null
-      ? []
-      : await listStockAttestations(getDb(), {
-          candidateId: openProduct.candidateId,
-          sellerAccountId: sellerAccount.id,
-        });
+    const openProduct =
+      query.source === ''
+        ? null
+        : await findSupplierProductForSeller(sellerAccount.id, query.source);
+    const attestations =
+      openProduct === null
+        ? []
+        : await listStockAttestations(getDb(), {
+            candidateId: openProduct.candidateId,
+            sellerAccountId: sellerAccount.id,
+          });
+
+    return { session, page, categories, summary, openProduct, attestations };
+  });
+
+  if (!resolved.ok) {
+    return (
+      <SourcingEmptyState
+        title="Cannot reach the database right now"
+        description="Your supplier products could not be loaded because the database did not respond. Nothing has been lost - this page reads saved Sals3 data and makes no supplier request. Check that Postgres is running and that DATABASE_URL points at an existing database, then reload."
+      />
+    );
+  }
+
+  const { session, page, categories, summary, openProduct, attestations } =
+    resolved.data;
 
   const currentParams: Record<string, string> = {
     ...(query.view === 'all' ? {} : { view: query.view }),
