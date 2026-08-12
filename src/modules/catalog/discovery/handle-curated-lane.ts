@@ -440,9 +440,18 @@ export default async function handleCuratedLane(
     curatedLaneIntent({
       supplierConnectionId: connection.id,
       lane: message.lane,
+      // The mid-run key must carry the run's own window, not just the page
+      // number. `advanceCuratedLane` resets `nextPage` to 1 when a run
+      // finishes, so every sweep walks the same page numbers again - and
+      // `work_outbox.idempotency_key` is uniquely indexed with no pruning, so
+      // a bare `page:4` is consumed for good by the first run. Without the
+      // window the second and every later sweep would enqueue an
+      // already-used key, `onConflictDoNothing` would drop it, and the lane
+      // would silently stall after its first invocation instead of walking up
+      // to `CURATED_MAX_PAGES`.
       keySuffix: runComplete
         ? `sweep:${sweepWindowKey() + 1}`
-        : `page:${nextPage}`,
+        : `page:${sweepWindowKey()}:${nextPage}`,
       delaySeconds: runComplete ? CURATED_SWEEP_DELAY_SECONDS : undefined,
     }),
   ]);
