@@ -1641,7 +1641,9 @@ is accepted and ignored.
   supplier HTML and is deliberately never rendered.
 - **Images.** Only `cf.cjdropshipping.com` and `oss-cf.cjdropshipping.com` are
   accepted, both in `src/lib/cj/schemas.ts` and in `next.config.ts`. Keep the two
-  lists in step. Any other host is dropped and the row shows a placeholder.
+  lists in step. Any other host is dropped and the row shows a placeholder. How
+  those images are actually delivered is described in
+  [Image delivery](#image-delivery).
 - **Currency.** Supplier prices show in US dollars. Each row also shows an
   estimated peso amount, resolved through the same live `resolveUsdToPhpRate()`
   the storefront feed uses (`src/lib/storefront/fx.ts` - ECB reference rate
@@ -1740,6 +1742,60 @@ detail page. Returns `404` when no product matches. Added after
 whole sections to find one product — safe at small scale, but capable of
 hammering CJ's one-request-per-second limit against the real catalogue; this
 endpoint replaces that workaround with one request.
+
+## Image delivery
+
+Every `next/image` in the portal is resolved by a custom loader,
+`src/lib/images/cj-image-loader.ts`, wired through `next.config.ts`
+`images.loaderFile`. The platform's built-in `/_next/image` optimizer is **not**
+used.
+
+Why: that optimizer is metered. Once the account's Image Optimization allowance
+ran out it began answering `402 OPTIMIZED_IMAGE_REQUEST_PAYMENT_REQUIRED` to
+every request — verified against production on 2026-08-13, including
+`?url=/favicon.ico`, so the failure was the optimizer itself and not any
+upstream host. Every Product Sourcing thumbnail and every brand mark rendered as
+a broken image.
+
+What the loader does:
+
+- **CJ addresses** get an Alibaba-OSS instruction appended
+  (`?x-oss-process=image/resize,w_<width>/format,webp/quality,q_<quality>`). CJ's
+  CDN performs the resize and the WebP re-encode at no cost to us. Measured on a
+  real product image, 2026-08-13: the original is 314,871 bytes; at
+  `w_80/format,webp/quality,q_75` it is 1,380 bytes.
+- **Everything else** — local `/public` paths, any non-allow-listed host — is
+  returned byte-identical, so the browser fetches exactly what the component
+  asked for. The loader never proxies and never rewrites a host, so it cannot be
+  turned into an open image proxy.
+
+Consequences to know before changing this:
+
+- **Local assets are no longer resized for you.** Nothing resizes
+  `public/`. `public/brand/sals3-mark.png` was a 2000×2000, 274,110-byte PNG
+  rendered at 28–36 CSS px; it is now 96×96 and 5,438 bytes, which covers the
+  largest use (36 px at 2× device pixel ratio) exactly. The 2000 px original is
+  retained outside the served directory at
+  `design-system/sals3-portal/brand/sals3-mark-2000.png`. Any new `public/` image
+  must be sized to its rendered dimensions before it is committed, and should
+  carry `unoptimized` on its `<Image>` — the loader returns local paths verbatim,
+  and without that prop Next warns `next-image-missing-loader-width` on every
+  render because the returned address ignores the requested width.
+- **`remotePatterns` is documentation now, not enforcement.** A custom loader
+  bypasses the optimizer that reads it. The enforcing gate is `cjImageUrl` in
+  `src/lib/cj/primitives.ts`, which rejects any non-allow-listed address at
+  intake, before it is stored. The host list lives once in
+  `src/lib/cj/image-hosts.ts` — a dependency-free module, because the loader is
+  serialized into the client bundle and must not pull Zod in with it.
+- **`oss-cf.cjdropshipping.com` is unverified for `x-oss-process`.** Only
+  `cf.cjdropshipping.com` was measured; no live `oss-cf` object was available to
+  test against. If that host ignores the parameter it serves the unresized
+  original, which displays correctly but wastes bandwidth. Re-measure when a real
+  `oss-cf` address appears in the data.
+
+Restoring the built-in optimizer is a billing decision, not a code one: raise the
+Image Optimization limit on the hosting account, then drop `loader` and
+`loaderFile` from `next.config.ts`.
 
 ## Important limitations
 

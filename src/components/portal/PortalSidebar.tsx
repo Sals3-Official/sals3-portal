@@ -51,6 +51,8 @@ function SidebarToggleButton() {
         alt="Sals3"
         width={28}
         height={28}
+        // Already stored at its rendered size; see README "Image delivery".
+        unoptimized
         className="rounded-md"
       />
     </button>

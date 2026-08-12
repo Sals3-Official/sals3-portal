@@ -41,6 +41,8 @@ export default function SupplierSourceBadge({
             alt=""
             width={24}
             height={24}
+            // A local SVG, which needs no raster resize; see README "Image delivery".
+            unoptimized
             className="size-full object-contain"
           />
         )}
