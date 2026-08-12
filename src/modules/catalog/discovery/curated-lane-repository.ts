@@ -114,7 +114,6 @@ export async function leaseCuratedLane(
   return row === undefined ? null : { row, leaseToken: input.leaseToken };
 }
 
-/** Advances the resumable cursor. A pause never calls this. */
 /**
  * The curated lanes that can still contribute to the current 600-PID wave, in
  * owner intake-priority order, each with the `stateVersion` its row currently
@@ -132,14 +131,27 @@ export async function leaseCuratedLane(
  * Trending -> Most listed -> New arrivals; restating that order anywhere else
  * would be a second source of truth for it.
  *
- * A lane is eligible unless it recorded exhaustion against THIS wave edge. A
- * row that does not exist yet is eligible too - `ensureCuratedLanes` creates it
+ * Exhaustion is PERMANENT (owner decision 2026-08-13): any recorded mark means
+ * the lane is done for good, whatever wave edge it finished at. The
+ * progression is strictly one-way - Trending until it can give no more, then
+ * Most listed, then New arrivals, then the partition scanner forever. The
+ * wave-scoped reading this replaces re-ran every finished lane at every new
+ * wave edge, so each wave transition stalled on a full trending re-walk that
+ * contributed nothing.
+ *
+ * One 25-page walk (`CURATED_MAX_PAGES`) is a lane's LIFETIME budget by
+ * design; whatever lies beyond page 25 of a sort is the partition scanner's
+ * job. No code path re-arms a finished lane - re-opening one someday is a
+ * deliberate manual `UPDATE ... SET exhausted_at_wave_limit = NULL` (see
+ * README).
+ *
+ * A row that does not exist yet is eligible - `ensureCuratedLanes` creates it
  * on first run, and treating an absent row as exhausted would let the partition
  * scanner take the wave before any lane ever got a turn.
  */
 export async function listEligibleCuratedLanes(
   executor: DbExecutor,
-  input: { supplierConnectionId: string; waveLimit: number },
+  input: { supplierConnectionId: string },
 ): Promise<Array<{ lane: CuratedLane; stateVersion: number }>> {
   const rows = await executor
     .select({
@@ -158,7 +170,9 @@ export async function listEligibleCuratedLanes(
   const byLane = new Map(rows.map((row) => [row.lane, row]));
 
   return CURATED_LANES.filter(
-    (lane) => byLane.get(lane)?.exhaustedAtWaveLimit !== input.waveLimit,
+    // Any recorded mark = permanently done. Never compared to the current
+    // wave edge - that comparison is what made lanes re-run every wave.
+    (lane) => (byLane.get(lane)?.exhaustedAtWaveLimit ?? null) === null,
   ).map((lane) => ({
     lane,
     // A lane with no row yet has not moved, so version 0 is a stable key.

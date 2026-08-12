@@ -267,9 +267,16 @@ describe('assessIntakeGate - strict curated intake priority', () => {
     ).resolves.toMatchObject({ allowed: true });
   });
 
-  it('treats a lane exhausted at a PREVIOUS wave edge as eligible again', async () => {
-    // New products appear between waves, so exhaustion is wave-scoped.
-    const { db } = gateWith(allLanesExhausted(600));
+  it('treats a lane exhausted at ANY wave edge as permanently done - one-way progression, never re-run', async () => {
+    // Owner decision 2026-08-13. The wave-scoped reading this replaces re-ran
+    // every finished lane at every new wave edge, stalling each transition on
+    // a full trending re-walk that contributed nothing. Marks at three
+    // DIFFERENT old edges must all still count as done.
+    const { db } = gateWith([
+      { lane: 'CJ_TRENDING', exhaustedAtWaveLimit: 600 },
+      { lane: 'CJ_MOST_LISTED', exhaustedAtWaveLimit: 1170 },
+      { lane: 'CJ_NEW_ARRIVALS', exhaustedAtWaveLimit: 300 },
+    ]);
 
     await expect(
       assessIntakeGate(db, {
@@ -278,19 +285,6 @@ describe('assessIntakeGate - strict curated intake priority', () => {
         intent: 'PARTITION',
       }),
     ).resolves.toMatchObject({ allowed: true });
-
-    const stale = gateWith(allLanesExhausted(300));
-
-    await expect(
-      assessIntakeGate(stale.db, {
-        supplierConnectionId: CONNECTION_ID,
-        requiredCapacity: 200,
-        intent: 'PARTITION',
-      }),
-    ).resolves.toMatchObject({
-      allowed: false,
-      reason: 'HIGHER_PRIORITY_INTAKE_PENDING',
-    });
   });
 
   it('treats a lane with no row yet as eligible, so a lane always gets its first turn', async () => {

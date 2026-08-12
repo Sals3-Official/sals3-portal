@@ -509,7 +509,6 @@ export async function assessIntakeGate(
   // lane eventually reports exhaustion and releases the floor.
   const eligibleLanes = await listEligibleCuratedLanes(executor, {
     supplierConnectionId: input.supplierConnectionId,
-    waveLimit: capacity.limitValue,
   });
   const { intent } = input;
   const ownRank =

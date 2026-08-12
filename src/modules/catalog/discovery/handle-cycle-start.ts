@@ -401,7 +401,6 @@ export default async function handleCycleStart(
       ? []
       : await listEligibleCuratedLanes(db, {
           supplierConnectionId: connection.id,
-          waveLimit,
         });
 
   await insertOutboxIntents(db, [
