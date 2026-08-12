@@ -25,6 +25,14 @@ import { isDiscoveryRunning } from './run-state-repository';
 const STRANDED_QUEUED_AFTER_MS = 2 * 60 * 60 * 1000;
 
 /**
+ * Re-sweep cadence while any tier still returned a full batch, instead of
+ * waiting a whole `FRESHNESS_SWEEP_DELAY_SECONDS` window per batch. This also
+ * sets the resolution of the accelerated continuation's idempotency sub-slot,
+ * so shortening it cannot make two consecutive continuations collide.
+ */
+const ACCELERATED_SWEEP_DELAY_SECONDS = 60;
+
+/**
  * RECONCILE_PRODUCT: the freshness + recovery machinery (ADR-010 §12.2,
  * §12.6, §12.7).
  *
@@ -106,9 +114,8 @@ export default async function handleReconcileProduct(
     return;
   }
 
-  const sweepBucket = Math.floor(
-    Date.now() / (FRESHNESS_SWEEP_DELAY_SECONDS * 1000),
-  );
+  const now = Date.now();
+  const sweepBucket = Math.floor(now / (FRESHNESS_SWEEP_DELAY_SECONDS * 1000));
 
   await db.transaction(async (tx) => {
     const refreshed = await requeueDueRefreshes(
@@ -129,6 +136,19 @@ export default async function handleReconcileProduct(
       refreshed.length >= FRESHNESS_SWEEP_BATCH ||
       policyStale.length >= FRESHNESS_SWEEP_BATCH ||
       stranded.length >= FRESHNESS_SWEEP_BATCH;
+
+    const nextDelaySeconds = anyBatchFull
+      ? ACCELERATED_SWEEP_DELAY_SECONDS
+      : FRESHNESS_SWEEP_DELAY_SECONDS;
+    const nextAt = now + nextDelaySeconds * 1000;
+    const nextBucket = Math.floor(
+      nextAt / (FRESHNESS_SWEEP_DELAY_SECONDS * 1000),
+    );
+    const nextSweepKey = anyBatchFull
+      ? `freshness:${connectionId}:${nextBucket}:${Math.floor(
+          nextAt / (ACCELERATED_SWEEP_DELAY_SECONDS * 1000),
+        )}`
+      : `freshness:${connectionId}:${nextBucket}`;
 
     await insertOutboxIntents(tx, [
       ...refreshed.map((candidateId) =>
@@ -156,15 +176,37 @@ export default async function handleReconcileProduct(
         }),
       ),
       // Self-chaining continuation; a full batch re-sweeps sooner.
+      //
+      // The key identifies the slot the successor is scheduled FOR, never the
+      // slot this delivery ran in. `work_outbox.idempotency_key` is uniquely
+      // indexed and rows are never pruned, so any given key can be used
+      // exactly once for the lifetime of the database - a continuation keyed
+      // on a slot that has already been used is silently swallowed by
+      // `onConflictDoNothing` and the chain simply stops.
+      //
+      // That is what `sweepBucket + 1` did on the accelerated path: a full
+      // batch re-sweeps in 60s, which lands inside the SAME
+      // `FRESHNESS_SWEEP_DELAY_SECONDS` bucket, so the successor reused the
+      // key of the delivery being processed and was dropped. Worse, the
+      // hourly chain then skipped that bucket too, because the key was
+      // already burnt. A backlog drained at one batch per two hours instead
+      // of one per minute.
+      //
+      // Accelerated continuations therefore carry a sub-slot at the
+      // accelerated resolution, so consecutive ones inside a bucket stay
+      // distinct. The unaccelerated continuation keeps the plain bucket key
+      // so it still de-duplicates against `handleCycleStart`'s hourly seed,
+      // and an accelerated chain rejoins that hourly chain as soon as a batch
+      // comes back short.
       {
         message: {
           v: 1,
           operation: 'RECONCILE_PRODUCT',
-          idempotencyKey: `freshness:${connectionId}:${sweepBucket + 1}`,
+          idempotencyKey: nextSweepKey,
           mode: 'SWEEP',
           supplierConnectionId: connectionId,
         },
-        delaySeconds: anyBatchFull ? 60 : FRESHNESS_SWEEP_DELAY_SECONDS,
+        delaySeconds: nextDelaySeconds,
       },
     ]);
   });
