@@ -216,10 +216,22 @@ Two limitations worth knowing:
   the seller's candidate rows. Fine at ~90k rows; if a seller's pipeline grows
   by an order of magnitude, add a `pg_trgm` index (needs a migration and the
   extension) rather than accepting a slow page.
-- **A screening-blocked row shows its CJ product id, not a name.** Those rows
-  are decided before any CJ evidence call, so no `supplier_snapshots.evidence`
-  exists to render a name from. The search does look inside the stored feed
-  name, so a name search finds them - the table just labels them by id.
+- **A row shows its CJ product id only when no name was ever captured.**
+  Until 2026-08-12 every pipeline table read the name from
+  `supplier_snapshots.evidence` alone, which exists only after a per-product
+  detail fetch - so a screening-blocked row, decided before any CJ evidence
+  call, rendered its numeric provider id. That was never a data gap: the
+  ingestion-time `feed_snapshot.name` is written for every candidate from its
+  `/product/list` row, which is why name _search_ already worked on rows the
+  table refused to name. `displayName` now reads evidence, then the feed
+  snapshot, then the id. Measured against production at the time of the fix:
+  19 of 87,966 candidates had evidence, 87,966 of 87,966 had a real
+  feed-snapshot name, and 87,947 rows changed from an id to a name with no
+  backfill and no supplier call.
+
+  `Available stock` and `Stocked origins` still legitimately read `—` without
+  evidence - those come from per-variant inventory, which the feed row does
+  not carry, and must not be guessed from it.
 
 Verify with:
 

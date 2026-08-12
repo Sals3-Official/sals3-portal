@@ -72,10 +72,7 @@ export default function AllCandidatesTable({
         </TableHeader>
         <TableBody>
           {candidates.map((candidate) => {
-            const name = displayName(
-              candidate.externalProductId,
-              candidate.evidence,
-            );
+            const name = displayName(candidate);
             const status =
               candidate.evaluation.status === 'EVALUATION_FAILED'
                 ? evaluationFailedDisplay(candidate.evaluation.attemptCount)

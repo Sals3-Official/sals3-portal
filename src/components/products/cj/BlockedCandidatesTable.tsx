@@ -53,10 +53,7 @@ export default function BlockedCandidatesTable({
         </TableHeader>
         <TableBody>
           {candidates.map((candidate) => {
-            const name = displayName(
-              candidate.externalProductId,
-              candidate.evidence,
-            );
+            const name = displayName(candidate);
             const reasonCodes = candidate.evaluation
               .reasonCodes as ReasonCode[];
             const isPermanent = candidate.evaluation.status === 'BLOCKED';
