@@ -94,6 +94,25 @@ export type CuratedPageQuery = {
   maxPrice?: number;
 };
 
+/**
+ * Seller-facing live browse page: the same legacy `GET /product/list`
+ * endpoint with only documented filters (`productNameEn`, `categoryId`,
+ * `orderBy=createAt|listedNum`, `sort`). Unlike `CatalogPageQuery`, ordering
+ * is caller-chosen because a browse view is a presentation, not a
+ * deterministic enumeration - discovery must never use this method.
+ */
+export type BrowsePageQuery = {
+  pageNum: number;
+  /** 1..200. The documented legacy maximum is 200. */
+  pageSize: number;
+  /** Sent as the documented `productNameEn` name filter when non-empty. */
+  search?: string;
+  categoryId?: string;
+  /** Documented legacy ordering values; omitted = provider default ranking. */
+  orderBy?: 'createAt' | 'listedNum';
+  sort?: 'asc' | 'desc';
+};
+
 export type SupplierCategoryLeaf = {
   /** Provider category id - the identity discovery partitions key on. */
   categoryId: string;
@@ -134,6 +153,15 @@ export interface SupplierProviderAdapter {
   listCuratedPage(
     connectionId: string,
     query: CuratedPageQuery,
+  ): Promise<CatalogPage>;
+
+  /**
+   * Seller-facing live browse page. Read-only presentation of the provider
+   * catalogue - never part of discovery, never a coverage claim.
+   */
+  listBrowsePage(
+    connectionId: string,
+    query: BrowsePageQuery,
   ): Promise<CatalogPage>;
 
   /** Current provider category tree flattened to leaf categories. */

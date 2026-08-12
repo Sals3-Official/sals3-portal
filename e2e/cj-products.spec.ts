@@ -1,50 +1,40 @@
 import { expect, test, type Page } from '@playwright/test';
 
 /**
- * All Supplier Products.
+ * All Supplier Products - the live CJ catalogue browser (owner decision
+ * 2026-08-13).
  *
- * As of the lean intake policy (ADR-013 §1a) this page calls no third-party
- * API at all: it renders what discovery already persisted. These tests assert
- * what the portal itself controls - the labelling, the URL contract, the
- * quick views and filters, the corrected search behaviour, and that a missing
- * database or an empty catalogue is reported honestly rather than left blank.
- *
- * They deliberately never assert that a particular supplier product is
- * present: which products exist depends on how far discovery has run in the
- * environment under test.
+ * The table is a live `/product/list` read through the signed-in seller's own
+ * CJ connection, so which products exist depends entirely on the environment:
+ * CI and local runs typically have no CJ connection at all, and must render
+ * the honest no-connection notice BEFORE any supplier call. These tests
+ * therefore assert what the portal itself controls - the labelling, the URL
+ * contract, the views - and never that a particular supplier product is
+ * present. No test here depends on live CJ answering.
  */
 
 /**
- * Either the workspace rendered, or the environment honestly has no database
- * configured (expected in CI/preview - see `isDatabaseConfigured()`). Never
- * neither, and never a silent crash.
+ * Either the live workspace rendered, or the environment honestly reported
+ * why it could not: no database, no CJ connection, a connection needing
+ * re-authentication, CJ throttling/unavailable, or the local browse throttle.
+ * Never neither, and never a silent crash.
+ *
+ * The views nav is the "loaded" marker because every failure state returns
+ * before it renders - the error notice is the whole output in those cases.
  */
 async function expectLoadedOrReported(page: Page): Promise<void> {
-  const notice = page
-    .getByRole('main')
-    .getByText(
-      'Browsing, searching, filtering, paging, and opening source details all read saved Sals3 data',
-    );
-  const noDatabase = page.getByRole('heading', {
-    name: 'No database configured in this environment',
-  });
-  const empty = page.getByRole('heading', {
-    name: 'No supplier products discovered yet',
+  const views = page.getByRole('navigation', { name: 'Saved views' });
+  const reported = page.getByRole('heading', {
+    name: /No database configured in this environment|No CJ connection yet|Your CJ connection needs attention|CJ is limiting requests right now|Browsing too fast|CJ did not answer/,
   });
 
-  // `.first()` because these three states are not mutually exclusive: a
-  // configured database holding an empty catalogue renders the workspace
-  // notice AND the "nothing discovered yet" heading at the same time, which
-  // makes the bare `.or()` chain match two elements and fail Playwright's
-  // strict-mode check. The assertion here is "at least one of the three is
-  // visible" - a crashed page still matches none of them and still fails.
-  await expect(notice.or(noDatabase).or(empty).first()).toBeVisible({
+  await expect(views.or(reported).first()).toBeVisible({
     timeout: 30_000,
   });
 }
 
 test.describe('All Supplier Products', () => {
-  test('renders the local catalogue at /products', async ({ page }) => {
+  test('renders the live catalogue browser at /products', async ({ page }) => {
     await page.goto('/products');
 
     await expectLoadedOrReported(page);
@@ -53,33 +43,51 @@ test.describe('All Supplier Products', () => {
     ).toBeVisible();
   });
 
-  test('still renders for an old ?source=cj / ?cjPage link', async ({
+  test('still renders for a retired ?signal / ?source=cj / ?cjPage link', async ({
     page,
   }) => {
-    await page.goto('/products?source=cj&cjPage=99999999&cjSearch=x');
+    await page.goto(
+      '/products?signal=CJ_TRENDING&source=cj&cjPage=99999999&cjSearch=x',
+    );
 
     await expectLoadedOrReported(page);
   });
 
-  test('states plainly that browsing makes no supplier request', async ({
+  test('states in the page header that the catalogue is live', async ({
     page,
   }) => {
     await page.goto('/products');
     await expectLoadedOrReported(page);
 
-    const notice = page.getByText(
-      'Browsing, searching, filtering, paging, and opening source details all read saved Sals3 data',
-    );
-
-    if (await notice.isVisible()) {
-      await expect(notice).toContainText('make no supplier request');
-      await expect(notice).toContainText(
-        'Stock is confirmed only by a person recording a CJ/MyCJ inspection',
-      );
-    }
+    // The in-table banner was removed by owner request; the page header still
+    // has to say plainly that this is a live supplier read, not saved data.
+    await expect(
+      page.getByText('The live CJdropshipping catalogue', { exact: false }),
+    ).toBeVisible();
   });
 
-  test('offers the saved local quick views under the page title', async ({
+  test('shows only the live product columns', async ({ page }) => {
+    await page.goto('/products');
+    await expectLoadedOrReported(page);
+
+    const table = page.getByRole('table');
+
+    if (!(await table.isVisible())) return;
+
+    await expect(
+      table.getByRole('columnheader', { name: 'Product' }),
+    ).toBeVisible();
+    await expect(
+      table.getByRole('columnheader', { name: 'Category' }),
+    ).toBeVisible();
+    await expect(
+      table.getByRole('columnheader', { name: 'Supplier price' }),
+    ).toBeVisible();
+    // Pipeline overlay columns are hidden for now.
+    await expect(table.getByRole('columnheader')).toHaveCount(3);
+  });
+
+  test('offers exactly the three live views under the page title', async ({
     page,
   }) => {
     await page.goto('/products');
@@ -92,45 +100,36 @@ test.describe('All Supplier Products', () => {
         views.getByRole('link', { name: 'All products' }),
       ).toBeVisible();
       await expect(
-        views.getByRole('link', { name: 'CJ Trending' }),
-      ).toBeVisible();
-      await expect(
         views.getByRole('link', { name: 'Most listed' }),
       ).toBeVisible();
       await expect(
         views.getByRole('link', { name: 'New arrivals' }),
       ).toBeVisible();
-      await expect(
-        views.getByRole('link', { name: /Needs attention/ }),
-      ).toBeVisible();
+      // Retired saved-data views must be gone.
+      await expect(views.getByRole('link')).toHaveCount(3);
     }
   });
 
-  test('offers Discovery signal and Category filters in the table filter bar', async ({
+  test('keeps the active view in a shareable URL and degrades retired views to All', async ({
     page,
   }) => {
-    await page.goto('/products');
-    await expectLoadedOrReported(page);
-
-    const signal = page.getByLabel('Discovery signal');
-    const category = page.getByLabel('Category');
-
-    if (await signal.isVisible()) {
-      await expect(signal).toBeEnabled();
-      await expect(category).toBeEnabled();
-    }
-  });
-
-  test('keeps the active quick view in a shareable URL', async ({ page }) => {
-    await page.goto('/products?view=needs-attention');
-
+    await page.goto('/products?view=most-listed');
     await expectLoadedOrReported(page);
 
     const views = page.getByRole('navigation', { name: 'Saved views' });
 
     if (await views.isVisible()) {
       await expect(
-        views.getByRole('link', { name: /Needs attention/ }),
+        views.getByRole('link', { name: 'Most listed' }),
+      ).toHaveAttribute('aria-current', 'page');
+    }
+
+    await page.goto('/products?view=needs-attention');
+    await expectLoadedOrReported(page);
+
+    if (await views.isVisible()) {
+      await expect(
+        views.getByRole('link', { name: 'All products' }),
       ).toHaveAttribute('aria-current', 'page');
     }
   });
@@ -147,7 +146,7 @@ test.describe('All Supplier Products', () => {
     await expect(
       page.getByText('Type at least 2 characters to search'),
     ).toBeVisible();
-    // The URL is untouched: no server search was submitted.
+    // The URL is untouched: no live CJ search was submitted.
     await expect(page).not.toHaveURL(/[?&]q=/);
   });
 
@@ -165,20 +164,6 @@ test.describe('All Supplier Products', () => {
     await expect(page).toHaveURL(/[?&]q=mug/, { timeout: 10_000 });
     // The typed value survives the navigation.
     await expect(search).toHaveValue('mug');
-  });
-
-  test('clearing the search restores the unfiltered scoped set', async ({
-    page,
-  }) => {
-    await page.goto('/products?q=mug');
-    await expectLoadedOrReported(page);
-
-    const search = page.getByLabel('Search your supplier products');
-
-    if (!(await search.isVisible())) return;
-
-    await search.fill('');
-    await expect(page).not.toHaveURL(/[?&]q=/, { timeout: 10_000 });
   });
 });
 

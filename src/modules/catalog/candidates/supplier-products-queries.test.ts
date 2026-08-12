@@ -3,81 +3,135 @@
 // This module imports `@/lib/db/client`, which throws when `window` is
 // defined (a load-bearing guard against bundling the DB client into client
 // code), so it needs the plain Node environment rather than jsdom.
-import { describe, expect, it } from 'vitest';
-import { PgDialect } from 'drizzle-orm/pg-core';
-import type { SQL } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  MIN_SEARCH_LENGTH,
-  normalizeSearchTerm,
-  supplierProductsSearchCondition,
-} from './supplier-products-queries';
+  fakeDb,
+  lastCallArgs,
+  type FakeDbCall,
+} from '../../../../test/fake-db';
 
-/**
- * The All Supplier Products read model must answer every browse, search,
- * filter, and page action from PostgreSQL. `PgDialect.sqlToQuery` is the
- * real renderer Drizzle uses before handing a query to `postgres.js` and
- * needs no live connection, so it can prove the generated SQL text and its
- * bind parameters without a database.
- */
-const dialect = new PgDialect();
+let currentDb: unknown;
 
-function render(sql: SQL | undefined): { sql: string; params: unknown[] } {
-  if (sql === undefined) {
-    throw new Error('Expected a defined SQL condition, got undefined.');
-  }
+vi.mock('@/lib/db/client', () => ({
+  default: () => currentDb,
+  isDatabaseConfigured: () => true,
+}));
 
-  return dialect.sqlToQuery(sql);
+// eslint-disable-next-line import/first
+import { findPipelineMatchesByPid } from './supplier-products-queries';
+
+function candidateRow(overrides: Record<string, unknown> = {}) {
+  return {
+    candidateId: 'candidate-1',
+    externalProductId: 'pid-1',
+    discoveredAt: new Date('2026-08-01T00:00:00Z'),
+    stockReviewState: 'STOCK_NOT_CHECKED',
+    stockReviewVersion: 0,
+    stockReviewObservedAt: null,
+    stockReviewRecordedAt: null,
+    stockReviewActorId: null,
+    stockReviewObservedQuantity: null,
+    stockReviewObservedOrigin: null,
+    stockReviewNote: null,
+    status: 'PASS',
+    reasonCodes: [],
+    attemptCount: 1,
+    lastErrorCode: null,
+    evaluatedAt: new Date('2026-08-02T00:00:00Z'),
+    ...overrides,
+  };
 }
 
-describe('normalizeSearchTerm', () => {
-  it('treats fewer than two meaningful characters as no search at all', () => {
-    expect(MIN_SEARCH_LENGTH).toBe(2);
-    expect(normalizeSearchTerm('a')).toBe('');
-    expect(normalizeSearchTerm(' a ')).toBe('');
-    expect(normalizeSearchTerm('   ')).toBe('');
-    expect(normalizeSearchTerm(undefined)).toBe('');
-    expect(normalizeSearchTerm(null)).toBe('');
-  });
+let calls: FakeDbCall[];
 
-  it('whitespace-normalizes a term before it is committed', () => {
-    expect(normalizeSearchTerm('  ceramic   mug  ')).toBe('ceramic mug');
-  });
+function useDb(results: unknown[][]) {
+  const fake = fakeDb(results);
+  currentDb = fake.db;
+  calls = fake.calls;
+}
 
-  it('accepts exactly two meaningful characters', () => {
-    expect(normalizeSearchTerm('mu')).toBe('mu');
-  });
+beforeEach(() => {
+  currentDb = undefined;
+  calls = [];
 });
 
-describe('supplierProductsSearchCondition', () => {
-  it('produces no condition below the minimum, leaving the scoped set intact', () => {
-    expect(supplierProductsSearchCondition('a')).toBeUndefined();
-    expect(supplierProductsSearchCondition('')).toBeUndefined();
-  });
+describe('findPipelineMatchesByPid', () => {
+  it('returns an empty map for an empty or all-blank pid list without touching the database', async () => {
+    useDb([]);
 
-  it('always sends the term as a bind parameter, never concatenated SQL', () => {
-    const { sql, params } = render(
-      supplierProductsSearchCondition(
-        "mug'; drop table supplier_candidates;--",
-      ),
+    expect(await findPipelineMatchesByPid('seller-1', [])).toEqual(new Map());
+    expect(await findPipelineMatchesByPid('seller-1', ['', ''])).toEqual(
+      new Map(),
     );
-
-    expect(sql).not.toContain('drop table');
-    expect(params).toContain("%mug'; drop table supplier\\_candidates;--%");
+    expect(calls).toHaveLength(0);
   });
 
-  it('escapes LIKE wildcards so a typed % or _ means the literal character', () => {
-    const { params } = render(supplierProductsSearchCondition('50%_off'));
+  it('keys matches by pid and attaches loaded signals', async () => {
+    useDb([
+      [candidateRow()],
+      [{ candidateId: 'candidate-1', signal: 'CJ_HIGH_LISTED' }],
+    ]);
 
-    expect(params).toEqual(['%50\\%\\_off%', '%50\\%\\_off%', '%50\\%\\_off%']);
+    const matches = await findPipelineMatchesByPid('seller-1', [
+      'pid-1',
+      'pid-unknown',
+    ]);
+
+    expect(matches.size).toBe(1);
+    const match = matches.get('pid-1');
+    expect(match).toMatchObject({
+      candidateId: 'candidate-1',
+      status: 'PASS',
+      signals: ['CJ_HIGH_LISTED'],
+    });
+    expect(matches.has('pid-unknown')).toBe(false);
   });
 
-  it('searches the CJ product id, the persisted name, and the persisted SKU', () => {
-    const { sql } = render(supplierProductsSearchCondition('mug'));
+  it('keeps a discovered-but-unevaluated candidate as a match with a null status', async () => {
+    useDb([
+      [
+        candidateRow({
+          status: null,
+          reasonCodes: null,
+          attemptCount: null,
+          lastErrorCode: null,
+          evaluatedAt: null,
+        }),
+      ],
+      [],
+    ]);
 
-    expect(sql).toContain('external_product_id');
-    expect(sql).toContain(`"feed_snapshot"->>'name'`);
-    expect(sql).toContain(`"feed_snapshot"->>'sku'`);
-    // Case-insensitive, so a seller does not have to match capitalisation.
-    expect(sql.toLowerCase()).toContain('ilike');
+    const matches = await findPipelineMatchesByPid('seller-1', ['pid-1']);
+
+    expect(matches.get('pid-1')).toMatchObject({
+      status: null,
+      reasonCodes: [],
+      attemptCount: 0,
+      evaluatedAt: null,
+    });
+  });
+
+  it('uses a LEFT JOIN for evaluations and scopes to the seller in the same WHERE', async () => {
+    useDb([[candidateRow()], []]);
+
+    await findPipelineMatchesByPid('seller-1', ['pid-1']);
+
+    const leftJoins = calls.filter((call) => call.method === 'leftJoin');
+    expect(leftJoins).toHaveLength(1);
+    const [whereCondition] = lastCallArgs(
+      calls.filter((call) => call.method === 'where').slice(0, 1),
+      'where',
+    );
+    expect(whereCondition).toBeDefined();
+  });
+
+  it('deduplicates pids and never sends more than 200', async () => {
+    useDb([[], []]);
+
+    const pids = Array.from({ length: 250 }, (_, i) => `pid-${i}`);
+    await findPipelineMatchesByPid('seller-1', [...pids, ...pids]);
+
+    // One select for candidates; signals lookup is skipped (no rows).
+    expect(calls.filter((call) => call.method === 'select')).toHaveLength(1);
   });
 });

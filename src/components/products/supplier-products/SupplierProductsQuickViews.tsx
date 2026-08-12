@@ -10,23 +10,19 @@ import {
 type SupplierProductsQuickViewsProps = {
   active: SupplierProductsQuery['view'];
   currentParams: Record<string, string>;
-  /** Row count for the attention view, so the label is factual, not decorative. */
-  needsAttentionCount: number;
 };
 
 /**
- * Saved local quick views, rendered directly under the page title rather than
- * as a new sidebar menu.
+ * Live browse views, rendered directly under the page title rather than as a
+ * new sidebar menu.
  *
  * Every one is a plain link that changes URL parameters the Server Component
- * reads. Switching views re-queries the Sals3 database and makes ZERO
- * supplier requests - which is the whole point of the change that introduced
- * them.
+ * reads. Each switch re-renders the page and therefore makes one live CJ
+ * request with that view's documented ordering (see `QUICK_VIEW_ORDERING`).
  */
 export default function SupplierProductsQuickViews({
   active,
   currentParams,
-  needsAttentionCount,
 }: SupplierProductsQuickViewsProps) {
   return (
     <nav aria-label="Saved views" className="flex flex-wrap items-center gap-1">
@@ -51,11 +47,6 @@ export default function SupplierProductsQuickViews({
             )}
           >
             {QUICK_VIEW_LABELS[view]}
-            {view === 'needs-attention' && needsAttentionCount > 0 ? (
-              <span className="ml-1.5 tabular-nums">
-                ({needsAttentionCount})
-              </span>
-            ) : null}
           </Link>
         );
       })}
