@@ -1,8 +1,8 @@
 'use server';
 
 import { requirePermission } from '@/lib/auth/session';
-import { revealBuyerContact } from '@/lib/seller-center/mock-data/orders';
 import type { RevealedContact } from '@/modules/orders/contracts';
+import getOrdersRepository from '@/modules/orders/repository';
 
 /**
  * Returns a parcel's real buyer contact.
@@ -20,7 +20,7 @@ import type { RevealedContact } from '@/modules/orders/contracts';
 export default async function revealParcelContactAction(
   parcelId: string,
 ): Promise<RevealedContact | null> {
-  await requirePermission('order:fulfill');
+  const session = await requirePermission('order:fulfill');
 
-  return revealBuyerContact(parcelId);
+  return getOrdersRepository().revealContact(parcelId, session.sellerId);
 }

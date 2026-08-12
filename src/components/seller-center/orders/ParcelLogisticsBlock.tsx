@@ -15,7 +15,7 @@ function routeChips(route: ParcelRoute): string[] {
   ];
 
   if (route.kind === 'SUPPLIER_DROPSHIP') {
-    chips.push(`Fulfilled by ${route.supplierLabel}`);
+    chips.push(`Fulfilled by ${route.connection.label}`);
     if (route.supplierOrderRef !== null) chips.push(route.supplierOrderRef);
   }
 

@@ -6,7 +6,17 @@ import type { ParcelAction } from '@/modules/orders/contracts';
 type ParcelActionsProps = {
   actions: ParcelAction[];
   onAction: (id: string) => void;
-  className?: string;
+  /**
+   * `stacked` is the list card's narrow action column: buttons full width,
+   * primary filled. `inline` is the detail page's action strip, where the
+   * controls sit in a row and are all outlined - a filled button there would
+   * compete with the page's own primary actions for the same attention.
+   *
+   * An explicit prop rather than a `className` override, because the two
+   * layouts need opposite `flex-direction` values and passing both leaves
+   * Tailwind to resolve a conflict by stylesheet order.
+   */
+  layout?: 'stacked' | 'inline';
 };
 
 /**
@@ -22,9 +32,11 @@ type ParcelActionsProps = {
 export default function ParcelActions({
   actions,
   onAction,
-  className,
+  layout = 'stacked',
 }: ParcelActionsProps) {
   if (actions.length === 0) return null;
+
+  const inline = layout === 'inline';
 
   const ordered = [...actions].sort((a, b) => {
     if (a.variant === b.variant) return 0;
@@ -33,21 +45,33 @@ export default function ParcelActions({
   });
 
   return (
-    <div className={cn('flex flex-col gap-2', className)}>
+    <div
+      className={cn(
+        'flex',
+        inline ? 'flex-wrap items-center gap-2' : 'flex-col gap-2',
+      )}
+    >
       {ordered.map((action) => {
         if (action.blockedReason !== null) {
           return (
             <span
               key={action.id}
               aria-disabled="true"
-              className="flex h-[34px] cursor-not-allowed items-center justify-center rounded-md border border-border bg-muted px-2 text-center text-[11.5px] leading-[1.25] font-medium text-ink-faint"
+              title={action.blockedReason}
+              className={cn(
+                'flex h-[34px] cursor-not-allowed items-center justify-center rounded-md border border-border bg-surface text-center text-[11.5px] leading-[1.25] font-medium text-ink-faint',
+                inline ? 'px-3.5' : 'px-2',
+              )}
             >
               {action.blockedReason}
             </span>
           );
         }
 
-        if (action.variant === 'primary') {
+        // In the strip every control is outlined. A filled button there would
+        // compete with the page's own primary actions, and the strip is a
+        // list of what is possible rather than a recommendation of one.
+        if (action.variant === 'primary' && !inline) {
           return (
             <button
               key={action.id}
@@ -65,7 +89,10 @@ export default function ParcelActions({
             key={action.id}
             type="button"
             onClick={() => onAction(action.id)}
-            className="flex h-[34px] cursor-pointer items-center justify-center rounded-md border border-border text-[12.5px] font-medium text-ink-muted transition-colors hover:border-border-strong hover:text-ink"
+            className={cn(
+              'flex h-[34px] cursor-pointer items-center justify-center rounded-md border border-border bg-card text-[12.5px] font-medium text-ink-muted transition-colors hover:border-border-strong hover:text-ink',
+              inline ? 'px-3.5' : '',
+            )}
           >
             {action.label}
           </button>

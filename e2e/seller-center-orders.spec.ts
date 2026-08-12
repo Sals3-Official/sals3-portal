@@ -184,6 +184,23 @@ test.describe('Seller Center orders', () => {
     expect(response?.status()).toBe(404);
   });
 
+  test('Check details opens the parcel detail page', async ({ page }) => {
+    // It is the most obvious control on the card. Toasting "not wired to a
+    // backend" while the detail route already existed made it look broken.
+    await page.goto('/orders');
+
+    await page
+      .getByRole('article')
+      .first()
+      .getByRole('button', { name: 'Check details' })
+      .click();
+
+    await expect(page).toHaveURL(/\/orders\/A-\d+-\d+$/);
+    await expect(
+      page.getByRole('heading', { name: 'Money on this parcel' }),
+    ).toBeVisible();
+  });
+
   test('the money row never shows a figure spanning two rails', async ({
     page,
   }) => {

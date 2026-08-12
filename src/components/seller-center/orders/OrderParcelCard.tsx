@@ -72,7 +72,7 @@ function routeLines(route: ParcelRoute): string[] {
   if (route.kind === 'OWN_STOCK') {
     if (route.handover !== null) lines.push(HANDOVER_LABELS[route.handover]);
   } else {
-    lines.push(`Fulfilled by ${route.supplierLabel}`);
+    lines.push(`Fulfilled by ${route.connection.label}`);
   }
 
   return lines;
@@ -127,7 +127,7 @@ export default function OrderParcelCard({
         </span>
         <span>{parcel.buyerLabel}</span>
         <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[11.5px] font-medium text-ink-muted">
-          {route.kind === 'OWN_STOCK' ? 'In-House' : route.supplierLabel}
+          {route.kind === 'OWN_STOCK' ? 'In-House' : route.connection.label}
         </span>
       </header>
 

@@ -14,7 +14,7 @@ import OrdersWorkspace from '@/components/seller-center/orders/OrdersWorkspace';
 import { requirePermission } from '@/lib/auth/session';
 import { buildHref } from '@/lib/portal/search-params';
 import { getActiveMarket } from '@/lib/seller-center/market-config';
-import { buildOrderParcels } from '@/lib/seller-center/mock-data/orders';
+import getOrdersRepository from '@/modules/orders/repository';
 import {
   ORDER_SEARCH_FIELDS,
   ORDER_SEARCH_FIELD_LABELS,
@@ -84,7 +84,10 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
     );
   }
 
-  const allParcels = buildOrderParcels(market);
+  const allParcels = await getOrdersRepository().listParcels(
+    market,
+    session.sellerId,
+  );
   const counts = new Map(
     countByLane(allParcels).map((entry) => [entry.key, entry.count]),
   );
@@ -101,19 +104,29 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   // A route chip row only earns its place once the account actually has more
   // than one route. A pure retailer would otherwise get a filter with a single
   // option, which is noise pretending to be a control.
-  const routes = new Set(
-    allParcels.map((parcel) =>
-      parcel.route.kind === 'OWN_STOCK'
-        ? 'own-stock'
-        : parcel.route.supplierLabel,
-    ),
-  );
+  // Keyed on connection id, not the provider's display name. Two accounts with
+  // the same provider carry the same label, and merging them into one chip
+  // would hide exactly the distinction a seller filters for - which wallet is
+  // short, which account to top up.
   const routeChips = [
     { key: 'all', label: 'All' },
-    ...[...routes].map((route) => ({
-      key: route,
-      label: route === 'own-stock' ? 'In-House' : route,
-    })),
+    ...(allParcels.some((parcel) => parcel.route.kind === 'OWN_STOCK')
+      ? [{ key: 'own-stock', label: 'In-House' }]
+      : []),
+    ...[
+      ...new Map(
+        allParcels
+          .filter((parcel) => parcel.route.kind === 'SUPPLIER_DROPSHIP')
+          .map((parcel) => {
+            const { connection } = parcel.route as Extract<
+              typeof parcel.route,
+              { kind: 'SUPPLIER_DROPSHIP' }
+            >;
+
+            return [connection.connectionId, connection.label] as const;
+          }),
+      ),
+    ].map(([connectionId, label]) => ({ key: connectionId, label })),
   ];
 
   const stageChips =

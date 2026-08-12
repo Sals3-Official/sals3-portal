@@ -15,7 +15,7 @@ import TrackingEventFeed from '@/components/seller-center/orders/TrackingEventFe
 import { can } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { getActiveMarket } from '@/lib/seller-center/market-config';
-import { buildParcelDetail } from '@/lib/seller-center/mock-data/orders';
+import getOrdersRepository from '@/modules/orders/repository';
 import revealParcelContactAction from './actions';
 
 export const metadata: Metadata = { title: 'Parcel · Seller Center' };
@@ -50,7 +50,12 @@ export default async function ParcelDetailPage({
     );
   }
 
-  const detail = buildParcelDetail(parcelId, market, canReveal);
+  const detail = await getOrdersRepository().findParcelDetail(
+    parcelId,
+    market,
+    session.sellerId,
+    canReveal,
+  );
 
   if (detail === null) notFound();
 
@@ -83,7 +88,7 @@ export default async function ParcelDetailPage({
             <span className="rounded-full bg-muted px-2 py-0.5 text-[11.5px] font-medium text-ink-muted">
               {parcel.route.kind === 'OWN_STOCK'
                 ? 'In-House'
-                : parcel.route.supplierLabel}
+                : parcel.route.connection.label}
             </span>
           </div>
           <p className="text-[12.5px] text-ink-subtle">

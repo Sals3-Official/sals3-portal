@@ -24,10 +24,12 @@ export default function ParcelStatusCard({
     <section className="rounded-lg border border-border bg-card">
       <div className="flex flex-col gap-2 p-4">
         <StatusPill label={status.label} tone={status.tone} />
-        <p className="text-sm text-ink-muted">{status.detail}</p>
+        <p className="max-w-[64ch] text-sm leading-[1.55] text-ink-muted">
+          {status.detail}
+        </p>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-b-lg border-t border-border bg-muted/40 px-4 py-3">
-        <p className="text-xs font-medium tracking-wide text-ink-subtle uppercase">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-b-lg border-t border-border bg-surface px-4 py-3">
+        <p className="text-[11.5px] font-semibold tracking-[0.06em] text-ink-subtle uppercase">
           What you can do next
         </p>
         {actionsSlot}

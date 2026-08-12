@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { formatMarketMoney } from '@/lib/seller-center/money';
 import type { SellerCenterMarket } from '@/lib/seller-center/market-config';
@@ -28,6 +29,7 @@ export default function OrdersWorkspace({
   market,
 }: OrdersWorkspaceProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const router = useRouter();
 
   const selectedParcels = parcels.filter((parcel) => selected.has(parcel.id));
   const proceedsMinor = selectedParcels.reduce(
@@ -50,8 +52,18 @@ export default function OrdersWorkspace({
   };
 
   const handleAction = (parcelId: string, actionId: string) => {
-    // Nothing in this slice performs a real fulfillment effect. The toast
-    // states that plainly rather than implying a courier was contacted.
+    // `details` is navigation, not a fulfillment effect - the detail route
+    // exists, so toasting "not wired to a backend" was simply wrong: it made
+    // the most obvious button on the card look broken while the page it should
+    // open was already there.
+    if (actionId === 'details') {
+      router.push(`/orders/${parcelId}`);
+
+      return;
+    }
+
+    // Everything else would touch a courier or a supplier wallet, and none of
+    // that is built. The toast says so rather than implying it happened.
     toast(`"${actionId}" on ${parcelId} is not wired to a backend yet.`, {
       duration: 5000,
     });

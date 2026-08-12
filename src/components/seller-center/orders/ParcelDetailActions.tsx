@@ -23,7 +23,7 @@ export default function ParcelDetailActions({
   return (
     <ParcelActions
       actions={actions}
-      className="flex-row flex-wrap items-center gap-4"
+      layout="inline"
       onAction={(actionId) =>
         toast(`"${actionId}" on ${parcelId} is not wired to a backend yet.`, {
           duration: 5000,

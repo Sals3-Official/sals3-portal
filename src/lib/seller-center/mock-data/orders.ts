@@ -31,7 +31,27 @@ import type {
   TrackingEvent,
   LifecycleEvent,
   RevealedContact,
+  SupplierConnectionRef,
 } from '@/modules/orders/contracts';
+import { findSupplierAdapter } from '@/modules/orders/adapters';
+import {
+  sals3OwnedActionsFor,
+  supplierActionsFor,
+} from '@/modules/orders/supplier-adapter';
+
+/**
+ * The one connected supplier account these fixtures use.
+ *
+ * A named constant rather than a literal on each parcel, because the moment a
+ * second connection exists - a second CJ account, or another provider - every
+ * parcel has to say which one, and a scattered `'CJ'` string would silently
+ * merge them.
+ */
+const CJ_MAIN: SupplierConnectionRef = {
+  connectionId: 'conn-cj-main',
+  providerCode: 'CJ',
+  label: 'CJ · Main',
+};
 
 /**
  * A fixture line may omit the fields the builder can derive, so adding a
@@ -298,7 +318,7 @@ const PARCEL_FIXTURES: ParcelFixture[] = [
       kind: 'SUPPLIER_DROPSHIP',
       serviceLevel: 'Standard delivery',
       carrier: null,
-      supplierLabel: 'CJ',
+      connection: CJ_MAIN,
       supplierOrderRef: 'CJ-77120934',
       trackingNumber: null,
     },
@@ -352,7 +372,7 @@ const PARCEL_FIXTURES: ParcelFixture[] = [
       kind: 'SUPPLIER_DROPSHIP',
       serviceLevel: 'Standard delivery',
       carrier: null,
-      supplierLabel: 'CJ',
+      connection: CJ_MAIN,
       supplierOrderRef: null,
       trackingNumber: null,
     },
@@ -411,7 +431,7 @@ const PARCEL_FIXTURES: ParcelFixture[] = [
       kind: 'SUPPLIER_DROPSHIP',
       serviceLevel: 'Standard delivery',
       carrier: 'J&T Express',
-      supplierLabel: 'CJ',
+      connection: CJ_MAIN,
       supplierOrderRef: null,
       trackingNumber: 'JT2260881144',
     },
@@ -524,7 +544,7 @@ const PARCEL_FIXTURES: ParcelFixture[] = [
       kind: 'SUPPLIER_DROPSHIP',
       serviceLevel: 'Standard delivery',
       carrier: 'J&T Express',
-      supplierLabel: 'CJ',
+      connection: CJ_MAIN,
       supplierOrderRef: 'CJ-77098220',
       trackingNumber: 'JT2260774091',
     },
@@ -1096,7 +1116,7 @@ function fillerToFixture(spec: FillerSpec, index: number): ParcelFixture {
           kind: 'SUPPLIER_DROPSHIP',
           serviceLevel: 'Standard delivery',
           carrier: spec.carrier,
-          supplierLabel: spec.supplier ?? 'CJ',
+          connection: CJ_MAIN,
           supplierOrderRef: null,
           trackingNumber: spec.tracking,
         }
@@ -1123,6 +1143,44 @@ const ALL_FIXTURES: ParcelFixture[] = [
   ...PARCEL_FIXTURES,
   ...FILLERS.map(fillerToFixture),
 ];
+
+/**
+ * Actions for one fixture.
+ *
+ * Own-stock parcels keep the fixture's own list - arranging a pickup and
+ * printing a waybill are Sals3's carrier flow, not a provider's. Dropship
+ * parcels ask the adapter, so an unregistered provider yields no supplier
+ * actions at all rather than CJ's by default.
+ */
+function supplierActionsForRoute(fixture: ParcelFixture): ParcelAction[] {
+  const owned = sals3OwnedActionsFor(fixture.state);
+
+  if (fixture.route.kind === 'OWN_STOCK') {
+    return owned.length > 0 ? [...owned, ...fixture.actions] : fixture.actions;
+  }
+
+  const adapter = findSupplierAdapter(fixture.route.connection.providerCode);
+
+  // An unregistered provider gets no supplier actions at all - never CJ's by
+  // default. Sals3's own actions still apply, because they are not the
+  // provider's to grant.
+  if (adapter === null) {
+    return [
+      ...owned,
+      {
+        id: 'details',
+        label: 'Check details',
+        variant: 'secondary',
+        blockedReason: null,
+      },
+    ];
+  }
+
+  return [
+    ...owned,
+    ...supplierActionsFor(adapter, fixture.state, fixture.route.connection),
+  ];
+}
 
 export function buildOrderParcels(market: SellerCenterMarket): OrderParcel[] {
   return ALL_FIXTURES.map((fixture) => ({
@@ -1159,7 +1217,12 @@ export function buildOrderParcels(market: SellerCenterMarket): OrderParcel[] {
     attentionReason: fixture.attentionReason,
     stage: fixture.stage,
     route: fixture.route,
-    actions: fixture.actions,
+    // Dropship actions are derived from the provider's declared capabilities,
+    // never from the fixture. A stored list would keep offering "Request
+    // cancellation" after a provider dropped it, and the seller would learn
+    // that from a failed request. Own-stock keeps its fixture actions: those
+    // are Sals3's own carrier flow, not a provider's.
+    actions: supplierActionsForRoute(fixture),
     selectable: fixture.selectable,
     proceedsMinor: fixture.proceedsMinor,
     channel: fixture.channel,
@@ -1446,7 +1509,7 @@ export function buildParcelDetail(
         routeLabel:
           candidate.route.kind === 'OWN_STOCK'
             ? 'In-House'
-            : candidate.route.supplierLabel,
+            : candidate.route.connection.label,
       })),
     // Own-stock only: Sals3 holds the carrier relationship directly, so it is
     // Sals3's own courier assignment to show. A dropship courier is the

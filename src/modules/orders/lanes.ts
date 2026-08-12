@@ -106,13 +106,20 @@ export function sortParcels(
   return sorted.sort((a, b) => b.orderedAt.localeCompare(a.orderedAt));
 }
 
+/**
+ * Matched on `connectionId`, not the display label.
+ *
+ * Two connections to the same provider carry the same label, so filtering on
+ * it would silently merge two separate supplier accounts into one chip - and
+ * the seller filtering for the wallet that is short of funds would get both.
+ */
 function matchesRoute(parcel: OrderParcel, route: string): boolean {
   if (route === 'all') return true;
   if (route === 'own-stock') return parcel.route.kind === 'OWN_STOCK';
 
   return (
     parcel.route.kind === 'SUPPLIER_DROPSHIP' &&
-    parcel.route.supplierLabel.toLowerCase() === route.toLowerCase()
+    parcel.route.connection.connectionId === route
   );
 }
 

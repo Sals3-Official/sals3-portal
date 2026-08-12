@@ -191,6 +191,20 @@ export type ProcessStage =
 
 // --- Presentation contracts ---------------------------------------------
 
+/**
+ * One connected supplier account.
+ *
+ * Lives here rather than beside the adapter contract because `ParcelRoute`
+ * needs it and the adapter needs `ParcelRoute`'s neighbours - defining it in
+ * the adapter file would make the two modules import each other.
+ */
+export type SupplierConnectionRef = {
+  connectionId: string;
+  providerCode: string;
+  /** Seller-facing, e.g. `CJ · Main`. Never used for routing decisions. */
+  label: string;
+};
+
 export type ParcelRoute =
   | {
       kind: 'OWN_STOCK';
@@ -203,7 +217,15 @@ export type ParcelRoute =
       kind: 'SUPPLIER_DROPSHIP';
       serviceLevel: string;
       carrier: string | null;
-      supplierLabel: string;
+      /**
+       * The exact connection fulfilling this parcel, not a display name.
+       *
+       * ADR-006 makes the connection the fulfillment authority, and one seller
+       * can hold two accounts with the same provider. A bare "CJ" on a card
+       * cannot say which wallet is short of funds or which account to top up,
+       * and a route filter keyed on the label would merge them into one chip.
+       */
+      connection: SupplierConnectionRef;
       supplierOrderRef: string | null;
       trackingNumber: string | null;
     };

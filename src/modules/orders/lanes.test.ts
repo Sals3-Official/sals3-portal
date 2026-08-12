@@ -215,7 +215,11 @@ describe('filterParcels', () => {
           kind: 'SUPPLIER_DROPSHIP',
           serviceLevel: 'Standard delivery',
           carrier: null,
-          supplierLabel: 'CJ',
+          connection: {
+            connectionId: 'conn-cj-main',
+            providerCode: 'CJ',
+            label: 'CJ · Main',
+          },
           supplierOrderRef: 'CJ-1',
           trackingNumber: null,
         },
@@ -227,11 +231,16 @@ describe('filterParcels', () => {
         (parcel) => parcel.id,
       ),
     ).toEqual(['own']);
+    // Keyed on the connection id, not the provider label: two accounts with
+    // one provider must stay separable.
     expect(
-      filterParcels(mixed, { ...EMPTY_FILTER, route: 'cj' }).map(
+      filterParcels(mixed, { ...EMPTY_FILTER, route: 'conn-cj-main' }).map(
         (parcel) => parcel.id,
       ),
     ).toEqual(['cj']);
+    expect(
+      filterParcels(mixed, { ...EMPTY_FILTER, route: 'CJ · Main' }),
+    ).toEqual([]);
   });
 
   it('searches the selected field only', () => {
