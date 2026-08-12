@@ -32,7 +32,13 @@ async function expectLoadedOrReported(page: Page): Promise<void> {
     name: 'No supplier products discovered yet',
   });
 
-  await expect(notice.or(noDatabase).or(empty)).toBeVisible({
+  // `.first()` because these three states are not mutually exclusive: a
+  // configured database holding an empty catalogue renders the workspace
+  // notice AND the "nothing discovered yet" heading at the same time, which
+  // makes the bare `.or()` chain match two elements and fail Playwright's
+  // strict-mode check. The assertion here is "at least one of the three is
+  // visible" - a crashed page still matches none of them and still fails.
+  await expect(notice.or(noDatabase).or(empty).first()).toBeVisible({
     timeout: 30_000,
   });
 }
