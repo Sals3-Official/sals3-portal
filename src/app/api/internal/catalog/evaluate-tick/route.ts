@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { isDatabaseConfigured } from '@/lib/db/client';
+import { revalidateTag } from 'next/cache';
 import runEvaluationTick from '@/modules/catalog/candidates/run-tick';
+import { CANDIDATE_STATUS_COUNTS_TAG } from '@/modules/catalog/candidates/status-counts-cache';
 
 /**
  * BREAK-GLASS RECOVERY ONLY. The normal execution model is the durable
@@ -46,6 +48,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   try {
     const result = await runEvaluationTick();
+
+    // The break-glass path evaluates a batch, so buckets moved.
+    // Stale-while-revalidate, as in the queue consumer.
+    revalidateTag(CANDIDATE_STATUS_COUNTS_TAG, 'max');
 
     return NextResponse.json({ ok: true, result });
   } catch (error) {

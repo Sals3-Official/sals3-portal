@@ -33,6 +33,15 @@ vi.mock('@/lib/auth/seller-guard', () => ({
   requireDropshipperAccount: requireDropshipperAccountMock,
 }));
 
+// The page reads the status counts through the cached wrapper, not the query
+// directly. Mocking the wrapper to the same spy keeps every assertion below
+// meaningful and keeps the real `unstable_cache` - which throws outside a request
+// context - out of a unit test.
+vi.mock('@/modules/catalog/candidates/status-counts-cache', () => ({
+  default: countCandidateStatusSummaryMock,
+  CANDIDATE_STATUS_COUNTS_TAG: 'candidate-status-counts',
+}));
+
 vi.mock('@/modules/catalog/candidates/queries', () => ({
   PIPELINE_PAGE_SIZE: 100,
   countCandidateStatusSummary: countCandidateStatusSummaryMock,

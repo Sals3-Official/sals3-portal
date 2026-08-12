@@ -7,10 +7,7 @@ import SourcingInfoBanner from '@/components/products/cj/SourcingInfoBanner';
 import AvailableProviderCard from '@/components/supplier-apps/AvailableProviderCard';
 import SupplierAppCard from '@/components/supplier-apps/SupplierAppCard';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
-import {
-  countCandidateStatusSummary,
-  mostRecentSnapshotAt,
-} from '@/modules/catalog/candidates/queries';
+import { mostRecentSnapshotAt } from '@/modules/catalog/candidates/queries';
 import {
   listActiveProviders,
   listConnectionsBySeller,
@@ -19,6 +16,7 @@ import type {
   SupplierConnectionRow,
   SupplierProviderRow,
 } from '@/lib/db/schema';
+import readCandidateStatusCounts from '@/modules/catalog/candidates/status-counts-cache';
 
 export const metadata: Metadata = { title: 'Supplier Apps · Sals3 Portal' };
 export const dynamic = 'force-dynamic';
@@ -63,7 +61,7 @@ export default async function SupplierAppsPage() {
     const [providers, connections, sourcingCounts] = await Promise.all([
       listActiveProviders(db),
       listConnectionsBySeller(db, sellerAccount.id),
-      countCandidateStatusSummary(sellerAccount.id),
+      readCandidateStatusCounts(sellerAccount.id),
     ]);
 
     const installedCards = (

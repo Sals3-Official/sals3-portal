@@ -1,7 +1,6 @@
 import { countForTab, type PipelineTab } from '@/lib/portal/pipeline-tabs';
 import { resolvePageWindow, type PageWindow } from '@/lib/portal/pagination';
 import {
-  countCandidateStatusSummary,
   countCandidatesByStatus,
   countDeadLetteredEvaluations,
   countEvaluatingCandidates,
@@ -14,6 +13,7 @@ import {
   type EvaluatedCandidateRow,
 } from './queries';
 import { EVALUATION_STATUSES } from './rules/contracts';
+import readCandidateStatusCounts from './status-counts-cache';
 
 /**
  * Data orchestration for `/products/pipeline`: which query backs which tab,
@@ -134,7 +134,7 @@ export default async function resolvePipelinePageData(
     // counts instead of waiting for them, keeping today's single round trip.
     const firstPage = resolvePageWindow(0, 1, PIPELINE_PAGE_SIZE);
     const [counts, searchTotal, firstPageRows] = await Promise.all([
-      countCandidateStatusSummary(sellerAccountId),
+      readCandidateStatusCounts(sellerAccountId),
       search === '' ? null : countTabRows(sellerAccountId, tab, search),
       requestedPage === 1
         ? listTabRows(sellerAccountId, tab, firstPage, search)

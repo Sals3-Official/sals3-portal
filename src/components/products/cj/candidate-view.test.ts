@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { displayName, supplierPriceUsd } from './candidate-view';
+import { displayName, imageUrl, supplierPriceUsd } from './candidate-view';
 
 /**
  * `displayName` is the single name resolver behind all five pipeline tables,
@@ -149,5 +149,53 @@ describe('supplierPriceUsd', () => {
     expect(supplierPriceUsd(row({}))).toBeNull();
     expect(supplierPriceUsd(row({ feedSnapshot: feedAt(null) }))).toBeNull();
     expect(supplierPriceUsd(row({ feedSnapshot: 'not an object' }))).toBeNull();
+  });
+});
+
+/**
+ * The host check on the read path. `feedSnapshotSchema.imageUrl` is a plain
+ * string and `cjImageUrl` only guards the discovery WRITE path, so without this
+ * a value planted by a manual UPDATE, a backfill, or a future ingest path would
+ * become a browser GET from the seller's session - and the custom image loader
+ * passes a non-CJ address through unchanged.
+ */
+describe('imageUrl', () => {
+  function withImage(address: unknown) {
+    return {
+      evaluation: {
+        feedSnapshot: { ...feed('Bracelet'), imageUrl: address },
+      },
+    };
+  }
+
+  it('accepts an https address on an allow-listed CJ host', () => {
+    const address = 'https://cf.cjdropshipping.com/quick/product/a.jpg';
+
+    expect(imageUrl(withImage(address))).toBe(address);
+    expect(
+      imageUrl(withImage('https://oss-cf.cjdropshipping.com/product/b.jpg')),
+    ).toBe('https://oss-cf.cjdropshipping.com/product/b.jpg');
+  });
+
+  it('rejects a lookalike host, a bare http address, and a relative path', () => {
+    [
+      'https://cf.cjdropshipping.com.evil.example.com/c.jpg',
+      'https://notcf.cjdropshipping.com/c.jpg',
+      'https://evil.example.com/c.jpg',
+      'http://cf.cjdropshipping.com/a.jpg',
+      '/local/path.jpg',
+      'not a url at all',
+    ].forEach((address) => {
+      expect(imageUrl(withImage(address))).toBeNull();
+    });
+  });
+
+  it('returns null for an absent address and an unparseable snapshot', () => {
+    expect(imageUrl(withImage(null))).toBeNull();
+    expect(imageUrl(withImage(''))).toBeNull();
+    expect(imageUrl({ evaluation: { feedSnapshot: null } })).toBeNull();
+    expect(
+      imageUrl({ evaluation: { feedSnapshot: { junk: true } } }),
+    ).toBeNull();
   });
 });

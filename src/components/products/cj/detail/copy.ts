@@ -56,6 +56,31 @@ export const CAVEAT_COPY = {
     'Look this up in your own CJ session. No supplier link is offered from here, and no credential is ever shown.',
 } as const;
 
+/**
+ * The image address is the ONLY image data the database holds
+ * (`candidate_evaluations.feed_snapshot.imageUrl`). `supplier_snapshots.evidence`
+ * keeps `usableImageCount` and discards CJ's `productImageSet` inside
+ * `countUsableImages()`, and `product_media_sources` is empty and keyed to
+ * `products.id`. So: one image, never a gallery, until someone funds a re-fetch.
+ *
+ * This is a FIELD-level absence, which is why it does not reuse
+ * `ABSENT_COPY.notFetched` - in this drawer "Not fetched from CJ yet" already
+ * means the CJ detail-evidence fetch, and borrowing it here would tell a
+ * reviewer a detail fetch is pending when that is unrelated.
+ */
+export const IMAGE_COPY = {
+  noAddressTitle: 'No image address captured',
+  noAddress:
+    'Discovery recorded no image address for this candidate. That is a gap in what was captured - it does not mean the product has no photo. CJ may not have returned one on the listing row, the row may predate the day this field started being stored, or the address it returned was not on an allowed CJ image host and was dropped.',
+  /**
+   * Appended when evidence counted usable images but no address was stored. The
+   * drawer would otherwise claim "N usable images" beside an empty box and leave
+   * a reviewer to guess which number to believe.
+   */
+  countedButUnstored: (count: number) =>
+    `CJ's detail fetch counted ${count} usable image${count === 1 ? '' : 's'}, but no address for any of them was stored.`,
+} as const;
+
 /** Shown when `?candidate=` names a candidate this seller cannot read - for any reason. */
 export const MISSING_COPY = {
   title: 'Not in your pipeline',

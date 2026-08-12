@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+// `updateTag` and `unstable_cache` joined the surface when the status-count
+// cache landed: `actions.ts` imports the cache module for its tag, and that
+// module imports `unstable_cache`. A partial mock throws on the missing export.
+vi.mock('next/cache', () => ({
+  revalidatePath: vi.fn(),
+  updateTag: vi.fn(),
+  unstable_cache: (fn: unknown) => fn,
+}));
 
 vi.mock('@/lib/db/client', () => ({
   default: () => ({

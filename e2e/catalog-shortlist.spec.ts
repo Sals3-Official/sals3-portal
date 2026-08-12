@@ -447,3 +447,44 @@ test.describe('candidate detail drawer', () => {
     await expect(page).not.toHaveURL(/[?&]candidate=/);
   });
 });
+
+test.describe('candidate detail drawer feedback', () => {
+  /**
+   * The pending state, asserted where it is actually observable. A unit test
+   * cannot see it: with a mocked router the transition commits before any
+   * assertion runs. Delaying the RSC navigation is what makes this deterministic
+   * rather than a race against a real server.
+   */
+  test('a clicked row reports itself busy while the drawer loads', async ({
+    page,
+  }) => {
+    test.skip(
+      !isDatabaseConfigured(),
+      'DATABASE_URL not configured in this environment',
+    );
+
+    await page.goto('/products/pipeline?tab=all');
+    await page
+      .getByRole('heading', { name: 'Product Sourcing', level: 1 })
+      .waitFor({ timeout: 30_000 });
+
+    const rows = page.locator('tbody tr');
+
+    test.skip((await rows.count()) === 0, 'no candidates in this database');
+
+    await page.route('**/products/pipeline?*', async (route) => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 1_500);
+      });
+      await route.continue();
+    });
+
+    const first = rows.first();
+
+    await first.click();
+    await expect(first).toHaveAttribute('aria-busy', 'true');
+
+    await page.unroute('**/products/pipeline?*');
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 30_000 });
+  });
+});
