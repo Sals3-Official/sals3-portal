@@ -34,7 +34,7 @@ const bodySchema = z
      * keeps one request inside `maxDuration` and keeps the published burst
      * proportionate to what the queue drains.
      */
-    limit: z.number().int().min(1).max(2000).default(500),
+    limit: z.number().int().min(1).max(600).default(600),
     supplierConnectionId: z.uuid().optional(),
   })
   .strict();

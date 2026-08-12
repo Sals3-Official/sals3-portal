@@ -300,11 +300,11 @@ async function fetchPage(
 ): Promise<{ outcome: 'PAGE'; page: CatalogPage } | { outcome: 'PARKED' }> {
   const db = getDb();
 
-  // Backlog-first, then the owner's new-PID ceiling - BEFORE the supplier
+  // Backlog-first, then the owner's rolling new-PID wave - BEFORE the supplier
   // call, never after. `requiredCapacity` is this bounded request's worst
-  // case (one page can bring at most `DISCOVERY_PAGE_SIZE` new PIDs), so the
-  // ceiling is reached exactly or safely underfilled by less than one page,
-  // and a page we could not fully ingest is never requested at all.
+  // case (one page can bring at most `DISCOVERY_PAGE_SIZE` new PIDs), so a
+  // wave is reached exactly or safely underfilled by less than one page, and
+  // a page we could not fully ingest is never requested at all.
   const intake = await assessIntakeGate(db, {
     supplierConnectionId: context.connection.id,
     requiredCapacity: DISCOVERY_PAGE_SIZE,
@@ -317,14 +317,21 @@ async function fetchPage(
       await drainExistingBacklog(context.connection.id);
     }
 
+    let detail: string;
+
+    if (intake.reason === 'BACKLOG_DRAIN_PENDING') {
+      detail = `Deferred: ${intake.backlogCount} actionable Candidate Pipeline rows must drain before a new product/list request.`;
+    } else if (intake.reason === 'NEW_PID_WAVE_DRAIN_PENDING') {
+      detail = `Deferred: current ${intake.waveSize}-product wave is full at ${intake.admittedCount}/${intake.limitValue}; ${intake.activeEvaluationWork} active Candidate Pipeline rows must finish before the next wave opens.`;
+    } else {
+      detail = `Deferred: ${intake.admittedCount}/${intake.limitValue} new PIDs admitted, ${intake.remainingCapacity} remaining (need ${DISCOVERY_PAGE_SIZE}).`;
+    }
+
     await recordDiscoveryFailure(db, {
       scope: 'DISCOVERY_PARTITION',
       referenceId: lease.row.id,
       errorCode: intake.reason,
-      detail:
-        intake.reason === 'BACKLOG_DRAIN_PENDING'
-          ? `Deferred: ${intake.backlogCount} actionable Candidate Pipeline rows must drain before a new product/list request.`
-          : `Deferred: ${intake.admittedCount}/${intake.limitValue} new PIDs admitted, ${intake.remainingCapacity} remaining (need ${DISCOVERY_PAGE_SIZE}).`,
+      detail,
       attempts: lease.row.attempts,
     });
     // A pause is a pause: no checkpoint advances, no coverage is claimed,
@@ -431,11 +438,11 @@ async function rejectInvalidPage(
 
 /**
  * Ingests every product on one validated page. Returns false when the
- * new-PID ceiling was reached mid-page - only possible when a concurrent
+ * current new-PID wave was exhausted mid-page - only possible when a concurrent
  * worker drained the capacity the pre-flight had already reserved headroom
  * for. Nothing is dropped: the caller parks WITHOUT advancing any cursor or
  * claiming coverage, and the idempotent re-delivery finishes the same page
- * once the owner raises the ceiling.
+ * once the active pipeline work drains and the next wave opens.
  */
 async function ingestPageProducts(
   lease: PartitionLease,

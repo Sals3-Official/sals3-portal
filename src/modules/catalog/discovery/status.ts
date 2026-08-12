@@ -70,16 +70,17 @@ export type ConnectionDiscoveryStatus = {
     drainCompletedAt: string | null;
   };
   /**
-   * The owner's active new-unique-PID intake ceiling and how much of it is
-   * spent. `limitValue` is what the durable ledger is enforcing, which is the
-   * number that matters - not whatever the reading process has in its own
-   * environment.
+   * The owner's active rolling new-unique-PID intake wave. `currentWaveLimit`
+   * is what the durable ledger is enforcing, which is the number that matters
+   * - not whatever the reading process has in its own environment.
    */
   newPidCapacity: {
     enabled: boolean;
-    limitValue: number | null;
+    waveSize: number;
+    currentWaveLimit: number | null;
     admittedCount: number | null;
-    remainingCapacity: number | null;
+    remainingInWave: number | null;
+    activeEvaluationWork: number;
     capReachedAt: string | null;
   };
   /** Curated CJ lanes: cursor, counters, and the exact current pause reason. */

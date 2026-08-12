@@ -31,7 +31,7 @@ const SCANNED_DIRECTORIES = [
 /**
  * Paid CJ evidence endpoints, plus AI-service markers. `/product/list` is
  * deliberately NOT here: it is the one legacy discovery endpoint the approved
- * policy still permits, gated by the backlog drain and the new-PID ceiling.
+ * policy still permits, gated by the backlog drain and rolling new-PID waves.
  */
 const FORBIDDEN_PATTERNS: { label: string; pattern: RegExp }[] = [
   { label: 'product detail fetch', pattern: /\/product\/query/ },

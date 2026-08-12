@@ -48,7 +48,11 @@ test.describe('Product Catalogue preview', () => {
   test('row actions offer Archive, never a bare Delete', async ({ page }) => {
     await page.goto('/listings');
 
-    await page.getByRole('button', { name: 'More' }).first().click();
+    await page
+      .getByRole('button', {
+        name: 'More actions for Corduroy Six-Panel Cap (draft)',
+      })
+      .click();
 
     await expect(page.getByRole('menuitem', { name: 'Archive' })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: 'Delete' })).toHaveCount(0);
@@ -62,8 +66,11 @@ test.describe('Product Catalogue preview', () => {
     // Filter to Draft, where no row has a real storefront URL.
     await page.getByRole('tab', { name: /^Draft/ }).click();
 
-    const moreButtons = page.getByRole('button', { name: 'More' });
-    await moreButtons.first().click();
+    await page
+      .getByRole('button', {
+        name: 'More actions for Corduroy Six-Panel Cap (draft)',
+      })
+      .click();
 
     await expect(
       page.getByRole('menuitem', { name: /View Live Page/ }),

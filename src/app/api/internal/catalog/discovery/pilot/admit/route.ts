@@ -22,7 +22,7 @@ export const maxDuration = 60;
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
 const bodySchema = z
-  .object({ limit: z.number().int().min(1).max(500).optional() })
+  .object({ limit: z.number().int().min(1).max(600).optional() })
   .strict();
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const result = await admitPilotCandidates({ limit: body.limit ?? 100 });
+    const result = await admitPilotCandidates({ limit: body.limit ?? 600 });
 
     // A failed publish has no queue delivery behind it to redeliver-and-drain
     // later, so the admitted rows would sit QUEUED with nothing in flight.

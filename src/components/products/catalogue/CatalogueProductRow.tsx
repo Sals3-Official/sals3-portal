@@ -208,6 +208,7 @@ export default function CatalogueProductRow({
                 render={
                   <button
                     type="button"
+                    aria-label={`More actions for ${product.name}`}
                     className="inline-flex items-center gap-0.5 text-sm text-muted-foreground hover:text-foreground"
                   >
                     More

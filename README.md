@@ -73,6 +73,13 @@ Then fill in `CJ_API_KEY` in `.env.local` — used only by the one-time
 bootstrap below; nothing reads it at request time anymore. `.env.local`
 is ignored by git and must never be committed.
 
+For Vercel-backed keys, use the linked project instead of copying secrets by
+hand:
+
+```bash
+npx vercel env pull .env.local --environment development --yes
+```
+
 Set `SUPPLIER_CREDENTIAL_MASTER_KEY_BASE64` (generate with
 `openssl rand -base64 32`) so supplier credentials in
 [Supplier Apps](#supplier-apps-multi-tenant-provider-connections) can be
@@ -699,13 +706,13 @@ re-opening on its own, bounded per call:
 curl -X POST "$PORTAL/api/internal/catalog/evaluations/recheck-policy-version" \
   -H "Authorization: Bearer $DISCOVERY_CONTROL_SECRET" \
   -H 'Content-Type: application/json' \
-  -d '{"limit":500}'
+  -d '{"limit":600}'
 ```
 
 It returns rows to `QUEUED` with admission `POLICY_VERSION_CHANGED`, publishes
 their evaluation messages, and reports `requeued` plus `remaining` per
 connection so the next call is an informed decision rather than a guess.
-`limit` defaults to 500 and is capped at 2000. Re-running is safe: a duplicate
+`limit` defaults to 600 and is capped at 600. Re-running is safe: a duplicate
 message finds nothing claimable.
 
 It runs while discovery is **paused**, deliberately, and this is only sound
@@ -780,7 +787,10 @@ must conserve them.
 The lean-intake tables and controls are created by
 `0014_lean_supplier_intake.sql`. It follows the canonical catalog migration
 `0013_cold_timeslip.sql`; apply both through the normal `npm run db:migrate`
-flow on a fresh or correctly migrated database.
+flow on a fresh or correctly migrated database. `0016_rolling_pid_waves.sql`
+then converts any existing lifetime-cap ledger into rolling 600-product waves
+by freezing the current wave at the already-admitted count until active
+pipeline work drains.
 
 ### What no longer calls CJ
 
@@ -837,30 +847,30 @@ recording `evidenceKind: MANUAL_SUPPLIER_WEBSITE_INSPECTION` and
 There is deliberately **no** "check inventory through the CJ API" button. No
 supplier credential or supplier deep link is exposed to seller staff.
 
-### New-PID intake ceiling — active policy
+### Rolling new-PID intake waves — active policy
 
-`CATALOG_NEW_DISCOVERY_PID_LIMIT` (default **5000**) is a ceiling on **new
-unique CJ product PIDs admitted per supplier connection**, not on HTTP
-requests. It is the active intake policy until the owner changes it: it does
-not expire, reset, or raise itself, and no seller/admin UI control can move
-it. An unset value means the default; a value that is present but not a
-positive integer throws where discovery records it, rather than silently
-becoming a different ceiling.
+`CATALOG_NEW_DISCOVERY_WAVE_SIZE` (default **600**) controls **new unique CJ
+product PIDs admitted per supplier connection per wave**, not HTTP requests.
+After a wave fills, discovery pauses new `product/list` calls until every
+`QUEUED`, `EVALUATING`, and retryable Candidate Pipeline row settles. An unset
+value means the default; a value that is present but not a positive integer
+throws where discovery records it, rather than silently becoming a different
+wave size.
 
-Enforcement lives in `discovery_pid_capacities`. Capacity is taken by a
-conditional `UPDATE ... WHERE admitted_count < limit_value` **inside the same
-transaction that inserts the candidate**, so concurrent workers and
-at-least-once redelivery cannot race past it, and a database CHECK constraint
-backs it up. Re-observing a known PID consumes nothing; a worker that loses an
-insert race returns its unit.
+Enforcement lives in `discovery_pid_capacities`. `limit_value` is the current
+wave edge. Capacity is taken by a conditional
+`UPDATE ... WHERE admitted_count < limit_value` **inside the same transaction
+that inserts the candidate**, so concurrent workers and at-least-once
+redelivery cannot race past it, and a database CHECK constraint backs it up.
+Re-observing a known PID consumes nothing; a worker that loses an insert race
+returns its unit.
 
-Before any supplier page, a lane requires remaining capacity ≥ the page size,
-so a page it could not fully ingest is never requested. The ceiling is
-therefore **exact or safely underfilled by less than one page — never
-exceeded, never partially ingested, never silently truncated.** A refusal
-persists `NEW_PID_CAP_REACHED`, records the exact counts, advances no
-checkpoint, claims no coverage, and leaves the unit resumable. Raising the
-limit resumes from the same durable ledger.
+Before any supplier page, a lane requires remaining wave capacity ≥ the page
+size, so a page it could not fully ingest is never requested. A full wave with
+active work persists `NEW_PID_WAVE_DRAIN_PENDING`, records the active count,
+advances no checkpoint, claims no coverage, and leaves the unit resumable.
+When active work reaches zero, the next request atomically opens the next wave
+at `admitted_count + 600`.
 
 ### One-time existing-backlog drain
 

@@ -242,35 +242,32 @@ export const PILOT_EVIDENCE_CAP = envInt('CATALOG_PILOT_EVIDENCE_CAP', 2_000);
 export const PILOT_BASELINE_COUNT = envInt('CATALOG_PILOT_BASELINE_COUNT', 0);
 
 /**
- * ACTIVE OWNER INTAKE POLICY (2026-08-12): the maximum number of NEW CJ
- * product PIDs that broad discovery may admit per supplier connection.
+ * ACTIVE OWNER INTAKE POLICY (2026-08-12): rolling NEW CJ product PID waves.
  *
- * This is a ceiling on unique products, NOT on HTTP requests, and NOT a
- * temporary test cap. It does not expire, reset, or raise itself; only the
- * owner changing `CATALOG_NEW_DISCOVERY_PID_LIMIT` changes it, and a raise
- * resumes from the durable ledger in `discovery_pid_capacities` rather than
- * restarting or duplicating discovery. No seller/admin UI control may move
- * it - that was explicitly out of scope for the task that introduced it.
+ * Discovery may admit only this many new unique PIDs, then must wait until
+ * every queued/evaluating/retryable row in the Candidate Pipeline settles
+ * before opening the next wave. The value is a wave size, NOT a lifetime cap
+ * and NOT an HTTP request count. No seller/admin UI control may move it.
  *
  * Validated strictly and lazily: an unset value means the owner-approved
  * default, while a value that is present but not a positive integer is a
  * real misconfiguration and throws where discovery can record it, instead of
- * silently degrading to a different ceiling than the operator intended.
+ * silently degrading to a different wave size than the operator intended.
  */
-export const DEFAULT_NEW_DISCOVERY_PID_LIMIT = 5_000;
+export const DEFAULT_NEW_DISCOVERY_WAVE_SIZE = 600;
 
-export function newDiscoveryPidLimit(): number {
-  const raw = process.env.CATALOG_NEW_DISCOVERY_PID_LIMIT;
+export function newDiscoveryWaveSize(): number {
+  const raw = process.env.CATALOG_NEW_DISCOVERY_WAVE_SIZE;
 
   if (raw === undefined || raw.trim() === '') {
-    return DEFAULT_NEW_DISCOVERY_PID_LIMIT;
+    return DEFAULT_NEW_DISCOVERY_WAVE_SIZE;
   }
 
   const parsed = Number(raw.trim());
 
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(
-      'CATALOG_NEW_DISCOVERY_PID_LIMIT must be a positive integer.',
+      'CATALOG_NEW_DISCOVERY_WAVE_SIZE must be a positive integer.',
     );
   }
 

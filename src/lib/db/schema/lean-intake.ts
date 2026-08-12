@@ -30,7 +30,7 @@ import { supplierConnections } from './supplier-connections';
  * - the one-time existing-backlog drain gate every discovery lane consults
  *   before its first broad `product/list` request;
  * - the durable new-unique-PID capacity ledger that enforces the owner's
- *   5,000-PID intake ceiling exactly, without overshoot, across workers;
+ *   rolling 600-PID intake waves exactly, without overshoot, across workers;
  * - curated-lane cursors, deliberately OUTSIDE the coverage cycle/partition
  *   machinery so a curated subset can never mark catalogue coverage complete.
  */
@@ -190,20 +190,19 @@ export const discoveryBacklogGates = pgTable(
 // --- New-unique-PID intake ceiling -------------------------------------------------
 
 /**
- * Durable capacity ledger for the owner's new-PID intake ceiling (default
- * 5,000 per supplier connection, `CATALOG_NEW_DISCOVERY_PID_LIMIT`).
+ * Durable capacity ledger for the owner's rolling new-PID intake waves
+ * (default 600 per supplier connection, `CATALOG_NEW_DISCOVERY_WAVE_SIZE`).
  *
  * A process-local counter would be wrong twice over: Vercel restarts lose it,
  * and concurrent queue consumers would each keep their own. Capacity is
  * therefore consumed by a conditional `UPDATE ... WHERE admitted_count <
  * limit_value` in the SAME transaction that inserts the candidate row, so the
- * ceiling can never be overshot no matter how work is redelivered.
+ * current wave can never be overshot no matter how work is redelivered.
  *
- * `limitValue` is a persisted snapshot of the configured limit, so the status
- * endpoint reports what the ledger is actually enforcing rather than what the
- * current process happens to have in its environment. Raising the configured
- * limit raises this value and resumes from the same durable count - it never
- * restarts, duplicates, or loses coverage.
+ * `limitValue` is the current wave edge, so the status endpoint reports what
+ * the ledger is actually enforcing rather than what the current process
+ * happens to have in its environment. Once active pipeline work drains, the
+ * gate advances this edge to `admittedCount + waveSize`.
  */
 export const discoveryPidCapacities = pgTable(
   'discovery_pid_capacities',
