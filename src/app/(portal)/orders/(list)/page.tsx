@@ -124,7 +124,11 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   const attentionCount = counts.get('attention') ?? 0;
 
   return (
-    <div className="flex flex-col gap-4">
+    // Container geometry taken from the design prototype: 1440px capped and
+    // centred, 24/28/60 padding, 18px between sections. Left full-width the
+    // four-column card stretches until the route and status columns sit a
+    // screen apart from the items they describe.
+    <div className="mx-auto flex max-w-[1440px] flex-col gap-[18px] px-7 pt-6 pb-15">
       <PageHeader
         title="Orders"
         description="One row is one parcel. Prepaid orders only."
@@ -168,49 +172,46 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
         </DisclosureBanner>
       ) : null}
 
-      {/* Chip rows sit in their own card so a lane with filters reads as a
-          distinct control surface, and a lane without them loses the card
-          entirely rather than leaving an empty strip. */}
-      {query.lane === 'to-process' || query.lane === 'attention' ? (
-        <div className="flex flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3.5">
-          {query.lane === 'to-process' && routeChips.length > 2 ? (
-            <OrdersChipRow
-              label="Route"
-              chips={routeChips}
-              active={query.route}
-              hrefFor={(key) =>
-                buildHref('/orders', currentParams, {
-                  route: key === 'all' ? null : key,
-                })
-              }
-            />
-          ) : null}
-          {query.lane === 'to-process' ? (
-            <OrdersChipRow
-              label="Stage"
-              chips={stageChips}
-              active={query.stage}
-              hrefFor={(key) =>
-                buildHref('/orders', currentParams, {
-                  stage: key === 'all' ? null : key,
-                })
-              }
-            />
-          ) : null}
-          {query.lane === 'attention' ? (
-            <OrdersChipRow
-              label="Reason"
-              chips={ATTENTION_CHIPS}
-              active={query.reason}
-              hrefFor={(key) =>
-                buildHref('/orders', currentParams, {
-                  reason: key === 'all' ? null : key,
-                })
-              }
-            />
-          ) : null}
-        </div>
-      ) : null}
+      {/* Route and Stage are always available - a seller filtering by supplier
+          or by what they still have to do wants that in every lane, not only
+          while standing in To process. Reason is the exception: it describes
+          why a parcel needs attention, so it only means anything there. */}
+      <div className="flex flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3.5">
+        {routeChips.length > 2 ? (
+          <OrdersChipRow
+            label="Route"
+            chips={routeChips}
+            active={query.route}
+            hrefFor={(key) =>
+              buildHref('/orders', currentParams, {
+                route: key === 'all' ? null : key,
+              })
+            }
+          />
+        ) : null}
+        <OrdersChipRow
+          label="Stage"
+          chips={stageChips}
+          active={query.stage}
+          hrefFor={(key) =>
+            buildHref('/orders', currentParams, {
+              stage: key === 'all' ? null : key,
+            })
+          }
+        />
+        {query.lane === 'attention' ? (
+          <OrdersChipRow
+            label="Reason"
+            chips={ATTENTION_CHIPS}
+            active={query.reason}
+            hrefFor={(key) =>
+              buildHref('/orders', currentParams, {
+                reason: key === 'all' ? null : key,
+              })
+            }
+          />
+        ) : null}
+      </div>
 
       <OrdersSearchBar
         fields={ORDER_SEARCH_FIELDS.map((field) => ({

@@ -72,20 +72,26 @@ test.describe('Seller Center orders', () => {
     await expect(page.getByText('3 parcels')).toBeVisible();
   });
 
-  test('chips render only in the lanes that have a decision to make', async ({
+  test('route and stage filters are available in every lane', async ({
     page,
   }) => {
     await page.goto('/orders');
-    await expect(page.getByText('Stage', { exact: true })).toBeHidden();
-
-    await page.goto('/orders?lane=to-process');
+    await expect(page.getByText('Route', { exact: true })).toBeVisible();
     await expect(page.getByText('Stage', { exact: true })).toBeVisible();
 
+    await page.goto('/orders?lane=shipping');
+    await expect(page.getByText('Stage', { exact: true })).toBeVisible();
+  });
+
+  test('the reason filter appears only where a reason exists', async ({
+    page,
+  }) => {
+    // Reason describes why a parcel needs attention, so it means nothing
+    // anywhere else.
     await page.goto('/orders?lane=attention');
     await expect(page.getByText('Reason', { exact: true })).toBeVisible();
 
     await page.goto('/orders?lane=shipping');
-    await expect(page.getByText('Stage', { exact: true })).toBeHidden();
     await expect(page.getByText('Reason', { exact: true })).toBeHidden();
   });
 

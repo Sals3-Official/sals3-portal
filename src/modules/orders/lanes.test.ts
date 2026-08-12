@@ -180,17 +180,18 @@ describe('filterParcels', () => {
     ).toEqual(['b']);
   });
 
-  it('ignores a stale stage outside to-process rather than emptying the list', () => {
-    // A seller switching lanes carries `?stage=` along in the URL. Honouring it
-    // in a lane that renders no stage chips would blank a list with no visible
-    // cause.
+  it('applies stage in every lane, since every lane offers the chip', () => {
+    // Parcels outside To process carry no stage, so a stage filter empties
+    // those lanes. That is the honest result of the chip the seller clicked,
+    // not a bug - silently ignoring it would leave the chip looking active
+    // while changing nothing.
     expect(
       filterParcels(parcels, {
         ...EMPTY_FILTER,
         lane: 'attention',
         stage: 'supplier-preparing',
-      }).map((parcel) => parcel.id),
-    ).toEqual(['c', 'd']);
+      }),
+    ).toEqual([]);
   });
 
   it('applies reason only inside attention', () => {

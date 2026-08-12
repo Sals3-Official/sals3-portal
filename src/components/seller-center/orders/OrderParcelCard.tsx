@@ -29,9 +29,9 @@ type OrderParcelCardProps = {
  * bulk bar acts on that set, so which rows are in it must never be ambiguous.
  */
 const HEADER_TONE_STYLES: Record<ParcelStatusTone, string> = {
-  neutral: 'bg-card',
-  info: 'bg-card',
-  success: 'bg-card',
+  neutral: 'bg-surface',
+  info: 'bg-surface',
+  success: 'bg-surface',
   warning: 'bg-warning-surface',
   danger: 'bg-danger-surface',
 };

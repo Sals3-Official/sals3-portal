@@ -151,13 +151,11 @@ export function filterParcels(
       return false;
     }
 
-    if (
-      filter.lane === 'to-process' &&
-      filter.stage !== 'all' &&
-      parcel.stage !== filter.stage
-    ) {
-      return false;
-    }
+    // Stage applies in every lane, because the chip row is offered in every
+    // lane. A parcel outside To process has no stage at all, so a stage filter
+    // correctly empties those lanes rather than silently ignoring the chip the
+    // seller just clicked.
+    if (filter.stage !== 'all' && parcel.stage !== filter.stage) return false;
 
     if (
       filter.lane === 'attention' &&
