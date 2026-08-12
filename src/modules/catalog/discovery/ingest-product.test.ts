@@ -106,8 +106,8 @@ beforeEach(() => {
     source: 'test',
     effective: 'ENABLED',
   });
-  // Default: the owner's new-PID ceiling has room. Individual tests below
-  // refuse capacity to prove the ceiling is exact and never overshot.
+  // Default: the owner's current new-PID wave has room. Individual tests
+  // below refuse capacity to prove the wave is exact and never overshot.
   asMock(tryConsumeNewPidCapacity).mockResolvedValue(true);
   asMock(findCandidateByConnectionAndExternalId).mockResolvedValue(null);
 });
@@ -258,12 +258,12 @@ describe('ingestDiscoveredProduct', () => {
 });
 
 /**
- * Owner new-PID intake ceiling and curated-signal recording (2026-08-12).
+ * Owner new-PID intake wave and curated-signal recording (2026-08-12).
  * Capacity is consumed inside the same transaction as the candidate insert,
- * which is what makes the ceiling exact under at-least-once delivery and
+ * which is what makes the wave exact under at-least-once delivery and
  * concurrent workers.
  */
-describe('ingestDiscoveredProduct - new-PID ceiling and CJ signals', () => {
+describe('ingestDiscoveredProduct - new-PID wave and CJ signals', () => {
   it('consumes exactly one capacity unit for a genuinely new PID', async () => {
     asMock(insertCandidateIfAbsent).mockResolvedValue({ id: 'candidate-1' });
 
@@ -291,7 +291,7 @@ describe('ingestDiscoveredProduct - new-PID ceiling and CJ signals', () => {
     expect(tryConsumeNewPidCapacity).not.toHaveBeenCalled();
   });
 
-  it('persists NOTHING when the ceiling is reached - never a partial admission', async () => {
+  it('persists NOTHING when the current wave is full - never a partial admission', async () => {
     asMock(tryConsumeNewPidCapacity).mockResolvedValue(false);
 
     await expect(

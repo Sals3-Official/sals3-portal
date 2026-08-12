@@ -316,11 +316,12 @@ beforeEach(() => {
     { id: 'child-2' },
   ]);
   asMock(ingestDiscoveredProduct).mockResolvedValue('created');
-  // Default: the one-time backlog drain is complete and the owner's new-PID
-  // ceiling has room. Individual tests below override this to prove the gate.
+  // Default: the one-time backlog drain is complete and the owner's rolling
+  // new-PID wave has room. Individual tests below override this to prove the
+  // gate.
   asMock(assessIntakeGate).mockResolvedValue({
     allowed: true,
-    remainingCapacity: 5_000,
+    remainingCapacity: 600,
   });
   asMock(drainExistingBacklog).mockResolvedValue({
     requeued: 0,
@@ -712,10 +713,10 @@ describe('handlePartition - atomic bucket reconciliation', () => {
 
 /**
  * Owner intake controls (2026-08-12): the one-time existing-backlog drain
- * gate and the 5,000 new-unique-PID ceiling. Both are consulted BEFORE the
+ * gate and rolling 600 new-unique-PID waves. Both are consulted BEFORE the
  * supplier call, and both are pauses - never a completed catalogue cycle.
  */
-describe('handlePartition - backlog-first gate and new-PID ceiling', () => {
+describe('handlePartition - backlog-first gate and new-PID waves', () => {
   it('makes no product/list request while actionable backlog remains, and drains it locally instead', async () => {
     const row = partitionRow();
 
@@ -725,8 +726,10 @@ describe('handlePartition - backlog-first gate and new-PID ceiling', () => {
       allowed: false,
       reason: 'BACKLOG_DRAIN_PENDING',
       backlogCount: 42,
-      remainingCapacity: 5_000,
-      limitValue: 5_000,
+      activeEvaluationWork: 42,
+      remainingCapacity: 600,
+      limitValue: 600,
+      waveSize: 600,
       admittedCount: 0,
     });
 
@@ -746,8 +749,10 @@ describe('handlePartition - backlog-first gate and new-PID ceiling', () => {
       allowed: false,
       reason: 'BACKLOG_DRAIN_PENDING',
       backlogCount: 42,
-      remainingCapacity: 5_000,
-      limitValue: 5_000,
+      activeEvaluationWork: 42,
+      remainingCapacity: 600,
+      limitValue: 600,
+      waveSize: 600,
       admittedCount: 0,
     });
 
@@ -780,7 +785,7 @@ describe('handlePartition - backlog-first gate and new-PID ceiling', () => {
     asMock(leasePartition).mockResolvedValue({ row, leaseToken: 'lease-1' });
     asMock(assessIntakeGate).mockResolvedValue({
       allowed: true,
-      remainingCapacity: 5_000,
+      remainingCapacity: 600,
     });
     listCatalogPageMock.mockResolvedValue(catalogPage([product('p1')]));
 
@@ -788,6 +793,35 @@ describe('handlePartition - backlog-first gate and new-PID ceiling', () => {
 
     expect(listCatalogPageMock).toHaveBeenCalledTimes(1);
     expect(coverPartition).toHaveBeenCalled();
+  });
+
+  it('never calls the supplier when a full wave is still draining', async () => {
+    const row = partitionRow();
+
+    asMock(findPartitionById).mockResolvedValue(row);
+    asMock(leasePartition).mockResolvedValue({ row, leaseToken: 'lease-1' });
+    asMock(assessIntakeGate).mockResolvedValue({
+      allowed: false,
+      reason: 'NEW_PID_WAVE_DRAIN_PENDING',
+      backlogCount: 0,
+      activeEvaluationWork: 1170,
+      remainingCapacity: 0,
+      limitValue: 600,
+      waveSize: 600,
+      admittedCount: 600,
+    });
+
+    await handlePartition(MESSAGE);
+
+    expect(listCatalogPageMock).not.toHaveBeenCalled();
+    expect(recordDiscoveryFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        errorCode: 'NEW_PID_WAVE_DRAIN_PENDING',
+        detail: expect.stringContaining('1170'),
+      }),
+    );
+    expect(coverPartition).not.toHaveBeenCalled();
   });
 
   it('never calls the supplier when remaining capacity cannot cover a whole page', async () => {
@@ -799,9 +833,11 @@ describe('handlePartition - backlog-first gate and new-PID ceiling', () => {
       allowed: false,
       reason: 'NEW_PID_CAP_REACHED',
       backlogCount: 0,
+      activeEvaluationWork: 0,
       remainingCapacity: 12,
-      limitValue: 5_000,
-      admittedCount: 4_988,
+      limitValue: 600,
+      waveSize: 600,
+      admittedCount: 588,
     });
 
     await handlePartition(MESSAGE);
@@ -811,7 +847,7 @@ describe('handlePartition - backlog-first gate and new-PID ceiling', () => {
       expect.anything(),
       expect.objectContaining({
         errorCode: 'NEW_PID_CAP_REACHED',
-        detail: expect.stringContaining('4988/5000'),
+        detail: expect.stringContaining('588/600'),
       }),
     );
     expect(coverPartition).not.toHaveBeenCalled();

@@ -34,15 +34,15 @@ function authorized(body = '{}'): NextRequest {
 function result(failed = 0) {
   return {
     policyVersion: 'catalog-eval-policy-placeholder-v1+buyer-destination:v2',
-    requeued: 500,
+    requeued: 600,
     results: [
       {
         supplierConnectionId: 'connection-1',
-        requeued: 500,
+        requeued: 600,
         remaining: 86_000,
       },
     ],
-    outbox: { dispatched: 500, failed },
+    outbox: { dispatched: 600, failed },
   };
 }
 
@@ -71,7 +71,7 @@ describe('POST /api/internal/catalog/evaluations/recheck-policy-version', () => 
 
     expect(response.status).toBe(200);
     expect(recheckPolicyVersionMismatches).toHaveBeenCalledWith({
-      limit: 500,
+      limit: 600,
       supplierConnectionId: undefined,
     });
   });
@@ -93,7 +93,7 @@ describe('POST /api/internal/catalog/evaluations/recheck-policy-version', () => 
   });
 
   it('rejects a limit outside the bound, an unknown field, and a bad connection id', async () => {
-    const tooBig = await POST(authorized(JSON.stringify({ limit: 2001 })));
+    const tooBig = await POST(authorized(JSON.stringify({ limit: 601 })));
     const zero = await POST(authorized(JSON.stringify({ limit: 0 })));
     const unknown = await POST(authorized(JSON.stringify({ nope: 1 })));
     const badId = await POST(

@@ -213,7 +213,7 @@ export default async function handleCuratedLane(
   for (let i = 0; i < CURATED_PAGES_PER_INVOCATION; i += 1) {
     if (pagesFetched >= CURATED_MAX_PAGES) break;
 
-    // Backlog first, then the shared new-PID ceiling - BEFORE the call.
+    // Backlog first, then the shared rolling new-PID wave - BEFORE the call.
     // eslint-disable-next-line no-await-in-loop -- pages are sequential by rate limit.
     const intake = await assessIntakeGate(db, {
       supplierConnectionId: connection.id,
@@ -226,15 +226,22 @@ export default async function handleCuratedLane(
         await drainExistingBacklog(connection.id);
       }
 
+      let detail: string;
+
+      if (intake.reason === 'BACKLOG_DRAIN_PENDING') {
+        detail = `Deferred: ${intake.backlogCount} actionable Candidate Pipeline rows must drain first.`;
+      } else if (intake.reason === 'NEW_PID_WAVE_DRAIN_PENDING') {
+        detail = `Deferred: current ${intake.waveSize}-product wave is full at ${intake.admittedCount}/${intake.limitValue}; ${intake.activeEvaluationWork} active Candidate Pipeline rows must finish before the next wave opens.`;
+      } else {
+        detail = `Deferred: ${intake.admittedCount}/${intake.limitValue} new PIDs admitted, ${intake.remainingCapacity} remaining.`;
+      }
+
       // eslint-disable-next-line no-await-in-loop -- terminal for this invocation.
       await recordDiscoveryFailure(db, {
         scope: 'DISCOVERY_CURATED_LANE',
         referenceId: `${connection.id}:${message.lane}`,
         errorCode: intake.reason,
-        detail:
-          intake.reason === 'BACKLOG_DRAIN_PENDING'
-            ? `Deferred: ${intake.backlogCount} actionable Candidate Pipeline rows must drain first.`
-            : `Deferred: ${intake.admittedCount}/${intake.limitValue} new PIDs admitted, ${intake.remainingCapacity} remaining.`,
+        detail,
       });
       // eslint-disable-next-line no-await-in-loop -- terminal for this invocation.
       await pauseAndRetry(lease, {

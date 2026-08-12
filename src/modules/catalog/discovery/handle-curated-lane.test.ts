@@ -188,7 +188,7 @@ beforeEach(() => {
   asMock(tryAcquireRequestSlot).mockResolvedValue(true);
   asMock(assessIntakeGate).mockResolvedValue({
     allowed: true,
-    remainingCapacity: 5_000,
+    remainingCapacity: 600,
   });
   asMock(ingestDiscoveredProduct).mockResolvedValue('created');
   asMock(advanceCuratedLane).mockResolvedValue(true);
@@ -251,8 +251,10 @@ describe('handleCuratedLane', () => {
       allowed: false,
       reason: 'BACKLOG_DRAIN_PENDING',
       backlogCount: 7,
-      remainingCapacity: 5_000,
-      limitValue: 5_000,
+      activeEvaluationWork: 7,
+      remainingCapacity: 600,
+      limitValue: 600,
+      waveSize: 600,
       admittedCount: 0,
     });
 
@@ -268,14 +270,42 @@ describe('handleCuratedLane', () => {
     expect(advanceCuratedLane).not.toHaveBeenCalled();
   });
 
-  it('shares the same new-PID ledger and stops calling CJ once the ceiling is reached', async () => {
+  it('shares the same new-PID ledger and waits while a full wave is still draining', async () => {
+    asMock(assessIntakeGate).mockResolvedValue({
+      allowed: false,
+      reason: 'NEW_PID_WAVE_DRAIN_PENDING',
+      backlogCount: 0,
+      activeEvaluationWork: 1170,
+      remainingCapacity: 0,
+      limitValue: 600,
+      waveSize: 600,
+      admittedCount: 600,
+    });
+
+    await handleCuratedLane(message('CJ_TRENDING'));
+
+    expect(listCuratedPageMock).not.toHaveBeenCalled();
+    expect(recordDiscoveryFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ errorCode: 'NEW_PID_WAVE_DRAIN_PENDING' }),
+    );
+    expect(pauseCuratedLane).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ reason: 'NEW_PID_WAVE_DRAIN_PENDING' }),
+    );
+    expect(advanceCuratedLane).not.toHaveBeenCalled();
+  });
+
+  it('shares the same new-PID ledger and stops calling CJ once the wave cannot fit a page', async () => {
     asMock(assessIntakeGate).mockResolvedValue({
       allowed: false,
       reason: 'NEW_PID_CAP_REACHED',
       backlogCount: 0,
+      activeEvaluationWork: 0,
       remainingCapacity: 3,
-      limitValue: 5_000,
-      admittedCount: 4_997,
+      limitValue: 600,
+      waveSize: 600,
+      admittedCount: 597,
     });
 
     await handleCuratedLane(message('CJ_TRENDING'));

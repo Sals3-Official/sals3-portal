@@ -9,18 +9,18 @@ import {
   type DiscoveryPidCapacityRow,
 } from '@/lib/db/schema';
 import { MAX_EVALUATION_ATTEMPTS } from '../candidates/rules/policy';
-import { newDiscoveryPidLimit } from './config';
+import { newDiscoveryWaveSize } from './config';
 
 /**
  * The two durable intake controls every CJ discovery lane must clear before
  * it may make a new broad `product/list` request:
  *
  * 1. the ONE-TIME existing-backlog drain gate, and
- * 2. the new-unique-PID capacity ledger (owner ceiling, default 5,000).
+ * 2. the rolling new-unique-PID wave ledger (owner wave size, default 600).
  *
  * Both live in PostgreSQL rather than process memory on purpose. Vercel
  * restarts, at-least-once queue redelivery, and concurrent workers must all
- * observe the same state, and the PID ceiling in particular must be
+ * observe the same state, and the PID wave in particular must be
  * impossible to overshoot by racing - which is why capacity is consumed by a
  * conditional UPDATE inside the same transaction that inserts the candidate,
  * never by a read-then-write in application code.
@@ -43,22 +43,47 @@ import { newDiscoveryPidLimit } from './config';
  * - `EVALUATION_FAILED` at or past `MAX_EVALUATION_ATTEMPTS` - a dead letter
  *   that belongs to the Exception Queue and a person, not to this gate.
  */
+function activeEvaluationCondition() {
+  return or(
+    eq(candidateEvaluations.status, 'QUEUED'),
+    eq(candidateEvaluations.status, 'EVALUATING'),
+    and(
+      eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
+      lt(candidateEvaluations.attemptCount, MAX_EVALUATION_ATTEMPTS),
+    ),
+    and(
+      eq(candidateEvaluations.status, 'TEMPORARILY_INELIGIBLE'),
+      isNotNull(candidateEvaluations.nextRetryAt),
+    ),
+  );
+}
+
 function actionableBacklogCondition(activationAt: Date) {
   return and(
     lte(supplierCandidates.createdAt, activationAt),
-    or(
-      eq(candidateEvaluations.status, 'QUEUED'),
-      eq(candidateEvaluations.status, 'EVALUATING'),
-      and(
-        eq(candidateEvaluations.status, 'EVALUATION_FAILED'),
-        lt(candidateEvaluations.attemptCount, MAX_EVALUATION_ATTEMPTS),
-      ),
-      and(
-        eq(candidateEvaluations.status, 'TEMPORARILY_INELIGIBLE'),
-        isNotNull(candidateEvaluations.nextRetryAt),
-      ),
-    ),
+    activeEvaluationCondition(),
   );
+}
+
+export async function countActiveEvaluationWork(
+  executor: DbExecutor,
+  supplierConnectionId: string,
+): Promise<number> {
+  const rows = await executor
+    .select({ total: sql<number>`count(*)` })
+    .from(candidateEvaluations)
+    .innerJoin(
+      supplierCandidates,
+      eq(supplierCandidates.id, candidateEvaluations.candidateId),
+    )
+    .where(
+      and(
+        eq(supplierCandidates.supplierConnectionId, supplierConnectionId),
+        activeEvaluationCondition(),
+      ),
+    );
+
+  return Number(rows[0]?.total ?? 0);
 }
 
 export async function countActionableBacklog(
@@ -235,16 +260,14 @@ export async function findPidCapacity(
 }
 
 /**
- * Creates the ledger when absent and keeps `limitValue` aligned with the
- * owner-configured ceiling. Only a deliberate configuration change moves it;
- * nothing here ever lowers `admittedCount`, so a raise resumes from the exact
- * durable count instead of restarting or duplicating discovery.
+ * Creates the ledger when absent. Existing rows are not silently rewritten:
+ * `limitValue` is the current wave edge and moves only when a wave drains.
  */
 export async function ensurePidCapacity(
   executor: DbExecutor,
   supplierConnectionId: string,
 ): Promise<DiscoveryPidCapacityRow> {
-  const limitValue = newDiscoveryPidLimit();
+  const limitValue = newDiscoveryWaveSize();
 
   await executor
     .insert(discoveryPidCapacities)
@@ -253,20 +276,6 @@ export async function ensurePidCapacity(
       target: discoveryPidCapacities.supplierConnectionId,
     });
 
-  // Adopt a changed configured ceiling, but never below what is already
-  // admitted - the CHECK constraint would reject that, and silently
-  // "un-admitting" real products would be a lie about coverage.
-  await executor
-    .update(discoveryPidCapacities)
-    .set({ limitValue, updatedAt: new Date() })
-    .where(
-      and(
-        eq(discoveryPidCapacities.supplierConnectionId, supplierConnectionId),
-        sql`${discoveryPidCapacities.limitValue} <> ${limitValue}`,
-        lte(discoveryPidCapacities.admittedCount, limitValue),
-      ),
-    );
-
   const row = await findPidCapacity(executor, supplierConnectionId);
 
   if (row === null) {
@@ -274,6 +283,36 @@ export async function ensurePidCapacity(
   }
 
   return row;
+}
+
+/**
+ * Opens the next rolling wave with a compare-and-set. This is separate from
+ * `tryConsumeNewPidCapacity`: advancing the wave changes how many products
+ * may be admitted, while consuming capacity accounts for one new PID.
+ */
+export async function advancePidCapacityWave(
+  executor: DbExecutor,
+  supplierConnectionId: string,
+  input: { observedLimitValue: number; observedAdmittedCount: number },
+): Promise<boolean> {
+  const now = new Date();
+  const updated = await executor
+    .update(discoveryPidCapacities)
+    .set({
+      limitValue: input.observedAdmittedCount + newDiscoveryWaveSize(),
+      capReachedAt: null,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(discoveryPidCapacities.supplierConnectionId, supplierConnectionId),
+        eq(discoveryPidCapacities.limitValue, input.observedLimitValue),
+        eq(discoveryPidCapacities.admittedCount, input.observedAdmittedCount),
+      ),
+    )
+    .returning({ id: discoveryPidCapacities.id });
+
+  return updated.length > 0;
 }
 
 /**
@@ -339,32 +378,46 @@ export async function releaseNewPidCapacity(
 // --- Combined pre-flight assessment -------------------------------------------------
 
 export type IntakeGateDecision =
-  | { allowed: true; remainingCapacity: number }
+  | {
+      allowed: true;
+      remainingCapacity: number;
+      waveSize: number;
+      currentWaveLimit: number;
+      admittedCount: number;
+      activeEvaluationWork: number;
+    }
   | {
       allowed: false;
       /** Persisted verbatim as the visible pause reason. */
-      reason: 'BACKLOG_DRAIN_PENDING' | 'NEW_PID_CAP_REACHED';
+      reason:
+        | 'BACKLOG_DRAIN_PENDING'
+        | 'NEW_PID_WAVE_DRAIN_PENDING'
+        | 'NEW_PID_CAP_REACHED';
       backlogCount: number;
+      activeEvaluationWork: number;
       remainingCapacity: number;
       limitValue: number;
+      waveSize: number;
       admittedCount: number;
     };
 
 /**
  * The single pre-flight both broad and curated lanes call BEFORE any
- * `product/list` request. Backlog first, then capacity: a lane that cannot
- * fully ingest the page it is about to request does not request it, which is
- * what makes "never overshoot, never partially ingest" true by construction
- * rather than by cleanup afterwards.
+ * `product/list` request. Backlog first, then wave capacity: a lane that
+ * cannot fully ingest the page it is about to request does not request it,
+ * which is what makes "never overshoot, never partially ingest" true by
+ * construction rather than by cleanup afterwards.
  *
  * `requiredCapacity` is the bounded request's worst case - one page can bring
- * at most `pageSize` new PIDs - so the ceiling is reached exactly or safely
- * underfilled by less than one page, never exceeded.
+ * at most `pageSize` new PIDs - so a wave is reached exactly or safely
+ * underfilled by less than one page, never exceeded. Once every active
+ * evaluation settles, the next 600-product wave opens automatically.
  */
 export async function assessIntakeGate(
   executor: DbExecutor,
   input: { supplierConnectionId: string; requiredCapacity: number },
 ): Promise<IntakeGateDecision> {
+  const waveSize = newDiscoveryWaveSize();
   const gate = await ensureBacklogGate(executor, input.supplierConnectionId);
   const capacity = await ensurePidCapacity(
     executor,
@@ -392,8 +445,10 @@ export async function assessIntakeGate(
         allowed: false,
         reason: 'BACKLOG_DRAIN_PENDING',
         backlogCount,
+        activeEvaluationWork: backlogCount,
         remainingCapacity,
         limitValue: capacity.limitValue,
+        waveSize,
         admittedCount: capacity.admittedCount,
       };
     }
@@ -406,17 +461,69 @@ export async function assessIntakeGate(
   }
 
   if (remainingCapacity < input.requiredCapacity) {
+    const activeEvaluationWork = await countActiveEvaluationWork(
+      executor,
+      input.supplierConnectionId,
+    );
+
+    if (activeEvaluationWork > 0) {
+      return {
+        allowed: false,
+        reason: 'NEW_PID_WAVE_DRAIN_PENDING',
+        backlogCount: 0,
+        activeEvaluationWork,
+        remainingCapacity,
+        limitValue: capacity.limitValue,
+        waveSize,
+        admittedCount: capacity.admittedCount,
+      };
+    }
+
+    await advancePidCapacityWave(executor, input.supplierConnectionId, {
+      observedLimitValue: capacity.limitValue,
+      observedAdmittedCount: capacity.admittedCount,
+    });
+
+    const advanced = await findPidCapacity(
+      executor,
+      input.supplierConnectionId,
+    );
+    const advancedRemaining =
+      advanced === null
+        ? 0
+        : Math.max(0, advanced.limitValue - advanced.admittedCount);
+
+    if (advanced !== null && advancedRemaining >= input.requiredCapacity) {
+      return {
+        allowed: true,
+        remainingCapacity: advancedRemaining,
+        waveSize,
+        currentWaveLimit: advanced.limitValue,
+        admittedCount: advanced.admittedCount,
+        activeEvaluationWork,
+      };
+    }
+
     return {
       allowed: false,
       reason: 'NEW_PID_CAP_REACHED',
       backlogCount: 0,
-      remainingCapacity,
-      limitValue: capacity.limitValue,
-      admittedCount: capacity.admittedCount,
+      activeEvaluationWork,
+      remainingCapacity: advancedRemaining,
+      limitValue: advanced?.limitValue ?? capacity.limitValue,
+      waveSize,
+      admittedCount: advanced?.admittedCount ?? capacity.admittedCount,
     };
   }
 
-  return { allowed: true, remainingCapacity };
+  return {
+    allowed: true,
+    remainingCapacity,
+    waveSize,
+    currentWaveLimit: capacity.limitValue,
+    admittedCount: capacity.admittedCount,
+    activeEvaluationWork: 0,
+  };
 }
 
 /** Status-endpoint read model. Never creates state - a pure observation. */
@@ -433,14 +540,20 @@ export async function readIntakeGateStatus(
   };
   newPidCapacity: {
     enabled: boolean;
-    limitValue: number | null;
+    waveSize: number;
+    currentWaveLimit: number | null;
     admittedCount: number | null;
-    remainingCapacity: number | null;
+    remainingInWave: number | null;
+    activeEvaluationWork: number;
     capReachedAt: string | null;
   };
 }> {
   const gate = await findBacklogGate(executor, supplierConnectionId);
   const capacity = await findPidCapacity(executor, supplierConnectionId);
+  const activeEvaluationWork = await countActiveEvaluationWork(
+    executor,
+    supplierConnectionId,
+  );
   const actionableBacklogCount =
     gate === null
       ? null
@@ -462,12 +575,14 @@ export async function readIntakeGateStatus(
       // ledger has not been created yet because this connection has never
       // been asked to discover anything.
       enabled: capacity !== null,
-      limitValue: capacity?.limitValue ?? null,
+      waveSize: newDiscoveryWaveSize(),
+      currentWaveLimit: capacity?.limitValue ?? null,
       admittedCount: capacity?.admittedCount ?? null,
-      remainingCapacity:
+      remainingInWave:
         capacity === null
           ? null
           : Math.max(0, capacity.limitValue - capacity.admittedCount),
+      activeEvaluationWork,
       capReachedAt: capacity?.capReachedAt?.toISOString() ?? null,
     },
   };

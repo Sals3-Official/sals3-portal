@@ -38,10 +38,10 @@ import { recordDiscoverySignal } from './signal-repository';
  * stock-review state starts - and stays - `STOCK_NOT_CHECKED` until a person
  * records a manual CJ/MyCJ inspection.
  *
- * A brand-new PID must also take one unit of the durable new-PID capacity
- * ledger, in this same transaction. When the owner's ceiling is reached the
- * product is NOT admitted and the caller is told, so it can defer its unit
- * with a resumable checkpoint instead of silently dropping products.
+ * A brand-new PID must also take one unit of the durable new-PID wave ledger,
+ * in this same transaction. When the current wave is reached the product is
+ * NOT admitted and the caller is told, so it can defer its unit with a
+ * resumable checkpoint instead of silently dropping products.
  *
  * Idempotent under re-delivery: candidate/evaluation inserts are
  * create-or-nothing on their unique indexes, the fingerprint requeue is a
@@ -56,7 +56,7 @@ export type IngestOutcome =
   | 'created'
   | 'requeued'
   | 'unchanged'
-  /** Refused: the new-PID ceiling is reached. Nothing was persisted for this product. */
+  /** Refused: the current new-PID wave is full. Nothing was persisted for this product. */
   | 'cap-reached';
 
 export type IngestSignal = {
