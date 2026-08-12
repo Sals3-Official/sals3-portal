@@ -1,3 +1,4 @@
+import type { PipelinePageData } from '@/modules/catalog/candidates/pipeline-page-data';
 import type { PipelineTab } from './pipeline-tabs';
 
 /**
@@ -56,3 +57,19 @@ export const EMPTY_STATE_COPY: Record<
       'Ordinary rejected or temporarily unavailable candidates never appear here - only evaluations that failed every automatic retry.',
   },
 };
+
+/**
+ * Counts the rows the tab holds in total, not the ones on this page: the
+ * header used to report the fetched-row count, so a tab holding 86,605
+ * candidates announced "100 candidates" - the page size - as if that were
+ * everything there was.
+ */
+export function pipelineHeaderDescription(
+  window: PipelinePageData['window'],
+  search: string,
+): string {
+  const noun = window.total === 1 ? 'candidate' : 'candidates';
+  const scope = search === '' ? '' : ` matching "${search}"`;
+
+  return `${window.total.toLocaleString()} ${noun}${scope}`;
+}

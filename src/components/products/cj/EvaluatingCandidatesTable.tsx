@@ -9,12 +9,19 @@ import {
 import StatusPill, {
   type StatusPillTone,
 } from '@/components/seller-center/shared/StatusPill';
+import { candidateDrawerHref } from '@/lib/portal/pipeline-params';
 import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
+import CandidateRow from './CandidateRow';
 import { displayName } from './candidate-view';
 import explainLastErrorCode from './last-error-code';
 
 type EvaluatingCandidatesTableProps = {
   candidates: EvaluatedCandidateRow[];
+  /**
+   * The page's current `?tab=`/`?q=`/`?page=`, so a row click adds
+   * `?candidate=` without losing the view behind the drawer.
+   */
+  currentParams: Record<string, string>;
 };
 
 const COLUMNS = ['Product', 'CJ product ID', 'Status', 'Queued/updated'];
@@ -40,6 +47,7 @@ const STATUS_PRESENTATION: Record<
  */
 export default function EvaluatingCandidatesTable({
   candidates,
+  currentParams,
 }: EvaluatingCandidatesTableProps) {
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -61,7 +69,11 @@ export default function EvaluatingCandidatesTable({
               candidate.evaluation.status === 'EVALUATION_FAILED';
 
             return (
-              <TableRow key={candidate.candidateId}>
+              <CandidateRow
+                key={candidate.candidateId}
+                href={candidateDrawerHref(currentParams, candidate.candidateId)}
+                label={`Open candidate detail for ${name}`}
+              >
                 <TableCell
                   className="max-w-64 truncate font-medium"
                   title={name}
@@ -88,7 +100,7 @@ export default function EvaluatingCandidatesTable({
                 <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
                   {new Date(candidate.evaluation.updatedAt).toLocaleString()}
                 </TableCell>
-              </TableRow>
+              </CandidateRow>
             );
           })}
         </TableBody>
