@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import getDb, { isDatabaseConfigured } from '@/lib/db/client';
+import { readOrUnavailable } from '@/lib/db/availability';
 import PageHeader from '@/components/portal/PageHeader';
 import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
 import SourcingInfoBanner from '@/components/products/cj/SourcingInfoBanner';
@@ -53,28 +54,55 @@ export default async function SupplierAppsPage() {
     );
   }
 
-  const { sellerAccount } = await requireDropshipperAccount();
-  const db = getDb();
-  const [providers, connections, sourcingCounts] = await Promise.all([
-    listActiveProviders(db),
-    listConnectionsBySeller(db, sellerAccount.id),
-    countCandidateStatusSummary(sellerAccount.id),
-  ]);
+  // Same guard as the Product Sourcing pages: the account lookup is itself a
+  // query, so an unreachable database must not red-screen the one page a
+  // seller would open to diagnose a supplier problem.
+  const resolved = await readOrUnavailable('supplier apps', async () => {
+    const { sellerAccount } = await requireDropshipperAccount();
+    const db = getDb();
+    const [providers, connections, sourcingCounts] = await Promise.all([
+      listActiveProviders(db),
+      listConnectionsBySeller(db, sellerAccount.id),
+      countCandidateStatusSummary(sellerAccount.id),
+    ]);
 
-  const installedCards = (
-    await Promise.all(
-      connections.map(async (connection): Promise<InstalledCard | null> => {
-        const provider = providers.find((p) => p.id === connection.providerId);
-        if (provider === undefined) return null;
+    const installedCards = (
+      await Promise.all(
+        connections.map(async (connection): Promise<InstalledCard | null> => {
+          const provider = providers.find(
+            (p) => p.id === connection.providerId,
+          );
+          if (provider === undefined) return null;
 
-        return {
-          provider,
-          connection,
-          lastSuccessfulSyncAt: await mostRecentSnapshotAt(connection.id),
-        };
-      }),
-    )
-  ).filter((card): card is InstalledCard => card !== null);
+          return {
+            provider,
+            connection,
+            lastSuccessfulSyncAt: await mostRecentSnapshotAt(connection.id),
+          };
+        }),
+      )
+    ).filter((card): card is InstalledCard => card !== null);
+
+    return { providers, connections, sourcingCounts, installedCards };
+  });
+
+  if (!resolved.ok) {
+    return (
+      <div className="flex flex-col gap-4">
+        <PageHeader
+          title="Supplier Apps"
+          description="Connect a supplier account"
+        />
+        <SourcingEmptyState
+          title="Cannot reach the database right now"
+          description="Your supplier connections could not be read because the database did not respond. No connection has been disconnected or changed, and no credential was touched. Check that Postgres is running and that DATABASE_URL points at an existing database, then reload."
+        />
+      </div>
+    );
+  }
+
+  const { providers, connections, sourcingCounts, installedCards } =
+    resolved.data;
 
   const connectedProviderIds = new Set(connections.map((c) => c.providerId));
   const availableProviders = providers.filter(

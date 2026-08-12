@@ -1,4 +1,5 @@
 import getDb, { isDatabaseConfigured } from '@/lib/db/client';
+import { readOrUnavailable } from '@/lib/db/availability';
 import { can } from '@/lib/auth/permissions';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import PostgresSupplierSecretStore from '@/lib/secrets/postgres-supplier-secret-store';
@@ -103,46 +104,73 @@ export default async function SupplierProductsWorkspace({
     );
   }
 
-  const { session, sellerAccount } = await requireDropshipperAccount();
+  // Authorization and reads share one guard on purpose. Resolving the seller
+  // account is itself a query, so protecting only the reads below still leaves
+  // the page crashing one line earlier - which is exactly what a dropped local
+  // database did to it. `readOrUnavailable` rethrows anything that is not
+  // genuine unavailability, so a PermissionError still denies access and a
+  // missing table still surfaces as the migration bug it is.
+  const resolved = await readOrUnavailable('supplier products', async () => {
+    const { session, sellerAccount } = await requireDropshipperAccount();
 
-  const secretStore = new PostgresSupplierSecretStore();
-  const adapter = new CjSupplierAdapter(
-    secretStore,
-    new CjTokenManager(secretStore),
-  );
+    const secretStore = new PostgresSupplierSecretStore();
+    const adapter = new CjSupplierAdapter(
+      secretStore,
+      new CjTokenManager(secretStore),
+    );
 
-  const ordering = QUICK_VIEW_ORDERING[query.view];
-  const result = await loadLiveBrowsePage(
-    { adapter },
-    {
-      sellerAccountId: sellerAccount.id,
-      userId: session.userId,
-      query: {
-        page: query.page,
-        search: query.q,
-        categoryId: query.category,
-        ...(ordering ?? {}),
+    const ordering = QUICK_VIEW_ORDERING[query.view];
+    // Supplier failures are a RESULT here, not an exception - the loader maps
+    // them to typed states - so they travel out of this closure rather than
+    // being caught by the database guard, which would report a CJ outage as a
+    // database one.
+    const browse = await loadLiveBrowsePage(
+      { adapter },
+      {
+        sellerAccountId: sellerAccount.id,
+        userId: session.userId,
+        query: {
+          page: query.page,
+          search: query.q,
+          categoryId: query.category,
+          ...(ordering ?? {}),
+        },
       },
-    },
-  );
+    );
 
-  if (!result.ok) {
-    return <LiveBrowseErrorNotice state={result.state} />;
+    if (!browse.ok) {
+      return { session, browse, openProduct: null, attestations: [] };
+    }
+
+    const openProduct =
+      query.source === ''
+        ? null
+        : await findSupplierProductForSeller(sellerAccount.id, query.source);
+    const attestations =
+      openProduct === null
+        ? []
+        : await listStockAttestations(getDb(), {
+            candidateId: openProduct.candidateId,
+            sellerAccountId: sellerAccount.id,
+          });
+
+    return { session, browse, openProduct, attestations };
+  });
+
+  if (!resolved.ok) {
+    return (
+      <SourcingEmptyState
+        title="Cannot reach the database right now"
+        description="Your supplier products could not be loaded because the database did not respond. Nothing has been lost. Check that Postgres is running and that DATABASE_URL points at an existing database, then reload."
+      />
+    );
   }
 
-  const { page } = result;
+  const { session, browse, openProduct, attestations } = resolved.data;
 
-  const openProduct =
-    query.source === ''
-      ? null
-      : await findSupplierProductForSeller(sellerAccount.id, query.source);
-  const attestations =
-    openProduct === null
-      ? []
-      : await listStockAttestations(getDb(), {
-          candidateId: openProduct.candidateId,
-          sellerAccountId: sellerAccount.id,
-        });
+  if (!browse.ok) return <LiveBrowseErrorNotice state={browse.state} />;
+
+  const { page } = browse;
 
   const currentParams: Record<string, string> = {
     ...(query.view === 'all' ? {} : { view: query.view }),

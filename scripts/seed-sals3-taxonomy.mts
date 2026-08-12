@@ -35,6 +35,19 @@ import type { Database } from '../src/lib/db/client';
    here, matching this codebase's own scripts/ convention. */
 import { sals3Categories } from '../src/lib/db/schema/pricing-policy';
 
+/**
+ * Same three lines as `bootstrap-sals3-official-cj.mts`, and for the same
+ * reason: `tsx` runs this outside Next.js, so nothing else loads `.env.local`.
+ * Without it the script threw `DATABASE_URL is not set.` on a machine where
+ * `DATABASE_URL` was correctly configured all along - the connection string
+ * was simply in the file this never read.
+ */
+try {
+  process.loadEnvFile('.env.local');
+} catch {
+  // No .env.local - env vars must already be exported in the shell.
+}
+
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 
 type TaxonomyRow = {

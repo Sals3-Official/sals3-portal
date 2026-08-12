@@ -27,6 +27,19 @@
   --color-red-600: #d92d20;
   --color-amber-600: #9a6200;
   --color-green-600: #1a7f4b;
+  /*
+   * Text-on-surface variants for the status pills.
+   *
+   * `red-600` on `danger-surface` measures 4.23:1 and `green-600` on
+   * `success-surface` 4.35:1 - both under the 4.5:1 minimum for body text, so
+   * the two most urgent states were the least legible ones. These darker pairs
+   * measure 5.75:1 and 5.91:1 on the same surfaces. The `-600` values stay for
+   * dots, borders and icons, where the 3:1 non-text threshold applies.
+   */
+  --color-red-700: #b42318;
+  --color-green-700: #15683d;
+  /* Border for an exception row sitting on `danger-surface`. */
+  --color-danger-border: #f5c9c6;
 
   /* Tinted status surfaces. Each is paired with a text token that clears
      4.5:1, and every status also carries a written label. */

@@ -50,9 +50,55 @@ function readTestBypassSession(): PortalSession | null {
     userId: SALS3_OFFICIAL_IDENTITY_ID,
     displayName: 'Development user',
     role: readDevRole(),
-    sellerId: 'seller-001',
+    // Deliberately not a real id. `resolveBypassSellerId` below replaces it
+    // with the actual seller-account UUID; this literal only survives when no
+    // such account exists, and is never used as a query parameter.
+    sellerId: 'system',
     sellerBusinessModel: 'DROPSHIPPER',
   };
+}
+
+/**
+ * Gives the bypass session the same `sellerId` the real path resolves.
+ *
+ * This used to be the literal `'seller-001'`, left over from before seller
+ * accounts were UUID-keyed. Every consumer that passed `session.sellerId`
+ * straight into a query - the nav rail badges and the footer connection
+ * health, on every single portal page - was therefore sending `'seller-001'`
+ * where Postgres expected a `uuid` and failing with `22P02`. A bare `catch {}`
+ * in `shell-data.ts` swallowed it, so the rail simply rendered empty forever
+ * and looked like a design choice.
+ *
+ * Falls back to `'system'` rather than throwing. `getSession()` runs before
+ * every page's own database guard, so making it throw on an unreachable
+ * database would reintroduce exactly the crash those guards exist to prevent.
+ * `'system'` is the value `resolvePortalSession` already uses for "no seller
+ * account", and `shell-data.ts` treats it as "nothing to show".
+ */
+async function resolveBypassSellerId(
+  session: PortalSession,
+): Promise<PortalSession> {
+  try {
+    const [{ default: getDb }, { findSellerAccountByIdentityId }] =
+      await Promise.all([
+        import('@/lib/db/client'),
+        import('@/modules/suppliers/repository'),
+      ]);
+    const sellerAccount = await findSellerAccountByIdentityId(
+      getDb(),
+      session.userId,
+    );
+
+    if (sellerAccount === null) return session;
+
+    return {
+      ...session,
+      sellerId: sellerAccount.id,
+      sellerBusinessModel: sellerAccount.businessModel,
+    };
+  } catch {
+    return session;
+  }
 }
 
 export type PortalAccessState = {
@@ -194,7 +240,7 @@ export async function getPortalEntryRedirect(
 export async function getSession(): Promise<PortalSession> {
   const testSession = readTestBypassSession();
 
-  if (testSession !== null) return testSession;
+  if (testSession !== null) return resolveBypassSellerId(testSession);
 
   const data = await getRawAuthSession();
 

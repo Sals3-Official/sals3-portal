@@ -43,6 +43,42 @@ Put that role's connection string in `DATABASE_URL` in `.env.local`, then:
 npm run db:migrate
 ```
 
+### Database-writing commands refuse a remote target
+
+`db:migrate`, `seed:taxonomy`, `seed:taxonomy-presets`, `bootstrap:cj`,
+`create:portal-user`, and `approve:portal-user` all run
+`scripts/guard-remote-db.mts` first. If `DATABASE_URL` resolves to any host
+other than `localhost`/`127.0.0.1`, the command stops before the real work
+starts and prints the host and database it refused (never the connection
+string — the password lives in there).
+
+This exists because every one of those scripts, and `drizzle.config.ts`, reads
+exactly one file: `.env.local`. Paste a production connection string in there
+to run a single query and _all_ of them silently repoint at production —
+`db:migrate` alters the live schema, `seed:taxonomy` inserts 1,345 rows,
+`bootstrap:cj` creates a supplier connection and spends a CJ call. `db:migrate`
+also succeeds quietly when there is nothing new to apply, so the mistake need
+not announce itself.
+
+**Keep a production URL out of `.env.local`.** Put it in `.env.prod-readonly`,
+which `.gitignore` covers and which nothing reads — not Next.js (it loads only
+`.env`, `.env.local`, `.env.$(NODE_ENV)`), not `drizzle.config.ts`, not any
+script here. Use it only for an explicit read-only `pg_dump`. Do not name it
+`.env.production`; `next build` and `next start` load that one.
+
+To write to a remote database on purpose:
+
+```bash
+ALLOW_REMOTE_DB_WRITE=1 npm run db:migrate
+```
+
+Only the exact string `1` opts in, and the run prints a warning naming the
+remote target. `db:generate` (offline) and `db:studio` (read/browse) are not
+guarded.
+
+Production catalogue data flows **from** Vercel to local, never the other way —
+see ADR-017 in the `sals3-ecommerce` vault.
+
 Set authentication secrets in `.env.local`:
 
 ```bash
@@ -110,23 +146,23 @@ queue delivery needs self-healing.
 
 ## Commands
 
-| Command                                                                           | What it does                                                                  |
-| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `npm run dev`                                                                     | Start dev server at http://localhost:3001 (3000 belongs to `sals3-ecommerce`) |
-| `npm run build`                                                                   | Production build                                                              |
-| `npm run start`                                                                   | Serve production build                                                        |
-| `npm run lint`                                                                    | ESLint                                                                        |
-| `npm run format:check`                                                            | Prettier check                                                                |
-| `npm run typecheck:clean`                                                         | TypeScript check without `.next` artifacts                                    |
-| `npm run test:run`                                                                | Unit tests (Vitest)                                                           |
-| `npm run test:e2e`                                                                | E2E tests (Playwright)                                                        |
-| `npm run verify`                                                                  | Full gate: lint + format + typecheck + build + unit + E2E                     |
-| `npm run db:generate`                                                             | Generate a SQL migration from `src/lib/db/schema/`                            |
-| `npm run db:migrate`                                                              | Apply pending migrations in `drizzle/`                                        |
-| `npm run db:studio`                                                               | Drizzle Studio (browse the local database)                                    |
-| `npm run approve:portal-user -- --email seller@example.com --role seller_manager` | Approve/promote one verified portal user                                      |
-| `npm run seed:taxonomy`                                                           | Seed Sals3 Taxonomy v0 category identities (one-time, idempotent)             |
-| `npm run seed:taxonomy-presets`                                                   | Seed Sals3 Taxonomy v0 form presets (run after `seed:taxonomy`)               |
+| Command                                                                           | What it does                                                                    |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `npm run dev`                                                                     | Start dev server at http://localhost:3001 (3000 belongs to `sals3-ecommerce`)   |
+| `npm run build`                                                                   | Production build                                                                |
+| `npm run start`                                                                   | Serve production build                                                          |
+| `npm run lint`                                                                    | ESLint                                                                          |
+| `npm run format:check`                                                            | Prettier check                                                                  |
+| `npm run typecheck:clean`                                                         | TypeScript check without `.next` artifacts                                      |
+| `npm run test:run`                                                                | Unit tests (Vitest)                                                             |
+| `npm run test:e2e`                                                                | E2E tests (Playwright)                                                          |
+| `npm run verify`                                                                  | Full gate: lint + format + typecheck + build + unit + E2E                       |
+| `npm run db:generate`                                                             | Generate a SQL migration from `src/lib/db/schema/`                              |
+| `npm run db:migrate`                                                              | Apply pending migrations in `drizzle/` — **refuses a non-local `DATABASE_URL`** |
+| `npm run db:studio`                                                               | Drizzle Studio (browse the local database)                                      |
+| `npm run approve:portal-user -- --email seller@example.com --role seller_manager` | Approve/promote one verified portal user                                        |
+| `npm run seed:taxonomy`                                                           | Seed Sals3 Taxonomy v0 category identities (one-time, idempotent)               |
+| `npm run seed:taxonomy-presets`                                                   | Seed Sals3 Taxonomy v0 form presets (run after `seed:taxonomy`)                 |
 
 ## Deployment and performance
 

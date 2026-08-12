@@ -140,6 +140,13 @@ const eslintConfig = defineConfig([
     // docs/ is the Obsidian vault (notes + a vendored community plugin
     // bundle), not project source - never lint it.
     'docs/**',
+    // Agent git worktrees live here. Each one is a full second checkout of
+    // this repository, so without this ESLint lints every source file twice
+    // and then fails the copy: a worktree has no `node_modules`, so every
+    // devDependency import in it resolves as extraneous. One worktree was
+    // enough to turn a clean `npm run lint` into 1,016 errors across 320
+    // files, none of them real, which breaks `npm run verify` for everyone.
+    '.claude/**',
   ]),
   prettierConfig,
 ]);
