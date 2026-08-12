@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import useSheetInitialFocus from '@/hooks/use-sheet-initial-focus';
 import {
   Sheet,
   SheetContent,
@@ -26,12 +27,9 @@ type EditorSheetProps = {
  * - **Width.** The shared `sheet` primitive is 75% wide by default, which
  *   leaves a useless sliver of page behind it on a phone and squeezes a
  *   variant table or an issue list. These panels go full width below `sm`.
- * - **Initial focus.** The panels are opened from state rather than from a
- *   `SheetTrigger`, and focus does not reliably land inside the dialog in
- *   that case. Without it a keyboard or screen-reader user opens the panel
- *   and is left at the top of the page behind it. Focusing the content
- *   region moves them in; the primitive still handles Escape and returning
- *   focus on close.
+ * - **Initial focus.** Handled by `useSheetInitialFocus`, which carries the
+ *   reasoning; the primitive still handles Escape and returning focus on
+ *   close.
  */
 export default function EditorSheet({
   open,
@@ -40,15 +38,7 @@ export default function EditorSheet({
   description,
   children,
 }: EditorSheetProps) {
-  const contentRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return undefined;
-
-    const frame = requestAnimationFrame(() => contentRef.current?.focus());
-
-    return () => cancelAnimationFrame(frame);
-  }, [open]);
+  const contentRef = useSheetInitialFocus(open);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
