@@ -1,7 +1,19 @@
-import { and, eq, gt, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import {
+  and,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lt,
+  ne,
+  or,
+  sql,
+} from 'drizzle-orm';
 import type { DbExecutor, DbTransaction } from '@/lib/db/client';
 import {
   auditEvents,
+  authUsers,
   candidateEvaluations,
   idempotencyRecords,
   supplierCandidates,
@@ -214,6 +226,70 @@ export async function appendAuditEvent(
   },
 ): Promise<void> {
   await executor.insert(auditEvents).values(event);
+}
+
+export type AuditHistoryEntry = {
+  id: string;
+  action: string;
+  createdAt: Date;
+  /** `authUsers.name`, or the raw `actorId` when no matching user row exists (e.g. a dev placeholder identity) — never blank. */
+  actorName: string;
+  actorEmail: string | null;
+  payload: Record<string, unknown>;
+};
+
+/**
+ * Read counterpart to `appendAuditEvent`. `audit_events` has no
+ * `sellerAccountId` column of its own — every write already stamps one
+ * into `payload`, so `sellerAccountId` here is the mandatory tenant
+ * guarantee: it always comes from the caller's own session, never from a
+ * client-supplied filter, so a crafted `payloadEquals` value can only ever
+ * surface that same seller's own history for it, never another tenant's.
+ *
+ * LEFT JOINs `authUsers` (not INNER) so a placeholder/dev identity with no
+ * real user row still renders history — see `actorName`'s fallback.
+ */
+export async function listAuditHistoryForSellerEntity(
+  executor: Executor,
+  params: {
+    entityType: string;
+    sellerAccountId: string;
+    payloadEquals?: Record<string, string>;
+  },
+): Promise<AuditHistoryEntry[]> {
+  const payloadConditions = Object.entries(params.payloadEquals ?? {}).map(
+    ([key, value]) => sql`${auditEvents.payload} ->> ${key} = ${value}`,
+  );
+
+  const rows = await executor
+    .select({
+      id: auditEvents.id,
+      action: auditEvents.action,
+      createdAt: auditEvents.createdAt,
+      payload: auditEvents.payload,
+      actorId: auditEvents.actorId,
+      actorName: authUsers.name,
+      actorEmail: authUsers.email,
+    })
+    .from(auditEvents)
+    .leftJoin(authUsers, eq(authUsers.id, auditEvents.actorId))
+    .where(
+      and(
+        eq(auditEvents.entityType, params.entityType),
+        sql`${auditEvents.payload} ->> 'sellerAccountId' = ${params.sellerAccountId}`,
+        ...payloadConditions,
+      ),
+    )
+    .orderBy(desc(auditEvents.createdAt));
+
+  return rows.map((row) => ({
+    id: row.id,
+    action: row.action,
+    createdAt: row.createdAt,
+    actorName: row.actorName ?? row.actorId,
+    actorEmail: row.actorEmail ?? null,
+    payload: row.payload as Record<string, unknown>,
+  }));
 }
 
 /**
