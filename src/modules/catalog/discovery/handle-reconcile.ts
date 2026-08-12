@@ -79,6 +79,35 @@ export function evaluationIntent(input: {
   };
 }
 
+/**
+ * The freshness SWEEP message itself. Exported so `handleCycleStart`'s hourly
+ * seed and the Start/Resume control action build the same message from the
+ * same key format, instead of restating it at three sites.
+ *
+ * `keySuffix` is the caller's choice of slot identity, and it decides whether
+ * the chain can be revived: `work_outbox.idempotency_key` is unique and never
+ * pruned, so an hour-resolution suffix can be spent only once per hour. That
+ * is correct for a periodic seed and wrong for a control action - see
+ * `startOrResumeConnection`, which passes a per-call suffix so a Resume always
+ * revives the chain.
+ */
+export function freshnessSweepIntent(input: {
+  supplierConnectionId: string;
+  keySuffix: string;
+  delaySeconds?: number;
+}): OutboxIntent {
+  return {
+    message: {
+      v: 1,
+      operation: 'RECONCILE_PRODUCT',
+      idempotencyKey: `freshness:${input.supplierConnectionId}:${input.keySuffix}`,
+      mode: 'SWEEP',
+      supplierConnectionId: input.supplierConnectionId,
+    },
+    delaySeconds: input.delaySeconds,
+  };
+}
+
 export default async function handleReconcileProduct(
   message: ReconcileProductMessage,
 ): Promise<void> {
@@ -149,11 +178,11 @@ export default async function handleReconcileProduct(
     const nextBucket = Math.floor(
       nextAt / (FRESHNESS_SWEEP_DELAY_SECONDS * 1000),
     );
-    const nextSweepKey = anyBatchFull
-      ? `freshness:${connectionId}:${nextBucket}:${Math.floor(
+    const nextSweepKeySuffix = anyBatchFull
+      ? `${nextBucket}:${Math.floor(
           nextAt / (ACCELERATED_SWEEP_DELAY_SECONDS * 1000),
         )}`
-      : `freshness:${connectionId}:${nextBucket}`;
+      : `${nextBucket}`;
 
     await insertOutboxIntents(tx, [
       ...refreshed.map((candidateId) =>
@@ -203,16 +232,11 @@ export default async function handleReconcileProduct(
       // so it still de-duplicates against `handleCycleStart`'s hourly seed,
       // and an accelerated chain rejoins that hourly chain as soon as a batch
       // comes back short.
-      {
-        message: {
-          v: 1,
-          operation: 'RECONCILE_PRODUCT',
-          idempotencyKey: nextSweepKey,
-          mode: 'SWEEP',
-          supplierConnectionId: connectionId,
-        },
+      freshnessSweepIntent({
+        supplierConnectionId: connectionId,
+        keySuffix: nextSweepKeySuffix,
         delaySeconds: nextDelaySeconds,
-      },
+      }),
     ]);
   });
 }
