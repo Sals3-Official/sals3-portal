@@ -45,6 +45,8 @@ import dispatchOutbox from './outbox-dispatch';
 // eslint-disable-next-line import/first
 import { findWatermark } from './lane-repository';
 // eslint-disable-next-line import/first
+import { insertOutboxIntents } from './outbox-repository';
+// eslint-disable-next-line import/first
 import applyDiscoveryControl from './control';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
@@ -64,6 +66,51 @@ beforeEach(() => {
   asMock(findLatestCompletedCycle).mockResolvedValue(null);
   asMock(findWatermark).mockResolvedValue(null);
   asMock(dispatchOutbox).mockResolvedValue({ dispatched: 1, failed: 0 });
+});
+
+describe('applyDiscoveryControl - freshness chain revival', () => {
+  /** Every intent the control action enqueued, from the mocked outbox insert. */
+  function enqueuedKeys(): string[] {
+    return (
+      asMock(insertOutboxIntents).mock.calls.flatMap(
+        (call) =>
+          (call[1] as Array<{ message: { idempotencyKey: string } }>) ?? [],
+      ) ?? []
+    ).map((intent) => intent.message.idempotencyKey);
+  }
+
+  it('RESUME enqueues a freshness sweep, so a chain killed by PAUSE is revived', async () => {
+    await applyDiscoveryControl({ action: 'RESUME' });
+
+    expect(
+      enqueuedKeys().filter((key) => key.startsWith('freshness:')),
+    ).toHaveLength(1);
+  });
+
+  it('keys the revival per control action, never on the hour the Resume happens to land in', async () => {
+    // The production failure this guards: PAUSE kills the chain mid-hour, and
+    // handleCycleStart's hour-resolution seed cannot re-enqueue because that
+    // hour's key is already spent - so nothing drains the backlog until the
+    // next hour. Two Resumes inside one hour must produce two distinct keys.
+    await applyDiscoveryControl({ action: 'RESUME' });
+    const first = enqueuedKeys().find((key) => key.startsWith('freshness:'))!;
+
+    asMock(insertOutboxIntents).mockClear();
+    await applyDiscoveryControl({ action: 'RESUME' });
+    const second = enqueuedKeys().find((key) => key.startsWith('freshness:'))!;
+
+    expect(first).not.toBe(second);
+    // An hour bucket would be a bare integer suffix; this must not be one.
+    expect(first).toContain('resume:');
+  });
+
+  it('PAUSE enqueues no freshness sweep - pausing must not schedule supplier work', async () => {
+    await applyDiscoveryControl({ action: 'PAUSE' });
+
+    expect(
+      enqueuedKeys().filter((key) => key.startsWith('freshness:')),
+    ).toEqual([]);
+  });
 });
 
 describe('applyDiscoveryControl', () => {

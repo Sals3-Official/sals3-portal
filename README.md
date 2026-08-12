@@ -538,6 +538,19 @@ platform-invoked) consumer function.
 > this were found and fixed on 2026-08-12 (the accelerated freshness sweep and
 > the curated-lane page walk); a third, `handleAuditUnit`, is inert only
 > because its lane never starts.
+>
+> The rule has a second half that is easy to miss: **a periodic key cannot
+> revive a chain, only continue one.** `handleCycleStart` seeds the freshness
+> sweep on an hour-resolution key, which is right for something that runs every
+> sweep tick - a finer key there would start a new concurrent chain each tick.
+> But PAUSE kills the chain wherever it stands, and a RESUME inside that same
+> hour cannot re-seed it, because the hour's key is already spent. Observed in
+> production 2026-08-12: a Resume at 11:47 could not re-seed hour bucket
+> 496259, first claimed at 11:38, so nothing drained the 913-row QUEUED backlog
+> for the rest of that hour - while the partition chain stayed healthy and the
+> intake gate kept ticking, which is exactly how a dead chain hides. Reviving
+> is therefore `startOrResumeConnection`'s job, on a `randomUUID` suffix: a
+> control action is not periodic and must not borrow a periodic key.
 
 Coverage semantics (ADR-010 §12.1, ADR-013 §3):
 

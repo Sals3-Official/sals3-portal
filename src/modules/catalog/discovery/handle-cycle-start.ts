@@ -37,6 +37,7 @@ import { isDiscoveryRunning } from './run-state-repository';
 import { findWatermark } from './lane-repository';
 import { CURATED_LANES } from './curated-lanes';
 import { curatedLaneIntent } from './handle-curated-lane';
+import { freshnessSweepIntent } from './handle-reconcile';
 
 /**
  * DISCOVERY_CYCLE_START: the ensure-and-sweep operation for one connection's
@@ -403,18 +404,16 @@ export default async function handleCycleStart(
       keySuffix: `sweep:${sweepWindowKey() + 1}`,
       delaySeconds: CYCLE_SWEEP_DELAY_SECONDS,
     }),
-    // Keep the freshness sweep chain alive alongside discovery.
-    {
-      message: {
-        v: 1,
-        operation: 'RECONCILE_PRODUCT',
-        idempotencyKey: `freshness:${connection.id}:${Math.floor(
-          Date.now() / (FRESHNESS_SWEEP_DELAY_SECONDS * 1000),
-        )}`,
-        mode: 'SWEEP',
-        supplierConnectionId: connection.id,
-      },
-    },
+    // Keep the freshness sweep chain alive alongside discovery. Hour-resolution
+    // suffix on purpose: this runs on every sweep tick, so a finer key would
+    // start a new concurrent freshness chain each time. Reviving a chain that
+    // a pause killed mid-hour is `startOrResumeConnection`'s job, not this one.
+    freshnessSweepIntent({
+      supplierConnectionId: connection.id,
+      keySuffix: `${Math.floor(
+        Date.now() / (FRESHNESS_SWEEP_DELAY_SECONDS * 1000),
+      )}`,
+    }),
     // Keep the curated CJ lanes alive on their own low-priority cadence.
     // They share this connection's backlog gate, new-PID ledger, request
     // limiter, and points reserve, so they can only ever run in the gaps the

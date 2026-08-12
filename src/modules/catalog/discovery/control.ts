@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import getDb from '@/lib/db/client';
 import { listWorkableConnections } from '@/modules/suppliers/repository';
 import { findRunState, setDesiredRunState } from './run-state-repository';
@@ -9,6 +10,7 @@ import {
 import { ensureBudgetRow } from './budget-repository';
 import { insertOutboxIntents } from './outbox-repository';
 import { cycleStartIntent } from './handle-cycle-start';
+import { freshnessSweepIntent } from './handle-reconcile';
 import dispatchOutbox from './outbox-dispatch';
 import { findWatermark } from './lane-repository';
 import { INCREMENTAL_SAFETY_OVERLAP_SECONDS } from './config';
@@ -84,6 +86,31 @@ async function startOrResumeConnection(
       cycleId: cycle.id,
       lane,
       keySuffix: `${action.toLowerCase()}:${cycle.id}:${Date.now()}`,
+    }),
+    // Revive the freshness sweep chain too, on a suffix unique to THIS control
+    // action - the same reason `cycleStartIntent` above already carries one.
+    //
+    // Pause kills the chain wherever it happens to be. The hourly seed in
+    // `handleCycleStart` cannot bring it back inside the same hour, because
+    // that hour's key has already been spent and `insertOutboxIntents` drops
+    // a repeat. Observed in production 2026-08-12: a Resume at 11:47 could not
+    // re-seed hour bucket 496259, first claimed at 11:38, so nothing drained
+    // the QUEUED backlog for the rest of that hour even though the partition
+    // chain was healthy and the gate was ticking.
+    //
+    // A Resume is not periodic, so it must not borrow a periodic key. If a
+    // chain is somehow still alive this adds one extra sweep; the sweep is
+    // idempotent, and its own continuation rejoins the shared cadence keys as
+    // soon as a batch comes back short. A duplicate sweep is cheap - a dead
+    // chain is not.
+    //
+    // Hence `randomUUID` rather than `Date.now()`: two control calls in the
+    // same millisecond would build the same key and the second revival would
+    // be dropped. `cycleStartIntent` above tolerates that collision, because
+    // losing a duplicate ensure-and-sweep changes nothing.
+    freshnessSweepIntent({
+      supplierConnectionId: connectionId,
+      keySuffix: `${action.toLowerCase()}:${randomUUID()}`,
     }),
   ]);
 
