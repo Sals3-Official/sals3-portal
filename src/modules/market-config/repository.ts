@@ -37,6 +37,37 @@ export async function listProfilesForSeller(
     .orderBy(desc(sellerMarketProfiles.createdAt));
 }
 
+/**
+ * Reads one active profile for the authenticated seller.
+ *
+ * Orders need only the account's established configuration; they must not
+ * re-evaluate today's setup capabilities here. A later policy narrowing may
+ * stop new setup, but it cannot make an existing seller's parcel workspace
+ * disappear or turn a read into a policy mutation. Ordering makes the answer
+ * deterministic if historical data contains more than one active profile.
+ */
+export async function findActiveProfileForSeller(
+  executor: Executor,
+  sellerAccountId: string,
+): Promise<SellerMarketProfileRow | null> {
+  const rows = await executor
+    .select()
+    .from(sellerMarketProfiles)
+    .where(
+      and(
+        eq(sellerMarketProfiles.sellerAccountId, sellerAccountId),
+        eq(sellerMarketProfiles.status, 'ACTIVE'),
+      ),
+    )
+    .orderBy(
+      desc(sellerMarketProfiles.activatedAt),
+      desc(sellerMarketProfiles.id),
+    )
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
 /** Read one profile, scoped. Returns `null` for another tenant's id. */
 export async function findProfileForSeller(
   executor: Executor,

@@ -3,8 +3,6 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { formatMarketMoney } from '@/lib/seller-center/money';
-import type { SellerCenterMarket } from '@/lib/seller-center/market-config';
 import type { OrderParcel } from '@/modules/orders/contracts';
 import OrdersBulkActionBar from './OrdersBulkActionBar';
 import OrderParcelCard from './OrderParcelCard';
@@ -12,7 +10,6 @@ import ParcelActions from './ParcelActions';
 
 type OrdersWorkspaceProps = {
   parcels: OrderParcel[];
-  market: SellerCenterMarket;
 };
 
 /**
@@ -24,10 +21,7 @@ type OrdersWorkspaceProps = {
  * the seller to print, because the seller never handles it. Excluding it is a
  * correctness rule, not a styling choice.
  */
-export default function OrdersWorkspace({
-  parcels,
-  market,
-}: OrdersWorkspaceProps) {
+export default function OrdersWorkspace({ parcels }: OrdersWorkspaceProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const router = useRouter();
 
@@ -70,23 +64,17 @@ export default function OrdersWorkspace({
   };
 
   const handlePrint = () => {
-    const count = selected.size;
     const previousSelection = new Set(selected);
 
     setSelected(new Set());
 
-    toast(
-      `${count} label${count === 1 ? '' : 's'} queued. Nothing is sent to ${
-        market.carrierName
-      } until print confirms.`,
-      {
-        duration: 8000,
-        action: {
-          label: 'Undo',
-          onClick: () => setSelected(previousSelection),
-        },
+    toast('Label printing is not configured yet. Nothing was sent.', {
+      duration: 8000,
+      action: {
+        label: 'Undo',
+        onClick: () => setSelected(previousSelection),
       },
-    );
+    });
   };
 
   if (parcels.length === 0) {
@@ -117,8 +105,7 @@ export default function OrdersWorkspace({
       {selected.size > 0 ? (
         <OrdersBulkActionBar
           selectedCount={selected.size}
-          proceedsLabel={formatMarketMoney(proceedsMinor, market)}
-          carrierName={market.carrierName}
+          proceedsLabel={`Example ${(proceedsMinor / 100).toFixed(2)}`}
           onClear={() => setSelected(new Set())}
           onPrint={handlePrint}
         />

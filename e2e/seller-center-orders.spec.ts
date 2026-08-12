@@ -1,6 +1,44 @@
 import { expect, test } from '@playwright/test';
 
+test('Seller Center orders shows an honest notice without an active profile', async ({
+  page,
+}) => {
+  await page.goto('/orders');
+
+  const noProfile = page.getByRole('heading', {
+    name: 'No active market profile',
+  });
+
+  if (!(await noProfile.isVisible())) {
+    test.skip(true, 'The configured test account has an active profile.');
+  }
+
+  await expect(noProfile).toBeVisible();
+  await expect(
+    page.getByText(
+      'No real per-seller market (currency, carrier, tax, payout rail) is configured for this account yet.',
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole('article')).toHaveCount(0);
+});
+
 test.describe('Seller Center orders', () => {
+  // The parcel workspace itself is an active-profile surface. These fixture
+  // interaction checks stay useful for environments seeded with one, but the
+  // local test account intentionally has none and must not receive a made-up
+  // profile merely to make the old UI assertions pass.
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/orders');
+
+    if (
+      await page
+        .getByRole('heading', { name: 'No active market profile' })
+        .isVisible()
+    ) {
+      test.skip(true, 'Requires an active seller market profile.');
+    }
+  });
+
   test('a parcel the seller never handles cannot be selected', async ({
     page,
   }) => {
@@ -22,7 +60,9 @@ test.describe('Seller Center orders', () => {
     ).toBeVisible();
   });
 
-  test('printing shows a toast with an Undo action', async ({ page }) => {
+  test('unconfigured printing explains that nothing was sent', async ({
+    page,
+  }) => {
     await page.goto('/orders');
 
     await page
@@ -30,7 +70,9 @@ test.describe('Seller Center orders', () => {
       .check();
     await page.getByRole('button', { name: /Print 1 label/ }).click();
 
-    await expect(page.getByText(/label queued/)).toBeVisible();
+    await expect(
+      page.getByText('Label printing is not configured yet. Nothing was sent.'),
+    ).toBeVisible();
     await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
   });
 
