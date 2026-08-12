@@ -286,15 +286,16 @@ export const discoveryCuratedLanes = pgTable(
     leasedUntil: timestamp('leased_until', { withTimezone: true }),
     stateVersion: integer('state_version').notNull().default(1),
     /**
-     * The `discovery_pid_capacities.limit_value` in force when this lane last
+     * The `discovery_pid_capacities.limit_value` in force when this lane
      * reported it could contribute nothing more — provider pages ran out, or
-     * `CURATED_MAX_PAGES` was reached.
+     * its one 25-page walk (`CURATED_MAX_PAGES`) completed.
      *
-     * Deliberately scoped to a wave rather than a permanent flag: a lane
-     * exhausted in one wave must be retried in the next, because new products
-     * appear between waves and `advanceCuratedLane` already resets the page
-     * cursor when a run finishes. A lane is eligible for the current wave when
-     * this is null or differs from the current wave edge.
+     * PERMANENT (owner decision 2026-08-13): any non-null value means the lane
+     * is done for good, and the value itself is only history — which wave edge
+     * it finished at. The progression is one-way: Trending, then Most listed,
+     * then New arrivals, then the partition scanner forever. No code path
+     * clears this; re-opening a lane is a deliberate manual
+     * `UPDATE ... SET exhausted_at_wave_limit = NULL` (see README).
      *
      * This is what makes strict intake priority possible: the canonical
      * partition scanner yields while any lane is eligible, and a lower-priority

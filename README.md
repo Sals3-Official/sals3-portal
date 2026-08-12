@@ -949,12 +949,27 @@ for priority, so the order cannot deadlock. `CURATED_MAX_PAGES` is what
 guarantees a lane eventually reports exhaustion and releases the floor, so
 raising it means re-checking this.
 
-Eligibility is wave-scoped, held in
+Eligibility is **one-way and permanent** (owner decision 2026-08-13), held in
 `discovery_curated_lanes.exhausted_at_wave_limit`: the wave edge at which a lane
-last reported it could contribute nothing more, recorded in the same
-compare-and-set as the finish it describes. A lane exhausted in one wave is
-retried in the next, because new products appear between waves. A lane with no
-row yet counts as eligible, so it always gets its first turn.
+reported it could contribute nothing more — provider pages ran out, or its one
+25-page walk (`CURATED_MAX_PAGES`) completed — recorded in the same
+compare-and-set as the finish it describes. **Any non-null mark means the lane
+is done for good**; the value is only history. Trending runs until it can give
+no more, then Most listed, then New arrivals, then the partition scanner fills
+every later wave. A lane with no row yet counts as eligible, so it always gets
+its first turn.
+
+This replaced wave-scoped eligibility, under which every new wave edge re-ran
+every finished lane: observed 2026-08-12, trending re-walked its whole set at
+each of five wave edges to contribute 0 new products after the first, stalling
+every wave transition. The accepted trade: whatever enters a sort's top 2,500
+later is the partition scanner's to find, and `CJ_NEW_ARRIVALS` covers one
+fixed 14-day window, once. **No code path re-arms a finished lane.** Re-opening
+one someday is a deliberate manual step:
+
+```sql
+UPDATE discovery_curated_lanes SET exhausted_at_wave_limit = NULL WHERE lane = 'CJ_TRENDING';
+```
 
 Two things this deliberately costs, per the owner's decision: coverage-partition
 progress pauses while curated lanes run, so the catalogue cannot be claimed
