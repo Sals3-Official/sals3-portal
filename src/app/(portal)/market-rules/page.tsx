@@ -3,7 +3,7 @@ import PageHeader from '@/components/portal/PageHeader';
 import MarketRolesExplainerPanel from '@/components/seller-center/market-rules/MarketRolesExplainerPanel';
 import MarketProfileSection from '@/components/seller-center/market-rules/profile/MarketProfileSection';
 import CategoryPricingSection from '@/components/seller-center/market-rules/pricing/CategoryPricingSection';
-import FxAdjustmentSection from '@/components/seller-center/market-rules/pricing/FxAdjustmentSection';
+import FundingBufferSection from '@/components/seller-center/market-rules/pricing/FundingBufferSection';
 import { can } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 
@@ -24,7 +24,7 @@ export const metadata: Metadata = { title: 'Market rules · Seller Center' };
  *
  * Three separate concerns, in order, and deliberately not merged: the
  * account's own market setup; the roles that gate changes to it; then
- * category pricing and FX adjustment (ADR-015 Phase 1), gated by
+ * category pricing and the funding buffer (ADR-015 Phase 1), gated by
  * `pricing_policy:read` independently of `market_rules:read` — staff and
  * viewer hold the latter but not the former. Having a pricing rule never
  * means a market is active, and vice versa.
@@ -53,7 +53,7 @@ export default async function MarketRulesPage() {
             sellerAccountId={session.sellerId}
             canManage={canManagePricing}
           />
-          <FxAdjustmentSection
+          <FundingBufferSection
             sellerAccountId={session.sellerId}
             canManage={canManagePricing}
           />

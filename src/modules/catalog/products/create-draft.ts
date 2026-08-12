@@ -480,7 +480,6 @@ async function runDraftTransaction(
       supplierCost: null,
       supplierCostObservedAt: observedAt?.toISOString() ?? null,
       settlementCurrency: SETTLEMENT_CURRENCY,
-      fundingRail: null,
     });
 
     const pricingUnavailableReason =

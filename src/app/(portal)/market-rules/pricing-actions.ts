@@ -9,23 +9,27 @@ import { checkRateLimit } from '@/lib/rate-limit';
 import {
   candidateBelongsToSeller,
   appendAuditEvent,
+  listAuditHistoryForSellerEntity,
+  type AuditHistoryEntry,
 } from '@/modules/catalog/candidates/repository';
 import {
   createCategoryPolicy,
-  createFxAdjustmentPolicy,
+  createFundingBufferPolicy,
   createProductOverride,
   createVariantOverride,
   deactivateCategoryPolicy,
-  deactivateFxAdjustmentPolicy,
+  deactivateFundingBufferPolicy,
   findActiveCategoryPolicy,
-  findActiveFxAdjustmentPolicy,
+  findActiveFundingBufferPolicy,
   findActiveProductOverride,
   findActiveVariantOverride,
   findCategoryByCode,
+  findCategoryById,
+  findLeafCategoriesByL1L2,
   removeProductOverride,
   removeVariantOverride,
   reviseCategoryPolicy,
-  reviseFxAdjustmentPolicy,
+  reviseFundingBufferPolicy,
   searchCategories,
 } from '@/modules/pricing/repository';
 import {
@@ -36,8 +40,8 @@ import {
 import type { Sals3CategoryRow } from '@/lib/db/schema';
 
 /**
- * Server actions for Settings → Market Rules → Category pricing / FX
- * adjustment (ADR-015 Phase 1). Every action follows the same discipline as
+ * Server actions for Settings → Market Rules → Category pricing / funding
+ * buffer (ADR-015 Phase 1). Every action follows the same discipline as
  * `supplier-apps/actions.ts`: Zod-validate, authorize, rate-limit, do every
  * read/write inside one transaction scoped to `session.sellerId`, audit
  * inside that same transaction, then return a typed `reason` instead of
@@ -69,18 +73,7 @@ const reasonSchema = z
   .min(MIN_REASON_LENGTH, 'Explain why in at least 10 characters.')
   .max(500);
 
-const currencySchema = z
-  .string()
-  .trim()
-  .toUpperCase()
-  .regex(/^[A-Z]{3}$/, 'Enter a 3-letter ISO currency code.');
-
 const roundingRuleSchema = z.enum(['NONE', 'NEAREST_0_99']);
-const fundingRailSchema = z.enum([
-  'CJ_WALLET_WIRE_TRANSFER',
-  'CJ_WALLET_PAYONEER',
-  'OTHER',
-]);
 
 export type ActionResult<T = undefined> =
   | ({ ok: true } & (T extends undefined ? object : { data: T }))
@@ -233,6 +226,117 @@ export async function saveCategoryPolicyAction(
   }
 }
 
+const saveCategoryGroupMarginInputSchema = z.object({
+  l1: z.string().trim().min(1).max(128),
+  l2: z.string().trim().min(1).max(128),
+  targetMarginRate: marginRateSchema,
+  roundingRule: roundingRuleSchema,
+  reason: reasonSchema,
+});
+
+/**
+ * Bulk-sets margin for every leaf category currently under one L1>L2
+ * group, in one transaction — the setup-UI equivalent of calling
+ * `saveCategoryPolicyAction` once per leaf. Storage stays exactly as it is
+ * for a single-category save: one policy row per `(sellerAccountId,
+ * categoryId)`, unconditionally created-or-revised. The leaf set is always
+ * recomputed from `(l1, l2)` here, never taken from the caller, so a
+ * client cannot bulk-write categories it never actually looked up.
+ *
+ * Overwrite is unconditional and by design: every current leaf under the
+ * group — including ones a seller individually customized before this
+ * click — gets the new rate and rounding. The UI's own confirmation step
+ * is what makes that safe, not a server-side "skip if different" rule.
+ */
+export async function saveCategoryGroupMarginAction(
+  input: unknown,
+): Promise<ActionResult<{ updatedCount: number }>> {
+  const parsed = saveCategoryGroupMarginInputSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, reason: 'invalid_input' };
+
+  const auth = await authorize(
+    'pricing_policy:manage',
+    'pricing:save-category-group-margin',
+  );
+  if (!auth.ok) return auth;
+
+  try {
+    const leaves = await findLeafCategoriesByL1L2(
+      getDb(),
+      parsed.data.l1,
+      parsed.data.l2,
+    );
+    if (leaves.length === 0) return { ok: false, reason: 'not_found' };
+
+    // Ties every audit row this one click produces back to one bulk
+    // operation, without inventing a new entityType/table for it.
+    const bulkOperationId = crypto.randomUUID();
+
+    await getDb().transaction(async (tx) => {
+      /* eslint-disable no-await-in-loop */
+      // eslint-disable-next-line no-restricted-syntax -- sequential: every leaf's write shares this one transaction's connection, and the audit trail is easiest to reason about in creation order.
+      for (const leaf of leaves) {
+        const existing = await findActiveCategoryPolicy(
+          tx,
+          auth.sellerAccountId,
+          leaf.id,
+        );
+
+        const row =
+          existing === null
+            ? await createCategoryPolicy(tx, {
+                sellerAccountId: auth.sellerAccountId,
+                categoryId: leaf.id,
+                targetMarginRate: parsed.data.targetMarginRate,
+                roundingRule: parsed.data.roundingRule,
+                reason: parsed.data.reason,
+                actorId: auth.actorId,
+              })
+            : await reviseCategoryPolicy(tx, existing, {
+                targetMarginRate: parsed.data.targetMarginRate,
+                roundingRule: parsed.data.roundingRule,
+                reason: parsed.data.reason,
+                actorId: auth.actorId,
+              });
+
+        await appendAuditEvent(tx, {
+          actorId: auth.actorId,
+          action:
+            existing === null
+              ? 'category_pricing_policy.created'
+              : 'category_pricing_policy.revised',
+          entityType: 'PricingCategoryPolicy',
+          entityId: row.id,
+          payload: {
+            sellerAccountId: auth.sellerAccountId,
+            categoryCode: leaf.code,
+            targetMarginRate: parsed.data.targetMarginRate,
+            roundingRule: parsed.data.roundingRule,
+            reason: parsed.data.reason,
+            version: row.version,
+            supersedesId: row.supersedesId,
+            bulkOperationId,
+            bulkL1: parsed.data.l1,
+            bulkL2: parsed.data.l2,
+            bulkLeafCount: leaves.length,
+          },
+        });
+      }
+      /* eslint-enable no-await-in-loop */
+    });
+
+    revalidatePath('/market-rules');
+    return { ok: true, data: { updatedCount: leaves.length } };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] save category group margin failed', {
+      sellerAccountId: auth.sellerAccountId,
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+    return { ok: false, reason: 'failed' };
+  }
+}
+
 const deactivateCategoryPolicyInputSchema = z.object({
   policyId: z.string().uuid(),
   sellerAccountId: z.string().uuid(),
@@ -254,23 +358,45 @@ export async function deactivateCategoryPolicyAction(
   );
   if (!auth.ok) return auth;
 
-  // IDOR guard: the id a seller may deactivate must be their own — never
-  // trust the browser's claim about which seller owns this policy.
+  // Cheap early exit for the obvious case, but the real IDOR guard is the
+  // sellerAccountId filter inside `deactivateCategoryPolicy`'s own WHERE
+  // clause below — a caller-claimed seller id checked only against the
+  // caller's own session proves nothing about who the policyId actually
+  // belongs to.
   if (parsed.data.sellerAccountId !== auth.sellerAccountId) {
     return { ok: false, reason: 'denied' };
   }
 
   try {
+    let notFound = false;
+
     await getDb().transaction(async (tx) => {
-      await deactivateCategoryPolicy(tx, parsed.data.policyId);
+      const deactivated = await deactivateCategoryPolicy(
+        tx,
+        parsed.data.policyId,
+        auth.sellerAccountId,
+      );
+
+      if (deactivated === null) {
+        notFound = true;
+        return;
+      }
+
+      const category = await findCategoryById(tx, deactivated.categoryId);
+
       await appendAuditEvent(tx, {
         actorId: auth.actorId,
         action: 'category_pricing_policy.deactivated',
         entityType: 'PricingCategoryPolicy',
         entityId: parsed.data.policyId,
-        payload: { sellerAccountId: auth.sellerAccountId },
+        payload: {
+          sellerAccountId: auth.sellerAccountId,
+          categoryCode: category?.code ?? null,
+        },
       });
     });
+
+    if (notFound) return { ok: false, reason: 'not_found' };
 
     revalidatePath('/market-rules');
     return { ok: true };
@@ -283,37 +409,31 @@ export async function deactivateCategoryPolicyAction(
   }
 }
 
-// --- FX adjustment policy ---------------------------------------------------
+// --- Funding buffer policy ---------------------------------------------------
 
-const saveFxAdjustmentPolicyInputSchema = z.object({
-  sourceCurrency: currencySchema,
-  targetCurrency: currencySchema,
-  fundingRail: fundingRailSchema,
+const saveFundingBufferPolicyInputSchema = z.object({
   adjustmentRate: fxAdjustmentRateSchema,
   reason: reasonSchema,
   effectiveTo: z.string().datetime().optional(),
 });
 
-export async function saveFxAdjustmentPolicyAction(
+export async function saveFundingBufferPolicyAction(
   input: unknown,
 ): Promise<ActionResult> {
-  const parsed = saveFxAdjustmentPolicyInputSchema.safeParse(input);
+  const parsed = saveFundingBufferPolicyInputSchema.safeParse(input);
   if (!parsed.success) return { ok: false, reason: 'invalid_input' };
 
   const auth = await authorize(
     'pricing_policy:manage',
-    'pricing:save-fx-policy',
+    'pricing:save-funding-buffer-policy',
   );
   if (!auth.ok) return auth;
 
   try {
     await getDb().transaction(async (tx) => {
-      const existing = await findActiveFxAdjustmentPolicy(
+      const existing = await findActiveFundingBufferPolicy(
         tx,
         auth.sellerAccountId,
-        parsed.data.sourceCurrency,
-        parsed.data.targetCurrency,
-        parsed.data.fundingRail,
       );
 
       const effectiveTo =
@@ -323,17 +443,14 @@ export async function saveFxAdjustmentPolicyAction(
 
       const row =
         existing === null
-          ? await createFxAdjustmentPolicy(tx, {
+          ? await createFundingBufferPolicy(tx, {
               sellerAccountId: auth.sellerAccountId,
-              sourceCurrency: parsed.data.sourceCurrency,
-              targetCurrency: parsed.data.targetCurrency,
-              fundingRail: parsed.data.fundingRail,
               adjustmentRate: parsed.data.adjustmentRate,
               reason: parsed.data.reason,
               actorId: auth.actorId,
               effectiveTo,
             })
-          : await reviseFxAdjustmentPolicy(tx, existing, {
+          : await reviseFundingBufferPolicy(tx, existing, {
               adjustmentRate: parsed.data.adjustmentRate,
               reason: parsed.data.reason,
               actorId: auth.actorId,
@@ -344,15 +461,12 @@ export async function saveFxAdjustmentPolicyAction(
         actorId: auth.actorId,
         action:
           existing === null
-            ? 'fx_adjustment_policy.created'
-            : 'fx_adjustment_policy.revised',
+            ? 'funding_buffer_policy.created'
+            : 'funding_buffer_policy.revised',
         entityType: 'PricingFxAdjustmentPolicy',
         entityId: row.id,
         payload: {
           sellerAccountId: auth.sellerAccountId,
-          sourceCurrency: parsed.data.sourceCurrency,
-          targetCurrency: parsed.data.targetCurrency,
-          fundingRail: parsed.data.fundingRail,
           adjustmentRate: parsed.data.adjustmentRate,
           reason: parsed.data.reason,
           version: row.version,
@@ -364,7 +478,7 @@ export async function saveFxAdjustmentPolicyAction(
     return { ok: true };
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.error('[portal] save FX adjustment policy failed', {
+    console.error('[portal] save funding buffer policy failed', {
       sellerAccountId: auth.sellerAccountId,
       error: error instanceof Error ? error.message : 'unknown',
     });
@@ -372,7 +486,7 @@ export async function saveFxAdjustmentPolicyAction(
   }
 }
 
-export async function deactivateFxAdjustmentPolicyAction(
+export async function deactivateFundingBufferPolicyAction(
   policyId: string,
   sellerAccountIdOfPolicy: string,
 ): Promise<ActionResult> {
@@ -383,31 +497,48 @@ export async function deactivateFxAdjustmentPolicyAction(
 
   const auth = await authorize(
     'pricing_policy:manage',
-    'pricing:deactivate-fx-policy',
+    'pricing:deactivate-funding-buffer-policy',
   );
   if (!auth.ok) return auth;
 
+  // Cheap early exit for the obvious case; the real IDOR guard is the
+  // sellerAccountId filter inside `deactivateFundingBufferPolicy`'s own
+  // WHERE clause below — see `deactivateCategoryPolicyAction`'s comment.
   if (parsed.data.sellerAccountId !== auth.sellerAccountId) {
     return { ok: false, reason: 'denied' };
   }
 
   try {
+    let notFound = false;
+
     await getDb().transaction(async (tx) => {
-      await deactivateFxAdjustmentPolicy(tx, parsed.data.policyId);
+      const deactivated = await deactivateFundingBufferPolicy(
+        tx,
+        parsed.data.policyId,
+        auth.sellerAccountId,
+      );
+
+      if (deactivated === null) {
+        notFound = true;
+        return;
+      }
+
       await appendAuditEvent(tx, {
         actorId: auth.actorId,
-        action: 'fx_adjustment_policy.deactivated',
+        action: 'funding_buffer_policy.deactivated',
         entityType: 'PricingFxAdjustmentPolicy',
         entityId: parsed.data.policyId,
         payload: { sellerAccountId: auth.sellerAccountId },
       });
     });
 
+    if (notFound) return { ok: false, reason: 'not_found' };
+
     revalidatePath('/market-rules');
     return { ok: true };
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.error('[portal] deactivate FX adjustment policy failed', {
+    console.error('[portal] deactivate funding buffer policy failed', {
       error: error instanceof Error ? error.message : 'unknown',
     });
     return { ok: false, reason: 'failed' };
@@ -448,7 +579,11 @@ export async function saveProductOverrideAction(
         parsed.data.supplierCandidateId,
       );
       if (existing !== null) {
-        await removeProductOverride(tx, existing.id);
+        await removeProductOverride(
+          tx,
+          existing.id,
+          parsed.data.supplierCandidateId,
+        );
       }
 
       const row = await createProductOverride(tx, {
@@ -509,8 +644,20 @@ export async function removeProductOverrideAction(
     );
     if (!owns) return { ok: false, reason: 'not_found' };
 
+    let notFound = false;
+
     await getDb().transaction(async (tx) => {
-      await removeProductOverride(tx, parsed.data.overrideId);
+      const removed = await removeProductOverride(
+        tx,
+        parsed.data.overrideId,
+        parsed.data.supplierCandidateId,
+      );
+
+      if (removed === null) {
+        notFound = true;
+        return;
+      }
+
       await appendAuditEvent(tx, {
         actorId: auth.actorId,
         action: 'product_pricing_override.removed',
@@ -522,6 +669,8 @@ export async function removeProductOverrideAction(
         },
       });
     });
+
+    if (notFound) return { ok: false, reason: 'not_found' };
 
     return { ok: true };
   } catch (error) {
@@ -572,7 +721,11 @@ export async function saveVariantOverrideAction(
         parsed.data.supplierVariantId,
       );
       if (existing !== null) {
-        await removeVariantOverride(tx, existing.id);
+        await removeVariantOverride(
+          tx,
+          existing.id,
+          parsed.data.supplierCandidateId,
+        );
       }
 
       const row = await createVariantOverride(tx, {
@@ -637,8 +790,20 @@ export async function removeVariantOverrideAction(
     );
     if (!owns) return { ok: false, reason: 'not_found' };
 
+    let notFound = false;
+
     await getDb().transaction(async (tx) => {
-      await removeVariantOverride(tx, parsed.data.overrideId);
+      const removed = await removeVariantOverride(
+        tx,
+        parsed.data.overrideId,
+        parsed.data.supplierCandidateId,
+      );
+
+      if (removed === null) {
+        notFound = true;
+        return;
+      }
+
       await appendAuditEvent(tx, {
         actorId: auth.actorId,
         action: 'variant_pricing_override.removed',
@@ -651,10 +816,110 @@ export async function removeVariantOverrideAction(
       });
     });
 
+    if (notFound) return { ok: false, reason: 'not_found' };
+
     return { ok: true };
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('[portal] remove variant override failed', {
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+    return { ok: false, reason: 'failed' };
+  }
+}
+
+// --- Policy history (read) --------------------------------------------------
+
+/**
+ * Read-only, `pricing_policy:read`-gated (not `:manage` — viewing history
+ * needs less authority than changing a policy). Both actions scope by
+ * `auth.sellerAccountId` exclusively, matching this file's IDOR discipline
+ * throughout: a category code or funding-buffer lookup can only ever
+ * surface the caller's own seller's history, never another tenant's.
+ */
+
+export async function getCategoryPolicyHistoryAction(
+  categoryCode: string,
+): Promise<ActionResult<AuditHistoryEntry[]>> {
+  const parsed = z.string().trim().min(1).max(64).safeParse(categoryCode);
+  if (!parsed.success) return { ok: false, reason: 'invalid_input' };
+
+  const auth = await authorize(
+    'pricing_policy:read',
+    'pricing:category-policy-history',
+  );
+  if (!auth.ok) return auth;
+
+  try {
+    const data = await listAuditHistoryForSellerEntity(getDb(), {
+      entityType: 'PricingCategoryPolicy',
+      sellerAccountId: auth.sellerAccountId,
+      payloadEquals: { categoryCode: parsed.data },
+    });
+    return { ok: true, data };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] category policy history read failed', {
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+    return { ok: false, reason: 'failed' };
+  }
+}
+
+/** Group-level history — bulk operations for one L1>L2 only, distinct from a single leaf's own full history above. */
+export async function getCategoryGroupHistoryAction(
+  l1: string,
+  l2: string,
+): Promise<ActionResult<AuditHistoryEntry[]>> {
+  const parsed = z
+    .object({
+      l1: z.string().trim().min(1).max(128),
+      l2: z.string().trim().min(1).max(128),
+    })
+    .safeParse({ l1, l2 });
+  if (!parsed.success) return { ok: false, reason: 'invalid_input' };
+
+  const auth = await authorize(
+    'pricing_policy:read',
+    'pricing:category-group-history',
+  );
+  if (!auth.ok) return auth;
+
+  try {
+    const data = await listAuditHistoryForSellerEntity(getDb(), {
+      entityType: 'PricingCategoryPolicy',
+      sellerAccountId: auth.sellerAccountId,
+      payloadEquals: { bulkL1: parsed.data.l1, bulkL2: parsed.data.l2 },
+    });
+    return { ok: true, data };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] category group history read failed', {
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+    return { ok: false, reason: 'failed' };
+  }
+}
+
+/** At most one active funding buffer per seller, so no extra payload filter is needed — this seller's whole history for it. */
+export async function getFundingBufferHistoryAction(): Promise<
+  ActionResult<AuditHistoryEntry[]>
+> {
+  const auth = await authorize(
+    'pricing_policy:read',
+    'pricing:funding-buffer-history',
+  );
+  if (!auth.ok) return auth;
+
+  try {
+    const data = await listAuditHistoryForSellerEntity(getDb(), {
+      entityType: 'PricingFxAdjustmentPolicy',
+      sellerAccountId: auth.sellerAccountId,
+    });
+    return { ok: true, data };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] funding buffer history read failed', {
       error: error instanceof Error ? error.message : 'unknown',
     });
     return { ok: false, reason: 'failed' };

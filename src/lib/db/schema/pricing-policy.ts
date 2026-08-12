@@ -98,18 +98,6 @@ export const roundingRuleEnum = pgEnum('rounding_rule', [
 ]);
 
 /**
- * Only the funding rails this codebase has actually documented (part31
- * research: CJ Wallet topped up by wire/Payoneer). `OTHER` exists so a
- * seller is never blocked from recording a real rail this enum has not
- * caught up to yet; it still requires the same reason/audit trail.
- */
-export const fundingRailEnum = pgEnum('funding_rail', [
-  'CJ_WALLET_WIRE_TRANSFER',
-  'CJ_WALLET_PAYONEER',
-  'OTHER',
-]);
-
-/**
  * Seller category margin policy — ADR-015's "normal operational default".
  * `targetMarginRate` is a `numeric` column (Drizzle returns it as a
  * `string`), never a JS `number`, so no floating-point value is ever the
@@ -232,11 +220,16 @@ export const pricingVariantOverrides = pgTable(
 );
 
 /**
- * Seller-owned FX adjustment (ADR-015 §4) — deliberately separate from
- * margin and from the reference rate. Scoped by currency pair + funding
- * rail, never a category/product default. `effectiveTo` is nullable
- * (open-ended) but when set makes the policy provably temporary per
- * ADR-015 §5 ("temporary overrides require start/end time or a review
+ * Seller-owned funding buffer (ADR-015 §4) — a flat, seller-owned
+ * cost-basis uplift, deliberately separate from margin and from
+ * `reference-fx.ts`'s buyer-settlement identity rate. Models the owner's
+ * real funding-conversion exposure (e.g. converting AUD to top up a
+ * CJ Wallet that only accepts USD/EUR) rather than a buyer-facing
+ * currency-pair conversion — see `src/modules/pricing/resolver.ts`'s
+ * unconditional funding-buffer step. At most one ACTIVE row per seller;
+ * there is no currency pair or funding rail dimension. `effectiveTo` is
+ * nullable (open-ended) but when set makes the policy provably temporary
+ * per ADR-015 §5 ("temporary overrides require start/end time or a review
  * date").
  */
 export const pricingFxAdjustmentPolicies = pgTable(
@@ -246,9 +239,6 @@ export const pricingFxAdjustmentPolicies = pgTable(
     sellerAccountId: uuid('seller_account_id')
       .notNull()
       .references(() => sellerAccounts.id, { onDelete: 'restrict' }),
-    sourceCurrency: text('source_currency').notNull(),
-    targetCurrency: text('target_currency').notNull(),
-    fundingRail: fundingRailEnum('funding_rail').notNull(),
     /** Signed buffer, e.g. 0.025 = +2.5%. Not a margin, not a fee. */
     adjustmentRate: numeric('adjustment_rate', {
       precision: 8,
@@ -271,13 +261,9 @@ export const pricingFxAdjustmentPolicies = pgTable(
       .defaultNow(),
   },
   (table) => [
+    // At most one ACTIVE funding buffer per seller — no currency/rail dimension.
     uniqueIndex('pricing_fx_adjustment_policies_active_key')
-      .on(
-        table.sellerAccountId,
-        table.sourceCurrency,
-        table.targetCurrency,
-        table.fundingRail,
-      )
+      .on(table.sellerAccountId)
       .where(sql`${table.status} = 'ACTIVE'`),
     index('pricing_fx_adjustment_policies_seller_idx').on(
       table.sellerAccountId,
@@ -286,7 +272,6 @@ export const pricingFxAdjustmentPolicies = pgTable(
 );
 
 export type RoundingRule = (typeof roundingRuleEnum.enumValues)[number];
-export type FundingRail = (typeof fundingRailEnum.enumValues)[number];
 
 export type Sals3CategoryRow = typeof sals3Categories.$inferSelect;
 export type NewSals3CategoryRow = typeof sals3Categories.$inferInsert;

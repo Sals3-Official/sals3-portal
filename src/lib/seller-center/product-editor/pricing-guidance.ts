@@ -59,7 +59,6 @@ export default async function resolveFixtureVariantGuidance(
           supplierCost: variant.supplierCost,
           supplierCostObservedAt: variant.evidenceCapturedAt,
           settlementCurrency: SETTLEMENT_CURRENCY,
-          fundingRail: null,
         });
 
         return {

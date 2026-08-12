@@ -50,6 +50,7 @@ describe('seller account reads inside a render', () => {
   it('go through the one request-scoped reader, never the repository directly', () => {
     const offenders = SCAN_ROOTS.flatMap(collectTsFiles)
       .filter((file) => readFileSync(file, 'utf8').includes(REPOSITORY_CALL))
+      .map((file) => file.replaceAll('\\', '/'))
       .map((file) => file.slice(file.indexOf('src/')))
       .filter((relative) => !ALLOWED.includes(relative));
 

@@ -10,9 +10,6 @@ export type Money = {
 export type CategoryMappingConfidence =
   'EXACT' | 'ACCEPTABLE' | 'AMBIGUOUS' | 'UNMAPPED';
 
-export type FundingRail =
-  'CJ_WALLET_WIRE_TRANSFER' | 'CJ_WALLET_PAYONEER' | 'OTHER';
-
 export type ResolvedPolicyLayer =
   'CATEGORY' | 'PRODUCT_OVERRIDE' | 'VARIANT_OVERRIDE';
 
@@ -22,8 +19,8 @@ export type PricingUnavailableReason =
   | 'CATEGORY_POLICY_REQUIRED'
   | 'SUPPLIER_COST_UNAVAILABLE'
   | 'REFERENCE_FX_UNAVAILABLE'
-  | 'FX_ADJUSTMENT_POLICY_REQUIRED'
-  | 'POLICY_EXPIRED'
+  | 'FUNDING_BUFFER_REQUIRED'
+  | 'FUNDING_BUFFER_EXPIRED'
   | 'INVALID_MARGIN_RATE';
 
 export const PRICING_UNAVAILABLE_REASON_LABELS: Record<
@@ -35,13 +32,13 @@ export const PRICING_UNAVAILABLE_REASON_LABELS: Record<
   CATEGORY_POLICY_REQUIRED: 'Category policy required',
   SUPPLIER_COST_UNAVAILABLE: 'Supplier cost unavailable',
   REFERENCE_FX_UNAVAILABLE: 'Reference FX unavailable',
-  FX_ADJUSTMENT_POLICY_REQUIRED: 'FX adjustment policy required',
-  POLICY_EXPIRED: 'Policy expired',
+  FUNDING_BUFFER_REQUIRED: 'Funding buffer required',
+  FUNDING_BUFFER_EXPIRED: 'Funding buffer expired',
   INVALID_MARGIN_RATE: 'Invalid margin rate',
 };
 
-/** Bumped whenever the resolver's formula or precedence changes, so a persisted/rendered decision can always be traced to the logic that produced it — same idiom as `POLICY_VERSION` in `rules/policy.ts`. */
-export const PRICING_RESOLVER_VERSION = 'pricing-resolver-v1';
+/** Bumped whenever the resolver's formula or precedence changes, so a persisted/rendered decision can always be traced to the logic that produced it — same idiom as `POLICY_VERSION` in `rules/policy.ts`. Bumped to v2: the funding buffer now always applies as a cost-basis uplift, unconditionally, instead of being gated on a buyer-settlement currency mismatch. */
+export const PRICING_RESOLVER_VERSION = 'pricing-resolver-v2';
 
 export type PricingResolutionInput = {
   sellerAccountId: string;
@@ -55,7 +52,6 @@ export type PricingResolutionInput = {
   supplierCostObservedAt: string | null;
   /** ADR-003 phase 1: always `'USD'` today. Passed in, never hardcoded inside the resolver, so a future multi-currency phase changes one caller-supplied value, not this module. */
   settlementCurrency: string;
-  fundingRail: FundingRail | null;
 };
 
 export type PricingDecision =
@@ -69,9 +65,9 @@ export type PricingDecision =
       referenceFxRate: string;
       referenceFxSource: string;
       referenceFxObservedAt: string;
-      fxAdjustmentRate: string | null;
-      fxAdjustmentPolicyId: string | null;
-      fxAdjustmentPolicyVersion: number | null;
+      fundingBufferRate: string;
+      fundingBufferPolicyId: string;
+      fundingBufferPolicyVersion: number;
       effectiveProductCost: Money;
       suggestedItemPrice: Money;
       roundedSuggestedItemPrice: Money;

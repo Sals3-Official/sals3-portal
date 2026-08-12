@@ -6,7 +6,6 @@ import {
   pricingProductOverrides,
   pricingVariantOverrides,
   sals3Categories,
-  type FundingRail as SchemaFundingRail,
   type PricingCategoryPolicyRow,
   type PricingFxAdjustmentPolicyRow,
   type PricingProductOverrideRow,
@@ -16,7 +15,7 @@ import {
 } from '@/lib/db/schema';
 
 /**
- * Data access for category-first margin and FX-adjustment policy.
+ * Data access for category-first margin and the seller's funding buffer.
  *
  * Every "revise" function supersedes the previous row and inserts a new one
  * in the SAME transaction the caller opened — this module never opens its
@@ -34,6 +33,19 @@ export async function findCategoryByCode(
     .select()
     .from(sals3Categories)
     .where(eq(sals3Categories.code, code))
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
+export async function findCategoryById(
+  executor: Executor,
+  categoryId: string,
+): Promise<Sals3CategoryRow | null> {
+  const rows = await executor
+    .select()
+    .from(sals3Categories)
+    .where(eq(sals3Categories.id, categoryId))
     .limit(1);
 
   return rows[0] ?? null;
@@ -124,6 +136,140 @@ export async function listActiveCategoryPolicies(
   }));
 }
 
+export type CategoryMarginLeafRow = {
+  categoryId: string;
+  code: string;
+  path: string;
+  l1: string | null;
+  l2: string | null;
+  l3: string | null;
+  policy: {
+    id: string;
+    targetMarginRate: string;
+    roundingRule: SchemaRoundingRule;
+    version: number;
+    updatedAt: Date;
+  } | null;
+};
+
+/**
+ * Every leaf in the taxonomy, LEFT JOINed to this seller's active policy
+ * (or `null`). LEFT JOIN — not the INNER JOIN `listActiveCategoryPolicies`
+ * uses — is what makes an L2 group with zero active policies still
+ * knowable: the query is driven FROM `sals3Categories`, not from the
+ * policy table. One query, no N+1 — the settings page's whole initial
+ * render comes from this single fetch.
+ */
+export async function listCategoryMarginOverview(
+  executor: Executor,
+  sellerAccountId: string,
+): Promise<CategoryMarginLeafRow[]> {
+  const rows = await executor
+    .select({
+      categoryId: sals3Categories.id,
+      code: sals3Categories.code,
+      path: sals3Categories.path,
+      l1: sals3Categories.l1,
+      l2: sals3Categories.l2,
+      l3: sals3Categories.l3,
+      policyId: pricingCategoryPolicies.id,
+      targetMarginRate: pricingCategoryPolicies.targetMarginRate,
+      roundingRule: pricingCategoryPolicies.roundingRule,
+      version: pricingCategoryPolicies.version,
+      updatedAt: pricingCategoryPolicies.updatedAt,
+    })
+    .from(sals3Categories)
+    .leftJoin(
+      pricingCategoryPolicies,
+      and(
+        eq(pricingCategoryPolicies.categoryId, sals3Categories.id),
+        eq(pricingCategoryPolicies.sellerAccountId, sellerAccountId),
+        eq(pricingCategoryPolicies.status, 'ACTIVE'),
+      ),
+    )
+    .orderBy(
+      sals3Categories.l1,
+      sals3Categories.l2,
+      sals3Categories.l3,
+      sals3Categories.path,
+    );
+
+  return rows.map((row) => ({
+    categoryId: row.categoryId,
+    code: row.code,
+    path: row.path,
+    l1: row.l1,
+    l2: row.l2,
+    l3: row.l3,
+    policy:
+      row.policyId === null
+        ? null
+        : {
+            id: row.policyId,
+            targetMarginRate: row.targetMarginRate as string,
+            roundingRule: row.roundingRule as SchemaRoundingRule,
+            version: row.version as number,
+            updatedAt: row.updatedAt as Date,
+          },
+  }));
+}
+
+/**
+ * Authoritative "every leaf under this L2 today" lookup, used ONLY at
+ * write time by the bulk margin action. Recomputed from `(l1, l2)` on
+ * every write — never trust a client-supplied leaf-id list, which would
+ * open a staleness/tamper gap.
+ */
+export async function findLeafCategoriesByL1L2(
+  executor: Executor,
+  l1: string,
+  l2: string,
+): Promise<Sals3CategoryRow[]> {
+  return executor
+    .select()
+    .from(sals3Categories)
+    .where(and(eq(sals3Categories.l1, l1), eq(sals3Categories.l2, l2)));
+}
+
+export type CategoryMarginGroup = {
+  l1: string;
+  l2: string;
+  /** Stable client-side key and lookup key: `${l1}::${l2}`. */
+  groupKey: string;
+  leaves: CategoryMarginLeafRow[];
+};
+
+/**
+ * Pure grouping — no I/O. Kept out of SQL deliberately: "uniform / mixed /
+ * unset" per group needs to compare actual rate+rounding values across a
+ * group's leaves, including treating "no policy" as a distinct third
+ * state — a plain reduce over an already-small (1,345-row) array reads far
+ * more clearly than the equivalent SQL aggregate. Buckets a null `l1`/`l2`
+ * under `'(Uncategorized)'` rather than dropping the row; every live row
+ * today is fully populated, but this defends against the schema's
+ * nullability anyway.
+ */
+export function groupCategoryMarginRowsByL2(
+  rows: CategoryMarginLeafRow[],
+): CategoryMarginGroup[] {
+  const byKey = new Map<string, CategoryMarginGroup>();
+
+  rows.forEach((row) => {
+    const l1 = row.l1 ?? '(Uncategorized)';
+    const l2 = row.l2 ?? '(Uncategorized)';
+    const groupKey = `${l1}::${l2}`;
+
+    let group = byKey.get(groupKey);
+    if (group === undefined) {
+      group = { l1, l2, groupKey, leaves: [] };
+      byKey.set(groupKey, group);
+    }
+    group.leaves.push(row);
+  });
+
+  return [...byKey.values()];
+}
+
 export async function createCategoryPolicy(
   executor: Executor,
   input: {
@@ -177,14 +323,30 @@ export async function reviseCategoryPolicy(
   return row;
 }
 
+/**
+ * Scoped by `sellerAccountId` — a policy id that belongs to another tenant
+ * matches zero rows and returns `null`, the same "not yours, not there"
+ * answer as a genuinely missing id. Never trust a caller-claimed seller id
+ * against the caller's own session as a substitute for this database-level
+ * check.
+ */
 export async function deactivateCategoryPolicy(
   executor: Executor,
   policyId: string,
-): Promise<void> {
-  await executor
+  sellerAccountId: string,
+): Promise<PricingCategoryPolicyRow | null> {
+  const [row] = await executor
     .update(pricingCategoryPolicies)
     .set({ status: 'DEACTIVATED', updatedAt: new Date() })
-    .where(eq(pricingCategoryPolicies.id, policyId));
+    .where(
+      and(
+        eq(pricingCategoryPolicies.id, policyId),
+        eq(pricingCategoryPolicies.sellerAccountId, sellerAccountId),
+      ),
+    )
+    .returning();
+
+  return row ?? null;
 }
 
 // --- Product override ---------------------------------------------------
@@ -248,14 +410,29 @@ export async function createProductOverride(
   return row;
 }
 
+/**
+ * Scoped by `supplierCandidateId` — the caller must already have verified
+ * (via `candidateBelongsToSeller`) that this candidate belongs to it. An
+ * `overrideId` that does not actually belong to that candidate matches
+ * zero rows rather than removing a different candidate's override.
+ */
 export async function removeProductOverride(
   executor: Executor,
   overrideId: string,
-): Promise<void> {
-  await executor
+  supplierCandidateId: string,
+): Promise<PricingProductOverrideRow | null> {
+  const [row] = await executor
     .update(pricingProductOverrides)
     .set({ status: 'REMOVED', updatedAt: new Date() })
-    .where(eq(pricingProductOverrides.id, overrideId));
+    .where(
+      and(
+        eq(pricingProductOverrides.id, overrideId),
+        eq(pricingProductOverrides.supplierCandidateId, supplierCandidateId),
+      ),
+    )
+    .returning();
+
+  return row ?? null;
 }
 
 // --- Variant override ---------------------------------------------------
@@ -311,24 +488,32 @@ export async function createVariantOverride(
   return row;
 }
 
+/** Scoped by `supplierCandidateId` — see `removeProductOverride`'s comment. */
 export async function removeVariantOverride(
   executor: Executor,
   overrideId: string,
-): Promise<void> {
-  await executor
+  supplierCandidateId: string,
+): Promise<PricingVariantOverrideRow | null> {
+  const [row] = await executor
     .update(pricingVariantOverrides)
     .set({ status: 'REMOVED', updatedAt: new Date() })
-    .where(eq(pricingVariantOverrides.id, overrideId));
+    .where(
+      and(
+        eq(pricingVariantOverrides.id, overrideId),
+        eq(pricingVariantOverrides.supplierCandidateId, supplierCandidateId),
+      ),
+    )
+    .returning();
+
+  return row ?? null;
 }
 
-// --- FX adjustment policy -------------------------------------------------
+// --- Funding buffer policy -------------------------------------------------
 
-export async function findActiveFxAdjustmentPolicy(
+/** At most one ACTIVE funding buffer per seller — no currency/rail dimension. */
+export async function findActiveFundingBufferPolicy(
   executor: Executor,
   sellerAccountId: string,
-  sourceCurrency: string,
-  targetCurrency: string,
-  fundingRail: SchemaFundingRail,
 ): Promise<PricingFxAdjustmentPolicyRow | null> {
   const rows = await executor
     .select()
@@ -336,9 +521,6 @@ export async function findActiveFxAdjustmentPolicy(
     .where(
       and(
         eq(pricingFxAdjustmentPolicies.sellerAccountId, sellerAccountId),
-        eq(pricingFxAdjustmentPolicies.sourceCurrency, sourceCurrency),
-        eq(pricingFxAdjustmentPolicies.targetCurrency, targetCurrency),
-        eq(pricingFxAdjustmentPolicies.fundingRail, fundingRail),
         eq(pricingFxAdjustmentPolicies.status, 'ACTIVE'),
       ),
     )
@@ -347,28 +529,10 @@ export async function findActiveFxAdjustmentPolicy(
   return rows[0] ?? null;
 }
 
-export async function listActiveFxAdjustmentPolicies(
-  executor: Executor,
-  sellerAccountId: string,
-): Promise<PricingFxAdjustmentPolicyRow[]> {
-  return executor
-    .select()
-    .from(pricingFxAdjustmentPolicies)
-    .where(
-      and(
-        eq(pricingFxAdjustmentPolicies.sellerAccountId, sellerAccountId),
-        eq(pricingFxAdjustmentPolicies.status, 'ACTIVE'),
-      ),
-    );
-}
-
-export async function createFxAdjustmentPolicy(
+export async function createFundingBufferPolicy(
   executor: Executor,
   input: {
     sellerAccountId: string;
-    sourceCurrency: string;
-    targetCurrency: string;
-    fundingRail: SchemaFundingRail;
     adjustmentRate: string;
     reason: string;
     actorId: string;
@@ -390,7 +554,7 @@ export async function createFxAdjustmentPolicy(
   return row;
 }
 
-export async function reviseFxAdjustmentPolicy(
+export async function reviseFundingBufferPolicy(
   executor: Executor,
   previous: PricingFxAdjustmentPolicyRow,
   input: {
@@ -409,9 +573,6 @@ export async function reviseFxAdjustmentPolicy(
     .insert(pricingFxAdjustmentPolicies)
     .values({
       sellerAccountId: previous.sellerAccountId,
-      sourceCurrency: previous.sourceCurrency,
-      targetCurrency: previous.targetCurrency,
-      fundingRail: previous.fundingRail,
       adjustmentRate: input.adjustmentRate,
       reason: input.reason,
       actorId: input.actorId,
@@ -426,12 +587,22 @@ export async function reviseFxAdjustmentPolicy(
   return row;
 }
 
-export async function deactivateFxAdjustmentPolicy(
+/** Scoped by `sellerAccountId` — see `deactivateCategoryPolicy`'s comment. */
+export async function deactivateFundingBufferPolicy(
   executor: Executor,
   policyId: string,
-): Promise<void> {
-  await executor
+  sellerAccountId: string,
+): Promise<PricingFxAdjustmentPolicyRow | null> {
+  const [row] = await executor
     .update(pricingFxAdjustmentPolicies)
     .set({ status: 'DEACTIVATED', updatedAt: new Date() })
-    .where(eq(pricingFxAdjustmentPolicies.id, policyId));
+    .where(
+      and(
+        eq(pricingFxAdjustmentPolicies.id, policyId),
+        eq(pricingFxAdjustmentPolicies.sellerAccountId, sellerAccountId),
+      ),
+    )
+    .returning();
+
+  return row ?? null;
 }
