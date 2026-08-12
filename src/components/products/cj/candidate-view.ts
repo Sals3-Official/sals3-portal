@@ -99,6 +99,22 @@ export function stockedOrigins(evidence: CandidateEvidence | null): string {
     : stocked.map((warehouse) => warehouse.name).join(', ');
 }
 
+/**
+ * Product image address for one candidate row, from the discovery feed
+ * snapshot. Evidence stores only `usableImageCount`, never an address, so the
+ * feed snapshot is the only image source. The address was allow-listed to the
+ * CJ image hosts at intake (`cjImageUrl`), matching `next.config.ts`
+ * `remotePatterns`.
+ */
+export function imageUrl(candidate: {
+  evaluation: { feedSnapshot: unknown };
+}): string | null {
+  // `feed_snapshot` is `jsonb`, so it reaches here untyped - parse, never cast.
+  const feed = feedSnapshotSchema.safeParse(candidate.evaluation.feedSnapshot);
+
+  return feed.success ? (feed.data.imageUrl ?? null) : null;
+}
+
 export function formatUsd(value: number | null): string {
   return value === null ? '—' : `$${value.toFixed(2)}`;
 }

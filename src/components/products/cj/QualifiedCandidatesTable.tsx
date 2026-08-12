@@ -9,13 +9,13 @@ import {
 import StatusPill from '@/components/seller-center/shared/StatusPill';
 import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
 import type { ReasonCode } from '@/modules/catalog/candidates/rules/contracts';
+import Image from 'next/image';
+import { Package } from 'lucide-react';
 import {
   displayName,
   formatUsd,
-  formatStock,
-  stockedOrigins,
+  imageUrl,
   supplierPriceUsd,
-  totalStock,
 } from './candidate-view';
 import CustomizeAndListButton from './CustomizeAndListButton';
 
@@ -25,14 +25,7 @@ type QualifiedCandidatesTableProps = {
   showReasons: boolean;
 };
 
-const SHARED_COLUMNS = [
-  'Product',
-  'CJ product ID',
-  'Supplier price',
-  'Weight',
-  'Available stock',
-  'Stocked origins',
-];
+const SHARED_COLUMNS = ['Product', 'CJ product ID', 'Supplier price'];
 
 /**
  * Ready and Needs Attention share this table (spec's row field list): every
@@ -64,16 +57,35 @@ export default function QualifiedCandidatesTable({
         <TableBody>
           {candidates.map((candidate) => {
             const name = displayName(candidate);
+            const image = imageUrl(candidate);
             const reasonCodes = candidate.evaluation
               .reasonCodes as ReasonCode[];
 
             return (
               <TableRow key={candidate.candidateId}>
-                <TableCell
-                  className="max-w-64 truncate font-medium"
-                  title={name}
-                >
-                  {name}
+                <TableCell className="max-w-64 font-medium">
+                  <div className="flex items-center gap-3">
+                    {image === null ? (
+                      <div
+                        aria-hidden="true"
+                        className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border bg-muted"
+                      >
+                        <Package className="size-4 text-ink-faint" />
+                      </div>
+                    ) : (
+                      <Image
+                        src={image}
+                        alt={name}
+                        width={40}
+                        height={40}
+                        loading="lazy"
+                        className="size-10 shrink-0 rounded-md border border-border object-cover"
+                      />
+                    )}
+                    <span className="min-w-0 truncate" title={name}>
+                      {name}
+                    </span>
+                  </div>
                 </TableCell>
                 <TableCell className="font-mono text-xs">
                   {candidate.externalProductId}
@@ -81,15 +93,6 @@ export default function QualifiedCandidatesTable({
                 <TableCell className="tabular-nums">
                   {formatUsd(supplierPriceUsd(candidate))}
                 </TableCell>
-                <TableCell>
-                  {candidate.evidence?.packedWeight
-                    ? `${candidate.evidence.packedWeight} g`
-                    : '—'}
-                </TableCell>
-                <TableCell className="tabular-nums">
-                  {formatStock(totalStock(candidate.evidence))}
-                </TableCell>
-                <TableCell>{stockedOrigins(candidate.evidence)}</TableCell>
                 {showReasons ? (
                   <TableCell>
                     {reasonCodes.length === 0 ? (
