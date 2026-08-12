@@ -62,6 +62,7 @@ vi.mock('./outbox-repository', () => ({ insertOutboxIntents: vi.fn() }));
 vi.mock('./failure-repository', () => ({ recordDiscoveryFailure: vi.fn() }));
 vi.mock('./run-state-repository', () => ({ isDiscoveryRunning: vi.fn() }));
 vi.mock('./lane-repository', () => ({ findWatermark: vi.fn() }));
+vi.mock('./intake-gate-repository', () => ({ findPidCapacity: vi.fn() }));
 
 // eslint-disable-next-line import/first
 import { randomUUID } from 'crypto';
@@ -89,6 +90,8 @@ import { insertOutboxIntents } from './outbox-repository';
 import { isDiscoveryRunning } from './run-state-repository';
 // eslint-disable-next-line import/first
 import { findWatermark } from './lane-repository';
+// eslint-disable-next-line import/first
+import { findPidCapacity } from './intake-gate-repository';
 // eslint-disable-next-line import/first
 import handleCycleStart from './handle-cycle-start';
 
@@ -141,6 +144,7 @@ beforeEach(() => {
   asMock(advanceSeedCursor).mockResolvedValue(true);
   asMock(findLatestCompletedCycle).mockResolvedValue(null);
   asMock(findWatermark).mockResolvedValue(null);
+  asMock(findPidCapacity).mockResolvedValue({ limitValue: 600 });
   asMock(insertPartitions).mockImplementation((_tx: unknown, rows: unknown[]) =>
     Promise.resolve(rows.map((_, i) => ({ id: `partition-${i}` }))),
   );
@@ -300,6 +304,71 @@ describe('handleCycleStart', () => {
     expect(
       intents.some((i) => i.message.operation === 'RECONCILE_PRODUCT'),
     ).toBe(true);
+  });
+
+  it('scopes the curated seed key to the wave edge, so a lane is not capped at one run per day', async () => {
+    // Outbox idempotency keys are consumed permanently. A day bucket therefore
+    // allowed exactly one run per lane per day while the partition scanner ran
+    // thousands of times, so the curated lanes could never fill a wave first.
+    asMock(createCycleIfAbsent).mockResolvedValue({
+      cycle: cycle({ state: 'RUNNING', seedCursor: -1, categorySnapshot: [] }),
+      created: false,
+    });
+    asMock(findActiveCycle).mockResolvedValue(
+      cycle({ state: 'RUNNING', seedCursor: -1, categorySnapshot: [] }),
+    );
+    asMock(listResumablePartitions).mockResolvedValue([]);
+    asMock(findPidCapacity).mockResolvedValue({ limitValue: 1200 });
+
+    await handleCycleStart(MESSAGE);
+
+    const keys = asMock(insertOutboxIntents)
+      .mock.calls.flatMap(
+        (call) => call[1] as Array<{ message: { idempotencyKey: string } }>,
+      )
+      .map((intent) => intent.message.idempotencyKey)
+      .filter((key) => key.startsWith('curated:'));
+
+    expect(keys).toHaveLength(3);
+    keys.forEach((key) => expect(key).toContain('wave:1200'));
+  });
+
+  it('prioritizes curated product/list lanes before partition product/list scans in each sweep', async () => {
+    asMock(createCycleIfAbsent).mockResolvedValue({
+      cycle: cycle({ state: 'RUNNING', seedCursor: -1, categorySnapshot: [] }),
+      created: false,
+    });
+    asMock(findActiveCycle).mockResolvedValue(
+      cycle({ state: 'RUNNING', seedCursor: -1, categorySnapshot: [] }),
+    );
+    asMock(listResumablePartitions).mockResolvedValue([{ id: 'partition-9' }]);
+
+    await handleCycleStart(MESSAGE);
+
+    const intents = asMock(insertOutboxIntents).mock.calls.flatMap(
+      (call) =>
+        call[1] as Array<{
+          message: { operation: string; lane?: string };
+        }>,
+    );
+    const discoveryOrder = intents
+      .filter((intent) =>
+        ['DISCOVERY_CURATED_LANE', 'DISCOVERY_PARTITION'].includes(
+          intent.message.operation,
+        ),
+      )
+      .map((intent) => intent.message.lane ?? intent.message.operation);
+
+    // Array position does NOT influence claim or delivery order - only
+    // `OUTBOX_CLAIM_PRIORITY` and the intake-gate arbitration do. This asserts
+    // the three lanes are all seeded, in the owner's ranking, which is what
+    // `CURATED_LANES` guarantees and what the gate then arbitrates on.
+    expect(discoveryOrder).toEqual([
+      'CJ_TRENDING',
+      'CJ_MOST_LISTED',
+      'CJ_NEW_ARRIVALS',
+      'DISCOVERY_PARTITION',
+    ]);
   });
 
   it('does nothing while paused - checkpoints and queue state are retained for resume', async () => {

@@ -39,14 +39,34 @@ function capacity(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * Every curated lane already exhausted for wave edge 600, so a `PARTITION`
+ * caller is not held back by intake priority and the wave-capacity behaviour
+ * under test is reachable. Priority itself is covered separately below.
+ */
+function allLanesExhausted(waveLimit = 600) {
+  return [
+    { lane: 'CJ_TRENDING', exhaustedAtWaveLimit: waveLimit },
+    { lane: 'CJ_MOST_LISTED', exhaustedAtWaveLimit: waveLimit },
+    { lane: 'CJ_NEW_ARRIVALS', exhaustedAtWaveLimit: waveLimit },
+  ];
+}
+
 describe('assessIntakeGate - rolling new-PID waves', () => {
   it('blocks supplier calls at the wave edge while active pipeline work remains', async () => {
-    const { db } = fakeDb([[backlogGate()], [], [capacity()], [{ total: 9 }]]);
+    const { db } = fakeDb([
+      [backlogGate()],
+      [],
+      [capacity()],
+      allLanesExhausted(),
+      [{ total: 9 }],
+    ]);
 
     await expect(
       assessIntakeGate(db, {
         supplierConnectionId: CONNECTION_ID,
         requiredCapacity: 200,
+        intent: 'PARTITION',
       }),
     ).resolves.toMatchObject({
       allowed: false,
@@ -63,6 +83,7 @@ describe('assessIntakeGate - rolling new-PID waves', () => {
       [backlogGate()],
       [],
       [capacity()],
+      allLanesExhausted(),
       [{ total: 0 }],
       [{ id: 'capacity-1' }],
       [capacity({ limitValue: 1200, admittedCount: 600, capReachedAt: null })],
@@ -72,6 +93,7 @@ describe('assessIntakeGate - rolling new-PID waves', () => {
       assessIntakeGate(db, {
         supplierConnectionId: CONNECTION_ID,
         requiredCapacity: 200,
+        intent: 'PARTITION',
       }),
     ).resolves.toMatchObject({
       allowed: true,
@@ -152,14 +174,137 @@ describe('countActiveEvaluationWork - historical freeze line', () => {
       [backlogGate({ activationAt })],
       [],
       [capacity()],
+      allLanesExhausted(),
       [{ total: 7 }],
     ]);
 
     await assessIntakeGate(db, {
       supplierConnectionId: CONNECTION_ID,
       requiredCapacity: 200,
+      intent: 'PARTITION',
     });
 
     expect(whereBinds(calls, activationAt)).toBe(true);
+  });
+});
+
+describe('assessIntakeGate - strict curated intake priority', () => {
+  /** Lane rows as the repository reads them, with only the fields it uses. */
+  function lanes(exhausted: Record<string, number | null>) {
+    return Object.entries(exhausted).map(([lane, exhaustedAtWaveLimit]) => ({
+      lane,
+      exhaustedAtWaveLimit,
+    }));
+  }
+
+  function gateWith(laneRows: unknown[]) {
+    // Backlog gate, backlog-observation write, capacity, lane rows, then the
+    // active-work count the wave check would reach if priority let it.
+    return fakeDb([
+      [backlogGate()],
+      [],
+      [capacity({ admittedCount: 0 })],
+      laneRows,
+      [{ total: 0 }],
+    ]);
+  }
+
+  it('refuses the partition scanner while any curated lane can still contribute', async () => {
+    const { db } = gateWith(lanes({ CJ_TRENDING: null }));
+
+    await expect(
+      assessIntakeGate(db, {
+        supplierConnectionId: CONNECTION_ID,
+        requiredCapacity: 200,
+        intent: 'PARTITION',
+      }),
+    ).resolves.toMatchObject({
+      allowed: false,
+      reason: 'HIGHER_PRIORITY_INTAKE_PENDING',
+      blockedBy: 'CJ_TRENDING',
+    });
+  });
+
+  it('lets the partition scanner through once every lane is exhausted for this wave', async () => {
+    const { db } = gateWith(allLanesExhausted());
+
+    await expect(
+      assessIntakeGate(db, {
+        supplierConnectionId: CONNECTION_ID,
+        requiredCapacity: 200,
+        intent: 'PARTITION',
+      }),
+    ).resolves.toMatchObject({ allowed: true });
+  });
+
+  it('makes a lower-priority lane wait for a higher-priority one', async () => {
+    const { db } = gateWith(lanes({ CJ_TRENDING: null }));
+
+    await expect(
+      assessIntakeGate(db, {
+        supplierConnectionId: CONNECTION_ID,
+        requiredCapacity: 200,
+        intent: 'CJ_MOST_LISTED',
+      }),
+    ).resolves.toMatchObject({
+      allowed: false,
+      reason: 'HIGHER_PRIORITY_INTAKE_PENDING',
+      blockedBy: 'CJ_TRENDING',
+    });
+  });
+
+  it('never refuses the highest-priority lane for priority', async () => {
+    // CJ_TRENDING has nothing above it, so the order cannot deadlock.
+    const { db } = gateWith(lanes({ CJ_TRENDING: null, CJ_MOST_LISTED: null }));
+
+    await expect(
+      assessIntakeGate(db, {
+        supplierConnectionId: CONNECTION_ID,
+        requiredCapacity: 200,
+        intent: 'CJ_TRENDING',
+      }),
+    ).resolves.toMatchObject({ allowed: true });
+  });
+
+  it('treats a lane exhausted at a PREVIOUS wave edge as eligible again', async () => {
+    // New products appear between waves, so exhaustion is wave-scoped.
+    const { db } = gateWith(allLanesExhausted(600));
+
+    await expect(
+      assessIntakeGate(db, {
+        supplierConnectionId: CONNECTION_ID,
+        requiredCapacity: 200,
+        intent: 'PARTITION',
+      }),
+    ).resolves.toMatchObject({ allowed: true });
+
+    const stale = gateWith(allLanesExhausted(300));
+
+    await expect(
+      assessIntakeGate(stale.db, {
+        supplierConnectionId: CONNECTION_ID,
+        requiredCapacity: 200,
+        intent: 'PARTITION',
+      }),
+    ).resolves.toMatchObject({
+      allowed: false,
+      reason: 'HIGHER_PRIORITY_INTAKE_PENDING',
+    });
+  });
+
+  it('treats a lane with no row yet as eligible, so a lane always gets its first turn', async () => {
+    const { db } = gateWith([]);
+
+    await expect(
+      assessIntakeGate(db, {
+        supplierConnectionId: CONNECTION_ID,
+        requiredCapacity: 200,
+        intent: 'PARTITION',
+      }),
+    ).resolves.toMatchObject({
+      allowed: false,
+      reason: 'HIGHER_PRIORITY_INTAKE_PENDING',
+      blockedBy: 'CJ_TRENDING',
+    });
   });
 });

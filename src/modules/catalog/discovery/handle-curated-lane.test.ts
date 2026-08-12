@@ -189,6 +189,7 @@ beforeEach(() => {
   asMock(assessIntakeGate).mockResolvedValue({
     allowed: true,
     remainingCapacity: 600,
+    currentWaveLimit: 600,
   });
   asMock(ingestDiscoveredProduct).mockResolvedValue('created');
   asMock(advanceCuratedLane).mockResolvedValue(true);
@@ -385,5 +386,22 @@ describe('handleCuratedLane', () => {
     await handleCuratedLane(message('CJ_TRENDING'));
 
     expect(listCuratedPageMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleCuratedLane - releasing the intake floor', () => {
+  it('marks the lane exhausted for the CURRENT wave when the provider runs out of pages', async () => {
+    // This is what hands the floor to the next lane down, and eventually back
+    // to the coverage partition scanner. Wave-scoped, so the next wave retries.
+    await handleCuratedLane(message('CJ_TRENDING'));
+
+    expect(advanceCuratedLane).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        lane: 'CJ_TRENDING',
+        finished: true,
+        exhaustedAtWaveLimit: 600,
+      }),
+    );
   });
 });

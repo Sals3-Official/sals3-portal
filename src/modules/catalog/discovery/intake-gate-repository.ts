@@ -5,11 +5,14 @@ import {
   discoveryBacklogGates,
   discoveryPidCapacities,
   supplierCandidates,
+  type CuratedLane,
   type DiscoveryBacklogGateRow,
   type DiscoveryPidCapacityRow,
 } from '@/lib/db/schema';
 import { MAX_EVALUATION_ATTEMPTS } from '../candidates/rules/policy';
 import { newDiscoveryWaveSize } from './config';
+import { CURATED_LANES } from './curated-lanes';
+import { listEligibleCuratedLanes } from './curated-lane-repository';
 
 /**
  * The two durable intake controls every CJ discovery lane must clear before
@@ -403,7 +406,14 @@ export type IntakeGateDecision =
       reason:
         | 'BACKLOG_DRAIN_PENDING'
         | 'NEW_PID_WAVE_DRAIN_PENDING'
-        | 'NEW_PID_CAP_REACHED';
+        | 'NEW_PID_CAP_REACHED'
+        | 'HIGHER_PRIORITY_INTAKE_PENDING';
+      /**
+       * Which curated lane holds the intake floor, when that is the reason. The
+       * failure record has to name it, or a parked partition looks like an
+       * unexplained stall rather than a deliberate yield.
+       */
+      blockedBy?: CuratedLane;
       backlogCount: number;
       activeEvaluationWork: number;
       remainingCapacity: number;
@@ -426,7 +436,17 @@ export type IntakeGateDecision =
  */
 export async function assessIntakeGate(
   executor: DbExecutor,
-  input: { supplierConnectionId: string; requiredCapacity: number },
+  input: {
+    supplierConnectionId: string;
+    requiredCapacity: number;
+    /**
+     * Who is asking. Owner intake priority (2026-08-12) is strict:
+     * `CJ_TRENDING`, then `CJ_MOST_LISTED`, then `CJ_NEW_ARRIVALS`, and the
+     * coverage partition scanner last. A caller is refused while anything above
+     * it can still contribute to the current wave.
+     */
+    intent: 'PARTITION' | CuratedLane;
+  },
 ): Promise<IntakeGateDecision> {
   const waveSize = newDiscoveryWaveSize();
   const gate = await ensureBacklogGate(executor, input.supplierConnectionId);
@@ -469,6 +489,40 @@ export async function assessIntakeGate(
       stateVersion: gate.stateVersion,
       observedBacklog: 0,
     });
+  }
+
+  // Strict intake priority, checked before capacity so the lowest-priority
+  // caller cannot trigger the wave advance and then lose the capacity it opened.
+  //
+  // `CURATED_LANES` is the ranking. A partition yields to every eligible lane; a
+  // lane yields only to the lanes above it, so `CJ_TRENDING` is never refused
+  // here and the order cannot deadlock. `CURATED_MAX_PAGES` is what guarantees a
+  // lane eventually reports exhaustion and releases the floor.
+  const eligibleLanes = await listEligibleCuratedLanes(executor, {
+    supplierConnectionId: input.supplierConnectionId,
+    waveLimit: capacity.limitValue,
+  });
+  const { intent } = input;
+  const ownRank =
+    intent === 'PARTITION'
+      ? CURATED_LANES.length
+      : CURATED_LANES.indexOf(intent);
+  const blockingLanes = eligibleLanes.filter(
+    (lane) => CURATED_LANES.indexOf(lane) < ownRank,
+  );
+
+  if (blockingLanes.length > 0) {
+    return {
+      allowed: false,
+      reason: 'HIGHER_PRIORITY_INTAKE_PENDING',
+      blockedBy: blockingLanes[0],
+      backlogCount: 0,
+      activeEvaluationWork: 0,
+      remainingCapacity,
+      limitValue: capacity.limitValue,
+      waveSize,
+      admittedCount: capacity.admittedCount,
+    };
   }
 
   if (remainingCapacity < input.requiredCapacity) {

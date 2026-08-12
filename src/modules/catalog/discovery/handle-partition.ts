@@ -308,6 +308,7 @@ async function fetchPage(
   const intake = await assessIntakeGate(db, {
     supplierConnectionId: context.connection.id,
     requiredCapacity: DISCOVERY_PAGE_SIZE,
+    intent: 'PARTITION',
   });
 
   if (!intake.allowed) {
@@ -323,6 +324,11 @@ async function fetchPage(
       detail = `Deferred: ${intake.backlogCount} actionable Candidate Pipeline rows must drain before a new product/list request.`;
     } else if (intake.reason === 'NEW_PID_WAVE_DRAIN_PENDING') {
       detail = `Deferred: current ${intake.waveSize}-product wave is full at ${intake.admittedCount}/${intake.limitValue}; ${intake.activeEvaluationWork} active Candidate Pipeline rows must finish before the next wave opens.`;
+    } else if (intake.reason === 'HIGHER_PRIORITY_INTAKE_PENDING') {
+      // A deliberate yield, not a stall: the owner priority order fills a wave
+      // from the curated lanes first, and coverage scanning resumes in the gaps
+      // they leave. Named explicitly so a quiet partition chain is explicable.
+      detail = `Deferred: curated lane ${intake.blockedBy} holds the intake floor for this wave; coverage scanning resumes once every curated lane is exhausted.`;
     } else {
       detail = `Deferred: ${intake.admittedCount}/${intake.limitValue} new PIDs admitted, ${intake.remainingCapacity} remaining (need ${DISCOVERY_PAGE_SIZE}).`;
     }

@@ -891,6 +891,52 @@ hold a wave hostage. Without that bound the first wave is the only one that can
 ever open: the historical pipeline is far larger than any wave, and any row of
 it returning to `QUEUED` re-blocks intake indefinitely.
 
+### Strict curated intake priority — active policy
+
+Owner intake priority for filling each rolling 600-PID wave (2026-08-12):
+
+| Rank | Producer                   | Provider query                                             |
+| ---- | -------------------------- | ---------------------------------------------------------- |
+| 1    | `CJ_TRENDING`              | `searchType=2`                                             |
+| 2    | `CJ_MOST_LISTED`           | `orderBy=listedNum&sort=desc`                              |
+| 3    | `CJ_NEW_ARRIVALS`          | `orderBy=createAt&sort=desc` + bounded `createTimeFrom/To` |
+| 4    | coverage partition scanner | category/time/price partitions                             |
+
+`CURATED_LANES` is the single source of that ranking; nothing else restates it.
+
+Arbitration happens in `assessIntakeGate`, the one pre-flight both producers
+already call before any supplier request. Each caller passes an `intent`, and is
+refused with `HIGHER_PRIORITY_INTAKE_PENDING` — naming the lane that holds the
+floor — while anything above it can still contribute to the current wave. The
+partition scanner yields to every eligible lane; `CJ_TRENDING` is never refused
+for priority, so the order cannot deadlock. `CURATED_MAX_PAGES` is what
+guarantees a lane eventually reports exhaustion and releases the floor, so
+raising it means re-checking this.
+
+Eligibility is wave-scoped, held in
+`discovery_curated_lanes.exhausted_at_wave_limit`: the wave edge at which a lane
+last reported it could contribute nothing more, recorded in the same
+compare-and-set as the finish it describes. A lane exhausted in one wave is
+retried in the next, because new products appear between waves. A lane with no
+row yet counts as eligible, so it always gets its first turn.
+
+Two things this deliberately costs, per the owner's decision: coverage-partition
+progress pauses while curated lanes run, so the catalogue cannot be claimed
+complete during a wave; and a parked partition is expected — its
+`discovery_failures` detail names the lane holding the floor, so a quiet
+partition chain is explicable rather than mysterious.
+
+The curated seed key is scoped to the wave edge (`wave:{limitValue}`), not a day
+bucket. Because outbox idempotency keys are consumed permanently, a day bucket
+allowed exactly one run per lane per day while the partition scanner ran
+thousands of times — measured 2026-08-12 at 609 `DISCOVERY_PARTITION` messages
+per 20 minutes — so the curated lanes could never fill a wave before it.
+
+`claimDispatchableOutbox` also orders claims by operation, curated lanes ahead of
+partitions and evaluation/reconcile ahead of both. That is a useful tie-breaker
+when the outbox holds a backlog, but it is not what enforces priority: it orders
+which PENDING rows are _published_, and the outbox is normally a pass-through.
+
 ### The historical freeze line — active policy
 
 `discovery_backlog_gates.activation_at` is the durable boundary between the

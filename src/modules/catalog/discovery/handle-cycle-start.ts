@@ -8,7 +8,6 @@ import {
 } from '@/modules/suppliers/repository';
 import type { SupplierCategoryLeaf } from '@/modules/suppliers/contracts';
 import {
-  CURATED_SWEEP_DELAY_SECONDS,
   CYCLE_SWEEP_DELAY_SECONDS,
   discoveryEpochMs,
   FRESHNESS_SWEEP_DELAY_SECONDS,
@@ -38,6 +37,7 @@ import { findWatermark } from './lane-repository';
 import { CURATED_LANES } from './curated-lanes';
 import { curatedLaneIntent } from './handle-curated-lane';
 import { freshnessSweepIntent } from './handle-reconcile';
+import { findPidCapacity } from './intake-gate-repository';
 
 /**
  * DISCOVERY_CYCLE_START: the ensure-and-sweep operation for one connection's
@@ -388,8 +388,30 @@ export default async function handleCycleStart(
     cycleId: active.id,
     limit: SEED_BATCH_SIZE,
   });
+  // The wave edge scopes the curated seeds below. Absent only before the
+  // capacity ledger exists, which `assessIntakeGate` creates on the first real
+  // intake attempt - a single literal key until then, superseded on the next
+  // sweep once the row is there.
+  const capacity = await findPidCapacity(db, connection.id);
+  const waveLimit = capacity?.limitValue ?? null;
 
   await insertOutboxIntents(db, [
+    // Owner intake priority inside each rolling 600-PID wave:
+    // `searchType=2`, then `listedNum desc`, then bounded `createAt desc`,
+    // before ordinary partition coverage resumes.
+    // Wave-scoped, not day-scoped. Outbox idempotency keys are consumed
+    // permanently, so a day bucket allowed exactly one run per lane per day
+    // while the partition scanner ran thousands of times - the curated lanes
+    // could never fill a wave before it. Keying on the wave edge gives each
+    // wave its own seed, and the lane's own mid-run continuation carries it to
+    // completion from there.
+    ...CURATED_LANES.map((lane) =>
+      curatedLaneIntent({
+        supplierConnectionId: connection.id,
+        lane,
+        keySuffix: `wave:${waveLimit ?? 'unknown'}`,
+      }),
+    ),
     ...resumable.map((partition) =>
       partitionMessageIntent({
         supplierConnectionId: connection.id,
@@ -414,19 +436,6 @@ export default async function handleCycleStart(
         Date.now() / (FRESHNESS_SWEEP_DELAY_SECONDS * 1000),
       )}`,
     }),
-    // Keep the curated CJ lanes alive on their own low-priority cadence.
-    // They share this connection's backlog gate, new-PID ledger, request
-    // limiter, and points reserve, so they can only ever run in the gaps the
-    // canonical scanner leaves.
-    ...CURATED_LANES.map((lane) =>
-      curatedLaneIntent({
-        supplierConnectionId: connection.id,
-        lane,
-        keySuffix: `sweep:${Math.floor(
-          Date.now() / (CURATED_SWEEP_DELAY_SECONDS * 1000),
-        )}`,
-      }),
-    ),
   ]);
 }
 

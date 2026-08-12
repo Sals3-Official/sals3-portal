@@ -21,6 +21,31 @@ export type OutboxIntent = {
 };
 
 /**
+ * Owner intake priority for broad CJ `product/list` waves (2026-08-12):
+ * Trending (`searchType=2`), then Most listed (`listedNum desc`), then
+ * bounded New arrivals (`createAt desc`), then the coverage partition scanner.
+ * Non-discovery maintenance/evaluation work stays ahead so active waves can
+ * drain and open the next 600 products.
+ */
+const OUTBOX_CLAIM_PRIORITY = sql`
+  CASE
+    WHEN ${workOutbox.operation} = 'EVALUATE_CANDIDATE' THEN 0
+    WHEN ${workOutbox.operation} = 'RECONCILE_PRODUCT' THEN 1
+    WHEN ${workOutbox.operation} = 'WEBHOOK_EVENT' THEN 2
+    WHEN ${workOutbox.operation} = 'DISCOVERY_CURATED_LANE'
+      AND ${workOutbox.payload}->>'lane' = 'CJ_TRENDING' THEN 10
+    WHEN ${workOutbox.operation} = 'DISCOVERY_CURATED_LANE'
+      AND ${workOutbox.payload}->>'lane' = 'CJ_MOST_LISTED' THEN 20
+    WHEN ${workOutbox.operation} = 'DISCOVERY_CURATED_LANE'
+      AND ${workOutbox.payload}->>'lane' = 'CJ_NEW_ARRIVALS' THEN 30
+    WHEN ${workOutbox.operation} = 'DISCOVERY_PARTITION' THEN 40
+    WHEN ${workOutbox.operation} = 'DISCOVERY_AUDIT_UNIT' THEN 50
+    WHEN ${workOutbox.operation} = 'DISCOVERY_CYCLE_START' THEN 60
+    ELSE 70
+  END
+`;
+
+/**
  * Insert successor intents inside the caller's transaction. Conflicts on
  * `idempotency_key` are silently skipped: the same logical successor can
  * only ever be recorded once, however many at-least-once deliveries try.
@@ -76,7 +101,7 @@ export async function claimDispatchableOutbox(
           or(isNull(workOutbox.leasedUntil), lte(workOutbox.leasedUntil, now)),
         ),
       )
-      .orderBy(asc(workOutbox.createdAt))
+      .orderBy(OUTBOX_CLAIM_PRIORITY, asc(workOutbox.createdAt))
       .limit(input.batchSize)
       .for('update', { skipLocked: true });
 

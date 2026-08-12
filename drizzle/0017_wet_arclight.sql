@@ -1,0 +1,1 @@
+ALTER TABLE "discovery_curated_lanes" ADD COLUMN "exhausted_at_wave_limit" integer;
