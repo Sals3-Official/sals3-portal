@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, lt, lte, or, sql } from 'drizzle-orm';
+import { and, eq, gt, isNotNull, lt, lte, or, sql } from 'drizzle-orm';
 import type { DbExecutor } from '@/lib/db/client';
 import {
   candidateEvaluations,
@@ -68,6 +68,14 @@ function actionableBacklogCondition(activationAt: Date) {
 export async function countActiveEvaluationWork(
   executor: DbExecutor,
   supplierConnectionId: string,
+  /**
+   * Count only work created after this instant. The wave gate passes the
+   * backlog gate's `activationAt`, so a wave waits for the products IT
+   * admitted and never for the historical pipeline: an unbounded count made
+   * every wave after the first hostage to rows discovered before lean intake
+   * existed. Omit to count everything.
+   */
+  createdAfter?: Date,
 ): Promise<number> {
   const rows = await executor
     .select({ total: sql<number>`count(*)` })
@@ -79,6 +87,9 @@ export async function countActiveEvaluationWork(
     .where(
       and(
         eq(supplierCandidates.supplierConnectionId, supplierConnectionId),
+        createdAfter === undefined
+          ? undefined
+          : gt(supplierCandidates.createdAt, createdAfter),
         activeEvaluationCondition(),
       ),
     );
@@ -464,6 +475,7 @@ export async function assessIntakeGate(
     const activeEvaluationWork = await countActiveEvaluationWork(
       executor,
       input.supplierConnectionId,
+      gate.activationAt,
     );
 
     if (activeEvaluationWork > 0) {
