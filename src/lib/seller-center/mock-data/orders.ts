@@ -3,18 +3,12 @@
  * review only. No backend order system exists yet. Names, amounts, and
  * timestamps are examples, not real Sals3 orders.
  *
- * Amounts are stored as integer minor units and formatted at build time
- * against the active market, rather than being checked in as pre-formatted
- * strings. A hardcoded "₱1,284.00" would silently keep saying pesos on an AU
- * account, which is exactly the kind of quiet wrongness the market work in
- * `market-config.ts` exists to prevent.
+ * Amounts are stored as integer minor units and labelled `Example` when the
+ * fixture is built. The active profile deliberately has no authorized selling
+ * currency, so formatting these sample values as a seller's real money would
+ * fabricate a commercial fact.
  */
 
-import type { SellerCenterMarket } from '@/lib/seller-center/market-config';
-import {
-  formatMarketMoney,
-  formatSignedMarketMoney,
-} from '@/lib/seller-center/money';
 import type {
   AttentionReason,
   MoneyLine,
@@ -38,6 +32,20 @@ import {
   sals3OwnedActionsFor,
   supplierActionsFor,
 } from '@/modules/orders/supplier-adapter';
+
+/**
+ * The orders workspace is still a review fixture. A bare `Example` prefix is
+ * deliberately more honest than formatting its sample amounts as a real
+ * profile's currency, which the current profile schema does not authorize.
+ */
+const formatIllustrativeMoney = (amountMinor: number): string =>
+  `Example ${(amountMinor / 100).toFixed(2)}`;
+
+const formatIllustrativeSignedMoney = (amountMinor: number): string => {
+  const formatted = formatIllustrativeMoney(Math.abs(amountMinor));
+
+  return amountMinor < 0 ? `−${formatted}` : formatted;
+};
 
 /**
  * The one connected supplier account these fixtures use.
@@ -75,7 +83,7 @@ type ParcelFixture = {
   /**
    * This parcel's own allocated proceeds. On a split order it is a share of
    * the order payment, not the whole thing - summing the two parcels of
-   * A-88217 must not double-count the buyer's ₱3,455.00.
+   * A-88217 must not double-count the buyer's illustrative payment amount.
    */
   proceedsMinor: number;
   supplierCostMinor: number | null;
@@ -362,7 +370,7 @@ const PARCEL_FIXTURES: ParcelFixture[] = [
     status: {
       label: 'Awaiting supplier funds',
       detail:
-        'Your CJ wallet is ₱180.00 short of this supplier order. Top up to release it.',
+        'Your CJ wallet is Example 180.00 short of this supplier order. Top up to release it.',
       tone: 'danger',
     },
     state: 'AWAITING_SUPPLIER_FUNDS',
@@ -1182,7 +1190,7 @@ function supplierActionsForRoute(fixture: ParcelFixture): ParcelAction[] {
   ];
 }
 
-export function buildOrderParcels(market: SellerCenterMarket): OrderParcel[] {
+export function buildOrderParcels(): OrderParcel[] {
   return ALL_FIXTURES.map((fixture) => ({
     id: fixture.id,
     orderRef: fixture.orderRef,
@@ -1200,15 +1208,15 @@ export function buildOrderParcels(market: SellerCenterMarket): OrderParcel[] {
         (fixture.route.kind === 'SUPPLIER_DROPSHIP' ? '18–22 Aug 2026' : null),
     })),
     money: {
-      buyerPaidLabel: formatMarketMoney(fixture.buyerPaidMinor, market),
+      buyerPaidLabel: formatIllustrativeMoney(fixture.buyerPaidMinor),
       commissionLabel:
         fixture.commissionMinor === null
           ? null
-          : formatSignedMarketMoney(fixture.commissionMinor, market),
+          : formatIllustrativeSignedMoney(fixture.commissionMinor),
       supplierCostLabel:
         fixture.supplierCostMinor === null
           ? null
-          : formatMarketMoney(fixture.supplierCostMinor, market),
+          : formatIllustrativeMoney(fixture.supplierCostMinor),
       supplierCostNote: fixture.supplierCostNote,
       wholeOrderNote: fixture.coversWholeOrder ? '(whole order)' : null,
     },
@@ -1255,9 +1263,9 @@ function line(
   return { label, valueLabel, hint, emphasis };
 }
 
-function buildSettlement(market: SellerCenterMarket): SettlementStatement {
-  const money = (minor: number) => formatMarketMoney(minor, market);
-  const signed = (minor: number) => formatSignedMarketMoney(minor, market);
+function buildSettlement(): SettlementStatement {
+  const money = (minor: number) => formatIllustrativeMoney(minor);
+  const signed = (minor: number) => formatIllustrativeSignedMoney(minor);
   const feesMinor =
     DETAIL_SETTLEMENT.commissionMinor +
     DETAIL_SETTLEMENT.paymentFeeMinor +
@@ -1350,8 +1358,8 @@ function buildSettlement(market: SellerCenterMarket): SettlementStatement {
   };
 }
 
-function buildSupplierSpend(market: SellerCenterMarket): SupplierSpend {
-  const money = (minor: number) => formatMarketMoney(minor, market);
+function buildSupplierSpend(): SupplierSpend {
+  const money = (minor: number) => formatIllustrativeMoney(minor);
   const totalMinor =
     DETAIL_SUPPLIER_SPEND.productCostMinor + DETAIL_SUPPLIER_SPEND.freightMinor;
 
@@ -1448,10 +1456,9 @@ export function revealBuyerContact(parcelId: string): RevealedContact | null {
 
 export function buildParcelDetail(
   parcelId: string,
-  market: SellerCenterMarket,
   canReveal: boolean,
 ): ParcelDetail | null {
-  const parcel = buildOrderParcels(market).find(
+  const parcel = buildOrderParcels().find(
     (candidate) => candidate.id === parcelId,
   );
 
@@ -1498,7 +1505,7 @@ export function buildParcelDetail(
       },
     ],
     sellerNote: null,
-    siblings: buildOrderParcels(market)
+    siblings: buildOrderParcels()
       .filter(
         (candidate) =>
           candidate.orderRef === parcel.orderRef && candidate.id !== parcel.id,
@@ -1517,8 +1524,8 @@ export function buildParcelDetail(
     courierContactLabel: isDropship ? null : 'A. Bautista · 0917 442 8810',
     trackingEvents: TRACKING_EVENTS[parcel.id] ?? [],
     lifecycleEvents: LIFECYCLE_EVENTS,
-    settlement: buildSettlement(market),
-    supplierSpend: isDropship ? buildSupplierSpend(market) : null,
+    settlement: buildSettlement(),
+    supplierSpend: isDropship ? buildSupplierSpend() : null,
   };
 }
 

@@ -1,7 +1,6 @@
 type OrdersBulkActionBarProps = {
   selectedCount: number;
   proceedsLabel: string;
-  carrierName: string;
   onClear: () => void;
   onPrint: () => void;
 };
@@ -13,7 +12,6 @@ type OrdersBulkActionBarProps = {
 export default function OrdersBulkActionBar({
   selectedCount,
   proceedsLabel,
-  carrierName,
   onClear,
   onPrint,
 }: OrdersBulkActionBarProps) {
@@ -37,8 +35,7 @@ export default function OrdersBulkActionBar({
         onClick={onPrint}
         className="h-9 cursor-pointer rounded-md bg-sidebar-primary px-4 text-sm font-semibold text-sidebar-primary-foreground transition-colors hover:opacity-90"
       >
-        Print {selectedCount} label{selectedCount === 1 ? '' : 's'} ·{' '}
-        {carrierName}
+        Print {selectedCount} label{selectedCount === 1 ? '' : 's'}
       </button>
     </div>
   );

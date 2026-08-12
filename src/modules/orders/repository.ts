@@ -1,4 +1,3 @@
-import type { SellerCenterMarket } from '@/lib/seller-center/market-config';
 import {
   buildOrderParcels,
   buildParcelDetail,
@@ -28,14 +27,10 @@ import type { OrderParcel, ParcelDetail, RevealedContact } from './contracts';
  * that file documents the exact failure.
  */
 export type OrdersRepository = {
-  listParcels(
-    market: SellerCenterMarket,
-    sellerId: string,
-  ): Promise<OrderParcel[]>;
+  listParcels(sellerId: string): Promise<OrderParcel[]>;
 
   findParcelDetail(
     parcelId: string,
-    market: SellerCenterMarket,
     sellerId: string,
     canRevealContact: boolean,
   ): Promise<ParcelDetail | null>;
@@ -61,12 +56,12 @@ export type OrdersRepository = {
  * change that gets applied to four call sites and missed on the fifth.
  */
 const fixtureOrdersRepository: OrdersRepository = {
-  async listParcels(market) {
-    return buildOrderParcels(market);
+  async listParcels() {
+    return buildOrderParcels();
   },
 
-  async findParcelDetail(parcelId, market, _sellerId, canRevealContact) {
-    return buildParcelDetail(parcelId, market, canRevealContact);
+  async findParcelDetail(parcelId, _sellerId, canRevealContact) {
+    return buildParcelDetail(parcelId, canRevealContact);
   },
 
   async revealContact(parcelId) {

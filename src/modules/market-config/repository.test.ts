@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Executor } from '@/modules/catalog/candidates/repository';
-import { createDraftProfile, transitionProfileForSeller } from './repository';
+import {
+  createDraftProfile,
+  findActiveProfileForSeller,
+  transitionProfileForSeller,
+} from './repository';
 
 /**
  * Covers what these helpers decide in pure logic: what a draft writes, what a
@@ -95,6 +99,44 @@ describe('createDraftProfile', () => {
     expect(inserts[0].values.capabilityVersion).toBe(
       DRAFT_INPUT.capabilityVersion,
     );
+  });
+});
+
+describe('findActiveProfileForSeller', () => {
+  function createReadExecutor(rows: unknown[]) {
+    const executor = {
+      select() {
+        return {
+          from() {
+            return {
+              where() {
+                return {
+                  orderBy() {
+                    return { limit: () => Promise.resolve(rows) };
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+
+    return executor as unknown as Executor;
+  }
+
+  it('returns the active profile scoped query found for the seller', async () => {
+    const profile = { id: 'active-profile' };
+
+    await expect(
+      findActiveProfileForSeller(createReadExecutor([profile]), 'seller-a'),
+    ).resolves.toEqual(profile);
+  });
+
+  it('returns null when the seller has no active profile', async () => {
+    await expect(
+      findActiveProfileForSeller(createReadExecutor([]), 'seller-a'),
+    ).resolves.toBeNull();
   });
 });
 

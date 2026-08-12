@@ -14,7 +14,9 @@ import SiblingParcelCard from '@/components/seller-center/orders/SiblingParcelCa
 import TrackingEventFeed from '@/components/seller-center/orders/TrackingEventFeed';
 import { can } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
-import { getActiveMarket } from '@/lib/seller-center/market-config';
+import getDb, { isDatabaseConfigured } from '@/lib/db/client';
+import { readOrUnavailable } from '@/lib/db/availability';
+import { findActiveProfileForSeller } from '@/modules/market-config/repository';
 import getOrdersRepository from '@/modules/orders/repository';
 import revealParcelContactAction from './actions';
 
@@ -23,6 +25,19 @@ export const metadata: Metadata = { title: 'Parcel · Seller Center' };
 type ParcelDetailPageProps = {
   params: Promise<{ parcelId: string }>;
 };
+
+function OrdersUnavailable() {
+  return (
+    <div className="mx-auto flex max-w-[1440px] flex-col gap-[18px] px-7 pt-6 pb-15">
+      <p className="rounded-lg border border-dashed border-border bg-muted/40 px-6 py-10 text-sm text-muted-foreground">
+        Orders cannot be checked right now because the database is unavailable.
+        No order or market configuration was changed. Check that Postgres is
+        running and that DATABASE_URL points at an existing database, then
+        reload.
+      </p>
+    </div>
+  );
+}
 
 /**
  * One parcel's detail.
@@ -34,25 +49,38 @@ type ParcelDetailPageProps = {
 export default async function ParcelDetailPage({
   params,
 }: ParcelDetailPageProps) {
-  const session = await requirePermission('order:read');
+  if (!isDatabaseConfigured()) {
+    return <OrdersUnavailable />;
+  }
+
+  const resolved = await readOrUnavailable('orders', async () => {
+    const session = await requirePermission('order:read');
+    const profile = await findActiveProfileForSeller(getDb(), session.sellerId);
+
+    return { session, profile };
+  });
+
+  if (!resolved.ok) {
+    return <OrdersUnavailable />;
+  }
+
+  if (resolved.data.profile === null) {
+    return (
+      <div className="mx-auto flex max-w-[1440px] flex-col gap-[18px] px-7 pt-6 pb-15">
+        <MarketNotConfiguredNotice title="No active market profile" />
+      </div>
+    );
+  }
+
+  const { session } = resolved.data;
   // Decides whether the *button* renders. The action re-checks server-side,
   // because hiding a control is never the authorization boundary.
   const canReveal = can(session.role, 'order:fulfill');
 
   const { parcelId } = await params;
-  const market = getActiveMarket();
-
-  if (market === null) {
-    return (
-      <div className="mx-auto flex max-w-[1440px] flex-col gap-[18px] px-7 pt-6 pb-15">
-        <MarketNotConfiguredNotice />
-      </div>
-    );
-  }
 
   const detail = await getOrdersRepository().findParcelDetail(
     parcelId,
-    market,
     session.sellerId,
     canReveal,
   );

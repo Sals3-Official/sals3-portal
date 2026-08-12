@@ -5,36 +5,28 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import type { SellerCenterMarket } from '@/lib/seller-center/market-config';
-
-type OrdersHandoffPanelProps = {
-  market: SellerCenterMarket;
-};
-
 /**
  * Pickup is suggested, never booked automatically - a seller reviews
  * capacity and exceptions before anything is sent to the carrier.
  */
-export default function OrdersHandoffPanel({
-  market,
-}: OrdersHandoffPanelProps) {
+export default function OrdersHandoffPanel() {
   return (
     <Card>
       <CardHeader>
         <CardTitle>Handoff</CardTitle>
         <CardDescription>
-          Pickup is suggested, never booked for you. You review it before it
-          goes to {market.carrierName}.
+          Carrier and cutoff details are not configured for this account yet.
+          Pickup cannot be suggested or booked.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 px-3 py-2.5">
           <div>
             <p className="text-sm font-semibold">
-              Suggested pickup — today, {market.cutoffTime}
+              Handoff setup is outstanding
             </p>
             <p className="text-xs text-muted-foreground">
-              Capacity 30 parcels · 12 booked
+              Configure a carrier and cutoff before arranging pickup.
             </p>
           </div>
           <button

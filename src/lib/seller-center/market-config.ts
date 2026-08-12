@@ -19,7 +19,7 @@
  * returns `null` there, so none of them shows invented data to a real
  * seller, but none has been migrated to the real profile either:
  *
- * - `app/(portal)/orders/page.tsx`, `finances/page.tsx`, `payouts/page.tsx`
+ * - `app/(portal)/finances/page.tsx`, `payouts/page.tsx`
  *   — `getActiveMarket()` for currency/payout/carrier display.
  * - `components/seller-center/listings/BlankListingWorkspace.tsx` — same.
  * - `components/products/catalog/{ActiveFilterChips,CatalogFilterDrawer}.tsx`
