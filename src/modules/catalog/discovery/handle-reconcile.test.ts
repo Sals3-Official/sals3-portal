@@ -25,6 +25,7 @@ vi.mock('../candidates/repository', () => ({
 
 vi.mock('./outbox-repository', () => ({ insertOutboxIntents: vi.fn() }));
 vi.mock('./run-state-repository', () => ({ isDiscoveryRunning: vi.fn() }));
+vi.mock('./intake-gate-repository', () => ({ findBacklogGate: vi.fn() }));
 
 // eslint-disable-next-line import/first
 import { randomUUID } from 'crypto';
@@ -40,6 +41,8 @@ import { insertOutboxIntents } from './outbox-repository';
 // eslint-disable-next-line import/first
 import { isDiscoveryRunning } from './run-state-repository';
 // eslint-disable-next-line import/first
+import { findBacklogGate } from './intake-gate-repository';
+// eslint-disable-next-line import/first
 import handleReconcileProduct from './handle-reconcile';
 // eslint-disable-next-line import/first
 import { FRESHNESS_SWEEP_BATCH, FRESHNESS_SWEEP_DELAY_SECONDS } from './config';
@@ -47,6 +50,8 @@ import { FRESHNESS_SWEEP_BATCH, FRESHNESS_SWEEP_DELAY_SECONDS } from './config';
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
 const CONNECTION_ID = randomUUID();
+/** The historical freeze line the backlog gate records. */
+const FREEZE_LINE = new Date('2026-08-12T07:53:53.888Z');
 const CANDIDATE_ID = randomUUID();
 
 beforeEach(() => {
@@ -55,6 +60,7 @@ beforeEach(() => {
   asMock(requeueDueRefreshes).mockResolvedValue([]);
   asMock(requeuePolicyVersionMismatches).mockResolvedValue([]);
   asMock(listStrandedEvaluations).mockResolvedValue([]);
+  asMock(findBacklogGate).mockResolvedValue({ activationAt: FREEZE_LINE });
 });
 
 describe('handleReconcileProduct - SWEEP (freshness tiers)', () => {
@@ -172,6 +178,66 @@ describe('handleReconcileProduct - SWEEP (freshness tiers)', () => {
           i.message.candidateId === strandedCandidate,
       ),
     ).toBe(true);
+  });
+});
+
+describe('handleReconcileProduct - SWEEP historical freeze', () => {
+  async function sweep(): Promise<void> {
+    await handleReconcileProduct({
+      v: 1,
+      operation: 'RECONCILE_PRODUCT',
+      idempotencyKey: 'freshness:x:freeze',
+      mode: 'SWEEP',
+      supplierConnectionId: CONNECTION_ID,
+    });
+  }
+
+  it('bounds both automatic tiers by the gate freeze line, so historical rows are never re-opened', async () => {
+    // The deadlock this prevents: every QUEUED row counts as active work, the
+    // intake gate refuses a new product/list request while active work exists,
+    // and an unbounded policy-version tier keeps returning historical rows to
+    // QUEUED - so new discovery is blocked permanently, not temporarily.
+    await sweep();
+
+    expect(requeueDueRefreshes).toHaveBeenCalledWith(
+      expect.anything(),
+      CONNECTION_ID,
+      expect.any(Number),
+      FREEZE_LINE,
+    );
+    expect(requeuePolicyVersionMismatches).toHaveBeenCalledWith(
+      expect.anything(),
+      CONNECTION_ID,
+      expect.objectContaining({ createdAfter: FREEZE_LINE }),
+    );
+  });
+
+  it('passes no bound when there is no gate, so a connection with no history behaves as before', async () => {
+    asMock(findBacklogGate).mockResolvedValue(null);
+
+    await sweep();
+
+    expect(requeueDueRefreshes).toHaveBeenCalledWith(
+      expect.anything(),
+      CONNECTION_ID,
+      expect.any(Number),
+      undefined,
+    );
+    expect(requeuePolicyVersionMismatches).toHaveBeenCalledWith(
+      expect.anything(),
+      CONNECTION_ID,
+      expect.objectContaining({ createdAfter: undefined }),
+    );
+  });
+
+  it('leaves the stranded tier unbounded, so a pre-line row stuck in QUEUED can still recover', async () => {
+    await sweep();
+
+    expect(listStrandedEvaluations).toHaveBeenCalledWith(
+      expect.anything(),
+      CONNECTION_ID,
+      expect.not.objectContaining({ createdAfter: expect.anything() }),
+    );
   });
 });
 

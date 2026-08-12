@@ -11,6 +11,7 @@ import {
   POLICY_VERSION,
 } from '../candidates/rules/policy';
 import { FRESHNESS_SWEEP_BATCH, FRESHNESS_SWEEP_DELAY_SECONDS } from './config';
+import { findBacklogGate } from './intake-gate-repository';
 import type { ReconcileProductMessage } from './messages';
 import { insertOutboxIntents, type OutboxIntent } from './outbox-repository';
 import { isDiscoveryRunning } from './run-state-repository';
@@ -151,15 +152,33 @@ export default async function handleReconcileProduct(
   const now = Date.now();
   const sweepBucket = Math.floor(now / (FRESHNESS_SWEEP_DELAY_SECONDS * 1000));
 
+  // The historical freeze line. Both automatic tiers below are bounded by it so
+  // they cannot re-open the pipeline that existed when lean intake activated.
+  //
+  // Without it the two correct mechanisms deadlock each other: the intake gate
+  // refuses a new `product/list` request while any evaluation work is active,
+  // and the policy-version tier keeps returning historical rows to QUEUED,
+  // which IS active work. Measured in production 2026-08-12 with 82,679 rows
+  // still on an obsolete policy version - the backlog climbed 73 -> 324 while
+  // running, `admitted_count` never left 0, and re-deciding those rows changed
+  // nothing anyway because their `intended_market_codes` is empty.
+  //
+  // The owner-triggered recheck route passes no bound, so re-opening the frozen
+  // backlog stays possible without a deploy.
+  const gate = await findBacklogGate(db, connectionId);
+  const freezeLine = gate?.activationAt;
+
   await db.transaction(async (tx) => {
     const refreshed = await requeueDueRefreshes(
       tx,
       connectionId,
       FRESHNESS_SWEEP_BATCH,
+      freezeLine,
     );
     const policyStale = await requeuePolicyVersionMismatches(tx, connectionId, {
       currentPolicyVersion: policyVersion,
       limit: FRESHNESS_SWEEP_BATCH,
+      createdAfter: freezeLine,
     });
     const stranded = await listStrandedEvaluations(tx, connectionId, {
       stalledSince: new Date(Date.now() - STRANDED_QUEUED_AFTER_MS),

@@ -3,6 +3,7 @@ import { fakeDb, lastCallArgs } from '../../../../test/fake-db';
 import {
   advancePidCapacityWave,
   assessIntakeGate,
+  countActiveEvaluationWork,
 } from './intake-gate-repository';
 
 const CONNECTION_ID = '6aa82ace-e1bb-42cb-88b0-af5e0917d0f5';
@@ -98,5 +99,67 @@ describe('advancePidCapacityWave', () => {
 
     expect(set.limitValue).toBe(1200);
     expect(set.capReachedAt).toBeNull();
+  });
+});
+
+describe('countActiveEvaluationWork - historical freeze line', () => {
+  const FREEZE_LINE = new Date('2026-08-12T07:53:53.888Z');
+
+  /**
+   * Whether the WHERE the repository handed to Drizzle carries this instant as
+   * a bind value. Walked rather than serialised: a Drizzle SQL object holds
+   * circular references, so `JSON.stringify` throws on it.
+   */
+  function whereBinds(
+    calls: Parameters<typeof lastCallArgs>[0],
+    target: Date,
+  ): boolean {
+    const seen = new Set<unknown>();
+
+    const walk = (value: unknown): boolean => {
+      if (value instanceof Date) return value.getTime() === target.getTime();
+      if (typeof value !== 'object' || value === null) return false;
+      if (seen.has(value)) return false;
+      seen.add(value);
+
+      return Object.values(value).some(walk);
+    };
+
+    return walk(lastCallArgs(calls, 'where')[0]);
+  }
+
+  it('bounds the count by the freeze line, so a wave never waits on historical work', async () => {
+    const { db, calls } = fakeDb([[{ total: 4 }]]);
+
+    await expect(
+      countActiveEvaluationWork(db, CONNECTION_ID, FREEZE_LINE),
+    ).resolves.toBe(4);
+    expect(whereBinds(calls, FREEZE_LINE)).toBe(true);
+  });
+
+  it('counts every active row when no freeze line is given', async () => {
+    const { db, calls } = fakeDb([[{ total: 4 }]]);
+
+    await expect(countActiveEvaluationWork(db, CONNECTION_ID)).resolves.toBe(4);
+    expect(whereBinds(calls, FREEZE_LINE)).toBe(false);
+  });
+
+  it('assessIntakeGate hands the gate activation instant to the wave-drain count', async () => {
+    // Decision of 2026-08-12: a wave waits for the products IT admitted, never
+    // for the pipeline that existed before lean intake activated.
+    const activationAt = new Date('2026-08-12T07:53:53.888Z');
+    const { db, calls } = fakeDb([
+      [backlogGate({ activationAt })],
+      [],
+      [capacity()],
+      [{ total: 7 }],
+    ]);
+
+    await assessIntakeGate(db, {
+      supplierConnectionId: CONNECTION_ID,
+      requiredCapacity: 200,
+    });
+
+    expect(whereBinds(calls, activationAt)).toBe(true);
   });
 });

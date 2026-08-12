@@ -885,6 +885,43 @@ advances no checkpoint, claims no coverage, and leaves the unit resumable.
 When active work reaches zero, the next request atomically opens the next wave
 at `admitted_count + 600`.
 
+**A wave waits only on the products that wave admitted.** The active-work count
+is bounded by `discovery_backlog_gates.activation_at`, so pre-cutoff rows never
+hold a wave hostage. Without that bound the first wave is the only one that can
+ever open: the historical pipeline is far larger than any wave, and any row of
+it returning to `QUEUED` re-blocks intake indefinitely.
+
+### The historical freeze line — active policy
+
+`discovery_backlog_gates.activation_at` is the durable boundary between the
+pipeline that existed when lean intake activated and everything discovered
+since. Both **automatic** freshness tiers are bounded by it:
+`requeueDueRefreshes` and `requeuePolicyVersionMismatches` only re-open rows
+for candidates created after that instant.
+
+This exists because two individually correct mechanisms deadlock without it.
+The intake gate refuses a new `product/list` request while any evaluation work
+is active; the policy-version tier returns rows whose stored policy version is
+obsolete to `QUEUED`; and `QUEUED` **is** active work. Measured in production
+2026-08-12 with 82,679 rows still on `buyer-destination-country-v1-disabled`:
+the backlog climbed `73 → 113 → 288 → 324` while the pipeline ran,
+`admitted_count` never left `0`, and the newest candidate stayed a day old.
+Re-deciding those rows changed nothing anyway — their `intended_market_codes`
+is `[]`, so `checkValidMarket` returns `NO_VALID_MARKET` whatever the enabled
+destinations are.
+
+Frozen rows are **not** rewritten. Their stored decision and policy version
+stay exactly as recorded, honestly showing what they were judged under; they
+remain visible and searchable in Blocked/Rejected.
+
+The freeze is reversible without a deploy.
+`POST /api/internal/catalog/evaluations/recheck-policy-version` passes **no**
+bound, deliberately, so the owner can re-open the historical backlog in bounded
+batches — which is the intended sequence once `intended_market_codes` is
+backfilled. `listStrandedEvaluations` is also left unbounded: it only re-drives
+rows already sitting in `QUEUED`, so it can recover a stuck pre-cutoff row
+without growing the pool.
+
 ### One-time existing-backlog drain
 
 Candidate Pipeline work that existed when the policy activated must be

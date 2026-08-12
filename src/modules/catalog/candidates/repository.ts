@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import type { DbExecutor, DbTransaction } from '@/lib/db/client';
 import {
   auditEvents,
@@ -751,10 +751,32 @@ export async function releaseEvaluationClaim(
  * call. Returns the requeued candidate ids so the caller can enqueue their
  * evaluation messages in the same transaction.
  */
+/**
+ * The historical-freeze bound shared by the automatic requeue tiers.
+ *
+ * `discovery_backlog_gates.activation_at` is the durable line between the
+ * pipeline that existed when the lean intake policy activated and everything
+ * discovered since. Passing it here stops the automatic tiers from re-opening
+ * historical rows forever: every `QUEUED` row counts as active work, and the
+ * intake gate refuses a new `product/list` request while active work exists,
+ * so an unbounded tier with a large historical pool blocks new discovery
+ * permanently rather than temporarily.
+ *
+ * `undefined` means unbounded, which is both the previous behaviour and the
+ * right one for a connection with no history to freeze - and for the
+ * owner-triggered recheck, which must still be able to reach frozen rows.
+ */
+function createdAfterBound(createdAfter: Date | undefined) {
+  return createdAfter === undefined
+    ? undefined
+    : gt(supplierCandidates.createdAt, createdAfter);
+}
+
 export async function requeueDueRefreshes(
   executor: Executor,
   supplierConnectionId: string,
   limit: number,
+  createdAfter?: Date,
 ): Promise<string[]> {
   const due = await executor
     .select({
@@ -769,6 +791,7 @@ export async function requeueDueRefreshes(
     .where(
       and(
         eq(supplierCandidates.supplierConnectionId, supplierConnectionId),
+        createdAfterBound(createdAfter),
         lt(candidateEvaluations.nextRefreshAt, new Date()),
         or(
           eq(candidateEvaluations.status, 'PASS'),
@@ -903,7 +926,12 @@ export async function listPilotAdmissibleCandidates(
 export async function requeuePolicyVersionMismatches(
   executor: Executor,
   supplierConnectionId: string,
-  input: { currentPolicyVersion: string; limit: number },
+  input: {
+    currentPolicyVersion: string;
+    limit: number;
+    /** Freeze line; omit to reach every row, including historical ones. */
+    createdAfter?: Date;
+  },
 ): Promise<string[]> {
   const stale = await executor
     .select({
@@ -918,6 +946,7 @@ export async function requeuePolicyVersionMismatches(
     .where(
       and(
         eq(supplierCandidates.supplierConnectionId, supplierConnectionId),
+        createdAfterBound(input.createdAfter),
         ne(candidateEvaluations.policyVersion, input.currentPolicyVersion),
         or(
           eq(candidateEvaluations.status, 'PASS'),
