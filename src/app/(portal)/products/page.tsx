@@ -14,19 +14,21 @@ type ProductsPageProps = {
 };
 
 /**
- * All Supplier Products - the raw supplier catalogue browser.
+ * All Supplier Products - the live supplier catalogue browser.
  *
- * A Server Component that parses the URL and composes the local workspace.
- * Unknown query keys (the retired `?source=cj`, `?cjPage`, `?cjSearch`) are
- * stripped by the schema, so old links keep working and simply land on the
- * default view.
+ * A Server Component that parses the URL and composes the workspace. Unknown
+ * query keys (the retired `?signal`, `?source=cj`, `?cjPage`, `?cjSearch`)
+ * are stripped by the schema, so old links keep working and simply land on
+ * the default view.
  *
  * The route stays `/products` on purpose: renaming it would break existing
  * links and the storefront feed's own references for a cosmetic gain.
  *
- * Rebuilt 2026-08-12 (ADR-013 §1a): this page used to call CJ
- * `/product/list` on every render. It now reads only what discovery has
- * already persisted, so browsing the catalogue costs no CJ API points.
+ * Rebuilt 2026-08-13 by owner decision: the table shows live CJ
+ * `/product/list` results (200 per page) on every render, overlaid with this
+ * seller's own pipeline state from the Sals3 database. This supersedes the
+ * 2026-08-12 saved-data read for this page only - the discovery pipeline and
+ * its pages are unchanged, and browsing never writes to them.
  */
 export default async function ProductsPage({
   searchParams,
@@ -38,10 +40,10 @@ export default async function ProductsPage({
     <div className="flex flex-col gap-4">
       <PageHeader
         title="All Supplier Products"
-        description="Everything discovery has found through your connected supplier apps. Screening runs automatically from saved supplier data; stock is confirmed only by a manual CJ/MyCJ check you record here."
+        description="The live CJdropshipping catalogue through your connected supplier app. Rows already picked up by discovery show their screening and stock-review state; stock is confirmed only by a manual CJ/MyCJ check you record here."
       />
       <Suspense
-        key={`${query.view}-${query.signal}-${query.category}-${query.q}-${query.page}-${query.source}`}
+        key={`${query.view}-${query.category}-${query.q}-${query.page}-${query.source}`}
         fallback={<CjTableSkeleton />}
       >
         <SupplierProductsWorkspace query={query} />

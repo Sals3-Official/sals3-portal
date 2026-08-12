@@ -1,46 +1,37 @@
 import { z } from 'zod';
 
 /**
- * URL contract for **All Supplier Products**.
+ * URL contract for **All Supplier Products** (live CJ browse).
  *
- * The page keeps its quick view, filters, search, and page in the URL, which
- * is this codebase's existing list-view convention: a view is shareable, the
+ * The page keeps its view, filters, search, and page in the URL, which is
+ * this codebase's existing list-view convention: a view is shareable, the
  * back button behaves, and the Server Component renders without client state.
  *
  * Every value is bounded or `.catch()`-defaulted, so a hand-edited URL
- * degrades to the safe default rather than reaching the database with
- * something unexpected. None of these parameters can produce a supplier
- * request - every one of them is answered from the Sals3 database.
+ * degrades to the safe default rather than reaching CJ or the database with
+ * something unexpected. Retired values from the saved-data era - the
+ * `cj-trending`/`needs-attention` views and the whole `signal` filter -
+ * degrade to the default view instead of erroring.
  */
 
 export const SUPPLIER_PRODUCTS_QUICK_VIEWS = [
   'all',
-  'cj-trending',
   'most-listed',
   'new-arrivals',
-  'needs-attention',
-] as const;
-
-export const DISCOVERY_SIGNAL_FILTERS = [
-  'ALL',
-  'CJ_TRENDING',
-  'CJ_HIGH_LISTED',
-  'CJ_NEW_ARRIVAL',
-  'NONE',
 ] as const;
 
 export const supplierProductsQuerySchema = z.object({
   view: z.enum(SUPPLIER_PRODUCTS_QUICK_VIEWS).catch('all').default('all'),
-  signal: z.enum(DISCOVERY_SIGNAL_FILTERS).catch('ALL').default('ALL'),
-  /** Provider category id, matched against the persisted Sals3 column. */
+  /** Provider category id, sent to CJ as the documented `categoryId` filter. */
   category: z.string().trim().max(120).catch('').default(''),
-  /**
-   * Raw typed term. The minimum-length rule lives in the query layer
-   * (`normalizeSearchTerm`), not here, so the server and the client agree on
-   * exactly one definition of "too short to search".
-   */
+  /** Sent to CJ as the documented `productNameEn` name filter. */
   q: z.string().trim().max(120).catch('').default(''),
-  page: z.coerce.number().int().min(1).max(10_000).catch(1).default(1),
+  /**
+   * Clamped to 500 like the storefront feed: CJ paging past the real result
+   * depth degrades into body-level errors, so an unbounded page number only
+   * manufactures failed supplier calls.
+   */
+  page: z.coerce.number().int().min(1).max(500).catch(1).default(1),
   /**
    * Candidate UUID whose read-only Supplier Source Details drawer is open.
    * Retired URLs used `source=cj`; rejecting non-UUID values here keeps them
@@ -56,19 +47,20 @@ export const QUICK_VIEW_LABELS: Record<
   string
 > = {
   all: 'All products',
-  'cj-trending': 'CJ Trending',
   'most-listed': 'Most listed',
   'new-arrivals': 'New arrivals',
-  'needs-attention': 'Needs attention',
 };
 
-export const SIGNAL_FILTER_LABELS: Record<
-  (typeof DISCOVERY_SIGNAL_FILTERS)[number],
-  string
+/**
+ * Live CJ ordering for each view. `all` sends no ordering at all - the
+ * provider's default ranking - while the other views use the two documented
+ * legacy `orderBy` values.
+ */
+export const QUICK_VIEW_ORDERING: Record<
+  (typeof SUPPLIER_PRODUCTS_QUICK_VIEWS)[number],
+  { orderBy: 'createAt' | 'listedNum'; sort: 'asc' | 'desc' } | null
 > = {
-  ALL: 'All products',
-  CJ_TRENDING: 'CJ Trending',
-  CJ_HIGH_LISTED: 'Most listed on CJ',
-  CJ_NEW_ARRIVAL: 'New arrivals',
-  NONE: 'No CJ signal yet',
+  all: null,
+  'most-listed': { orderBy: 'listedNum', sort: 'desc' },
+  'new-arrivals': { orderBy: 'createAt', sort: 'desc' },
 };

@@ -15,6 +15,7 @@ import { CJ_BASE_URL, CJ_PAGE_SIZE, CjApiError } from '@/services/cj/config';
 import type { SupplierSecretStore } from '@/lib/secrets/supplier-secret-store';
 import { updateConnectionHealth } from '../../repository';
 import type {
+  BrowsePageQuery,
   CandidateListInput,
   CandidatePage,
   CatalogPage,
@@ -234,6 +235,61 @@ export default class CjSupplierAdapter implements SupplierProviderAdapter {
   }
 
   /**
+   * Shared tail of every `/product/list` page read: fetch, tolerant parse,
+   * envelope-code handling, normalisation, derived `totalPages`. Callers own
+   * their param construction - discovery's pinned ordering params are built
+   * in `listCatalogPage`/`listCuratedPage` exactly as before.
+   */
+  private async fetchProductListPage(
+    connectionId: string,
+    params: URLSearchParams,
+    requestedPageNum: number,
+    requestedPageSize: number,
+  ): Promise<CatalogPage> {
+    const parsed = cjProductListSchema.safeParse(
+      await this.getJson(connectionId, `/product/list?${params.toString()}`),
+    );
+
+    if (!parsed.success) throw new CjApiError('unexpected-response');
+    if (parsed.data.code !== 200) {
+      throw new CjApiError(
+        parsed.data.code === 401
+          ? 'authentication-failed'
+          : 'unexpected-response',
+      );
+    }
+
+    const data = parsed.data.data ?? null;
+    const total = data?.total ?? 0;
+    const pageSize = data?.pageSize ?? requestedPageSize;
+
+    return {
+      products: (data?.list ?? []).map(normalizeCjProduct),
+      requestedPageNum,
+      pageNum: data?.pageNum ?? -1,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / Math.max(pageSize, 1))),
+      pointsInfo: parsed.data.pointsInfo ?? null,
+    };
+  }
+
+  private static assertPageBounds(query: {
+    pageNum: number;
+    pageSize: number;
+  }): void {
+    if (
+      !Number.isInteger(query.pageNum) ||
+      query.pageNum < 1 ||
+      !Number.isInteger(query.pageSize) ||
+      query.pageSize < 1 ||
+      query.pageSize > CATALOG_PAGE_SIZE_MAX
+    ) {
+      throw new CjApiError('unexpected-response');
+    }
+  }
+
+  /**
    * Legacy full-catalogue discovery page. Only documented legacy filters are
    * sent; ordering is pinned to `orderBy=createAt&sort=asc` so an immutable
    * partition enumerates deterministically. `totalPages` is derived from the
@@ -245,15 +301,7 @@ export default class CjSupplierAdapter implements SupplierProviderAdapter {
     connectionId: string,
     query: CatalogPageQuery,
   ): Promise<CatalogPage> {
-    if (
-      !Number.isInteger(query.pageNum) ||
-      query.pageNum < 1 ||
-      !Number.isInteger(query.pageSize) ||
-      query.pageSize < 1 ||
-      query.pageSize > CATALOG_PAGE_SIZE_MAX
-    ) {
-      throw new CjApiError('unexpected-response');
-    }
+    CjSupplierAdapter.assertPageBounds(query);
 
     const params = new URLSearchParams({
       pageNum: String(query.pageNum),
@@ -278,32 +326,12 @@ export default class CjSupplierAdapter implements SupplierProviderAdapter {
       params.set('maxPrice', query.maxPrice.toFixed(2));
     }
 
-    const parsed = cjProductListSchema.safeParse(
-      await this.getJson(connectionId, `/product/list?${params.toString()}`),
+    return this.fetchProductListPage(
+      connectionId,
+      params,
+      query.pageNum,
+      query.pageSize,
     );
-
-    if (!parsed.success) throw new CjApiError('unexpected-response');
-    if (parsed.data.code !== 200) {
-      throw new CjApiError(
-        parsed.data.code === 401
-          ? 'authentication-failed'
-          : 'unexpected-response',
-      );
-    }
-
-    const data = parsed.data.data ?? null;
-    const total = data?.total ?? 0;
-    const pageSize = data?.pageSize ?? query.pageSize;
-
-    return {
-      products: (data?.list ?? []).map(normalizeCjProduct),
-      requestedPageNum: query.pageNum,
-      pageNum: data?.pageNum ?? -1,
-      pageSize,
-      total,
-      totalPages: Math.max(1, Math.ceil(total / Math.max(pageSize, 1))),
-      pointsInfo: parsed.data.pointsInfo ?? null,
-    };
   }
 
   /**
@@ -320,15 +348,7 @@ export default class CjSupplierAdapter implements SupplierProviderAdapter {
     connectionId: string,
     query: CuratedPageQuery,
   ): Promise<CatalogPage> {
-    if (
-      !Number.isInteger(query.pageNum) ||
-      query.pageNum < 1 ||
-      !Number.isInteger(query.pageSize) ||
-      query.pageSize < 1 ||
-      query.pageSize > CATALOG_PAGE_SIZE_MAX
-    ) {
-      throw new CjApiError('unexpected-response');
-    }
+    CjSupplierAdapter.assertPageBounds(query);
 
     const params = new URLSearchParams({
       pageNum: String(query.pageNum),
@@ -356,32 +376,47 @@ export default class CjSupplierAdapter implements SupplierProviderAdapter {
       params.set('maxPrice', query.maxPrice.toFixed(2));
     }
 
-    const parsed = cjProductListSchema.safeParse(
-      await this.getJson(connectionId, `/product/list?${params.toString()}`),
+    return this.fetchProductListPage(
+      connectionId,
+      params,
+      query.pageNum,
+      query.pageSize,
     );
+  }
 
-    if (!parsed.success) throw new CjApiError('unexpected-response');
-    if (parsed.data.code !== 200) {
-      throw new CjApiError(
-        parsed.data.code === 401
-          ? 'authentication-failed'
-          : 'unexpected-response',
-      );
+  /**
+   * Seller-facing live browse page. Same legacy `/product/list` endpoint and
+   * documented 50-point cost as every other list read; only documented
+   * filters are sent (`productNameEn`, `categoryId`, `orderBy`, `sort`).
+   * Ordering is caller-chosen because this is a presentation read, never a
+   * deterministic discovery enumeration - discovery must not call this.
+   */
+  async listBrowsePage(
+    connectionId: string,
+    query: BrowsePageQuery,
+  ): Promise<CatalogPage> {
+    CjSupplierAdapter.assertPageBounds(query);
+
+    const params = new URLSearchParams({
+      pageNum: String(query.pageNum),
+      pageSize: String(query.pageSize),
+    });
+
+    if (query.search !== undefined && query.search !== '') {
+      params.set('productNameEn', query.search);
     }
+    if (query.categoryId !== undefined && query.categoryId !== '') {
+      params.set('categoryId', query.categoryId);
+    }
+    if (query.orderBy !== undefined) params.set('orderBy', query.orderBy);
+    if (query.sort !== undefined) params.set('sort', query.sort);
 
-    const data = parsed.data.data ?? null;
-    const total = data?.total ?? 0;
-    const pageSize = data?.pageSize ?? query.pageSize;
-
-    return {
-      products: (data?.list ?? []).map(normalizeCjProduct),
-      requestedPageNum: query.pageNum,
-      pageNum: data?.pageNum ?? -1,
-      pageSize,
-      total,
-      totalPages: Math.max(1, Math.ceil(total / Math.max(pageSize, 1))),
-      pointsInfo: parsed.data.pointsInfo ?? null,
-    };
+    return this.fetchProductListPage(
+      connectionId,
+      params,
+      query.pageNum,
+      query.pageSize,
+    );
   }
 
   /**

@@ -93,15 +93,25 @@ describe('raw supplier intake and review spend no supplier evidence budget', () 
     expect(offenders).toEqual([]);
   });
 
-  it('keeps the All Supplier Products UI free of any supplier client import', () => {
+  /**
+   * Owner decision 2026-08-13: the All Supplier Products page is a live
+   * `/product/list` browse, so its Server Component workspace legitimately
+   * constructs the CJ adapter. That construction is confined to exactly one
+   * file - every other file in the subtree (table, drawer, filters,
+   * pagination) must stay supplier-client-free so a future edit cannot
+   * quietly spread live supplier calls through presentation components.
+   */
+  it('confines the supplier client to the workspace entry point', () => {
     const files = collectTsFiles(
       join(REPO_SRC, 'components', 'products', 'supplier-products'),
     );
 
-    const offenders = files.filter((file) =>
-      /cj-adapter|cj-auth|supplier-secret-store|modules\/suppliers\/providers/.test(
-        stripComments(readFileSync(file, 'utf8')),
-      ),
+    const offenders = files.filter(
+      (file) =>
+        !file.endsWith('SupplierProductsWorkspace.tsx') &&
+        /cj-adapter|cj-auth|supplier-secret-store|modules\/suppliers\/providers/.test(
+          stripComments(readFileSync(file, 'utf8')),
+        ),
     );
 
     expect(offenders).toEqual([]);

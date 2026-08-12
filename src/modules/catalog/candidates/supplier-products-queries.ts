@@ -1,16 +1,4 @@
-import {
-  and,
-  asc,
-  count,
-  desc,
-  eq,
-  ilike,
-  inArray,
-  isNotNull,
-  ne,
-  sql,
-  type SQL,
-} from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, type SQL } from 'drizzle-orm';
 import getDb from '@/lib/db/client';
 import {
   candidateDiscoverySignals,
@@ -24,15 +12,16 @@ import { feedSnapshotSchema } from './rules/contracts';
 import type { EvaluationStatus } from './rules/contracts';
 
 /**
- * Read model for **All Supplier Products**, served entirely from the Sals3
- * database.
+ * Pipeline read model for **All Supplier Products**.
  *
- * The page previously called CJ `/product/list` on every render, search
- * keystroke, filter change, and page turn. Under the owner's CJ call-budget
- * decision (ADR-013 §1a) it must not: browsing, filtering, searching, paging,
- * and opening the source drawer are all local reads of what discovery already
- * persisted. Nothing in this module can reach a supplier adapter - it imports
- * none.
+ * The page's product rows now come from a live CJ `/product/list` read (owner
+ * decision 2026-08-13, see `live-browse.ts`); this module supplies only the
+ * Sals3-side pipeline data laid over those rows - which live products are
+ * already discovered candidates, their screening outcome, discovery signals,
+ * and manual stock review - plus the read for the Source Details drawer.
+ * Nothing in this module can reach a supplier adapter - it imports none, and
+ * nothing here ever writes: browsing must never create or refresh a
+ * candidate.
  *
  * Every query is seller-scoped in the same `WHERE` clause as its lookup, by
  * joining `supplier_candidates.supplier_connection_id ->
@@ -40,25 +29,8 @@ import type { EvaluationStatus } from './rules/contracts';
  * `intended_seller_id` text field, and never a separate check-then-fetch.
  */
 
-export const SUPPLIER_PRODUCTS_PAGE_SIZE = 50;
-const MAX_ROWS_PER_REQUEST = 200;
-/** Below this, a search is not submitted at all - see the search input. */
-export const MIN_SEARCH_LENGTH = 2;
-/** Bounded so one seller's very long tail cannot build an unbounded select. */
-const MAX_CATEGORY_FACETS = 200;
-
-export type SupplierProductsQuickView =
-  'all' | 'cj-trending' | 'most-listed' | 'new-arrivals' | 'needs-attention';
-
-export type DiscoverySignalFilter = DiscoverySignal | 'ALL' | 'NONE';
-
-export type SupplierProductsFilters = {
-  quickView: SupplierProductsQuickView;
-  signal: DiscoverySignalFilter;
-  categoryId: string | null;
-  search: string;
-  page: number;
-};
+/** Hard bound on one pid-match lookup - the live page size is at most 200. */
+const MAX_MATCH_IDS = 200;
 
 export type SupplierProductRow = {
   candidateId: string;
@@ -95,146 +67,15 @@ export type SupplierProductRow = {
   signals: DiscoverySignal[];
 };
 
-export type SupplierProductsPage = {
-  rows: SupplierProductRow[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
-};
-
-/** `%` and `_` are LIKE wildcards and `\` escapes them - a typed one means the literal character. */
-function escapeLikePattern(term: string) {
-  return term.replace(/[\\%_]/g, (character) => `\\${character}`);
-}
-
 /**
- * Whitespace-normalized search term, or `''` when it is below the minimum
- * meaningful length. Returning `''` is what makes a one-character input leave
- * the scoped result set completely intact rather than filtering it.
- */
-export function normalizeSearchTerm(raw: string | undefined | null): string {
-  const collapsed = (raw ?? '').trim().replace(/\s+/g, ' ');
-
-  return collapsed.length < MIN_SEARCH_LENGTH ? '' : collapsed;
-}
-
-/**
- * Case-insensitive substring match over every identifier the search box
- * advertises, executed in SQL against the whole scoped set - never against
- * the current page in JavaScript, which would report "no matches" for a hit
- * sitting past the first page.
- *
- * Parameterized by Drizzle: the term always travels as a bind parameter and
- * its LIKE wildcards are escaped, so the debounce and minimum length are a
- * request-volume control, never the security boundary.
- */
-export function supplierProductsSearchCondition(
-  search: string,
-): SQL | undefined {
-  const term = normalizeSearchTerm(search);
-
-  if (term === '') return undefined;
-
-  const pattern = `%${escapeLikePattern(term)}%`;
-
-  return sql`(${ilike(supplierCandidates.externalProductId, pattern)}
-    OR ${candidateEvaluations.feedSnapshot}->>'name' ILIKE ${pattern}
-    OR ${candidateEvaluations.feedSnapshot}->>'sku' ILIKE ${pattern})`;
-}
-
-/**
- * Rows a seller should act on: a manual inspection found no inventory or
- * could not verify it, or the pipeline itself is blocked/failed. An
- * uninspected `STOCK_NOT_CHECKED` row is an honest unknown and deliberately
- * NOT attention - inventing a queue of things nobody has looked at yet would
- * be the same fabrication this whole change removes.
- */
-function needsAttentionCondition(): SQL {
-  return sql`(${inArray(supplierCandidates.stockReviewState, [
-    'MANUALLY_NO_INVENTORY',
-    'MANUALLY_COULD_NOT_VERIFY',
-  ])}
-    OR ${inArray(candidateEvaluations.status, [
-      'PASS_WITH_ATTENTION',
-      'EVALUATION_FAILED',
-    ])})`;
-}
-
-function signalExists(signal: DiscoverySignal): SQL {
-  return sql`EXISTS (
-    SELECT 1 FROM ${candidateDiscoverySignals}
-    WHERE ${candidateDiscoverySignals.candidateId} = ${supplierCandidates.id}
-      AND ${candidateDiscoverySignals.signal} = ${signal}
-  )`;
-}
-
-function noSignalExists(): SQL {
-  return sql`NOT EXISTS (
-    SELECT 1 FROM ${candidateDiscoverySignals}
-    WHERE ${candidateDiscoverySignals.candidateId} = ${supplierCandidates.id}
-  )`;
-}
-
-const QUICK_VIEW_SIGNAL: Partial<
-  Record<SupplierProductsQuickView, DiscoverySignal>
-> = {
-  'cj-trending': 'CJ_TRENDING',
-  'most-listed': 'CJ_HIGH_LISTED',
-  'new-arrivals': 'CJ_NEW_ARRIVAL',
-};
-
-function scopeFor(
-  sellerAccountId: string,
-  filters: SupplierProductsFilters,
-): SQL | undefined {
-  const quickViewSignal = QUICK_VIEW_SIGNAL[filters.quickView];
-  const conditions: (SQL | undefined)[] = [
-    eq(supplierConnections.sellerAccountId, sellerAccountId),
-    supplierProductsSearchCondition(filters.search),
-  ];
-
-  if (quickViewSignal !== undefined) {
-    conditions.push(signalExists(quickViewSignal));
-  }
-
-  if (filters.quickView === 'needs-attention') {
-    conditions.push(needsAttentionCondition());
-  }
-
-  if (filters.signal === 'NONE') {
-    conditions.push(noSignalExists());
-  } else if (filters.signal !== 'ALL') {
-    conditions.push(signalExists(filters.signal));
-  }
-
-  if (filters.categoryId !== null) {
-    conditions.push(
-      eq(supplierCandidates.providerCategoryId, filters.categoryId),
-    );
-  }
-
-  return and(...conditions);
-}
-
-/**
- * Newest sighting first, with the candidate id as a tiebreaker. The
- * tiebreaker is load-bearing for paging, not cosmetic: one discovery cycle
- * stamps thousands of rows with the same instant, and ordering by that column
- * alone leaves their relative order undefined - the same row could then
- * appear on two pages while another is skipped.
+ * Newest sighting first, with the candidate id as a tiebreaker - deterministic
+ * even when one discovery cycle stamps thousands of rows with the same
+ * instant.
  */
 const PAGE_ORDER = [
   desc(supplierCandidates.createdAt),
   asc(supplierCandidates.id),
 ] as const;
-
-function boundedPageSize(pageSize: number | undefined): number {
-  return Math.min(
-    Math.max(pageSize ?? SUPPLIER_PRODUCTS_PAGE_SIZE, 1),
-    MAX_ROWS_PER_REQUEST,
-  );
-}
 
 async function loadSignals(
   candidateIds: string[],
@@ -349,144 +190,105 @@ async function fetchRows(
   });
 }
 
-async function countRows(scope: SQL | undefined): Promise<number> {
-  const rows = await getDb()
-    .select({ total: count() })
-    .from(supplierCandidates)
-    .innerJoin(
-      candidateEvaluations,
-      eq(candidateEvaluations.candidateId, supplierCandidates.id),
-    )
-    .innerJoin(
-      supplierConnections,
-      eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
-    )
-    .where(scope);
-
-  return Number(rows[0]?.total ?? 0);
-}
-
-export async function listSupplierProducts(
-  sellerAccountId: string,
-  filters: SupplierProductsFilters,
-  options: { pageSize?: number } = {},
-): Promise<SupplierProductsPage> {
-  const pageSize = boundedPageSize(options.pageSize);
-  const scope = scopeFor(sellerAccountId, filters);
-  const total = await countRows(scope);
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  // Clamped, so a hand-edited `?page=9999` shows the last real page instead
-  // of an empty table that looks like "no results".
-  const page = Math.min(Math.max(filters.page, 1), totalPages);
-  const rows = await fetchRows(scope, {
-    limit: pageSize,
-    offset: (page - 1) * pageSize,
-  });
-
-  return { rows, total, page, pageSize, totalPages };
-}
-
-export type CategoryFacet = { id: string; name: string; total: number };
+export type SupplierProductMatch = {
+  candidateId: string;
+  externalProductId: string;
+  /** Null when the candidate is discovered but not yet evaluated. */
+  status: EvaluationStatus | null;
+  reasonCodes: string[];
+  attemptCount: number;
+  lastErrorCode: string | null;
+  evaluatedAt: Date | null;
+  discoveredAt: Date;
+  stockReview: SupplierProductRow['stockReview'];
+  signals: DiscoverySignal[];
+};
 
 /**
- * Category options for the table filter bar, built from the provider category
- * already persisted on this seller's own rows. Deliberately a grouped count
- * over the Sals3 database: CJ is never called to populate or apply this
- * filter, and a seller only ever sees categories present in their own scope.
+ * Pipeline overlay for one live browse page: which of these provider product
+ * ids are already discovered candidates for this seller, keyed by pid. A
+ * LEFT JOIN on `candidate_evaluations` on purpose - a candidate discovery has
+ * inserted but not yet evaluated must still match, with a null status, rather
+ * than rendering as "not discovered". Pure read: browsing never creates or
+ * refreshes a candidate.
  */
-export async function listSupplierProductCategories(
+export async function findPipelineMatchesByPid(
   sellerAccountId: string,
-): Promise<CategoryFacet[]> {
+  externalProductIds: string[],
+): Promise<Map<string, SupplierProductMatch>> {
+  const pids = [...new Set(externalProductIds)]
+    .filter((pid) => pid !== '')
+    .slice(0, MAX_MATCH_IDS);
+
+  if (pids.length === 0) return new Map();
+
   const rows = await getDb()
     .select({
-      id: supplierCandidates.providerCategoryId,
-      name: supplierCandidates.providerCategoryName,
-      total: count(),
+      candidateId: supplierCandidates.id,
+      externalProductId: supplierCandidates.externalProductId,
+      discoveredAt: supplierCandidates.createdAt,
+      stockReviewState: supplierCandidates.stockReviewState,
+      stockReviewVersion: supplierCandidates.stockReviewVersion,
+      stockReviewObservedAt: supplierCandidates.stockReviewObservedAt,
+      stockReviewRecordedAt: supplierCandidates.stockReviewRecordedAt,
+      stockReviewActorId: supplierCandidates.stockReviewActorId,
+      stockReviewObservedQuantity:
+        supplierCandidates.stockReviewObservedQuantity,
+      stockReviewObservedOrigin: supplierCandidates.stockReviewObservedOrigin,
+      stockReviewNote: supplierCandidates.stockReviewNote,
+      status: candidateEvaluations.status,
+      reasonCodes: candidateEvaluations.reasonCodes,
+      attemptCount: candidateEvaluations.attemptCount,
+      lastErrorCode: candidateEvaluations.lastErrorCode,
+      evaluatedAt: candidateEvaluations.evaluatedAt,
     })
     .from(supplierCandidates)
     .innerJoin(
       supplierConnections,
       eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
     )
+    .leftJoin(
+      candidateEvaluations,
+      eq(candidateEvaluations.candidateId, supplierCandidates.id),
+    )
     .where(
       and(
         eq(supplierConnections.sellerAccountId, sellerAccountId),
-        isNotNull(supplierCandidates.providerCategoryId),
-        ne(supplierCandidates.providerCategoryId, ''),
+        inArray(supplierCandidates.externalProductId, pids),
       ),
-    )
-    .groupBy(
-      supplierCandidates.providerCategoryId,
-      supplierCandidates.providerCategoryName,
-    )
-    .orderBy(asc(supplierCandidates.providerCategoryName))
-    .limit(MAX_CATEGORY_FACETS);
+    );
 
-  return rows
-    .filter((row): row is { id: string; name: string | null; total: number } =>
-      Boolean(row.id),
-    )
-    .map((row) => ({
-      id: row.id,
-      name: row.name ?? row.id,
-      total: Number(row.total),
-    }));
-}
-
-export type SupplierProductsSummary = {
-  total: number;
-  stockNotChecked: number;
-  manuallyInStock: number;
-  needsAttention: number;
-};
-
-/**
- * Header counters. Grouped counts, not a row fetch: this renders on every
- * visit to a page that can hold tens of thousands of rows.
- */
-export async function summariseSupplierProducts(
-  sellerAccountId: string,
-): Promise<SupplierProductsSummary> {
-  const db = getDb();
-  const scoped = and(eq(supplierConnections.sellerAccountId, sellerAccountId));
-
-  const [totals, attention] = await Promise.all([
-    db
-      .select({
-        state: supplierCandidates.stockReviewState,
-        total: count(),
-      })
-      .from(supplierCandidates)
-      .innerJoin(
-        supplierConnections,
-        eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
-      )
-      .where(scoped)
-      .groupBy(supplierCandidates.stockReviewState),
-    db
-      .select({ total: count() })
-      .from(supplierCandidates)
-      .innerJoin(
-        candidateEvaluations,
-        eq(candidateEvaluations.candidateId, supplierCandidates.id),
-      )
-      .innerJoin(
-        supplierConnections,
-        eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
-      )
-      .where(and(scoped, needsAttentionCondition())),
-  ]);
-
-  const byState = new Map(
-    totals.map((row) => [row.state, Number(row.total)] as const),
+  const signalsByCandidate = await loadSignals(
+    rows.map((row) => row.candidateId),
   );
 
-  return {
-    total: [...byState.values()].reduce((sum, value) => sum + value, 0),
-    stockNotChecked: byState.get('STOCK_NOT_CHECKED') ?? 0,
-    manuallyInStock: byState.get('MANUALLY_IN_STOCK') ?? 0,
-    needsAttention: Number(attention[0]?.total ?? 0),
-  };
+  const matches = new Map<string, SupplierProductMatch>();
+
+  rows.forEach((row) => {
+    matches.set(row.externalProductId, {
+      candidateId: row.candidateId,
+      externalProductId: row.externalProductId,
+      status: row.status,
+      reasonCodes: row.reasonCodes ?? [],
+      attemptCount: row.attemptCount ?? 0,
+      lastErrorCode: row.lastErrorCode,
+      evaluatedAt: row.evaluatedAt,
+      discoveredAt: row.discoveredAt,
+      stockReview: {
+        state: row.stockReviewState,
+        version: row.stockReviewVersion,
+        observedAt: row.stockReviewObservedAt,
+        recordedAt: row.stockReviewRecordedAt,
+        actorId: row.stockReviewActorId,
+        observedQuantity: row.stockReviewObservedQuantity,
+        observedOrigin: row.stockReviewObservedOrigin,
+        note: row.stockReviewNote,
+      },
+      signals: signalsByCandidate.get(row.candidateId) ?? [],
+    });
+  });
+
+  return matches;
 }
 
 /**

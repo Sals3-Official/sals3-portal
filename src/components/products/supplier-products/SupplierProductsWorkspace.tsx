@@ -1,20 +1,21 @@
 import getDb, { isDatabaseConfigured } from '@/lib/db/client';
 import { can } from '@/lib/auth/permissions';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
+import PostgresSupplierSecretStore from '@/lib/secrets/postgres-supplier-secret-store';
 import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
 import {
-  QUICK_VIEW_LABELS,
-  SIGNAL_FILTER_LABELS,
-  DISCOVERY_SIGNAL_FILTERS,
+  QUICK_VIEW_ORDERING,
   type SupplierProductsQuery,
 } from '@/lib/products/supplier-products-params';
 import {
-  findSupplierProductForSeller,
-  listSupplierProductCategories,
-  listSupplierProducts,
-  summariseSupplierProducts,
-} from '@/modules/catalog/candidates/supplier-products-queries';
+  loadLiveBrowsePage,
+  type LiveBrowseErrorState,
+} from '@/modules/catalog/candidates/live-browse';
+import { findSupplierProductForSeller } from '@/modules/catalog/candidates/supplier-products-queries';
 import { listStockAttestations } from '@/modules/catalog/candidates/stock-review-repository';
+import CjSupplierAdapter from '@/modules/suppliers/providers/cj/cj-adapter';
+import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
+import { CJ_ERROR_MESSAGES } from '@/services/cj/config';
 import SupplierProductsFilterSelect from './SupplierProductsFilterSelect';
 import SupplierProductsPagination from './SupplierProductsPagination';
 import SupplierProductsQuickViews from './SupplierProductsQuickViews';
@@ -27,17 +28,65 @@ type SupplierProductsWorkspaceProps = {
 };
 
 /**
- * All Supplier Products, served entirely from the Sals3 database.
+ * One plain sentence per failure state - the detail stays in the server log,
+ * never in the response.
+ */
+function LiveBrowseErrorNotice({ state }: { state: LiveBrowseErrorState }) {
+  if (state === 'no-connection') {
+    return (
+      <SourcingEmptyState
+        title="No CJ connection yet"
+        description="Connect a CJdropshipping account under Supplier Apps to browse its live catalogue here."
+      />
+    );
+  }
+
+  if (state === 'reauth-required') {
+    return (
+      <SourcingEmptyState
+        title="Your CJ connection needs attention"
+        description={CJ_ERROR_MESSAGES['authentication-failed']}
+      />
+    );
+  }
+
+  if (state === 'rate-limited') {
+    return (
+      <SourcingEmptyState
+        title="CJ is limiting requests right now"
+        description={CJ_ERROR_MESSAGES['rate-limited']}
+      />
+    );
+  }
+
+  if (state === 'throttled-locally') {
+    return (
+      <SourcingEmptyState
+        title="Browsing too fast"
+        description="This page is briefly paused to protect your CJ API budget. Wait a moment, then reload or continue browsing."
+      />
+    );
+  }
+
+  return (
+    <SourcingEmptyState
+      title="CJ did not answer"
+      description={CJ_ERROR_MESSAGES['upstream-unavailable']}
+    />
+  );
+}
+
+/**
+ * All Supplier Products - a live CJ `/product/list` browse (owner decision
+ * 2026-08-13, superseding the ADR-013 §1a saved-data read for THIS page
+ * only).
  *
- * This component replaced a version that called CJ `/product/list` on every
- * render, so every page view, search keystroke, filter change, page turn, and
- * drawer open spent supplier points. Under the owner's CJ call-budget
- * decision none of those may contact CJ, and the way that is guaranteed here
- * is structural: this subtree imports no supplier adapter, token manager, or
- * secret store, so there is nothing in it that *could* make a supplier call.
- *
- * Discovery still populates these rows in the background, bounded by the
- * one-time backlog drain gate and the owner's new-PID intake ceiling.
+ * Every render makes exactly one live `/product/list` request through the
+ * seller's own CJ connection, plus an hourly-cached category tree read. The
+ * Sals3 database supplies only the pipeline overlay: which live rows are
+ * already discovered candidates, their screening state, signals, and manual
+ * stock review. Browsing performs ZERO writes - it never creates, refreshes,
+ * or evaluates a candidate; the discovery workers remain the only writers.
  */
 export default async function SupplierProductsWorkspace({
   query,
@@ -49,26 +98,39 @@ export default async function SupplierProductsWorkspace({
     return (
       <SourcingEmptyState
         title="No database configured in this environment"
-        description="DATABASE_URL is not set here, so your supplier products cannot be read. This page works against a configured Postgres database - see the README."
+        description="DATABASE_URL is not set here, so your CJ connection cannot be resolved. This page works against a configured Postgres database - see the README."
       />
     );
   }
 
   const { session, sellerAccount } = await requireDropshipperAccount();
 
-  const filters = {
-    quickView: query.view,
-    signal: query.signal,
-    categoryId: query.category === '' ? null : query.category,
-    search: query.q,
-    page: query.page,
-  } as const;
+  const secretStore = new PostgresSupplierSecretStore();
+  const adapter = new CjSupplierAdapter(
+    secretStore,
+    new CjTokenManager(secretStore),
+  );
 
-  const [page, categories, summary] = await Promise.all([
-    listSupplierProducts(sellerAccount.id, filters),
-    listSupplierProductCategories(sellerAccount.id),
-    summariseSupplierProducts(sellerAccount.id),
-  ]);
+  const ordering = QUICK_VIEW_ORDERING[query.view];
+  const result = await loadLiveBrowsePage(
+    { adapter },
+    {
+      sellerAccountId: sellerAccount.id,
+      userId: session.userId,
+      query: {
+        page: query.page,
+        search: query.q,
+        categoryId: query.category,
+        ...(ordering ?? {}),
+      },
+    },
+  );
+
+  if (!result.ok) {
+    return <LiveBrowseErrorNotice state={result.state} />;
+  }
+
+  const { page } = result;
 
   const openProduct =
     query.source === ''
@@ -84,7 +146,6 @@ export default async function SupplierProductsWorkspace({
 
   const currentParams: Record<string, string> = {
     ...(query.view === 'all' ? {} : { view: query.view }),
-    ...(query.signal === 'ALL' ? {} : { signal: query.signal }),
     ...(query.category === '' ? {} : { category: query.category }),
     ...(query.q === '' ? {} : { q: query.q }),
     ...(query.page === 1 ? {} : { page: String(query.page) }),
@@ -96,31 +157,13 @@ export default async function SupplierProductsWorkspace({
       <SupplierProductsQuickViews
         active={query.view}
         currentParams={currentParams}
-        needsAttentionCount={summary.needsAttention}
       />
 
-      <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-ink-muted">
-        {summary.total} product{summary.total === 1 ? '' : 's'} discovered from
-        your connected supplier apps · {summary.stockNotChecked} not yet
-        stock-checked · {summary.manuallyInStock} manually confirmed in stock.
-        Browsing, searching, filtering, paging, and opening source details all
-        read saved Sals3 data and make no supplier request. Stock is confirmed
-        only by a person recording a CJ/MyCJ inspection.
-      </p>
-
-      <div className="flex flex-wrap items-end gap-3">
+      {/* `items-start`, not `items-end`: the search column carries a hint line
+          under its input, so bottom alignment would drop the category select
+          below the input it sits beside. */}
+      <div className="flex flex-wrap items-start gap-3">
         <SupplierProductsSearchInput value={query.q} />
-        <SupplierProductsFilterSelect
-          id="discovery-signal-filter"
-          label="Discovery signal"
-          param="signal"
-          clearedValue="ALL"
-          value={query.signal}
-          options={DISCOVERY_SIGNAL_FILTERS.map((value) => ({
-            value,
-            label: SIGNAL_FILTER_LABELS[value],
-          }))}
-        />
         <SupplierProductsFilterSelect
           id="category-filter"
           label="Category"
@@ -129,9 +172,12 @@ export default async function SupplierProductsWorkspace({
           value={query.category}
           options={[
             { value: '', label: 'All categories' },
-            ...categories.map((category) => ({
-              value: category.id,
-              label: `${category.name} (${category.total})`,
+            ...page.categories.map((category) => ({
+              value: category.categoryId,
+              label:
+                category.path.length === 0
+                  ? category.categoryName
+                  : `${category.path.join(' › ')} › ${category.categoryName}`,
             })),
           ]}
         />
@@ -140,22 +186,16 @@ export default async function SupplierProductsWorkspace({
       {page.rows.length === 0 ? (
         <div className="rounded-lg border border-border bg-card px-6 py-16 text-center">
           <h2 className="font-display text-lg font-semibold">
-            {summary.total === 0
-              ? 'No supplier products discovered yet'
-              : 'No products match these filters'}
+            No CJ products match this view
           </h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            {summary.total === 0
-              ? 'Connect a CJ Dropshipping account under Supplier Apps, then start discovery. Products appear here as they are found.'
-              : `Clear the ${QUICK_VIEW_LABELS[query.view]} view, the filters, or the search to see more.`}
+            CJ returned no products for this page, search, or category. Clear
+            the search or filters, or go back a page.
           </p>
         </div>
       ) : (
         <>
-          <SupplierProductsTable
-            rows={page.rows}
-            currentParams={currentParams}
-          />
+          <SupplierProductsTable rows={page.rows} />
           <SupplierProductsPagination
             page={page.page}
             totalPages={page.totalPages}
