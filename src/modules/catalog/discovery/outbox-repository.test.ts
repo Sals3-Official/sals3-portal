@@ -123,4 +123,27 @@ describe('claimDispatchableOutbox', () => {
     expect(rendered.sql).toContain('"state" = ');
     expect(rendered.sql).toContain('"leased_until"');
   });
+
+  it('claims product/list discovery work by owner priority before partition scans', async () => {
+    const { db, calls } = fakeDb([[{ id: 'outbox-1' }], [{ id: 'outbox-1' }]]);
+
+    await claimDispatchableOutbox(db, { leaseToken: 'lease-1', batchSize: 10 });
+
+    const orderByArgs = lastCallArgs(calls, 'orderBy') as SQL[];
+    const rendered = dialect.sqlToQuery(orderByArgs[0]!);
+
+    expect(rendered.sql).toContain('CJ_TRENDING');
+    expect(rendered.sql).toContain('CJ_MOST_LISTED');
+    expect(rendered.sql).toContain('CJ_NEW_ARRIVALS');
+    expect(rendered.sql).toContain('DISCOVERY_PARTITION');
+    expect(rendered.sql.indexOf('CJ_TRENDING')).toBeLessThan(
+      rendered.sql.indexOf('CJ_MOST_LISTED'),
+    );
+    expect(rendered.sql.indexOf('CJ_MOST_LISTED')).toBeLessThan(
+      rendered.sql.indexOf('CJ_NEW_ARRIVALS'),
+    );
+    expect(rendered.sql.indexOf('CJ_NEW_ARRIVALS')).toBeLessThan(
+      rendered.sql.indexOf('DISCOVERY_PARTITION'),
+    );
+  });
 });

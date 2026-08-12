@@ -115,6 +115,45 @@ export async function leaseCuratedLane(
 }
 
 /** Advances the resumable cursor. A pause never calls this. */
+/**
+ * The curated lanes that can still contribute to the current 600-PID wave, in
+ * owner intake-priority order.
+ *
+ * Ranking comes from `CURATED_LANES`, which is already ordered
+ * Trending -> Most listed -> New arrivals; restating that order anywhere else
+ * would be a second source of truth for it.
+ *
+ * A lane is eligible unless it recorded exhaustion against THIS wave edge. A
+ * row that does not exist yet is eligible too - `ensureCuratedLanes` creates it
+ * on first run, and treating an absent row as exhausted would let the partition
+ * scanner take the wave before any lane ever got a turn.
+ */
+export async function listEligibleCuratedLanes(
+  executor: DbExecutor,
+  input: { supplierConnectionId: string; waveLimit: number },
+): Promise<CuratedLane[]> {
+  const rows = await executor
+    .select({
+      lane: discoveryCuratedLanes.lane,
+      exhaustedAtWaveLimit: discoveryCuratedLanes.exhaustedAtWaveLimit,
+    })
+    .from(discoveryCuratedLanes)
+    .where(
+      eq(
+        discoveryCuratedLanes.supplierConnectionId,
+        input.supplierConnectionId,
+      ),
+    );
+
+  const exhausted = new Set(
+    rows
+      .filter((row) => row.exhaustedAtWaveLimit === input.waveLimit)
+      .map((row) => row.lane),
+  );
+
+  return CURATED_LANES.filter((lane) => !exhausted.has(lane));
+}
+
 export async function advanceCuratedLane(
   executor: DbExecutor,
   input: {
@@ -130,6 +169,15 @@ export async function advanceCuratedLane(
     /** True when the lane finished its bounded run for this sweep. */
     finished: boolean;
     releaseLease: boolean;
+    /**
+     * The current wave edge when this lane can contribute nothing more to it,
+     * `null` to make the lane eligible again, `undefined` to leave it as is.
+     *
+     * Recorded here rather than in a second statement so it lands in the same
+     * compare-and-set as the finish it describes: a lane cannot be marked
+     * exhausted by a worker that has already lost its lease.
+     */
+    exhaustedAtWaveLimit?: number | null;
   },
 ): Promise<boolean> {
   const now = new Date();
@@ -138,6 +186,9 @@ export async function advanceCuratedLane(
     .set({
       nextPage: input.finished ? 1 : input.nextPage,
       pagesFetched: input.finished ? 0 : input.pagesFetched,
+      ...(input.exhaustedAtWaveLimit === undefined
+        ? {}
+        : { exhaustedAtWaveLimit: input.exhaustedAtWaveLimit }),
       newPidsAdmitted: sql`${discoveryCuratedLanes.newPidsAdmitted} + ${input.newPidsAdmitted}`,
       signalsRecorded: sql`${discoveryCuratedLanes.signalsRecorded} + ${input.signalsRecorded}`,
       ...(input.windowFromMs === undefined

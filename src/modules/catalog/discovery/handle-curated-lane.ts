@@ -209,6 +209,8 @@ export default async function handleCuratedLane(
   let newPidsAdmitted = 0;
   let signalsRecorded = 0;
   let exhaustedProviderPages = false;
+  /** The wave edge this invocation actually worked against, once admitted. */
+  let currentWaveLimit: number | null = null;
 
   for (let i = 0; i < CURATED_PAGES_PER_INVOCATION; i += 1) {
     if (pagesFetched >= CURATED_MAX_PAGES) break;
@@ -218,7 +220,10 @@ export default async function handleCuratedLane(
     const intake = await assessIntakeGate(db, {
       supplierConnectionId: connection.id,
       requiredCapacity: CURATED_PAGE_SIZE,
+      intent: message.lane,
     });
+
+    if (intake.allowed) currentWaveLimit = intake.currentWaveLimit;
 
     if (!intake.allowed) {
       if (intake.reason === 'BACKLOG_DRAIN_PENDING') {
@@ -232,6 +237,8 @@ export default async function handleCuratedLane(
         detail = `Deferred: ${intake.backlogCount} actionable Candidate Pipeline rows must drain first.`;
       } else if (intake.reason === 'NEW_PID_WAVE_DRAIN_PENDING') {
         detail = `Deferred: current ${intake.waveSize}-product wave is full at ${intake.admittedCount}/${intake.limitValue}; ${intake.activeEvaluationWork} active Candidate Pipeline rows must finish before the next wave opens.`;
+      } else if (intake.reason === 'HIGHER_PRIORITY_INTAKE_PENDING') {
+        detail = `Deferred: ${intake.blockedBy} holds the intake floor for this wave under the owner priority order.`;
       } else {
         detail = `Deferred: ${intake.admittedCount}/${intake.limitValue} new PIDs admitted, ${intake.remainingCapacity} remaining.`;
       }
@@ -440,6 +447,14 @@ export default async function handleCuratedLane(
     windowToMs,
     finished: runComplete,
     releaseLease: true,
+    // A completed run means this lane can contribute nothing more to the
+    // CURRENT wave, which is what releases the intake floor to the next lane
+    // down and eventually to the partition scanner. Recorded against the wave
+    // edge, so the next wave retries the lane from page 1 - new products appear
+    // between waves. A run that merely paused leaves the mark untouched.
+    ...(runComplete && currentWaveLimit !== null
+      ? { exhaustedAtWaveLimit: currentWaveLimit }
+      : {}),
   });
 
   // Continue this run immediately, or schedule the next low-priority sweep.
