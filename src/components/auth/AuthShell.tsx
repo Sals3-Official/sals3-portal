@@ -24,6 +24,8 @@ export default function AuthShell({
             alt="Sals3"
             width={36}
             height={36}
+            // Already stored at its rendered size; see README "Image delivery".
+            unoptimized
             className="rounded-md"
             priority
           />

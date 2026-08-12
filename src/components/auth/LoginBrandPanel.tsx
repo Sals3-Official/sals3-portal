@@ -28,6 +28,8 @@ function BrandMark() {
         alt="Sals3"
         width={32}
         height={32}
+        // Already stored at its rendered size; see README "Image delivery".
+        unoptimized
         priority
         className="rounded-md"
       />

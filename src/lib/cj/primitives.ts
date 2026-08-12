@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import CJ_IMAGE_HOSTS from './image-hosts';
 
 /**
  * Shared Zod primitives for every CJdropshipping response.
@@ -14,11 +15,12 @@ import { z } from 'zod';
  * `/product/stock/getInventoryByPid`, and `/product/productComments`.
  */
 
-/** Hosts `next.config.ts` allows for product imagery. Keep the two in step. */
-export const CJ_IMAGE_HOSTS = [
-  'cf.cjdropshipping.com',
-  'oss-cf.cjdropshipping.com',
-];
+/**
+ * Re-exported so existing importers keep working. The list itself moved to
+ * `./image-hosts` because the `next/image` loader needs it in the client bundle
+ * and must not import this Zod-bearing module to get it.
+ */
+export { CJ_IMAGE_HOSTS };
 
 /**
  * Accepts an image address only from an allow-listed CJ host. Anything else
