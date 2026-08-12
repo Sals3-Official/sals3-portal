@@ -4,7 +4,9 @@ import StatusPill from '@/components/seller-center/shared/StatusPill';
 import formatUtcDateTime from '@/lib/portal/format-datetime';
 import type { CandidateDetail } from '@/modules/catalog/candidates/candidate-detail';
 import CandidateEvidencePanel from '../CandidateEvidencePanel';
+import { displayName, imageUrl } from '../candidate-view';
 import CandidateAbsentSection from './CandidateAbsentSection';
+import CandidateFeedImage from './CandidateFeedImage';
 import { ABSENT_COPY, CAVEAT_COPY } from './copy';
 
 function orNotCaptured(value: string | null | undefined): string {
@@ -25,7 +27,16 @@ export default function SupplierEvidenceTab({
 }: {
   detail: CandidateDetail;
 }) {
-  const { feedSnapshot, snapshot } = detail;
+  const { candidate, evaluation, feedSnapshot, snapshot } = detail;
+  // Both go through the same helpers the drawer title and the pipeline tables
+  // use, so the photo, its alt text, and the dialog name can never disagree.
+  const evaluationShape = { feedSnapshot: evaluation?.feedSnapshot ?? null };
+  const address = imageUrl({ evaluation: evaluationShape });
+  const name = displayName({
+    externalProductId: candidate.externalProductId,
+    evidence: snapshot?.evidence ?? null,
+    evaluation: evaluationShape,
+  });
 
   return (
     <div className="flex flex-col gap-6">
@@ -36,41 +47,53 @@ export default function SupplierEvidenceTab({
             message={ABSENT_COPY.neverQueued}
           />
         ) : (
-          <dl className="m-0">
-            <DetailRow label="Name" value={feedSnapshot.name} />
-            <DetailRow label="Category" value={feedSnapshot.category} />
-            <DetailRow
-              label="Category ID"
-              value={orNotCaptured(feedSnapshot.categoryId)}
-              mono
+          <div className="flex flex-col gap-4 md:flex-row md:items-start">
+            {/*
+              Side by side from `md`, not `sm`: the drawer is only 85vw from
+              `md`, and at 640px a 320px image plus `DetailRow`'s 176px label
+              column would leave about 96px for every value.
+            */}
+            <CandidateFeedImage
+              address={address}
+              name={name}
+              usableImageCount={snapshot?.evidence.usableImageCount ?? null}
             />
-            <DetailRow
-              label="SKU"
-              value={orNotCaptured(feedSnapshot.sku)}
-              mono
-            />
-            <DetailRow
-              label="Platform listings"
-              value={feedSnapshot.listedCount ?? 'Not captured'}
-              hint={CAVEAT_COPY.listedCount}
-            />
-            <DetailRow
-              label="Weight"
-              value={orNotCaptured(feedSnapshot.weight)}
-            />
-            <DetailRow
-              label="Product type"
-              value={orNotCaptured(feedSnapshot.productType)}
-            />
-            <DetailRow
-              label="Supplier name"
-              value={orNotCaptured(feedSnapshot.supplierName)}
-            />
-            <DetailRow
-              label="Created on CJ"
-              value={orNotCaptured(feedSnapshot.providerCreatedAt)}
-            />
-          </dl>
+            <dl className="m-0 min-w-0 flex-1">
+              <DetailRow label="Name" value={feedSnapshot.name} />
+              <DetailRow label="Category" value={feedSnapshot.category} />
+              <DetailRow
+                label="Category ID"
+                value={orNotCaptured(feedSnapshot.categoryId)}
+                mono
+              />
+              <DetailRow
+                label="SKU"
+                value={orNotCaptured(feedSnapshot.sku)}
+                mono
+              />
+              <DetailRow
+                label="Platform listings"
+                value={feedSnapshot.listedCount ?? 'Not captured'}
+                hint={CAVEAT_COPY.listedCount}
+              />
+              <DetailRow
+                label="Weight"
+                value={orNotCaptured(feedSnapshot.weight)}
+              />
+              <DetailRow
+                label="Product type"
+                value={orNotCaptured(feedSnapshot.productType)}
+              />
+              <DetailRow
+                label="Supplier name"
+                value={orNotCaptured(feedSnapshot.supplierName)}
+              />
+              <DetailRow
+                label="Created on CJ"
+                value={orNotCaptured(feedSnapshot.providerCreatedAt)}
+              />
+            </dl>
+          </div>
         )}
       </DetailSection>
 

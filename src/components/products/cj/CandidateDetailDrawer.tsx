@@ -29,7 +29,11 @@ export default async function CandidateDetailDrawer({
 
   if (detail === null) {
     return (
-      <CandidateDetailSheet closeHref={closeHref} title="Candidate detail">
+      <CandidateDetailSheet
+        closeHref={closeHref}
+        candidateId={candidateId}
+        title="Candidate detail"
+      >
         <CandidateMissingNotice />
       </CandidateDetailSheet>
     );
@@ -52,6 +56,7 @@ export default async function CandidateDetailDrawer({
   return (
     <CandidateDetailSheet
       closeHref={closeHref}
+      candidateId={candidateId}
       title={name}
       description={status}
     >

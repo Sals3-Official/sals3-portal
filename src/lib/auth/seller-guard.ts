@@ -1,7 +1,6 @@
-import getDb from '@/lib/db/client';
-import { findSellerAccountByIdentityId } from '@/modules/suppliers/repository';
 import type { SellerAccountRow } from '@/lib/db/schema';
 import { PermissionError } from './permissions';
+import readSellerAccountForIdentity from './seller-account';
 import { getSession, type PortalSession } from './session';
 
 /**
@@ -30,7 +29,9 @@ export type DropshipperContext = {
 
 export async function requireDropshipperAccount(): Promise<DropshipperContext> {
   const { session, identityId } = await requireAuthenticatedSellerSession();
-  const account = await findSellerAccountByIdentityId(getDb(), identityId);
+  // Request-scoped: `getSession()` above already resolved this same row, so
+  // without the shared reader this was the third read of it in one render.
+  const account = await readSellerAccountForIdentity(identityId);
 
   if (
     account === null ||

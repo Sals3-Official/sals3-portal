@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { useTransition } from 'react';
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { TableRow } from '@/components/ui/table';
 
@@ -57,24 +58,47 @@ export default function CandidateRow({
   children,
 }: CandidateRowProps) {
   const router = useRouter();
+  const [pending, startTransition] = useTransition();
+
+  function open() {
+    // Guard, not a nicety: without it a second click on an already-pending row
+    // queues a second identical navigation. `pending` is per row instance, so a
+    // DIFFERENT row is never blocked by this one.
+    if (pending) return;
+
+    startTransition(() => router.push(href, { scroll: false }));
+  }
 
   return (
     <TableRow
       role="button"
       tabIndex={0}
       aria-label={label}
+      // `aria-busy` is the only correct announcement available here: a live
+      // region cannot be a `<tr>` child. The outcome IS spoken - the drawer
+      // mounts, focus moves into it, and base-ui announces the dialog - so only
+      // the interval in between is silent.
+      aria-busy={pending}
+      data-pending={pending ? '' : undefined}
       onClick={(event) => {
         if (fromNestedControl(event)) return;
 
-        router.push(href, { scroll: false });
+        open();
       }}
       onKeyDown={(event) => {
         if (!isActivationKey(event)) return;
 
         event.preventDefault();
-        router.push(href, { scroll: false });
+        open();
       }}
-      className="cursor-pointer"
+      // The pending affordance has to be something the `<tr>` itself can carry:
+      // the cells arrive as opaque `children` from five tables with five
+      // different column counts, so appending a spinner cell would break that
+      // one row's alignment. `bg-accent` is the design system's "row you acted
+      // on" surface, `TableRow` already carries `transition-colors`, and
+      // `globals.css` neutralises the pulse under `prefers-reduced-motion` -
+      // leaving colour as the signal, so motion is never the only cue.
+      className="cursor-pointer data-pending:animate-pulse data-pending:cursor-wait data-pending:bg-accent"
     >
       {children}
     </TableRow>

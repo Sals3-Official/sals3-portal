@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { useState, useTransition, type ReactNode } from 'react';
 import useSheetInitialFocus from '@/hooks/use-sheet-initial-focus';
 import {
   Sheet,
@@ -14,6 +14,11 @@ import {
 type CandidateDetailSheetProps = {
   /** Where to navigate on close - drops `?candidate=` and keeps the rest. */
   closeHref: string;
+  /**
+   * Only used to reset the local close override when the URL swaps one candidate
+   * for another (back/forward, or a pasted link) without unmounting this panel.
+   */
+  candidateId: string;
   title: string;
   description?: string;
   children: ReactNode;
@@ -50,18 +55,53 @@ const WIDTH_CLASSES =
 
 export default function CandidateDetailSheet({
   closeHref,
+  candidateId,
   title,
   description,
   children,
 }: CandidateDetailSheetProps) {
   const router = useRouter();
   const contentRef = useSheetInitialFocus(true);
+  /**
+   * An override, never the source of truth. This component is mounted only while
+   * `?candidate=` is set, so being mounted already means "open"; `closing` just
+   * lets the panel run ahead of the URL.
+   *
+   * Without it, pressing the X waited on a full server render - the tab's count
+   * and page queries and the seven detail statements - before anything moved, so
+   * a click that should feel instant felt broken. The server render still
+   * happens; it just no longer blocks the animation.
+   */
+  const [closing, setClosing] = useState(false);
+  const [, startTransition] = useTransition();
+  /**
+   * Resets the override when the URL swaps one candidate for another (back /
+   * forward, or a pasted link) without unmounting this panel.
+   *
+   * Adjusted during render rather than in an effect: React re-renders
+   * immediately without committing the first pass, so the panel never paints a
+   * frame in the wrong state. An effect would paint the closed panel first and
+   * then reopen it, which is also what `react-hooks/set-state-in-effect` exists
+   * to stop. `key={candidateId}` on the parent would work too, but it remounts
+   * base-ui's popup and replays the slide-in for what is only a content swap.
+   */
+  const [renderedId, setRenderedId] = useState(candidateId);
+
+  if (renderedId !== candidateId) {
+    setRenderedId(candidateId);
+    setClosing(false);
+  }
 
   return (
     <Sheet
-      open
+      open={!closing}
       onOpenChange={(open) => {
-        if (!open) router.push(closeHref, { scroll: false });
+        // Idempotent on purpose: Escape twice, or Escape then a click on the X,
+        // must still produce exactly one navigation.
+        if (open || closing) return;
+
+        setClosing(true);
+        startTransition(() => router.push(closeHref, { scroll: false }));
       }}
     >
       {/*

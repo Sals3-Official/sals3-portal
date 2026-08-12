@@ -91,3 +91,35 @@ describe('CandidateRow', () => {
     expect(push).not.toHaveBeenCalled();
   });
 });
+
+describe('CandidateRow pending state', () => {
+  beforeEach(() => {
+    push.mockClear();
+  });
+
+  it('is not busy while idle', () => {
+    renderRow();
+
+    expect(row()).toHaveAttribute('aria-busy', 'false');
+  });
+
+  /**
+   * The guard, not a nicety: without it a second click on an already-pending row
+   * queues a second identical navigation.
+   *
+   * Honest limit of this test: with a `vi.fn()` router there is nothing to await,
+   * so the transition commits before any assertion and `aria-busy="true"` is
+   * never observable in jsdom. Do NOT make the component `async` to widen that
+   * window - that would change production semantics to satisfy a test. The real
+   * pending state is asserted in Playwright, where the navigation can be delayed.
+   */
+  it('pushes once per activation, never twice for one gesture', () => {
+    renderRow();
+
+    fireEvent.click(row());
+    fireEvent.keyDown(row(), { key: 'Enter' });
+
+    expect(push).toHaveBeenCalledTimes(2);
+    expect(push).toHaveBeenNthCalledWith(1, HREF, { scroll: false });
+  });
+});

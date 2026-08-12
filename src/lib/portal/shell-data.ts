@@ -1,15 +1,13 @@
 import getDb, { isDatabaseConfigured } from '@/lib/db/client';
 import { isDatabaseUnavailableError } from '@/lib/db/availability';
 import type { PortalSession } from '@/lib/auth/session';
-import {
-  countCandidateStatusSummary,
-  type CandidateStatusCounts,
-} from '@/modules/catalog/candidates/queries';
+import { type CandidateStatusCounts } from '@/modules/catalog/candidates/queries';
 import {
   findConnectionBySellerAndProvider,
   findProviderByCode,
 } from '@/modules/suppliers/repository';
 import type { ConnectionSummary } from '@/components/portal/PortalSidebar';
+import readCandidateStatusCounts from '@/modules/catalog/candidates/status-counts-cache';
 
 export type PortalShellData = {
   connectionSummary: ConnectionSummary;
@@ -73,7 +71,7 @@ export async function resolvePortalShellData(
             provider.id,
           );
 
-    const sourcingCounts = await countCandidateStatusSummary(session.sellerId);
+    const sourcingCounts = await readCandidateStatusCounts(session.sellerId);
 
     return {
       connectionSummary:

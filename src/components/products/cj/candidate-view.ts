@@ -1,4 +1,5 @@
 import type { CandidateEvidence } from '@/lib/cj/evidence';
+import CJ_IMAGE_HOSTS from '@/lib/cj/image-hosts';
 import { feedSnapshotSchema } from '@/modules/catalog/candidates/rules/contracts';
 
 /**
@@ -102,9 +103,27 @@ export function stockedOrigins(evidence: CandidateEvidence | null): string {
 /**
  * Product image address for one candidate row, from the discovery feed
  * snapshot. Evidence stores only `usableImageCount`, never an address, so the
- * feed snapshot is the only image source. The address was allow-listed to the
- * CJ image hosts at intake (`cjImageUrl`), matching `next.config.ts`
- * `remotePatterns`.
+ * feed snapshot is the only image source.
+ *
+ * ## Why the host check is here and not only at intake
+ *
+ * This function used to say the address "was allow-listed at intake" and stop
+ * there. That was an assertion about a different code path, not a property of
+ * this one. Three facts make the difference load-bearing:
+ *
+ * - `feedSnapshotSchema.imageUrl` is a plain `z.string().nullish()` - the
+ *   `cjImageUrl` gate runs on the discovery WRITE path only, so nothing
+ *   re-checks the host when the row is read back.
+ * - `next.config.ts` sets `images.loader: 'custom'`, which bypasses
+ *   `/_next/image` entirely, so `remotePatterns` enforces nothing at request
+ *   time.
+ * - `cjImageLoader` returns a non-CJ address unchanged, by design.
+ *
+ * So whatever string reaches this function becomes a browser `GET` from the
+ * seller's session. A manual `UPDATE`, a backfill, a script, or a future ingest
+ * path that builds a feed snapshot without `toFeedSnapshot` would all reach the
+ * browser unchecked. Re-checking here costs three lines and closes it for every
+ * caller at once.
  */
 export function imageUrl(candidate: {
   evaluation: { feedSnapshot: unknown };
@@ -112,7 +131,22 @@ export function imageUrl(candidate: {
   // `feed_snapshot` is `jsonb`, so it reaches here untyped - parse, never cast.
   const feed = feedSnapshotSchema.safeParse(candidate.evaluation.feedSnapshot);
 
-  return feed.success ? (feed.data.imageUrl ?? null) : null;
+  if (!feed.success) return null;
+
+  const address = feed.data.imageUrl;
+
+  if (address === null || address === undefined || address === '') return null;
+
+  try {
+    const url = new URL(address);
+
+    return url.protocol === 'https:' && CJ_IMAGE_HOSTS.includes(url.hostname)
+      ? address
+      : null;
+  } catch {
+    // Not an absolute address at all. Relative paths are never CJ imagery.
+    return null;
+  }
 }
 
 export function formatUsd(value: number | null): string {

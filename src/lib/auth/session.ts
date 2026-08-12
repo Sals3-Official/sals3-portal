@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import type { SellerAccountRow } from '@/lib/db/schema';
@@ -79,15 +80,9 @@ async function resolveBypassSellerId(
   session: PortalSession,
 ): Promise<PortalSession> {
   try {
-    const [{ default: getDb }, { findSellerAccountByIdentityId }] =
-      await Promise.all([
-        import('@/lib/db/client'),
-        import('@/modules/suppliers/repository'),
-      ]);
-    const sellerAccount = await findSellerAccountByIdentityId(
-      getDb(),
-      session.userId,
-    );
+    const { default: readSellerAccountForIdentity } =
+      await import('./seller-account');
+    const sellerAccount = await readSellerAccountForIdentity(session.userId);
 
     if (sellerAccount === null) return session;
 
@@ -124,7 +119,13 @@ const TWO_FACTOR_COOKIE_NAMES = [
   '__Secure-better-auth-two_factor',
 ];
 
-export async function getRawAuthSession() {
+/**
+ * Deduped per request: the layout and `requireDropshipperAccount` both reach
+ * here, and two callers in one request must not be able to observe two
+ * different sessions. In production this also removes a full Better Auth
+ * session+user read.
+ */
+export const getRawAuthSession = cache(async () => {
   // `headers()` first, on purpose. It is the dynamic signal that makes Next
   // abandon a prerender, and it must land before anything touches the
   // database — otherwise `next build` fails collecting page data for every
@@ -133,7 +134,7 @@ export async function getRawAuthSession() {
   const { default: getAuth } = await import('./server');
 
   return getAuth().api.getSession({ headers: requestHeaders });
-}
+});
 
 async function hasPendingTwoFactorChallenge(): Promise<boolean> {
   const requestHeaders = await headers();
@@ -153,13 +154,10 @@ function coercePortalRole(role: unknown): PortalRole {
 async function resolvePortalSession(
   user: BetterAuthUser,
 ): Promise<PortalSession> {
-  const [{ default: getDb }, { findSellerAccountByIdentityId }] =
-    await Promise.all([
-      import('@/lib/db/client'),
-      import('@/modules/suppliers/repository'),
-    ]);
+  const { default: readSellerAccountForIdentity } =
+    await import('./seller-account');
   const role = coercePortalRole(user.portalRole);
-  const sellerAccount = await findSellerAccountByIdentityId(getDb(), user.id);
+  const sellerAccount = await readSellerAccountForIdentity(user.id);
 
   if (SELLER_ROLES.has(role)) {
     if (
@@ -210,12 +208,9 @@ export async function getPortalAccessState(): Promise<PortalAccessState> {
 
   const user = data.user as BetterAuthUser;
   const role = coercePortalRole(user.portalRole);
-  const [{ default: getDb }, { findSellerAccountByIdentityId }] =
-    await Promise.all([
-      import('@/lib/db/client'),
-      import('@/modules/suppliers/repository'),
-    ]);
-  const sellerAccount = await findSellerAccountByIdentityId(getDb(), user.id);
+  const { default: readSellerAccountForIdentity } =
+    await import('./seller-account');
+  const sellerAccount = await readSellerAccountForIdentity(user.id);
   const sellerApproved =
     !SELLER_ROLES.has(role) ||
     (sellerAccount !== null &&
@@ -237,7 +232,18 @@ export async function getPortalEntryRedirect(
   return resolvePortalEntryRedirect(await getPortalAccessState(), intended);
 }
 
-export async function getSession(): Promise<PortalSession> {
+/**
+ * Deduped per request. The portal layout calls this, and so does
+ * `requireDropshipperAccount` on the page below it - two reads of one identity
+ * on every navigation before this wrapper existed.
+ *
+ * It can `redirect()`. `React.cache` memoizes the thrown value and rethrows the
+ * same object, and Next dispatches on the error's digest, so the behaviour is
+ * unchanged. The consequence worth knowing: a request cannot re-read the session
+ * to escape a redirect. That is correct, and it is only surprising if you do not
+ * expect the memo.
+ */
+export const getSession = cache(async (): Promise<PortalSession> => {
   const testSession = readTestBypassSession();
 
   if (testSession !== null) return resolveBypassSellerId(testSession);
@@ -259,7 +265,7 @@ export async function getSession(): Promise<PortalSession> {
   }
 
   return resolvePortalSession(user);
-}
+});
 
 /**
  * Server-side authorization check. Throws `PermissionError` when the session
