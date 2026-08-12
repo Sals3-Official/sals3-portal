@@ -41,6 +41,8 @@ import { insertOutboxIntents } from './outbox-repository';
 import { isDiscoveryRunning } from './run-state-repository';
 // eslint-disable-next-line import/first
 import handleReconcileProduct from './handle-reconcile';
+// eslint-disable-next-line import/first
+import { FRESHNESS_SWEEP_BATCH, FRESHNESS_SWEEP_DELAY_SECONDS } from './config';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
@@ -170,6 +172,90 @@ describe('handleReconcileProduct - SWEEP (freshness tiers)', () => {
           i.message.candidateId === strandedCandidate,
       ),
     ).toBe(true);
+  });
+});
+
+describe('handleReconcileProduct - SWEEP continuation keys', () => {
+  /** The self-chaining RECONCILE_PRODUCT successor this sweep emitted. */
+  async function runSweep(incomingKey: string): Promise<{
+    key: string;
+    delaySeconds?: number;
+  }> {
+    asMock(insertOutboxIntents).mockClear();
+
+    await handleReconcileProduct({
+      v: 1,
+      operation: 'RECONCILE_PRODUCT',
+      idempotencyKey: incomingKey,
+      mode: 'SWEEP',
+      supplierConnectionId: CONNECTION_ID,
+    });
+
+    const intents = asMock(insertOutboxIntents).mock.calls[0]![1] as Array<{
+      message: { operation: string; idempotencyKey: string };
+      delaySeconds?: number;
+    }>;
+    const chained = intents.find(
+      (i) => i.message.operation === 'RECONCILE_PRODUCT',
+    )!;
+
+    return {
+      key: chained.message.idempotencyKey,
+      delaySeconds: chained.delaySeconds,
+    };
+  }
+
+  it('gives every accelerated continuation a distinct key, so a full-batch backlog is not silently capped at one extra sweep', async () => {
+    vi.useFakeTimers();
+
+    try {
+      // Mid-bucket on purpose: the first continuation and the one 60s later
+      // both land inside the SAME FRESHNESS_SWEEP_DELAY_SECONDS bucket, which
+      // is exactly the case the old `sweepBucket + 1` key could not express.
+      vi.setSystemTime(new Date('2026-08-12T09:30:00.000Z'));
+
+      asMock(requeuePolicyVersionMismatches).mockResolvedValue(
+        Array.from({ length: FRESHNESS_SWEEP_BATCH }, () => randomUUID()),
+      );
+
+      const first = await runSweep('freshness:seeded-by-cycle-start');
+
+      expect(first.delaySeconds).toBe(60);
+      expect(first.key).not.toBe('freshness:seeded-by-cycle-start');
+
+      // The accelerated successor is delivered 60s later, same bucket.
+      vi.advanceTimersByTime(60_000);
+      const second = await runSweep(first.key);
+
+      expect(second.delaySeconds).toBe(60);
+      // `work_outbox.idempotency_key` is unique and never pruned, so reusing
+      // the incoming delivery's key means `onConflictDoNothing` drops the
+      // successor and the accelerated chain dies after one extra batch.
+      expect(second.key).not.toBe(first.key);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps an unaccelerated continuation on the plain bucket key, so it still de-duplicates against the hourly cycle-start seed', async () => {
+    vi.useFakeTimers();
+
+    try {
+      vi.setSystemTime(new Date('2026-08-12T09:30:00.000Z'));
+
+      // Every tier came back short - no acceleration.
+      const chained = await runSweep('freshness:seeded-by-cycle-start');
+
+      expect(chained.delaySeconds).toBe(FRESHNESS_SWEEP_DELAY_SECONDS);
+      expect(chained.key).toBe(
+        `freshness:${CONNECTION_ID}:${Math.floor(
+          (Date.now() + FRESHNESS_SWEEP_DELAY_SECONDS * 1000) /
+            (FRESHNESS_SWEEP_DELAY_SECONDS * 1000),
+        )}`,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

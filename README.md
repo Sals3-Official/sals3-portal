@@ -491,6 +491,21 @@ browser and PC can be closed after the chain starts** - Vercel's managed
 queue infrastructure delivers messages and runs the (air-gapped,
 platform-invoked) consumer function.
 
+> [!IMPORTANT] Outbox idempotency keys are consumed permanently
+> `work_outbox.idempotency_key` is uniquely indexed and **no code path ever
+> deletes an outbox row** - `insertOutboxIntents` uses
+> `onConflictDoNothing`, so a key that has been used once can never be used
+> again for the lifetime of the database. Any self-chaining handler must
+> therefore key its successor on the slot the successor is scheduled **for**,
+> at a resolution at least as fine as the shortest delay it can pick. Keying
+> on the slot the current delivery ran in reuses the in-flight message's own
+> key, the successor is silently swallowed, and the chain stops dead with no
+> failure recorded anywhere - the outbox row is `DISPATCHED`, nothing is
+> `FAILED`, and `.../discovery/status` looks healthy. Two live instances of
+> this were found and fixed on 2026-08-12 (the accelerated freshness sweep and
+> the curated-lane page walk); a third, `handleAuditUnit`, is inert only
+> because its lane never starts.
+
 Coverage semantics (ADR-010 §12.1, ADR-013 §3):
 
 - **Legacy endpoint only.** Discovery uses `GET /api2.0/v1/product/list` and
@@ -499,10 +514,21 @@ Coverage semantics (ADR-010 §12.1, ADR-013 §3):
   of exactly 6,000 or greater is ordinary density data.
 - **Three lane semantics.** `BOOTSTRAP` is the one-time historical scan up to
   an immutable bootstrap cutoff. `INCREMENTAL` scans only creation-time
-  windows after the stored cursor, with a conservative overlap. `AUDIT` is
-  lowest-priority bounded work against persisted bootstrap partition proofs.
-  A completed bootstrap never creates another epoch-to-current historical
-  cycle.
+  windows after the stored cursor, with a conservative overlap. A completed
+  bootstrap never creates another epoch-to-current historical cycle.
+- **`AUDIT` is scaffolding, not a running lane** (verified 2026-08-12). The
+  `discovery_audit_units` table, its state enum, and `handleAuditUnit` exist,
+  but nothing reaches them: `resolveNextLane` returns `AUDIT` only when a
+  caller passes `lane: 'AUDIT'` and no caller ever does, and
+  `DISCOVERY_AUDIT_UNIT` is enqueued only by `handleAuditUnit` itself, so the
+  self-chain has no first message. Do not "fix" this by seeding the chain
+  from `handleCycleStart`. No code ever inserts a `discovery_audit_units`
+  row, no code transitions `DUE`/`RUNNING`/`STABLE`/`CHANGED`/`UNRESOLVED`,
+  and `listDueAuditUnits` filters on `discovery_audit_units.id IS NULL`
+  without comparing `next_audit_due_at` to now - so a seeded chain would
+  re-enqueue the same already-proven partitions every sweep forever and spend
+  CJ points on repeat work that never advances any state. The audit-unit
+  lifecycle has to be built before the lane is started.
 - **Immutable lane windows.** Every cycle snapshots `cycleCutoff`; incremental
   cycles also snapshot `windowFrom` and `safetyOverlapSeconds`. An unresolved
   incremental range is stored as an obligation, while later windows can still
@@ -553,8 +579,21 @@ Coverage semantics (ADR-010 §12.1, ADR-013 §3):
   concurrent workers - discovery pages acquire a slot per request, and
   evaluation evidence calls run through a governed fetch wrapper that gates
   every HTTP call on the same limiter; `pointsInfo` from every response
-  (list and evidence alike) is persisted;
-  background work may spend at most 80% of known available points (20%
+  (list and evidence alike) is persisted, **except** a report whose `total`
+  is absent or non-positive. CJ attaches `pointsInfo` to every response, but
+  endpoints outside the points system - `GET /product/productComments`, which
+  the documented cost table does not list - return
+  `{total: 0, usedToday: 0, remaining: 0}`. Those zeros mean "this endpoint
+  has no quota to report", never "the account is out of points", and
+  persisting them deadlocked the pipeline: `getCandidateEvidence` calls
+  comments last, so every successful evaluation overwrote the ledger with
+  zeros, after which the budget check refused all background work until the
+  next UTC reset. A stored total of `0` is likewise read back as "unobserved"
+  rather than as a real quota of zero, and a `remaining` observed before the
+  most recent 00:00 UTC reset is treated as unknown - it describes
+  yesterday's allowance, and trusting it would refuse the very calls whose
+  responses would correct it.
+  Background work may spend at most 80% of known available points (20%
   reserved for selected/live/order-critical work). Low current `remaining`
   no longer parks broad work until UTC midnight by default; retry time is
   projected from current `pointsInfo`, endpoint cost, `total / 1440`
@@ -585,9 +624,17 @@ transport has no application dead-letter queue.
 
 Operating it:
 
-1. **Deploy** (owner action). Apply migrations through `0010` first -
+1. **Deploy** (owner action). Apply migrations through `0015` first -
    `npm run db:migrate` is an owner-run step and has NOT been executed by
-   this implementation.
+   this implementation. Deploying the application without it is a live
+   outage, not a degraded mode: on 2026-08-12 production served the
+   post-`0013` build against a database migrated only through `0010` and
+   `/products` returned `42703 column ... does not exist` on every request,
+   while every `DISCOVERY_PARTITION` delivery threw against the missing
+   `0014` intake-gate tables until the delivery cap parked it. Vercel never
+   runs migrations - no workflow in `.github/` invokes `db:migrate` - so the
+   application and the schema can only be kept in step by running this
+   command against the production database as part of the same release.
 2. **Automatic start**: the official CJ connect/reconnect path persists and
    publishes a chain intent after the connection becomes workable. The old
    "heal on the first authorized All Supplier Products page load" behaviour
