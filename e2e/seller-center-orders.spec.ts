@@ -177,6 +177,54 @@ test.describe('Seller Center orders', () => {
     expect(response?.status()).toBe(404);
   });
 
+  test('the money row never shows a figure spanning two rails', async ({
+    page,
+  }) => {
+    await page.goto('/orders/A-88217-2');
+
+    // Settlement ₱3,063.38 minus supplier spend ₱412.00. That is the "profit"
+    // number a reader wants and the architecture forbids: the two rails settle
+    // with different counterparties, so the difference means nothing.
+    await expect(page.getByText('₱2,651.38')).toHaveCount(0);
+    // Buyer payment minus settlement, the other tempting subtraction.
+    await expect(page.getByText('₱391.62')).toHaveCount(0);
+
+    await expect(page.getByText('Buyer paid', { exact: true })).toBeVisible();
+    await expect(page.getByText('Your Sals3 settlement')).toBeVisible();
+    await expect(page.getByText('Your supplier spend')).toBeVisible();
+  });
+
+  test('buyer contact details are masked until revealed', async ({ page }) => {
+    await page.goto('/orders/A-88217-2');
+
+    // Off on load, every load.
+    await expect(page.getByText('M****z · Makati')).toBeVisible();
+    await expect(page.getByText('Maria Mendez')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Reveal contact details' }).click();
+
+    await expect(page.getByText('Maria Mendez')).toBeVisible();
+    await expect(page.getByText('+63 917 220 4471')).toBeVisible();
+
+    // And it masks again on reload rather than persisting.
+    await page.reload();
+    await expect(page.getByText('Maria Mendez')).toHaveCount(0);
+  });
+
+  test('an own-stock parcel shows no delivery estimate it cannot source', async ({
+    page,
+  }) => {
+    // Only a supplier gives us a window, so inventing one for a parcel we ship
+    // ourselves would be a promise with nothing behind it.
+    await page.goto('/orders/A-88217-1');
+
+    await expect(page.getByText('Supplier estimate')).toHaveCount(0);
+
+    await page.goto('/orders/A-88217-2');
+
+    await expect(page.getByText('Supplier estimate')).toBeVisible();
+  });
+
   test('an own-stock parcel shows no supplier spend panel', async ({
     page,
   }) => {

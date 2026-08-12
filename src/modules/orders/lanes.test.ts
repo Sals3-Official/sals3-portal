@@ -38,6 +38,8 @@ function parcelWith(overrides: Partial<OrderParcel>): OrderParcel {
         quantity: 1,
         imageUrl: null,
         acceptedOnLabel: 'as ordered on 12 Aug 2026',
+        sku: 'SL3-KRA-32',
+        deliveryRangeLabel: null,
       },
     ],
     money: {

@@ -32,6 +32,15 @@ import type {
   LifecycleEvent,
 } from '@/modules/orders/contracts';
 
+/**
+ * A fixture line may omit the fields the builder can derive, so adding a
+ * required field to `ParcelLine` does not mean editing every literal below.
+ */
+type FixtureLine = Omit<ParcelLine, 'sku' | 'deliveryRangeLabel'> & {
+  sku?: string;
+  deliveryRangeLabel?: string | null;
+};
+
 type ParcelFixture = {
   id: string;
   orderRef: string;
@@ -39,7 +48,7 @@ type ParcelFixture = {
   parcelCount: number;
   buyerLabel: string;
   buyerMessage: string | null;
-  lines: ParcelLine[];
+  lines: FixtureLine[];
   buyerPaidMinor: number;
   commissionMinor: number | null;
   /**
@@ -1122,7 +1131,15 @@ export function buildOrderParcels(market: SellerCenterMarket): OrderParcel[] {
     parcelCount: fixture.parcelCount,
     buyerLabel: fixture.buyerLabel,
     buyerMessage: fixture.buyerMessage,
-    lines: fixture.lines,
+    lines: fixture.lines.map((fixtureLine) => ({
+      ...fixtureLine,
+      sku: fixtureLine.sku ?? `SKU-${fixtureLine.id.toUpperCase()}`,
+      // Only a supplier gives us an estimate we can actually read, so an
+      // own-stock parcel carries no window rather than an invented one.
+      deliveryRangeLabel:
+        fixtureLine.deliveryRangeLabel ??
+        (fixture.route.kind === 'SUPPLIER_DROPSHIP' ? '18–22 Aug 2026' : null),
+    })),
     money: {
       buyerPaidLabel: formatMarketMoney(fixture.buyerPaidMinor, market),
       commissionLabel:
@@ -1361,6 +1378,61 @@ export function buildParcelDetail(
   return {
     parcel,
     actions: parcel.actions,
+    buyer: {
+      maskedName: parcel.buyerLabel,
+      maskedPhone: 'Phone hidden',
+      maskedAddress: '•••• Kalayaan Ave, Makati, 1209 Metro Manila',
+      // Illustrative. A real implementation gates this on `order:fulfill`
+      // and hands `null` to anyone who only holds `order:read`.
+      revealed: {
+        name: 'Maria Mendez',
+        phone: '+63 917 220 4471',
+        address: '4F Cituhall Bldg, 88 Kalayaan Ave, Makati, 1209 Metro Manila',
+      },
+      addressLabel: 'Work address',
+    },
+    riskFacts: [
+      {
+        id: 'ship-by',
+        label: 'Ship-by deadline',
+        value: isDropship
+          ? 'Not set — the supplier ships'
+          : '13 Aug 2026 (Thu)',
+        tone: 'neutral',
+      },
+      {
+        id: 'pickup-attempts',
+        label: 'Pickup attempts',
+        value: '1 failed, courier rescheduled',
+        tone: 'warning',
+      },
+      {
+        id: 'supplier-handover',
+        label: 'Supplier handover',
+        value: isDropship ? 'Not yet · CJ averages 1.2 days' : 'Not applicable',
+        tone: 'neutral',
+      },
+      {
+        id: 'late-shipments',
+        label: 'Late shipments, last 30 days',
+        value: '1 of 12 parcels',
+        tone: 'neutral',
+      },
+    ],
+    sellerNote: null,
+    siblings: buildOrderParcels(market)
+      .filter(
+        (candidate) =>
+          candidate.orderRef === parcel.orderRef && candidate.id !== parcel.id,
+      )
+      .map((candidate) => ({
+        id: candidate.id,
+        indexLabel: `Parcel ${candidate.parcelIndex} of ${candidate.parcelCount}`,
+        routeLabel:
+          candidate.route.kind === 'OWN_STOCK'
+            ? 'In-House'
+            : candidate.route.supplierLabel,
+      })),
     // Own-stock only: Sals3 holds the carrier relationship directly, so it is
     // Sals3's own courier assignment to show. A dropship courier is the
     // supplier's third party, and ADR-004 §3 keeps that personal data out.

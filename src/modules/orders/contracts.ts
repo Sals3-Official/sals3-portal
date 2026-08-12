@@ -224,6 +224,17 @@ export type ParcelLine = {
   quantity: number;
   imageUrl: string | null;
   acceptedOnLabel: string;
+  sku: string;
+  /**
+   * Pre-formatted delivery window, e.g. `18–22 Aug 2026`.
+   *
+   * `null` on own-stock parcels, and that is not an oversight. The only
+   * delivery estimate Sals3 can actually read today is the supplier's, so a
+   * range on a parcel we ship ourselves would be invented. The label names the
+   * source for the same reason - a window with no attribution reads as a
+   * promise Sals3 made.
+   */
+  deliveryRangeLabel: string | null;
 };
 
 export type ParcelMoney = {
@@ -360,9 +371,48 @@ export type SupplierSpend = {
   walletStateLabel: string | null;
 };
 
+/**
+ * Buyer contact, masked by default.
+ *
+ * `revealed` is `null` when the viewer may not see the real values, and the
+ * control is then absent rather than disabled - an inert button still tells
+ * someone the data is there and that they are being refused. Nothing here is
+ * persisted: the reveal resets on every load, because a screen that stays
+ * unmasked is one shoulder away from leaking a customer's address.
+ */
+export type BuyerIdentity = {
+  maskedName: string;
+  maskedPhone: string;
+  maskedAddress: string;
+  revealed: { name: string; phone: string; address: string } | null;
+  addressLabel: string | null;
+};
+
+/**
+ * Fulfilment risk, as counted facts.
+ *
+ * Deliberately not a score, a percentage or a dial. The reference this design
+ * studied shows a buyer's delivery-success rate, which is a *payment* risk
+ * signal for cash-on-delivery - meaningless here, where the money is captured
+ * before the parcel exists. What a Sals3 seller needs is whether this parcel
+ * can actually be fulfilled, and that is a handful of plain counts.
+ */
+export type FulfilmentRiskFact = {
+  id: string;
+  label: string;
+  value: string;
+  tone: 'neutral' | 'warning' | 'danger';
+};
+
 export type ParcelDetail = {
   parcel: OrderParcel;
   actions: ParcelAction[];
+  buyer: BuyerIdentity;
+  riskFacts: FulfilmentRiskFact[];
+  /** Private to the seller. Read-only until a write path exists. */
+  sellerNote: string | null;
+  /** Other parcels under the same order reference. Empty unless split. */
+  siblings: { id: string; indexLabel: string; routeLabel: string }[];
   /** Own-stock only: Sals3 holds the carrier relationship directly. */
   courierContactLabel: string | null;
   trackingEvents: TrackingEvent[];

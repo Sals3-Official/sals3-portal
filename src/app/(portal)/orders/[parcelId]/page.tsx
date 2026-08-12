@@ -3,12 +3,14 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import MarketNotConfiguredNotice from '@/components/seller-center/shared/MarketNotConfiguredNotice';
 import OrderHistoryTimeline from '@/components/seller-center/orders/OrderHistoryTimeline';
-import ParcelDetailActions from '@/components/seller-center/orders/ParcelDetailActions';
-import ParcelLogisticsBlock from '@/components/seller-center/orders/ParcelLogisticsBlock';
 import OrdersViewToggle from '@/components/seller-center/orders/OrdersViewToggle';
+import ParcelBuyerCard from '@/components/seller-center/orders/ParcelBuyerCard';
+import ParcelContentsCard from '@/components/seller-center/orders/ParcelContentsCard';
+import ParcelDetailActions from '@/components/seller-center/orders/ParcelDetailActions';
+import ParcelMoneyRow from '@/components/seller-center/orders/ParcelMoneyRow';
+import ParcelRiskFacts from '@/components/seller-center/orders/ParcelRiskFacts';
 import ParcelStatusCard from '@/components/seller-center/orders/ParcelStatusCard';
-import SettlementStatement from '@/components/seller-center/orders/SettlementStatement';
-import SupplierSpendPanel from '@/components/seller-center/orders/SupplierSpendPanel';
+import SiblingParcelCard from '@/components/seller-center/orders/SiblingParcelCard';
 import TrackingEventFeed from '@/components/seller-center/orders/TrackingEventFeed';
 import { requirePermission } from '@/lib/auth/session';
 import { getActiveMarket } from '@/lib/seller-center/market-config';
@@ -37,7 +39,7 @@ export default async function ParcelDetailPage({
 
   if (market === null) {
     return (
-      <div className="flex flex-col gap-4">
+      <div className="mx-auto flex max-w-[1440px] flex-col gap-[18px] px-7 pt-6 pb-15">
         <MarketNotConfiguredNotice />
       </div>
     );
@@ -48,22 +50,44 @@ export default async function ParcelDetailPage({
   if (detail === null) notFound();
 
   const { parcel } = detail;
+  const isSplit = parcel.parcelCount > 1;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="mx-auto flex max-w-[1440px] flex-col gap-[18px] px-7 pt-6 pb-15">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <nav className="flex items-center gap-1 text-sm text-ink-muted">
-          <Link href="/orders" className="hover:text-primary hover:underline">
-            Orders
-          </Link>
-          <span aria-hidden="true">/</span>
-          <span className="text-ink">{parcel.orderRef}</span>
-          {parcel.parcelCount > 1 ? (
-            <span className="text-ink-faint">
-              · parcel {parcel.parcelIndex} of {parcel.parcelCount}
+        <div className="flex flex-col gap-1">
+          <nav className="flex items-center gap-1 text-sm text-ink-muted">
+            <Link href="/orders" className="hover:text-primary hover:underline">
+              Orders
+            </Link>
+            <span aria-hidden="true">/</span>
+            <span className="text-ink">{parcel.orderRef}</span>
+            {isSplit ? (
+              <span className="text-ink-faint">
+                · parcel {parcel.parcelIndex} of {parcel.parcelCount}
+              </span>
+            ) : null}
+          </nav>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="font-display text-2xl font-semibold tracking-tight">
+              {parcel.id}
+            </h1>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[11.5px] font-medium text-ink-muted">
+              {parcel.channel}
             </span>
-          ) : null}
-        </nav>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[11.5px] font-medium text-ink-muted">
+              {parcel.route.kind === 'OWN_STOCK'
+                ? 'In-House'
+                : parcel.route.supplierLabel}
+            </span>
+          </div>
+          <p className="text-[12.5px] text-ink-subtle">
+            Prepaid, payment captured
+            {isSplit
+              ? ` · ships separately from the other parcel on ${parcel.orderRef}`
+              : ''}
+          </p>
+        </div>
         <OrdersViewToggle
           active="detail"
           listHref="/orders"
@@ -71,8 +95,8 @@ export default async function ParcelDetailPage({
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-start gap-[18px]">
+        <div className="flex min-w-0 flex-[2_1_560px] flex-col gap-[18px]">
           <ParcelStatusCard
             status={parcel.status}
             actionsSlot={
@@ -83,21 +107,52 @@ export default async function ParcelDetailPage({
             }
           />
 
-          <ParcelLogisticsBlock
-            parcel={parcel}
-            courierContactLabel={detail.courierContactLabel}
-            feedSlot={<TrackingEventFeed events={detail.trackingEvents} />}
+          <ParcelBuyerCard buyer={detail.buyer} route={parcel.route} />
+
+          <ParcelContentsCard
+            lines={parcel.lines}
+            sellerNote={detail.sellerNote}
           />
 
-          <SettlementStatement settlement={detail.settlement} />
+          <ParcelMoneyRow
+            settlement={detail.settlement}
+            supplierSpend={detail.supplierSpend}
+            buyerPaymentNote={
+              isSplit
+                ? `Covers the whole order ${parcel.orderRef}, both parcels. It is not money paid to you.`
+                : 'What the buyer was charged. It is not money paid to you.'
+            }
+          />
 
-          {/* Rail B renders as its own card, and only for dropship parcels. */}
-          {detail.supplierSpend === null ? null : (
-            <SupplierSpendPanel spend={detail.supplierSpend} />
-          )}
+          <ParcelRiskFacts facts={detail.riskFacts} />
         </div>
 
-        <OrderHistoryTimeline events={detail.lifecycleEvents} />
+        <div className="flex min-w-0 flex-[1_1_300px] flex-col gap-[18px]">
+          <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
+            <div className="flex flex-col gap-1">
+              <h2 className="font-display text-[15px] font-semibold">
+                Carrier tracking
+              </h2>
+              <span className="text-[12px] text-ink-faint">
+                Scans from the carrier and your supplier.
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between gap-3 border-b border-border pb-3 text-[12.5px]">
+              <span className="text-ink-subtle">Tracking number</span>
+              <span className="text-ink tabular-nums">
+                {parcel.route.trackingNumber ?? 'Not issued yet'}
+              </span>
+            </div>
+            <TrackingEventFeed events={detail.trackingEvents} />
+          </section>
+
+          <OrderHistoryTimeline events={detail.lifecycleEvents} />
+
+          <SiblingParcelCard
+            orderRef={parcel.orderRef}
+            siblings={detail.siblings}
+          />
+        </div>
       </div>
     </div>
   );
