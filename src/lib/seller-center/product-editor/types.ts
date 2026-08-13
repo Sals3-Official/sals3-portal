@@ -140,8 +140,8 @@ export type MarketEligibility =
 export type MarketEvidenceFixture = {
   code: string;
   name: string;
-  /** Always true: no destination market is approved yet (ADR-003). */
-  isSampleMarket: true;
+  /** Fixture markets are labelled as samples; database-backed markets are real seller profile destinations. */
+  isSampleMarket: boolean;
   eligibility: MarketEligibility;
   affectedVariantsLabel: string;
   sourceWarehouse: string;

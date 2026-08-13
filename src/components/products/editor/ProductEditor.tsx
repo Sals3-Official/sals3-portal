@@ -15,6 +15,7 @@ type ProductEditorProps = {
   initialLifecycle: EditorLifecycle;
   /** Server-resolved price guidance, one entry per variant — see `page.tsx`. */
   variantGuidance: VariantPricingGuidance[];
+  dataMode?: 'fixture' | 'database';
 };
 
 /**
@@ -34,7 +35,10 @@ export default function ProductEditor({
   fixture,
   initialLifecycle,
   variantGuidance,
+  dataMode = 'fixture',
 }: ProductEditorProps) {
+  const isDatabaseBacked = dataMode === 'database';
+
   return (
     <div className="flex flex-col gap-4">
       <p
@@ -46,7 +50,9 @@ export default function ProductEditor({
           className="mt-0.5 size-4 shrink-0 text-primary"
         />
         <span>
-          UI preview using fictional product data. Changes are not saved.
+          {isDatabaseBacked
+            ? 'Loaded from the Sals3 catalogue database. Editor changes are not saved yet.'
+            : 'UI preview using fictional product data. Changes are not saved.'}
           <span className="block text-xs text-ink-muted">
             Scenario: {fixture.scenarioLabel}
           </span>

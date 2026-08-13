@@ -20,8 +20,24 @@ const notFound = vi.fn(() => {
   throw new NotFoundError('NEXT_NOT_FOUND');
 });
 
+const requireDropshipperAccount = vi.fn(async () => ({
+  sellerAccount: { id: 'seller-1' },
+}));
+const findProductEditorFixtureForSeller = vi.fn<
+  (sellerId: string, productId: string) => Promise<null>
+>(async () => null);
+
 vi.mock('@/lib/auth/session', () => ({
   requirePermission: (permission: string) => requirePermission(permission),
+}));
+
+vi.mock('@/lib/auth/seller-guard', () => ({
+  requireDropshipperAccount: () => requireDropshipperAccount(),
+}));
+
+vi.mock('@/modules/catalog/products/read-model', () => ({
+  findProductEditorFixtureForSeller: (sellerId: string, productId: string) =>
+    findProductEditorFixtureForSeller(sellerId, productId),
 }));
 
 vi.mock('next/navigation', () => ({
@@ -47,6 +63,8 @@ function searchParams(params: Record<string, string> = {}) {
 
 beforeEach(() => {
   requirePermission.mockClear();
+  requireDropshipperAccount.mockClear();
+  findProductEditorFixtureForSeller.mockClear();
   notFound.mockClear();
 });
 

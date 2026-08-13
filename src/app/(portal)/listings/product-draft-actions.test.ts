@@ -13,6 +13,10 @@ vi.mock('@/lib/rate-limit', () => ({
   checkRateLimit: vi.fn(() => ({ allowed: true, retryAfterMs: 0 })),
 }));
 
+vi.mock('next/cache', () => ({
+  revalidatePath: vi.fn(),
+}));
+
 vi.mock('@/modules/catalog/products/create-draft', () => ({
   default: vi.fn(),
 }));
@@ -28,8 +32,10 @@ import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
 import createProductDraftFromCandidate from '@/modules/catalog/products/create-draft';
 import saveProductDraft from '@/modules/catalog/products/save-draft';
+import { revalidatePath } from 'next/cache';
 
 import {
+  bulkCreateProductDraftsAction,
   createProductDraftAction,
   saveProductDraftAction,
 } from './product-draft-actions';
@@ -208,6 +214,61 @@ describe('createProductDraftAction — input handling', () => {
     expect(outcome).toEqual({ ok: false, reason: 'failed' });
     expect(JSON.stringify(outcome)).not.toContain('pg_xyz');
     consoleError.mockRestore();
+  });
+});
+
+describe('bulkCreateProductDraftsAction', () => {
+  it('imports selected candidates with one server-resolved tenant and actor', async () => {
+    const secondCandidate = '44444444-4444-4444-8444-444444444444';
+
+    await expect(
+      bulkCreateProductDraftsAction({
+        requests: [
+          { candidateId: CANDIDATE, idempotencyKey: 'idem-key-0001' },
+          { candidateId: secondCandidate, idempotencyKey: 'idem-key-0002' },
+        ],
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      created: 2,
+      replayed: 0,
+      failed: [],
+    });
+
+    expect(createProductDraftFromCandidate).toHaveBeenCalledWith({
+      candidateId: CANDIDATE,
+      sellerAccountId: SELLER,
+      actorId: 'actor-1',
+      idempotencyKey: 'idem-key-0001',
+    });
+    expect(createProductDraftFromCandidate).toHaveBeenCalledWith({
+      candidateId: secondCandidate,
+      sellerAccountId: SELLER,
+      actorId: 'actor-1',
+      idempotencyKey: 'idem-key-0002',
+    });
+  });
+
+  it('revalidates sourcing and catalogue pages after a successful batch', async () => {
+    await bulkCreateProductDraftsAction({
+      requests: [{ candidateId: CANDIDATE, idempotencyKey: 'idem-key-0001' }],
+    });
+
+    expect(revalidatePath).toHaveBeenCalledWith('/products/pipeline');
+    expect(revalidatePath).toHaveBeenCalledWith('/listings');
+  });
+
+  it('rejects an unbounded batch before authorizing', async () => {
+    const requests = Array.from({ length: 51 }, (_, index) => ({
+      candidateId: CANDIDATE,
+      idempotencyKey: `idem-key-${index.toString().padStart(4, '0')}`,
+    }));
+
+    await expect(bulkCreateProductDraftsAction({ requests })).resolves.toEqual({
+      ok: false,
+      reason: 'invalid_input',
+    });
+    expect(requirePermission).not.toHaveBeenCalled();
   });
 });
 

@@ -142,12 +142,16 @@ export function filterAndSortProducts(
   switch (filters.sort) {
     case 'PRICE_ASC':
       sorted.sort(
-        (a, b) => a.sellingPrice.amountMinor - b.sellingPrice.amountMinor,
+        (a, b) =>
+          (a.sellingPrice?.amountMinor ?? Number.MAX_SAFE_INTEGER) -
+          (b.sellingPrice?.amountMinor ?? Number.MAX_SAFE_INTEGER),
       );
       break;
     case 'PRICE_DESC':
       sorted.sort(
-        (a, b) => b.sellingPrice.amountMinor - a.sellingPrice.amountMinor,
+        (a, b) =>
+          (b.sellingPrice?.amountMinor ?? Number.MIN_SAFE_INTEGER) -
+          (a.sellingPrice?.amountMinor ?? Number.MIN_SAFE_INTEGER),
       );
       break;
     case 'ATTENTION_SEVERITY_DESC':

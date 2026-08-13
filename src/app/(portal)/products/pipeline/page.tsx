@@ -27,6 +27,7 @@ import resolvePipelinePageData, {
   type PipelinePageData,
 } from '@/modules/catalog/candidates/pipeline-page-data';
 import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
+import { findCataloguedCandidateIds } from '@/modules/catalog/products/read-model';
 
 export const metadata: Metadata = { title: 'Product Sourcing · Sals3 Portal' };
 export const dynamic = 'force-dynamic';
@@ -49,6 +50,7 @@ function renderTable(
   candidates: EvaluatedCandidateRow[],
   tabIsEmpty: boolean,
   search: string,
+  cataloguedCandidateIds: string[],
 ) {
   if (candidates.length === 0) {
     if (tabIsEmpty) {
@@ -70,10 +72,20 @@ function renderTable(
   switch (tab) {
     case 'ready':
       return (
-        <QualifiedCandidatesTable candidates={candidates} showReasons={false} />
+        <QualifiedCandidatesTable
+          candidates={candidates}
+          showReasons={false}
+          cataloguedCandidateIds={cataloguedCandidateIds}
+        />
       );
     case 'needs-attention':
-      return <QualifiedCandidatesTable candidates={candidates} showReasons />;
+      return (
+        <QualifiedCandidatesTable
+          candidates={candidates}
+          showReasons
+          cataloguedCandidateIds={cataloguedCandidateIds}
+        />
+      );
     case 'evaluating':
       return <EvaluatingCandidatesTable candidates={candidates} />;
     case 'blocked':
@@ -160,11 +172,21 @@ export default async function ProductSourcingPipelinePage({
   // unreachable database still crashed this page ahead of that guard.
   const resolved = await readOrUnavailable('candidate pipeline', async () => {
     const { sellerAccount } = await requireDropshipperAccount();
-
-    return resolvePipelinePageData(sellerAccount.id, tab, {
+    const data = await resolvePipelinePageData(sellerAccount.id, tab, {
       search,
       requestedPage: parsePageParam(query.page),
     });
+    const cataloguedCandidateIds =
+      tab === 'ready' || tab === 'needs-attention'
+        ? [
+            ...(await findCataloguedCandidateIds(
+              sellerAccount.id,
+              data.candidates.map((candidate) => candidate.candidateId),
+            )),
+          ]
+        : [];
+
+    return { ...data, cataloguedCandidateIds };
   });
 
   if (!resolved.ok) {
@@ -182,7 +204,8 @@ export default async function ProductSourcingPipelinePage({
     );
   }
 
-  const { counts, candidates, queueAgeMs, window } = resolved.data;
+  const { counts, candidates, queueAgeMs, window, cataloguedCandidateIds } =
+    resolved.data;
   const isStale =
     tab === 'exception' &&
     queueAgeMs !== null &&
@@ -222,7 +245,13 @@ export default async function ProductSourcingPipelinePage({
         />
       ) : null}
       {renderEvaluatingBreakdown(tab, counts)}
-      {renderTable(tab, candidates, countForTab(tab, counts) === 0, search)}
+      {renderTable(
+        tab,
+        candidates,
+        countForTab(tab, counts) === 0,
+        search,
+        cataloguedCandidateIds,
+      )}
       {window.totalPages > 1 ? (
         <PipelinePagination
           page={window.page}

@@ -131,9 +131,10 @@ export function worstEvidenceFreshness(
  * never a silently wrong cross-currency subtraction.
  */
 export function estimateMarginMinor(
-  sellingPrice: MoneyValue,
+  sellingPrice: MoneyValue | null,
   supplierCost: MoneyValue,
 ): number | null {
+  if (sellingPrice === null) return null;
   if (sellingPrice.currency !== supplierCost.currency) return null;
 
   return sellingPrice.amountMinor - supplierCost.amountMinor;

@@ -25,6 +25,7 @@ import {
 
 const EXPIRY_MARGIN_MS = 60 * 60 * 1000;
 const FALLBACK_LIFETIME_MS = 12 * 60 * 60 * 1000;
+const CJ_AUTH_TIMEOUT_MS = 8_000;
 
 type CachedToken = { token: string; expiresAtMs: number };
 
@@ -49,13 +50,24 @@ function logCredentialFailure(message: string, error: unknown): void {
   console.error(message, error instanceof Error ? error.message : error);
 }
 
+function timeoutSignal(): AbortSignal {
+  return AbortSignal.timeout(CJ_AUTH_TIMEOUT_MS);
+}
+
 async function reauthenticate(apiKey: string): Promise<ReauthResult> {
-  const response = await fetch(`${CJ_BASE_URL}/authentication/getAccessToken`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ apiKey }),
-    cache: 'no-store',
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${CJ_BASE_URL}/authentication/getAccessToken`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey }),
+      cache: 'no-store',
+      signal: timeoutSignal(),
+    });
+  } catch {
+    throw new CjApiError('upstream-unavailable');
+  }
 
   if (!response.ok) {
     throw new CjApiError('upstream-unavailable');

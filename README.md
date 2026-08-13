@@ -205,6 +205,7 @@ Redis, KV, or paid cache service is used for this path.
 | `/auth/pending`                                            | Fallback for legacy or manually deactivated seller accounts that are signed in but not active/verified                                                                                                                                                                                                                                                                                                                                                                         |
 | `/overview`                                                | Seller Center dashboard: needs-action tasks, money position, glance stats                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `/orders`                                                  | Batch fulfillment: filter, select, print (static), handoff                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `/listings`                                                | Product Catalogue. Reads persisted Sals3 Product/Variant/Offer/provider-reference rows for the seller and maps them into the existing catalogue UI. No supplier API call is made. Imported rows remain Draft/Unpublished until the real publish gates can resolve category, media, price, variant options, and revision approval.                                                                                                                                              |
 | `/listings/new`                                            | Add Product. No query: the blank essentials-first wizard (read-only fields, no save yet). `?fixture=<key>`: the supplier-prefilled Product Editor design preview — see [Product Editor](#product-editor-add-product-from-a-supplier-product). `?supplierCandidateId=`: reserved for the real integration, states that it is not wired up yet                                                                                                                                   |
 | `/inventory`                                               | Inline stock edits with undo and an audit record                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `/finances`                                                | Itemized ledger and estimated proceeds for one example order                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -253,6 +254,14 @@ page had already fetched, which reported "No matches" for a product sitting
 past the first page. The term is a bind parameter and its LIKE wildcards are
 escaped (`searchCondition` in `src/modules/catalog/candidates/queries.ts`,
 asserted in `queries.pipeline.test.ts`).
+
+Ready and Needs Attention rows now have a checkbox column and an
+`Add to Product Catalogue` action. The action calls the existing protected
+candidate-to-draft import flow, then `/listings` reads the persisted Product,
+Variant, Offer, provider-reference, and snapshot data. Rows already represented
+in Product Catalogue are highlighted in light blue. The import does not call CJ
+and does not mark a database row live unless the real publish gates have done
+so.
 
 Two limitations worth knowing:
 
@@ -1886,13 +1895,17 @@ These are real gaps, not oversights. Do not treat any screen as production ready
   signup grants `seller_manager` after email verification and TOTP setup; use
   `npm run approve:portal-user -- --email <email> --role <role>` from an owner
   shell only to repair or change an existing account.
-- **Read-only catalogue.** The portal shows the CJdropshipping supplier feed
-  and nothing else — there is no writable Sals3 product catalogue, no add/edit
-  form, and no import/export. A real Postgres database does exist now (see
-  [Catalog database](#catalog-database-drizzle--postgresql) and
-  [Supplier Apps](#supplier-apps-multi-tenant-provider-connections)) for the
-  shortlist/evaluation pipeline and provider connections - the earlier
-  in-memory fixture catalogue was removed, not replaced with "no database".
+- **Supplier feed is read-only.** Product Sourcing still reads the
+  CJdropshipping supplier feed without writing back to CJ. Selected ready
+  candidates can now be copied into the persisted Sals3 Product Catalogue draft
+  flow; the underlying supplier feed remains a provider read model, not an
+  editable supplier catalogue.
+- **Product Catalogue publication is still gated.** Product Sourcing can import
+  a selected candidate into the persisted Product Catalogue draft flow, and
+  `/listings` plus `/listings/new?productId=<uuid>` read those database rows.
+  Publication/resume remains unbuilt: unresolved category, media, pricing,
+  variant-option, revision-approval, and storefront gates are shown as
+  blockers rather than rounded up to Live.
 - The portal is `robots: noindex` and publishes no structured data on purpose.
   It is an internal tool, so the SEO, GEO, and AEO work that applies to the
   storefront does not apply here.

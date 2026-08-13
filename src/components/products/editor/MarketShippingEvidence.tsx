@@ -99,9 +99,11 @@ export default function MarketShippingEvidence({
             >
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-sm font-semibold">{market.name}</h3>
-                <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-ink-muted">
-                  Sample market
-                </span>
+                {market.isSampleMarket ? (
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-ink-muted">
+                    Sample market
+                  </span>
+                ) : null}
                 <EditorStatusPill presentation={presentation} />
               </div>
 
@@ -178,11 +180,13 @@ export default function MarketShippingEvidence({
         </ul>
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        Sample market A and B are placeholder fixture markets for interface
-        review. No destination market has been approved, so no real country is
-        hardcoded here.
-      </p>
+      {markets.every((market) => market.isSampleMarket) ? (
+        <p className="text-xs text-muted-foreground">
+          Sample market A and B are placeholder fixture markets for interface
+          review. No destination market has been approved, so no real country is
+          hardcoded here.
+        </p>
+      ) : null}
     </div>
   );
 }
