@@ -8,8 +8,6 @@ import { Label } from '@/components/ui/label';
 import { buildHref } from '@/lib/portal/search-params';
 
 type PipelineSearchInputProps = {
-  /** The list route the search submits to. Defaults to the pipeline. */
-  path?: string;
   value: string;
 };
 
@@ -22,7 +20,6 @@ const DEBOUNCE_MS = 300;
  * the URL and let the server component re-render.
  */
 export default function PipelineSearchInput({
-  path = '/products/pipeline',
   value,
 }: PipelineSearchInputProps) {
   const router = useRouter();
@@ -36,7 +33,7 @@ export default function PipelineSearchInput({
     }
 
     const timer = setTimeout(() => {
-      const href = buildHref(path, searchParams, {
+      const href = buildHref('/products/pipeline', searchParams, {
         q: term.trim() === '' ? null : term.trim(),
       });
 
@@ -44,7 +41,7 @@ export default function PipelineSearchInput({
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(timer);
-  }, [term, value, router, searchParams, path]);
+  }, [term, value, router, searchParams]);
 
   return (
     <div className="flex w-full flex-col gap-1 sm:w-72">

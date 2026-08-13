@@ -11,11 +11,9 @@ import {
   AVAILABILITY_LABELS,
   type Availability,
 } from '@/lib/seller-center/product-catalogue/types';
-import type { Tracked } from '@/lib/seller-center/product-catalogue/view';
-import NotTrackedPill from './NotTrackedPill';
 
 type AvailabilityBadgeProps = {
-  availability: Tracked<Availability>;
+  availability: Availability;
 };
 
 const TONE_BY_AVAILABILITY: Record<Availability, StatusPillTone> = {
@@ -54,28 +52,23 @@ const TIP_BY_AVAILABILITY: Record<Availability, string> = {
 export default function AvailabilityBadge({
   availability,
 }: AvailabilityBadgeProps) {
-  if (availability.kind !== 'value')
-    return <NotTrackedPill tracked={availability} />;
-
-  const state = availability.value;
-
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <span className="inline-flex items-center gap-1">
             <StatusPill
-              label={AVAILABILITY_LABELS[state]}
-              tone={TONE_BY_AVAILABILITY[state]}
+              label={AVAILABILITY_LABELS[availability]}
+              tone={TONE_BY_AVAILABILITY[availability]}
             />
             <Info
-              aria-label={`What "${AVAILABILITY_LABELS[state]}" means`}
+              aria-label={`What "${AVAILABILITY_LABELS[availability]}" means`}
               className="size-3.5 text-muted-foreground"
             />
           </span>
         }
       />
-      <TooltipContent>{TIP_BY_AVAILABILITY[state]}</TooltipContent>
+      <TooltipContent>{TIP_BY_AVAILABILITY[availability]}</TooltipContent>
     </Tooltip>
   );
 }

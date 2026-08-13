@@ -170,62 +170,6 @@ export type ProductDraftActionResult =
   | { ok: true; result: ProductDraftResult }
   | { ok: false; reason: ProductDraftFailureReason };
 
-/**
- * One bulk request covers at most one pipeline page (`PIPELINE_PAGE_SIZE` is
- * 100), so the cap and the page size are the same number on purpose - "select
- * all on this page" and "the largest legal batch" cannot drift apart.
- */
-export const MAX_BULK_DRAFT_CANDIDATES = 100;
-
-export const bulkCreateProductDraftsInputSchema = z.object({
-  candidateIds: z
-    .array(z.string().uuid())
-    .min(1)
-    .max(MAX_BULK_DRAFT_CANDIDATES)
-    // Dedup AFTER the bounds check: 200 copies of one id is a malformed
-    // request, not a clever way to submit one candidate.
-    .transform((ids) => [...new Set(ids)]),
-  /**
-   * Per-candidate keys are derived as `${base}:${candidateId}` (36 chars + 1),
-   * so the base gets the remainder of `MAX_IDEMPOTENCY_KEY_LENGTH`.
-   */
-  idempotencyKeyBase: idempotencyKeySchema.refine(
-    (value) => value.length <= MAX_IDEMPOTENCY_KEY_LENGTH - 37,
-    'Leave room for the per-candidate suffix.',
-  ),
-});
-
-export type BulkCreateProductDraftsInput = z.infer<
-  typeof bulkCreateProductDraftsInputSchema
->;
-
-/**
- * Per-candidate outcome of a bulk draft request. `already_in_catalogue` is a
- * pre-check result (the row's checkbox is disabled in the UI, so reaching it
- * means a stale page, not an error). A replayed idempotent create still
- * reports `created` - to the seller both mean "it is in the catalogue now".
- */
-export type BulkDraftRowOutcome =
-  | {
-      candidateId: string;
-      status: 'created';
-      productId: string;
-      missingRequirements: DraftMissingRequirement[];
-    }
-  | { candidateId: string; status: 'already_in_catalogue' }
-  | {
-      candidateId: string;
-      status: 'failed';
-      reason: 'not_found' | 'idempotency_conflict' | 'failed';
-    };
-
-export type BulkCreateProductDraftsResult =
-  | { ok: true; outcomes: BulkDraftRowOutcome[] }
-  | {
-      ok: false;
-      reason: 'invalid_input' | 'denied' | 'rate_limited' | 'not_configured';
-    };
-
 /** Audit action names. Stable strings — a rename breaks historical queries. */
 export const PRODUCT_AUDIT_ACTIONS = {
   productCreated: 'catalog_product.created',
@@ -237,8 +181,6 @@ export const PRODUCT_AUDIT_ACTIONS = {
   offerCreated: 'catalog_product_offer.created',
   bindingCreated: 'catalog_offer_supplier_binding.created',
   draftRequestConflict: 'catalog_product_draft.idempotency_conflict',
-  productArchived: 'catalog_product.archived',
-  productArchiveRejected: 'catalog_product.archive_rejected_stale',
 } as const;
 
 /** Operation name recorded on `idempotency_records.operation`. */

@@ -1,7 +1,5 @@
 import { countForTab, type PipelineTab } from '@/lib/portal/pipeline-tabs';
 import { resolvePageWindow, type PageWindow } from '@/lib/portal/pagination';
-import getDb from '@/lib/db/client';
-import { listCandidateIdsWithProducts } from '@/modules/catalog/products/repository';
 import {
   countCandidatesByStatus,
   countDeadLetteredEvaluations,
@@ -45,12 +43,6 @@ export type PipelinePageData = {
   candidates: EvaluatedCandidateRow[];
   queueAgeMs: number | null;
   window: PageWindow;
-  /**
-   * candidateId -> productId for this page's candidates already drafted into
-   * the catalogue. Queried only on the two tabs that offer "Add to Product
-   * Catalogue" (one extra statement there); empty everywhere else.
-   */
-  inCatalogue: ReadonlyMap<string, string>;
 };
 
 function safeErrorMessage(error: unknown) {
@@ -119,7 +111,6 @@ function emptyPage(): PipelinePageData {
     candidates: [],
     queueAgeMs: null,
     window: resolvePageWindow(0, 1, PIPELINE_PAGE_SIZE),
-    inCatalogue: new Map(),
   };
 }
 
@@ -157,21 +148,7 @@ export default async function resolvePipelinePageData(
       tab === 'exception' ? oldestQueuedAgeMs(sellerAccountId) : null,
     ]);
 
-    // Ids straight out of the tenant-scoped candidate query, so the global
-    // provenance table is only ever probed with this seller's own candidates.
-    const inCatalogue =
-      tab === 'ready' || tab === 'needs-attention'
-        ? new Map(
-            (
-              await listCandidateIdsWithProducts(
-                getDb(),
-                candidates.map((candidate) => candidate.candidateId),
-              )
-            ).map((row) => [row.sourceCandidateId, row.productId]),
-          )
-        : new Map<string, string>();
-
-    return { counts, candidates, queueAgeMs, window, inCatalogue };
+    return { counts, candidates, queueAgeMs, window };
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error(

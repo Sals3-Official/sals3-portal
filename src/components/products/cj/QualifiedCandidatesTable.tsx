@@ -6,15 +6,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import LinkButton from '@/components/portal/LinkButton';
+import StatusPill from '@/components/seller-center/shared/StatusPill';
 import { candidateDrawerHref } from '@/lib/portal/pipeline-params';
 import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
 import type { ReasonCode } from '@/modules/catalog/candidates/rules/contracts';
-import CandidateProductCell from './CandidateProductCell';
+import Image from 'next/image';
+import { Package } from 'lucide-react';
 import CandidateRow from './CandidateRow';
-import CandidateSelectCheckbox from './CandidateSelectCheckbox';
-import CandidateStatusCell from './CandidateStatusCell';
-import SelectAllOnPageCheckbox from './SelectAllOnPageCheckbox';
 import {
   displayName,
   formatUsd,
@@ -25,47 +23,40 @@ import CustomizeAndListButton from './CustomizeAndListButton';
 
 type QualifiedCandidatesTableProps = {
   candidates: EvaluatedCandidateRow[];
-  /** `?tab=`/`?q=`/`?page=`, so a row click adds `?candidate=` without losing the view. */
+  /**
+   * The page's current `?tab=`/`?q=`/`?page=`, so a row click adds
+   * `?candidate=` without losing the view behind the drawer.
+   */
   currentParams: Record<string, string>;
-  /** "Attention reasons" column (Needs Attention only). */
+  /** Whether to show the "Attention reasons" column (Needs Attention only). */
   showReasons: boolean;
-  /** candidateId -> productId for rows already drafted. */
-  inCatalogue: ReadonlyMap<string, string>;
 };
 
+const SHARED_COLUMNS = ['Product', 'CJ product ID', 'Supplier price'];
+
 /**
- * Ready and Needs Attention share this table: every row already passed
- * automated evaluation. The one seller action is selecting rows for "Add to
- * Product Catalogue". A row already drafted keeps its place - a candidate is a
- * sourcing record, not a queue entry - and is marked three ways: row tint,
- * "In catalogue" pill, disabled checkbox.
+ * Ready and Needs Attention share this table (spec's row field list): every
+ * row here already passed automated evaluation - `PASS` or
+ * `PASS_WITH_ATTENTION` - and is eligible for "Customize & List". No manual
+ * shortlist action exists here; rows arrive automatically from the pipeline.
  */
 export default function QualifiedCandidatesTable({
   candidates,
   currentParams,
   showReasons,
-  inCatalogue,
 }: QualifiedCandidatesTableProps) {
   const columns = [
-    'Product',
-    'CJ product ID',
-    'Supplier price',
+    ...SHARED_COLUMNS,
     showReasons ? 'Attention reasons' : 'Status',
     'Last checked',
     'Action',
   ];
-  const eligibleIds = candidates
-    .map((candidate) => candidate.candidateId)
-    .filter((id) => !inCatalogue.has(id));
 
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-card">
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-10">
-              <SelectAllOnPageCheckbox eligibleIds={eligibleIds} />
-            </TableHead>
             {columns.map((label) => (
               <TableHead key={label}>{label}</TableHead>
             ))}
@@ -74,7 +65,7 @@ export default function QualifiedCandidatesTable({
         <TableBody>
           {candidates.map((candidate) => {
             const name = displayName(candidate);
-            const productId = inCatalogue.get(candidate.candidateId);
+            const image = imageUrl(candidate);
             const reasonCodes = candidate.evaluation
               .reasonCodes as ReasonCode[];
 
@@ -83,30 +74,56 @@ export default function QualifiedCandidatesTable({
                 key={candidate.candidateId}
                 href={candidateDrawerHref(currentParams, candidate.candidateId)}
                 label={`Open candidate detail for ${name}`}
-                inCatalogue={productId !== undefined}
               >
-                <TableCell className="w-10">
-                  <CandidateSelectCheckbox
-                    candidateId={candidate.candidateId}
-                    name={name}
-                    disabled={productId !== undefined}
-                  />
+                <TableCell className="max-w-64 font-medium">
+                  <div className="flex items-center gap-3">
+                    {image === null ? (
+                      <div
+                        aria-hidden="true"
+                        className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border bg-muted"
+                      >
+                        <Package className="size-4 text-ink-faint" />
+                      </div>
+                    ) : (
+                      <Image
+                        src={image}
+                        alt={name}
+                        width={40}
+                        height={40}
+                        loading="lazy"
+                        className="size-10 shrink-0 rounded-md border border-border object-cover"
+                      />
+                    )}
+                    <span className="min-w-0 truncate" title={name}>
+                      {name}
+                    </span>
+                  </div>
                 </TableCell>
-                <CandidateProductCell
-                  name={name}
-                  image={imageUrl(candidate)}
-                  inCatalogue={productId !== undefined}
-                />
                 <TableCell className="font-mono text-xs">
                   {candidate.externalProductId}
                 </TableCell>
                 <TableCell className="tabular-nums">
                   {formatUsd(supplierPriceUsd(candidate))}
                 </TableCell>
-                <CandidateStatusCell
-                  showReasons={showReasons}
-                  reasonCodes={reasonCodes}
-                />
+                {showReasons ? (
+                  <TableCell>
+                    {reasonCodes.length === 0 ? (
+                      '—'
+                    ) : (
+                      <ul className="flex flex-col gap-1">
+                        {reasonCodes.map((code) => (
+                          <li key={code}>
+                            <StatusPill label={code} tone="warning" />
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </TableCell>
+                ) : (
+                  <TableCell>
+                    <StatusPill label="Ready" tone="success" />
+                  </TableCell>
+                )}
                 <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
                   {candidate.evaluation.evaluatedAt
                     ? new Date(
@@ -115,17 +132,7 @@ export default function QualifiedCandidatesTable({
                     : '—'}
                 </TableCell>
                 <TableCell>
-                  {productId === undefined ? (
-                    <CustomizeAndListButton productName={name} />
-                  ) : (
-                    <LinkButton
-                      href={`/listings/${productId}`}
-                      variant="outline"
-                      size="sm"
-                    >
-                      Open in catalogue
-                    </LinkButton>
-                  )}
+                  <CustomizeAndListButton productName={name} />
                 </TableCell>
               </CandidateRow>
             );

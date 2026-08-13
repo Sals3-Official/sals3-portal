@@ -8,8 +8,6 @@ import AllCandidatesTable from './AllCandidatesTable';
 import BlockedCandidatesTable from './BlockedCandidatesTable';
 import EvaluatingCandidatesTable from './EvaluatingCandidatesTable';
 import ExceptionQueueTable from './ExceptionQueueTable';
-import AddToCatalogueButton from './AddToCatalogueButton';
-import PipelineSelectionProvider from './PipelineSelectionProvider';
 import QualifiedCandidatesTable from './QualifiedCandidatesTable';
 import SourcingEmptyState from './SourcingEmptyState';
 
@@ -20,44 +18,7 @@ type PipelineTabTableProps = {
   tabIsEmpty: boolean;
   search: string;
   currentParams: Record<string, string>;
-  /** candidateId -> productId for rows already drafted. Populated on ready/needs-attention only. */
-  inCatalogue: ReadonlyMap<string, string>;
 };
-
-type SelectableQualifiedTableProps = {
-  candidates: EvaluatedCandidateRow[];
-  currentParams: Record<string, string>;
-  showReasons: boolean;
-  inCatalogue: ReadonlyMap<string, string>;
-};
-
-/**
- * Ready and Needs Attention wrapped in the page-scoped selection: the button
- * sits top-right above the table (owner's placement), and both subscribe to
- * one client provider while the table itself stays a Server Component.
- */
-function SelectableQualifiedTable({
-  candidates,
-  currentParams,
-  showReasons,
-  inCatalogue,
-}: SelectableQualifiedTableProps) {
-  return (
-    <PipelineSelectionProvider>
-      <div className="flex flex-col gap-3">
-        <div className="flex justify-end">
-          <AddToCatalogueButton />
-        </div>
-        <QualifiedCandidatesTable
-          candidates={candidates}
-          currentParams={currentParams}
-          showReasons={showReasons}
-          inCatalogue={inCatalogue}
-        />
-      </div>
-    </PipelineSelectionProvider>
-  );
-}
 
 /**
  * Picks the table for one pipeline tab, and renders the right empty state when
@@ -76,7 +37,6 @@ export default function PipelineTabTable({
   tabIsEmpty,
   search,
   currentParams,
-  inCatalogue,
 }: PipelineTabTableProps) {
   if (candidates.length === 0) {
     if (tabIsEmpty) {
@@ -98,20 +58,18 @@ export default function PipelineTabTable({
   switch (tab) {
     case 'ready':
       return (
-        <SelectableQualifiedTable
+        <QualifiedCandidatesTable
           candidates={candidates}
           currentParams={currentParams}
           showReasons={false}
-          inCatalogue={inCatalogue}
         />
       );
     case 'needs-attention':
       return (
-        <SelectableQualifiedTable
+        <QualifiedCandidatesTable
           candidates={candidates}
           currentParams={currentParams}
           showReasons
-          inCatalogue={inCatalogue}
         />
       );
     case 'evaluating':

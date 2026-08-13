@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 
 import {
   offerSupplierBindings,
@@ -129,46 +129,6 @@ export async function findProviderProductReference(
 }
 
 /**
- * Which of these candidates already have a Sals3 product, and which product.
- *
- * Feeds the Product Sourcing pipeline's "In catalogue" row treatment: one
- * batched read per rendered page instead of one per row. Returns at most one
- * entry per candidate - `provider_product_references` is unique on
- * `(productId, supplierProviderId)` and a candidate seeds one product, so a
- * duplicate here would indicate corrupted provenance, and the LAST write wins
- * in the map the caller builds.
- *
- * Same tenancy posture as `listProviderReferencesForSourceCandidate` below:
- * this table is global, so the candidate ids MUST already be tenant-scoped by
- * the caller. The pipeline satisfies that - its ids come from
- * `listCandidatesByStatus`, which filters by the owning connection's seller.
- */
-export async function listCandidateIdsWithProducts(
-  executor: Executor,
-  sourceCandidateIds: string[],
-): Promise<Array<{ sourceCandidateId: string; productId: string }>> {
-  if (sourceCandidateIds.length === 0) return [];
-
-  const rows = await executor
-    .selectDistinct({
-      sourceCandidateId: providerProductReferences.sourceCandidateId,
-      productId: providerProductReferences.productId,
-    })
-    .from(providerProductReferences)
-    .where(
-      inArray(providerProductReferences.sourceCandidateId, sourceCandidateIds),
-    );
-
-  // `sourceCandidateId` is nullable in the schema (set null on candidate
-  // delete); the inArray predicate cannot match null, but the type does not
-  // know that.
-  return rows.filter(
-    (row): row is { sourceCandidateId: string; productId: string } =>
-      row.sourceCandidateId !== null,
-  );
-}
-
-/**
  * Provenance only: whether this candidate was ever drafted into a Sals3
  * product, and against which snapshot checksum.
  *
@@ -218,51 +178,6 @@ export async function findProductForSteward(
     .limit(1);
 
   return rows[0] ?? null;
-}
-
-/**
- * Archives one product, if it is still exactly what the caller last saw.
- *
- * Five conditions travel together in the `WHERE` clause and every one of them
- * is load-bearing: the id (which row), the steward (that this tenant may act on
- * it at all - folded into the same statement, never a read-then-write), the
- * expected version (that a stale table loses the race), and the two source
- * states. `PUBLISHED` is deliberately excluded even though the schema's CHECK
- * constraints would permit it: taking a live listing down is a different
- * decision from filing away a draft, and it belongs with the publish flow that
- * does not exist yet.
- *
- * `null` means at least one condition failed and the caller cannot tell which -
- * the same deliberate opacity as `saveDraftRevisionContent`.
- */
-export async function archiveProductForSteward(
-  executor: Executor,
-  input: {
-    productId: string;
-    stewardSellerAccountId: string;
-    expectedVersion: number;
-    actorId: string;
-  },
-): Promise<ProductRow | null> {
-  const [row] = await executor
-    .update(products)
-    .set({
-      publicationState: 'ARCHIVED',
-      version: input.expectedVersion + 1,
-      updatedAt: new Date(),
-      updatedBy: input.actorId,
-    })
-    .where(
-      and(
-        eq(products.id, input.productId),
-        eq(products.stewardSellerAccountId, input.stewardSellerAccountId),
-        eq(products.version, input.expectedVersion),
-        inArray(products.publicationState, ['UNPUBLISHED', 'PAUSED']),
-      ),
-    )
-    .returning();
-
-  return row ?? null;
 }
 
 export async function insertProduct(
