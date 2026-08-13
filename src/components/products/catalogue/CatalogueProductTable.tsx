@@ -8,29 +8,40 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import type { CatalogueProductFixture } from '@/lib/seller-center/product-catalogue/types';
+import type {
+  CatalogueRowAction,
+  CatalogueRowView,
+  VariantActionView,
+} from '@/lib/seller-center/product-catalogue/view';
 import CatalogueProductRow from './CatalogueProductRow';
 
 type CatalogueProductTableProps = {
-  products: CatalogueProductFixture[];
+  rows: CatalogueRowView[];
   selectedIds: Set<string>;
   expandedIds: Set<string>;
   onToggleSelected: (id: string) => void;
   onToggleExpanded: (id: string) => void;
-  onPauseListing: (id: string) => void;
-  onArchive: (id: string) => void;
-  onToggleVariantPaused: (productId: string, variantId: string) => void;
+  onAction: (id: string, action: CatalogueRowAction) => void;
+  onVariantAction: (
+    productId: string,
+    variantId: string,
+    kind: VariantActionView['kind'],
+  ) => void;
 };
 
+/**
+ * The eight-column catalogue table, shared by the design preview and the real
+ * `/listings`. It takes `CatalogueRowView`, so neither caller can hand it a
+ * fixture-shaped lie or a raw database row.
+ */
 export default function CatalogueProductTable({
-  products,
+  rows,
   selectedIds,
   expandedIds,
   onToggleSelected,
   onToggleExpanded,
-  onPauseListing,
-  onArchive,
-  onToggleVariantPaused,
+  onAction,
+  onVariantAction,
 }: CatalogueProductTableProps) {
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -48,20 +59,19 @@ export default function CatalogueProductTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {products.map((product) => (
+          {rows.map((row) => (
             <CatalogueProductRow
-              key={product.id}
-              product={product}
-              selected={selectedIds.has(product.id)}
-              expanded={expandedIds.has(product.id)}
+              key={row.id}
+              row={row}
+              selected={selectedIds.has(row.id)}
+              expanded={expandedIds.has(row.id)}
               onToggleSelected={onToggleSelected}
               onToggleExpanded={onToggleExpanded}
-              onPauseListing={onPauseListing}
-              onArchive={onArchive}
-              onToggleVariantPaused={onToggleVariantPaused}
+              onAction={onAction}
+              onVariantAction={onVariantAction}
             />
           ))}
-          {products.length === 0 ? (
+          {rows.length === 0 ? (
             <TableRow>
               <TableCell
                 colSpan={8}

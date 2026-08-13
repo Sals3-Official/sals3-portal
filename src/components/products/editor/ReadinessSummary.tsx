@@ -7,7 +7,13 @@ type ReadinessSummaryProps = {
   blockerCount: number;
   warningCount: number;
   suggestionCount: number;
-  lastValidatedAt: string;
+  /**
+   * When the check behind these counts ran. `null` means it ran as part of THIS
+   * render - the real editor derives its requirements from the product's own
+   * rows on every load, so there is no stored validation timestamp to quote,
+   * and printing one would date a check that never happened separately.
+   */
+  lastValidatedAt: string | null;
 };
 
 type CountChipProps = {
@@ -71,7 +77,9 @@ export default function ReadinessSummary({
         floor. `text-muted-foreground` clears it at 5.85:1.
       */}
       <p className="text-xs text-muted-foreground">
-        Last automated check {formatDateTime(lastValidatedAt)}
+        {lastValidatedAt === null
+          ? 'Checked as this page loaded, from this product\u2019s own records'
+          : `Last automated check ${formatDateTime(lastValidatedAt)}`}
       </p>
     </div>
   );

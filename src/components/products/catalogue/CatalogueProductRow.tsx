@@ -1,89 +1,77 @@
 'use client';
 
-import { ChevronDown, ChevronRight, Copy, Pencil } from 'lucide-react';
-import Link from 'next/link';
-import { toast } from 'sonner';
-import StatusPill, {
-  type StatusPillTone,
-} from '@/components/seller-center/shared/StatusPill';
+import { Pencil } from 'lucide-react';
+import StatusPill from '@/components/seller-center/shared/StatusPill';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { TableCell, TableRow } from '@/components/ui/table';
-import copyToClipboard from '@/lib/seller-center/clipboard';
-import { deriveProductAvailability } from '@/lib/seller-center/product-catalogue/derive';
 import { formatMoney } from '@/lib/seller-center/product-editor/format';
-import {
-  LISTING_STATUS_LABELS,
-  type CatalogueProductFixture,
-  type ListingStatus,
-} from '@/lib/seller-center/product-catalogue/types';
+import type {
+  CatalogueRowAction,
+  CatalogueRowView,
+  VariantActionView,
+} from '@/lib/seller-center/product-catalogue/view';
 import AttentionBadge from './AttentionBadge';
 import AvailabilityBadge from './AvailabilityBadge';
+import CatalogueRowActionsMenu from './CatalogueRowActionsMenu';
+import CatalogueRowIdentityCell from './CatalogueRowIdentityCell';
 import CatalogueVariantRow from './CatalogueVariantRow';
-import ContentScoreBadge from './ContentScoreBadge';
 import MediaStatusBadge from './MediaStatusBadge';
-import SupplierConnectionHealthBadge from './SupplierConnectionHealthBadge';
+import NotTrackedPill from './NotTrackedPill';
+
+/**
+ * A paused row explains itself; every other row prints nothing here. A
+ * "pause reason: not tracked" line under a draft would be noise.
+ */
+function pauseReasonLine(pauseReason: CatalogueRowView['pauseReason']) {
+  if (pauseReason.kind !== 'value')
+    return (
+      <p className="mt-1 max-w-40 text-xs text-muted-foreground">
+        <NotTrackedPill tracked={pauseReason} />
+      </p>
+    );
+
+  if (pauseReason.value === null) return null;
+
+  return (
+    <p className="mt-1 max-w-40 text-xs text-muted-foreground">
+      {pauseReason.value}
+    </p>
+  );
+}
 
 type CatalogueProductRowProps = {
-  product: CatalogueProductFixture;
+  row: CatalogueRowView;
   selected: boolean;
   expanded: boolean;
   onToggleSelected: (id: string) => void;
   onToggleExpanded: (id: string) => void;
-  onPauseListing: (id: string) => void;
-  onArchive: (id: string) => void;
-  onToggleVariantPaused: (productId: string, variantId: string) => void;
+  onAction: (id: string, action: CatalogueRowAction) => void;
+  onVariantAction: (
+    productId: string,
+    variantId: string,
+    kind: VariantActionView['kind'],
+  ) => void;
 };
 
-const LISTING_STATUS_TONE: Record<ListingStatus, StatusPillTone> = {
-  DRAFT: 'neutral',
-  LIVE: 'success',
-  LIVE_NEEDS_ATTENTION: 'warning',
-  AUTO_PAUSED: 'danger',
-  ARCHIVED: 'neutral',
-};
-
-function announceUnbuilt(action: string, productName: string) {
-  toast(`${action} isn't built yet for "${productName}".`, {
-    description: 'This design preview has no catalogue backend.',
-  });
-}
-
-async function copyIdentity(value: string, label: string) {
-  const ok = await copyToClipboard(value);
-
-  toast(
-    ok
-      ? `Copied ${label} to clipboard.`
-      : `Couldn't copy ${label} to clipboard.`,
-  );
-}
-
-/** Parent row: one Sals3 listing, plus its expandable Sals3 variant rows. */
+/**
+ * Parent row: one Sals3 listing, plus its expandable Sals3 variant rows.
+ *
+ * Renders a `CatalogueRowView`, never a fixture and never a database row, so
+ * the design preview at `/design-preview/product-catalogue` and the real
+ * `/listings` share this markup exactly. Anything the real system does not
+ * record arrives as a non-`value` arm and prints "Not tracked yet" instead of a
+ * plausible number.
+ */
 export default function CatalogueProductRow({
-  product,
+  row,
   selected,
   expanded,
   onToggleSelected,
   onToggleExpanded,
-  onPauseListing,
-  onArchive,
-  onToggleVariantPaused,
+  onAction,
+  onVariantAction,
 }: CatalogueProductRowProps) {
-  const hasVariants = product.variants.length > 0;
-  const editHref = `/listings/new?fixture=${product.editorFixtureKey}`;
-  const availability = deriveProductAvailability(
-    product.variants,
-    product.availability,
-  );
-  const isLive =
-    product.status === 'LIVE' || product.status === 'LIVE_NEEDS_ATTENTION';
-  const canViewLive = isLive && product.storefrontUrl !== null;
+  const price = row.sellingPrice;
 
   return (
     <>
@@ -91,200 +79,72 @@ export default function CatalogueProductRow({
         <TableCell>
           <Checkbox
             checked={selected}
-            onCheckedChange={() => onToggleSelected(product.id)}
-            aria-label={`Select ${product.name}`}
+            onCheckedChange={() => onToggleSelected(row.id)}
+            aria-label={`Select ${row.name}`}
           />
         </TableCell>
         <TableCell>
-          <div className="flex items-start gap-2.5">
-            {hasVariants ? (
-              <button
-                type="button"
-                onClick={() => onToggleExpanded(product.id)}
-                aria-expanded={expanded}
-                aria-label={`${expanded ? 'Collapse' : 'Expand'} ${product.variants.length} variants`}
-                className="mt-1 shrink-0 text-muted-foreground hover:text-foreground"
-              >
-                {expanded ? (
-                  <ChevronDown aria-hidden="true" className="size-4" />
-                ) : (
-                  <ChevronRight aria-hidden="true" className="size-4" />
-                )}
-              </button>
-            ) : (
-              <span className="size-4 shrink-0" aria-hidden="true" />
-            )}
-
-            <span
-              aria-hidden="true"
-              className="flex size-12 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[10px] text-muted-foreground"
-            >
-              {product.hasImage ? null : 'No image'}
-            </span>
-
-            <div className="min-w-0 flex-1">
-              <Link
-                href={editHref}
-                className="font-medium text-foreground hover:underline"
-              >
-                {product.name}
-              </Link>
-              <button
-                type="button"
-                onClick={() =>
-                  copyIdentity(product.sals3ProductId, 'Sals3 Product ID')
-                }
-                aria-label={`Copy Sals3 Product ID ${product.sals3ProductId}`}
-                className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                Sals3 Product ID: {product.sals3ProductId}
-                <Copy aria-hidden="true" className="size-3" />
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  copyIdentity(product.cjProductId, 'CJ Product ID')
-                }
-                aria-label={`Copy CJ Product ID ${product.cjProductId}`}
-                className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                {product.supplierProviderName} · CJ ID: {product.cjProductId}
-                <Copy aria-hidden="true" className="size-3" />
-              </button>
-              <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5">
-                <ContentScoreBadge score={product.contentReadiness} />
-                {product.supplierConnectionHealth === 'CONNECTED' ? null : (
-                  <SupplierConnectionHealthBadge
-                    health={product.supplierConnectionHealth}
-                  />
-                )}
-              </div>
-            </div>
-          </div>
+          <CatalogueRowIdentityCell
+            row={row}
+            expanded={expanded}
+            onToggleExpanded={onToggleExpanded}
+          />
         </TableCell>
         <TableCell>
-          <StatusPill
-            label={LISTING_STATUS_LABELS[product.status]}
-            tone={LISTING_STATUS_TONE[product.status]}
-          />
-          {product.status === 'AUTO_PAUSED' && product.pauseReason !== null ? (
-            <p className="mt-1 max-w-40 text-xs text-muted-foreground">
-              {product.pauseReason}
-            </p>
-          ) : null}
+          <StatusPill label={row.status.label} tone={row.status.tone} />
+          {pauseReasonLine(row.pauseReason)}
         </TableCell>
         <TableCell>
           <div className="flex items-center gap-1.5">
-            {formatMoney(product.sellingPrice)}
-            <button
-              type="button"
-              onClick={() => announceUnbuilt('Editing price', product.name)}
-              aria-label={`Edit selling price for ${product.name}`}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <Pencil aria-hidden="true" className="size-3.5" />
-            </button>
+            {price.kind === 'value' ? (
+              formatMoney(price.value)
+            ) : (
+              <NotTrackedPill tracked={price} />
+            )}
+            {row.actions.editPrice.kind === 'hidden' ? null : (
+              <button
+                type="button"
+                onClick={() => onAction(row.id, 'editPrice')}
+                aria-label={`Edit selling price for ${row.name}`}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <Pencil aria-hidden="true" className="size-3.5" />
+              </button>
+            )}
           </div>
         </TableCell>
         <TableCell>
-          <AvailabilityBadge availability={availability} />
+          <AvailabilityBadge availability={row.availability} />
+          {row.evidenceNotes.length === 0 ? null : (
+            <ul className="mt-1 flex max-w-48 flex-col gap-0.5 text-xs text-muted-foreground">
+              {row.evidenceNotes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          )}
         </TableCell>
         <TableCell>
-          <MediaStatusBadge mediaStatus={product.mediaStatus} />
+          <MediaStatusBadge mediaStatus={row.mediaStatus} />
         </TableCell>
         <TableCell>
-          <AttentionBadge reasons={product.attentionReasons} />
+          <AttentionBadge reasons={row.attentionReasons} />
         </TableCell>
         <TableCell>
-          <div className="flex items-center gap-3">
-            <Link
-              href={editHref}
-              className="text-sm font-medium text-primary hover:underline"
-            >
-              Edit
-            </Link>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label={`More actions for ${product.name}`}
-                    className="inline-flex items-center gap-0.5 text-sm text-muted-foreground hover:text-foreground"
-                  >
-                    More
-                    <ChevronDown aria-hidden="true" className="size-3.5" />
-                  </button>
-                }
-              />
-              <DropdownMenuContent align="end">
-                {isLive ? (
-                  <DropdownMenuItem onClick={() => onPauseListing(product.id)}>
-                    Pause listing
-                  </DropdownMenuItem>
-                ) : null}
-                {product.status === 'AUTO_PAUSED' ? (
-                  <DropdownMenuItem
-                    onClick={() =>
-                      announceUnbuilt('Review & resume', product.name)
-                    }
-                  >
-                    Review & resume
-                  </DropdownMenuItem>
-                ) : null}
-                {product.status === 'DRAFT' ? (
-                  <DropdownMenuItem
-                    onClick={() => announceUnbuilt('Publish', product.name)}
-                  >
-                    Publish
-                  </DropdownMenuItem>
-                ) : null}
-                {product.status === 'ARCHIVED' ? (
-                  <DropdownMenuItem
-                    onClick={() =>
-                      announceUnbuilt('Restore as new draft', product.name)
-                    }
-                  >
-                    Restore as new draft
-                  </DropdownMenuItem>
-                ) : null}
-                <DropdownMenuItem
-                  onClick={() =>
-                    announceUnbuilt('Duplicate as new draft', product.name)
-                  }
-                >
-                  Duplicate as new draft
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={!canViewLive}
-                  onClick={() => {
-                    if (canViewLive)
-                      announceUnbuilt('View Live Page', product.name);
-                  }}
-                >
-                  View Live Page
-                  {canViewLive ? null : ' (not live)'}
-                </DropdownMenuItem>
-                {product.status !== 'ARCHIVED' ? (
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onClick={() => onArchive(product.id)}
-                  >
-                    Archive
-                  </DropdownMenuItem>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+          <CatalogueRowActionsMenu
+            productName={row.name}
+            actions={row.actions}
+            onAction={(action) => onAction(row.id, action)}
+          />
         </TableCell>
       </TableRow>
 
       {expanded
-        ? product.variants.map((variant) => (
+        ? row.variants.map((variant) => (
             <CatalogueVariantRow
               key={variant.id}
               variant={variant}
-              onTogglePaused={(variantId) =>
-                onToggleVariantPaused(product.id, variantId)
+              onAction={(variantId, kind) =>
+                onVariantAction(row.id, variantId, kind)
               }
             />
           ))

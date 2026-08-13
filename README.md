@@ -260,20 +260,72 @@ Facts worth knowing before filing bugs:
   keys, so nothing is created twice. Failed rows stay selected for a one-click
   retry.
 
-`/listings` is now the REAL Product Catalogue: the steward seller's products
-out of the database, with server-side status tabs, SQL search, and pagination
-(`CATALOGUE_PAGE_SIZE` 50). The fictional 11-fixture preview - including the
-richer ADR-011 lifecycle vocabulary (`Live · Needs Attention`, `Auto-paused`,
-availability states, media status) that no column backs yet - moved unchanged
-to `/design-preview/product-catalogue`.
+`/listings` is the REAL Product Catalogue, in the full rich design: the
+eight-column table with expandable variant rows, the complete filter bar, bulk
+selection, and per-row actions - rendered from the steward seller's own
+database rows, with server-side status tabs, SQL search, and pagination
+(`CATALOGUE_PAGE_SIZE` 25 - the limit is RSC payload, not SQL, because each row
+carries its variants). The fictional 11-fixture preview stays unchanged at
+`/design-preview/product-catalogue`.
 
-`/listings/[productId]` is the REAL product editor: title and structured
-description are editable (the only real write surface, via
-`saveProductDraftAction` with optimistic concurrency); variants, supplier
-provenance, and the derived "Before this can publish" requirements render
-read-only from real rows. A description that already holds structured blocks
-is shown read-only and saved back VERBATIM on a title-only save - never
-silently flattened to paragraphs. The fixture editor preview stays at
+### One table, two worlds: `Tracked<T>`
+
+Both pages render the SAME components, through one view model
+(`src/lib/seller-center/product-catalogue/view.ts`). It exists because the rich
+UI was designed for a system with a stock-evidence store, a media pipeline and
+an attention system, and this system has none of the three - so the fixture
+types (`sellingPrice: MoneyValue`, `availability: Availability`,
+`mediaStatus: MediaStatus`, all non-nullable) cannot hold a real row without
+inventing `$0.00` and a specific availability state nobody checked.
+
+`Tracked<T>` has three arms, not two, because this screen has three states:
+
+| arm           | example                       | renders                                                    |
+| ------------- | ----------------------------- | ---------------------------------------------------------- |
+| `value`       | `variantCount = 12`           | the value                                                  |
+| `absent`      | `external_product_id IS NULL` | "No supplier reference"                                    |
+| `not-tracked` | `mediaStatus`                 | "Not tracked yet" + a tooltip naming the missing machinery |
+
+Collapsing the last two is how "no supplier reference" starts reading as "Sals3
+does not track suppliers". Two adapters feed it: `adapt-fixture.ts` (everything
+a `value`, so no pill can ever appear in the design preview) and
+`adapt-real.ts`, whose test asserts the full not-tracked set and greps the
+serialized output for `$0.00`/`Available`/`Clear`.
+
+What the real page DOES show, from real columns: title, Sals3 id, supplier
+reference, provider, connection health (via `source_candidate_id` provenance -
+`provider_product_references` deliberately carries no connection id), category
+path when mapped, supplier-side status, evidence sync state, when the evidence
+was captured, and per-variant SKU, raw supplier option label, observed cost and
+observed inventory. Price is three-way honest: no offer row at all is
+`not-tracked`; offers that exist with nothing resolved print the resolver's OWN
+`pricing_unavailable_reason` verbatim; a resolved price is real money.
+
+Availability, Media and the two quick-filter chips render **disabled with their
+reason on hover** rather than being removed - a seller looking for the filter
+should learn the dimension is not measured.
+
+**Archive is real.** `archiveProductsAction` → `archiveProduct` →
+`archiveProductForSteward`: compare-and-set on `products.version` with the
+steward filter and the legal source states (`UNPUBLISHED`/`PAUSED`) in the same
+`WHERE`, an audit event on both success and a lost race, and per-product
+outcomes so "archived 3, 1 already archived, 1 lost a race" is what the toast
+says. `PUBLISHED` is excluded even though the schema permits it. Pause renders
+disabled and explains that nothing is published.
+
+`/listings/[productId]` is the REAL product editor, in the seven-section design.
+Two sections are genuinely editable - title and structured description, via
+`saveProductDraftAction` with optimistic concurrency. The other five are
+server-rendered read-only slots, so the client shell holds state for exactly
+the fields that have a write path; giving Category, SKU, specifications, media
+order or variant price an input would let a seller type into something with
+nowhere to store it. `draft-readiness.ts` turns the derived
+`DraftMissingRequirement` codes into real `ReadinessIssue`s, which is what lets
+the reviewed readiness UI (`ReadinessIssueList`, `ReadinessSummary`,
+`EditorSectionNavigation`) run on real data. There is no Publish button, not
+even disabled. A description that already holds structured blocks is shown
+read-only and saved back VERBATIM on a title-only save - never silently
+flattened to paragraphs. The fixture editor preview stays at
 `/listings/new?fixture=`.
 
 ### Parked ticket: the real publish flow
