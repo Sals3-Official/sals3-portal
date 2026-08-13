@@ -220,6 +220,51 @@ export async function findProductForSteward(
   return rows[0] ?? null;
 }
 
+/**
+ * Archives one product, if it is still exactly what the caller last saw.
+ *
+ * Five conditions travel together in the `WHERE` clause and every one of them
+ * is load-bearing: the id (which row), the steward (that this tenant may act on
+ * it at all - folded into the same statement, never a read-then-write), the
+ * expected version (that a stale table loses the race), and the two source
+ * states. `PUBLISHED` is deliberately excluded even though the schema's CHECK
+ * constraints would permit it: taking a live listing down is a different
+ * decision from filing away a draft, and it belongs with the publish flow that
+ * does not exist yet.
+ *
+ * `null` means at least one condition failed and the caller cannot tell which -
+ * the same deliberate opacity as `saveDraftRevisionContent`.
+ */
+export async function archiveProductForSteward(
+  executor: Executor,
+  input: {
+    productId: string;
+    stewardSellerAccountId: string;
+    expectedVersion: number;
+    actorId: string;
+  },
+): Promise<ProductRow | null> {
+  const [row] = await executor
+    .update(products)
+    .set({
+      publicationState: 'ARCHIVED',
+      version: input.expectedVersion + 1,
+      updatedAt: new Date(),
+      updatedBy: input.actorId,
+    })
+    .where(
+      and(
+        eq(products.id, input.productId),
+        eq(products.stewardSellerAccountId, input.stewardSellerAccountId),
+        eq(products.version, input.expectedVersion),
+        inArray(products.publicationState, ['UNPUBLISHED', 'PAUSED']),
+      ),
+    )
+    .returning();
+
+  return row ?? null;
+}
+
 export async function insertProduct(
   executor: Executor,
   input: {

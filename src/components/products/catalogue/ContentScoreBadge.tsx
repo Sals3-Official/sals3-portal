@@ -11,11 +11,13 @@ import {
   CONTENT_READINESS_LABELS,
   type CatalogueProductFixture,
 } from '@/lib/seller-center/product-catalogue/types';
+import type { Tracked } from '@/lib/seller-center/product-catalogue/view';
+import NotTrackedPill from './NotTrackedPill';
 
 type ContentReadiness = CatalogueProductFixture['contentReadiness'];
 
 type ContentScoreBadgeProps = {
-  score: ContentReadiness;
+  score: Tracked<ContentReadiness>;
 };
 
 const TONE_BY_SCORE: Record<ContentReadiness, StatusPillTone> = {
@@ -39,23 +41,27 @@ const TIP_BY_SCORE: Record<ContentReadiness, string> = {
  * hard publication gate (availability, supplier health, media, attention).
  */
 export default function ContentScoreBadge({ score }: ContentScoreBadgeProps) {
+  if (score.kind !== 'value') return <NotTrackedPill tracked={score} />;
+
+  const state = score.value;
+
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <span className="inline-flex items-center gap-1">
             <StatusPill
-              label={`Content: ${CONTENT_READINESS_LABELS[score]}`}
-              tone={TONE_BY_SCORE[score]}
+              label={`Content: ${CONTENT_READINESS_LABELS[state]}`}
+              tone={TONE_BY_SCORE[state]}
             />
             <Info
-              aria-label={`What "${CONTENT_READINESS_LABELS[score]}" content readiness means`}
+              aria-label={`What "${CONTENT_READINESS_LABELS[state]}" content readiness means`}
               className="size-3.5 text-muted-foreground"
             />
           </span>
         }
       />
-      <TooltipContent>{TIP_BY_SCORE[score]}</TooltipContent>
+      <TooltipContent>{TIP_BY_SCORE[state]}</TooltipContent>
     </Tooltip>
   );
 }

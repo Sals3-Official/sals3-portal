@@ -45,6 +45,16 @@ async function importWithDb(rows: unknown[]) {
   return { queries, recorded };
 }
 
+/** The neutral filter set, so each test states only the field it is about. */
+const BASE = {
+  search: '',
+  searchField: 'NAME',
+  categoryId: null,
+  providerCode: null,
+} as const;
+
+const PAGE = { sort: 'CREATED_DESC', limit: 25, offset: 0 } as const;
+
 describe('catalogue queries tenancy', () => {
   /**
    * The steward filter must live in the SAME `WHERE` as every other predicate -
@@ -54,10 +64,9 @@ describe('catalogue queries tenancy', () => {
     const { queries, recorded } = await importWithDb([]);
 
     await queries.listCatalogueRowsForSteward('seller-a', {
+      ...BASE,
+      ...PAGE,
       states: ['UNPUBLISHED'],
-      search: '',
-      limit: 50,
-      offset: 0,
     });
 
     const actual = renderSql(recorded.wheres[0]);
@@ -76,14 +85,13 @@ describe('catalogue queries tenancy', () => {
     const { queries, recorded } = await importWithDb([{ total: 0 }]);
 
     await queries.countCatalogueRowsForSteward('seller-a', {
+      ...BASE,
       states: ['UNPUBLISHED', 'PUBLISHED'],
-      search: '',
     });
     await queries.listCatalogueRowsForSteward('seller-a', {
+      ...BASE,
+      ...PAGE,
       states: ['UNPUBLISHED', 'PUBLISHED'],
-      search: '',
-      limit: 50,
-      offset: 0,
     });
 
     expect(renderSql(recorded.wheres[0]).sql).toBe(
@@ -95,10 +103,10 @@ describe('catalogue queries tenancy', () => {
     const { queries, recorded } = await importWithDb([]);
 
     await queries.listCatalogueRowsForSteward('seller-a', {
+      ...BASE,
+      ...PAGE,
       states: ['UNPUBLISHED'],
       search: "50%_off'; drop table products;--",
-      limit: 50,
-      offset: 0,
     });
 
     const rendered = renderSql(recorded.wheres[0]);
