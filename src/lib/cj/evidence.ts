@@ -87,6 +87,21 @@ export type CandidateEvidence = {
   listedCount: number | null;
   /** Platform listing count, never units sold (spec section 8.2). */
   usableImageCount: number;
+  /**
+   * The allow-listed image URLs themselves, in CJ's own order with the primary
+   * image first.
+   *
+   * Added 2026-08-13 (`cj-evidence-v3`). Before this, `countUsableImages`
+   * computed exactly this set and then threw it away, keeping only the count —
+   * so the entire catalogue had one image per product, taken from a screening
+   * row, and a product detail page had nothing to build a gallery from.
+   *
+   * Still evidence, not a publishable asset: no bytes are fetched, so no
+   * checksum, content type, or dimensions exist here. A URL becomes servable
+   * only after `products/media-projection.ts` records it in
+   * `product_media_sources` with a rights basis (ADR-011 §6).
+   */
+  imageUrls: string[];
   variants: VariantEvidence[];
   warehouses: WarehouseEvidence[];
   reviews: ReviewEvidence;
@@ -109,16 +124,33 @@ function isAllowedImage(url: string): boolean {
   }
 }
 
-/** Counts only images we would actually be allowed to serve. */
-export function countUsableImages(detail: CjProductDetail): number {
-  const candidates = new Set<string>();
+/**
+ * Only the images we would actually be allowed to serve, de-duplicated, with
+ * the primary image first so a gallery's lead photo is CJ's own choice rather
+ * than whatever the set happened to list.
+ *
+ * The primary image goes through the same host allow-list as the set. It
+ * previously did not — `productImage` was added unconditionally — so a primary
+ * image on an unexpected host would have been counted as usable and, now that
+ * the URLs are kept, would have been recorded as servable.
+ */
+export function collectUsableImages(detail: CjProductDetail): string[] {
+  const urls = new Set<string>();
 
-  if (detail.productImage !== null) candidates.add(detail.productImage);
+  if (detail.productImage !== null && isAllowedImage(detail.productImage)) {
+    urls.add(detail.productImage);
+  }
+
   detail.productImageSet.filter(isAllowedImage).forEach((url) => {
-    candidates.add(url);
+    urls.add(url);
   });
 
-  return candidates.size;
+  return [...urls];
+}
+
+/** Counts only images we would actually be allowed to serve. */
+export function countUsableImages(detail: CjProductDetail): number {
+  return collectUsableImages(detail).length;
 }
 
 function parseUsd(value: string): number | null {
@@ -195,6 +227,7 @@ export default function toCandidateEvidence(input: {
   const inventoryByVid = new Map(
     input.variantInventories.map((entry) => [entry.vid, entry.inventory]),
   );
+  const imageUrls = collectUsableImages(input.detail);
 
   return {
     externalProductId: input.detail.pid,
@@ -210,7 +243,8 @@ export default function toCandidateEvidence(input: {
     sourceStatusRaw: input.detail.status,
     isTestProduct: input.detail.isTestProduct,
     listedCount: input.detail.listedNum,
-    usableImageCount: countUsableImages(input.detail),
+    usableImageCount: imageUrls.length,
+    imageUrls,
     variants: input.detail.variants.map((variant) => {
       const stockByOrigin = toStockByOrigin(
         inventoryByVid.get(variant.vid) ?? [],

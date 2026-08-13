@@ -4,6 +4,7 @@ import StatusPill from '@/components/seller-center/shared/StatusPill';
 import formatUtcDateTime from '@/lib/portal/format-datetime';
 import type { CandidateDetail } from '@/modules/catalog/candidates/candidate-detail';
 import CandidateEvidencePanel from '../CandidateEvidencePanel';
+import CaptureEvidenceButton from '../CaptureEvidenceButton';
 import { displayName, imageUrl } from '../candidate-view';
 import CandidateAbsentSection from './CandidateAbsentSection';
 import CandidateFeedImage from './CandidateFeedImage';
@@ -98,14 +99,26 @@ export default function SupplierEvidenceTab({
       </DetailSection>
 
       <DetailSection title="CJ detail evidence">
-        {snapshot === null ? (
-          <CandidateAbsentSection
-            kind="not-fetched"
-            message={ABSENT_COPY.notFetched}
+        {/*
+          The fetch control sits with the evidence it produces, in both states:
+          absent (nothing has been fetched) and present (re-observe a cost or
+          stock figure that has since moved). It is the only place in the
+          sourcing UI that spends CJ points, and it always takes a press.
+        */}
+        <div className="flex flex-col gap-3">
+          {snapshot === null ? (
+            <CandidateAbsentSection
+              kind="not-fetched"
+              message={ABSENT_COPY.notFetched}
+            />
+          ) : (
+            <CandidateEvidencePanel evidence={snapshot.evidence} />
+          )}
+          <CaptureEvidenceButton
+            candidateId={candidate.id}
+            hasSnapshot={snapshot !== null}
           />
-        ) : (
-          <CandidateEvidencePanel evidence={snapshot.evidence} />
-        )}
+        </div>
       </DetailSection>
 
       {snapshot === null ? null : (

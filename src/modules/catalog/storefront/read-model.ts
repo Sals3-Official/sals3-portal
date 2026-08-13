@@ -1,0 +1,607 @@
+import { and, asc, count, desc, eq, isNotNull, ne, sql } from 'drizzle-orm';
+import getDb, { type DbExecutor } from '@/lib/db/client';
+import {
+  productMediaSources,
+  productOffers,
+  productOptions,
+  productOptionValues,
+  productRevisions,
+  products,
+  productVariantOptionValues,
+  productVariants,
+  sals3Categories,
+} from '@/lib/db/schema';
+import {
+  descriptionDocumentSchema,
+  type DescriptionDocument,
+} from '@/modules/catalog/products/description-document';
+
+/**
+ * The public storefront's read model — the only query path behind
+ * `/api/storefront/*`.
+ *
+ * ## Two rules this module exists to enforce
+ *
+ * **No supplier call.** Every value here comes from the Sals3 catalogue
+ * tables. `sals3-ecommerce` used to be served a live CJ `/product/list`
+ * response on every uncached buyer request, which made the public storefront
+ * depend on CJ's uptime, spend CJ points per page view, and — most
+ * importantly — meant nothing a seller did in the Portal ever reached a
+ * buyer. Owner decision 2026-08-13: the storefront reads the database and
+ * nothing else. `storefront/no-supplier-calls.test.ts` asserts the import
+ * graph, so this is checked rather than remembered.
+ *
+ * **Publication is the gate, and it lives in the `WHERE` clause.** Not a
+ * post-`filter` in JavaScript: a predicate that can be forgotten at one call
+ * site is not a gate. Five conditions have to hold together before a row is
+ * public, and they are listed once, in `publishedScope()`, shared by the list
+ * query and its `count`.
+ *
+ * ## What is deliberately NOT filtered
+ *
+ * There is **no tenant filter**. The public catalogue is cross-seller on
+ * purpose — a buyer has no seller identity to scope to, and filtering to one
+ * `seller_account_id` would silently hide another seller's genuinely live
+ * product with no rule anywhere saying it should be hidden. `publication_state`
+ * is the authority.
+ *
+ * There is also **no `market_code` filter**. Adding one means reading a
+ * destination from the request and validating it against
+ * `resolveBuyerDestinationCountryPolicy()`, not hardcoding a constant here.
+ * Until that exists, every published offer is visible and the cheapest one
+ * prices the card.
+ *
+ * ## Why no `server-only` guard
+ *
+ * Same reason as `lib/security/step-up-challenge-core.ts`: `server-only`'s
+ * default export throws unconditionally outside Next's bundler condition,
+ * which would make this module untestable from Vitest — and its scope is
+ * exactly what most needs a test. The guard lives on the app-facing
+ * re-export, `lib/storefront/catalog-cache.ts`, and `getDb()` throws on any
+ * client import besides.
+ */
+
+export type StorefrontSection = 'for-you' | 'deals';
+
+export type StorefrontListRow = {
+  id: string;
+  slug: string;
+  title: string;
+  priceMinor: number;
+  priceCurrency: string;
+  availabilityState: 'UNKNOWN' | 'AVAILABLE' | 'UNAVAILABLE';
+  categoryCode: string | null;
+  categoryPath: string | null;
+  primaryImageUrl: string | null;
+  /** ISO 8601. A `Date` here would not survive `unstable_cache`'s JSON round-trip. */
+  publishedAt: string;
+};
+
+export type StorefrontPage = {
+  rows: StorefrontListRow[];
+  total: number;
+};
+
+export type StorefrontImage = { url: string };
+
+export type StorefrontVariant = {
+  id: string;
+  sku: string;
+  priceMinor: number;
+  currency: string;
+  availability: 'UNKNOWN' | 'AVAILABLE' | 'UNAVAILABLE';
+  /** Empty for a product with no option axes — one implicit variant. */
+  options: { name: string; value: string }[];
+};
+
+export type StorefrontDescription = {
+  blocks: DescriptionDocument['blocks'];
+};
+
+export type StorefrontSpecs = {
+  sku?: string;
+  weightGrams?: number;
+  lengthMillimeters?: number;
+  widthMillimeters?: number;
+  heightMillimeters?: number;
+  gtins?: string[];
+  mpn?: string;
+  brand?: string;
+  condition?: 'NEW' | 'REFURBISHED' | 'USED';
+};
+
+/**
+ * One product's full detail. Every optional field is **absent** when its rows
+ * do not exist, never defaulted — the consumer renders a section only when it
+ * has something real to put in it.
+ */
+export type StorefrontDetailRow = StorefrontListRow & {
+  images: StorefrontImage[];
+  description?: StorefrontDescription;
+  variants?: StorefrontVariant[];
+  specs?: StorefrontSpecs;
+};
+
+/** Bounds one gallery. Beyond this nobody scrolls and nobody reviews. */
+const MAX_DETAIL_IMAGES = 12;
+
+export type StorefrontCategoryRow = {
+  code: string;
+  path: string;
+};
+
+/**
+ * The five conditions that together make one row public. Any single one
+ * missing is a bug that publishes something, so they are written once and
+ * reused by both the page query and the count.
+ *
+ * - `publication_state = 'PUBLISHED'` — the product itself is live.
+ * - `slug IS NOT NULL` — enforced by `products_published_requires_slug` too,
+ *   but repeated here because the slug is the public URL and a null one would
+ *   produce an unreachable card.
+ * - `publish_state = 'PUBLISHED'` + `pricing_state = 'RESOLVED'` +
+ *   `price_amount_minor IS NOT NULL` — there is a real, explainable price.
+ *   `product_offers_published_requires_price` already forbids a priced-less
+ *   published offer; asserting it in the read too means a future schema
+ *   relaxation cannot leak an unpriced card.
+ * - `variants.status = 'ACTIVE'` — a `DRAFT` variant has no mapped option
+ *   combination, so its identity is not yet stable enough to sell.
+ */
+function publishedScope() {
+  return and(
+    eq(products.publicationState, 'PUBLISHED'),
+    isNotNull(products.slug),
+    isNotNull(products.publishedAt),
+    eq(productVariants.status, 'ACTIVE'),
+    eq(productOffers.publishState, 'PUBLISHED'),
+    eq(productOffers.pricingState, 'RESOLVED'),
+    isNotNull(productOffers.priceAmountMinor),
+  );
+}
+
+/**
+ * One product's display image: the first approved media row, product-level
+ * before variant-level, oldest observation first so the choice is stable
+ * across requests rather than whatever the planner returns.
+ *
+ * `review_state = 'APPROVED'` and `rights_basis <> 'UNKNOWN'` are both
+ * required. `product_media_sources_approved_requires_rights` makes the pair
+ * consistent at write time; requiring both here means a public image always
+ * has a recorded rights basis behind it (ADR-011 §6), and a product whose
+ * media has not been reviewed renders a placeholder rather than a supplier
+ * asset nobody cleared.
+ */
+const primaryImageUrl = sql<string | null>`(
+  select ${productMediaSources.sourceUrl}
+  from ${productMediaSources}
+  where ${productMediaSources.productId} = ${products.id}
+    and ${productMediaSources.reviewState} = 'APPROVED'
+    and ${productMediaSources.rightsBasis} <> 'UNKNOWN'
+    and ${productMediaSources.sourceUrl} is not null
+  order by (${productMediaSources.variantId} is null) desc,
+           ${productMediaSources.observedAt} asc,
+           ${productMediaSources.id} asc
+  limit 1
+)`;
+
+/**
+ * The lowest published price across a product's offers, in minor units.
+ *
+ * Typed as `string` because `price_amount_minor` is a `bigint` column and
+ * `postgres.js` returns aggregates over it as text. It is converted at this
+ * boundary rather than downstream, because the cached value is persisted with
+ * `JSON.stringify`, which throws on a real `bigint`.
+ */
+const lowestPriceMinor = sql<
+  string | null
+>`min(${productOffers.priceAmountMinor})`;
+
+/**
+ * The currency belonging to that lowest price — not `min(price_currency)`,
+ * which would be alphabetically smallest and could pair an amount with a
+ * different currency's code the moment two markets are published.
+ */
+const lowestPriceCurrency = sql<string | null>`(
+  array_agg(${productOffers.priceCurrency} order by ${productOffers.priceAmountMinor} asc)
+)[1]`;
+
+/**
+ * `AVAILABLE` wins over `UNKNOWN`, which wins over `UNAVAILABLE`, when a
+ * product has several published offers. Folded in SQL rather than in a JS
+ * reduce so it survives the `GROUP BY` — the alternative is fetching every
+ * offer row per product just to collapse three enum values.
+ */
+const availabilityState = sql<'UNKNOWN' | 'AVAILABLE' | 'UNAVAILABLE'>`
+  case
+    when bool_or(${productOffers.availabilityState} = 'AVAILABLE') then 'AVAILABLE'
+    when bool_or(${productOffers.availabilityState} = 'UNKNOWN') then 'UNKNOWN'
+    else 'UNAVAILABLE'
+  end`;
+
+const LIST_SELECTION = {
+  id: products.id,
+  slug: products.slug,
+  title: products.title,
+  publishedAt: products.publishedAt,
+  priceMinor: lowestPriceMinor,
+  priceCurrency: lowestPriceCurrency,
+  availabilityState,
+  categoryCode: sql<string | null>`min(${sals3Categories.code})`,
+  categoryPath: sql<string | null>`min(${sals3Categories.path})`,
+  primaryImageUrl,
+} as const;
+
+function listBase(executor: DbExecutor) {
+  return executor
+    .select(LIST_SELECTION)
+    .from(products)
+    .innerJoin(
+      productRevisions,
+      eq(productRevisions.id, products.publishedRevisionId),
+    )
+    .innerJoin(productVariants, eq(productVariants.productId, products.id))
+    .innerJoin(productOffers, eq(productOffers.variantId, productVariants.id))
+    .leftJoin(sals3Categories, eq(sals3Categories.id, products.categoryId));
+}
+
+type ListQueryRow = {
+  id: string;
+  slug: string | null;
+  title: string;
+  publishedAt: Date | null;
+  priceMinor: string | null;
+  priceCurrency: string | null;
+  availabilityState: 'UNKNOWN' | 'AVAILABLE' | 'UNAVAILABLE';
+  categoryCode: string | null;
+  categoryPath: string | null;
+  primaryImageUrl: string | null;
+};
+
+function toListRow(row: ListQueryRow): StorefrontListRow | null {
+  // `publishedScope()` already excludes each of these, so a null here means
+  // the scope and this mapper have drifted apart. Dropping the row keeps a
+  // half-published product out of the feed instead of emitting `null` fields
+  // the consumer's schema would reject for the whole page.
+  if (row.slug === null || row.publishedAt === null) return null;
+  if (row.priceMinor === null || row.priceCurrency === null) return null;
+
+  const priceMinor = Number(row.priceMinor);
+
+  if (!Number.isSafeInteger(priceMinor) || priceMinor <= 0) return null;
+
+  return {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    priceMinor,
+    priceCurrency: row.priceCurrency,
+    availabilityState: row.availabilityState,
+    categoryCode: row.categoryCode,
+    categoryPath: row.categoryPath,
+    primaryImageUrl: row.primaryImageUrl,
+    publishedAt: row.publishedAt.toISOString(),
+  };
+}
+
+/**
+ * One page of published products.
+ *
+ * `LIMIT/OFFSET` on the caller's own `limit` — not a supplier page size. The
+ * old CJ-backed feed passed `page` straight through to CJ while slicing to
+ * `limit`, so at `limit=14` items 15–20 of every CJ page of 20 were
+ * unreachable on any page number, and `totalPages` was computed from a
+ * different denominator than the one being served. Real offsets remove the
+ * class of bug, not just the instance.
+ *
+ * `section` is an ordering, never a claim:
+ * - `for-you` — newest publication first.
+ * - `deals` — cheapest first. This is **not** a discount: no `compare_at`
+ *   price is read and none is published (ADR-003 forbids a was/now pair that
+ *   no sale ever happened at).
+ */
+export async function listPublishedProducts(
+  input: { section: StorefrontSection; page: number; limit: number },
+  executor: DbExecutor = getDb(),
+): Promise<StorefrontPage> {
+  const scope = publishedScope();
+  const grouped = listBase(executor).where(scope).groupBy(products.id);
+  const ordered =
+    input.section === 'deals'
+      ? grouped.orderBy(asc(lowestPriceMinor), asc(products.id))
+      : grouped.orderBy(desc(products.publishedAt), asc(products.id));
+
+  const [rows, totals] = await Promise.all([
+    ordered.limit(input.limit).offset((input.page - 1) * input.limit),
+    // Distinct products, not offer rows: the joins fan out one product into
+    // one row per published offer, so `count()` would over-report the total
+    // and invent pages that render empty.
+    executor
+      .select({ total: count(sql`distinct ${products.id}`) })
+      .from(products)
+      .innerJoin(
+        productRevisions,
+        eq(productRevisions.id, products.publishedRevisionId),
+      )
+      .innerJoin(productVariants, eq(productVariants.productId, products.id))
+      .innerJoin(productOffers, eq(productOffers.variantId, productVariants.id))
+      .where(scope),
+  ]);
+
+  return {
+    rows: rows
+      .map(toListRow)
+      .filter((row): row is StorefrontListRow => row !== null),
+    total: totals[0]?.total ?? 0,
+  };
+}
+
+/**
+ * One published product by its public slug.
+ *
+ * Resolved by slug, never by `products.id`: `sals3-ecommerce`'s
+ * `fetchProductBySlug` puts the slug in the path (its route folder is named
+ * `[id]` for historical reasons) and its cards link by slug. The predicate is
+ * `publishedScope()` plus the slug, so "not a published product" and "no such
+ * slug" are the same answer — the caller cannot distinguish an unpublished
+ * product from a nonexistent one, which is the honest posture for a public
+ * endpoint.
+ */
+/**
+ * Every approved image for the product, product-level first, then by
+ * observation order — the same precedence the card's single image uses, so the
+ * gallery's lead photo is the one the card showed.
+ */
+async function loadApprovedImages(
+  executor: DbExecutor,
+  productId: string,
+): Promise<StorefrontImage[]> {
+  const rows = await executor
+    .select({ url: productMediaSources.sourceUrl })
+    .from(productMediaSources)
+    .where(
+      and(
+        eq(productMediaSources.productId, productId),
+        eq(productMediaSources.reviewState, 'APPROVED'),
+        ne(productMediaSources.rightsBasis, 'UNKNOWN'),
+        isNotNull(productMediaSources.sourceUrl),
+      ),
+    )
+    .orderBy(
+      sql`(${productMediaSources.variantId} is null) desc`,
+      asc(productMediaSources.observedAt),
+      asc(productMediaSources.id),
+    )
+    .limit(MAX_DETAIL_IMAGES);
+
+  return rows
+    .map((row) => row.url)
+    .filter((url): url is string => url !== null)
+    .map((url) => ({ url }));
+}
+
+/**
+ * The frozen description of the revision that was published — never the live
+ * `content_document`, which a seller may have edited since.
+ *
+ * Returns `null` for an empty document, which is the current state of every
+ * product: CJ's own `description` is unsanitised supplier HTML and this
+ * repository has no sanitiser, so a CJ-sourced draft starts from an honestly
+ * empty document that the seller fills in.
+ */
+async function loadDescriptionBlocks(
+  executor: DbExecutor,
+  productId: string,
+): Promise<StorefrontDescription | null> {
+  const rows = await executor
+    .select({ snapshot: productRevisions.contentSnapshot })
+    .from(products)
+    .innerJoin(
+      productRevisions,
+      eq(productRevisions.id, products.publishedRevisionId),
+    )
+    .where(eq(products.id, productId))
+    .limit(1);
+  const parsed = descriptionDocumentSchema.safeParse(rows[0]?.snapshot);
+
+  if (!parsed.success || parsed.data.blocks.length === 0) return null;
+
+  return { blocks: parsed.data.blocks };
+}
+
+/**
+ * The published variants, each with the option values that identify it.
+ *
+ * A variant with no mapped options is still returned: it is the single implicit
+ * variant of a product that has no axes, and the consumer renders no selector
+ * for it. What is never returned is a variant whose offer is not published —
+ * the same `publishedScope()` conditions apply per row.
+ */
+async function loadPublishedVariants(
+  executor: DbExecutor,
+  productId: string,
+): Promise<StorefrontVariant[]> {
+  const rows = await executor
+    .select({
+      id: productVariants.id,
+      sku: productVariants.sals3Sku,
+      priceMinor: productOffers.priceAmountMinor,
+      priceCurrency: productOffers.priceCurrency,
+      availability: productOffers.availabilityState,
+      optionName: productOptions.name,
+      optionValue: productOptionValues.label,
+      optionPosition: productOptions.position,
+    })
+    .from(productVariants)
+    .innerJoin(productOffers, eq(productOffers.variantId, productVariants.id))
+    .leftJoin(
+      productVariantOptionValues,
+      eq(productVariantOptionValues.variantId, productVariants.id),
+    )
+    .leftJoin(
+      productOptions,
+      eq(productOptions.id, productVariantOptionValues.optionId),
+    )
+    .leftJoin(
+      productOptionValues,
+      eq(productOptionValues.id, productVariantOptionValues.optionValueId),
+    )
+    .where(
+      and(
+        eq(productVariants.productId, productId),
+        eq(productVariants.status, 'ACTIVE'),
+        eq(productOffers.publishState, 'PUBLISHED'),
+        eq(productOffers.pricingState, 'RESOLVED'),
+        isNotNull(productOffers.priceAmountMinor),
+      ),
+    )
+    .orderBy(asc(productVariants.sals3Sku), asc(productOptions.position));
+
+  // One row per variant × option, folded back into one variant per id. Done in
+  // JS rather than with an aggregate so the option order stays the seller's
+  // `position` rather than whatever a string_agg produced.
+  const byVariant = new Map<string, StorefrontVariant>();
+
+  rows.forEach((row) => {
+    const priceMinor = Number(row.priceMinor);
+
+    if (!Number.isSafeInteger(priceMinor) || priceMinor <= 0) return;
+    if (row.priceCurrency === null) return;
+
+    const existing = byVariant.get(row.id) ?? {
+      id: row.id,
+      sku: row.sku,
+      priceMinor,
+      currency: row.priceCurrency,
+      availability: row.availability,
+      options: [],
+    };
+
+    if (row.optionName !== null && row.optionValue !== null) {
+      existing.options.push({ name: row.optionName, value: row.optionValue });
+    }
+
+    byVariant.set(row.id, existing);
+  });
+
+  return [...byVariant.values()];
+}
+
+/**
+ * Physical and identifier facts, assembled field by field.
+ *
+ * Every one is omitted when null. `weight_grams` and the dimensions are
+ * supplier-reported, not Sals3-verified — the consumer is responsible for
+ * labelling them as such. `gtins`, `mpn`, and `brand_name` are never invented
+ * (ADR-013 §7); `brand_name` is only read when `brand_mode` says a brand was
+ * actually declared.
+ */
+async function loadSpecs(
+  executor: DbExecutor,
+  productId: string,
+): Promise<StorefrontSpecs | null> {
+  const rows = await executor
+    .select({
+      sku: productVariants.sals3Sku,
+      weightGrams: productVariants.weightGrams,
+      lengthMillimeters: productVariants.lengthMillimeters,
+      widthMillimeters: productVariants.widthMillimeters,
+      heightMillimeters: productVariants.heightMillimeters,
+      gtins: productVariants.gtins,
+      mpn: productVariants.mpn,
+      brandMode: products.brandMode,
+      brandName: products.brandName,
+      condition: products.condition,
+    })
+    .from(products)
+    .innerJoin(productVariants, eq(productVariants.productId, products.id))
+    .where(
+      and(eq(products.id, productId), eq(productVariants.status, 'ACTIVE')),
+    )
+    .orderBy(asc(productVariants.sals3Sku))
+    .limit(1);
+  const row = rows[0];
+
+  if (row === undefined) return null;
+
+  const specs: StorefrontSpecs = {
+    ...(row.sku === null ? {} : { sku: row.sku }),
+    ...(row.weightGrams === null ? {} : { weightGrams: row.weightGrams }),
+    ...(row.lengthMillimeters === null
+      ? {}
+      : { lengthMillimeters: row.lengthMillimeters }),
+    ...(row.widthMillimeters === null
+      ? {}
+      : { widthMillimeters: row.widthMillimeters }),
+    ...(row.heightMillimeters === null
+      ? {}
+      : { heightMillimeters: row.heightMillimeters }),
+    ...(row.gtins === null || row.gtins.length === 0
+      ? {}
+      : { gtins: row.gtins }),
+    ...(row.mpn === null ? {} : { mpn: row.mpn }),
+    ...(row.brandMode === 'DECLARED' && row.brandName !== null
+      ? { brand: row.brandName }
+      : {}),
+    ...(row.condition === null ? {} : { condition: row.condition }),
+  };
+
+  return Object.keys(specs).length === 0 ? null : specs;
+}
+
+export async function findPublishedProductBySlug(
+  slug: string,
+  executor: DbExecutor = getDb(),
+): Promise<StorefrontDetailRow | null> {
+  const rows = await listBase(executor)
+    .where(and(publishedScope(), eq(products.slug, slug)))
+    .groupBy(products.id)
+    .limit(1);
+  const base = rows[0] === undefined ? null : toListRow(rows[0]);
+
+  if (base === null) return null;
+
+  const [images, description, variants, specs] = await Promise.all([
+    loadApprovedImages(executor, base.id),
+    loadDescriptionBlocks(executor, base.id),
+    loadPublishedVariants(executor, base.id),
+    loadSpecs(executor, base.id),
+  ]);
+
+  return {
+    ...base,
+    images,
+    // Every one of these is omitted rather than defaulted when its rows do not
+    // exist. An empty `description` key would tell the consumer a description
+    // exists and is blank; absent says nobody has written one.
+    ...(description === null ? {} : { description }),
+    ...(variants.length === 0 ? {} : { variants }),
+    ...(specs === null ? {} : { specs }),
+  };
+}
+
+/**
+ * The categories that actually have something to browse.
+ *
+ * Derived from published products rather than from the taxonomy table, so no
+ * empty category tile ever renders. A category with no live product is not a
+ * navigable category.
+ */
+export async function listPublishedCategories(
+  executor: DbExecutor = getDb(),
+): Promise<StorefrontCategoryRow[]> {
+  return executor
+    .selectDistinct({
+      code: sals3Categories.code,
+      path: sals3Categories.path,
+    })
+    .from(products)
+    .innerJoin(
+      productRevisions,
+      eq(productRevisions.id, products.publishedRevisionId),
+    )
+    .innerJoin(productVariants, eq(productVariants.productId, products.id))
+    .innerJoin(productOffers, eq(productOffers.variantId, productVariants.id))
+    .innerJoin(sals3Categories, eq(sals3Categories.id, products.categoryId))
+    .where(and(publishedScope(), ne(sals3Categories.path, '')))
+    .orderBy(asc(sals3Categories.path));
+}

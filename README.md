@@ -229,8 +229,8 @@ Redis, KV, or paid cache service is used for this path.
 | `/api/internal/catalog/evaluations/recheck-policy-version` | Protected (same `DISCOVERY_CONTROL_SECRET`) - bounded, idempotent re-evaluation of decisions taken under an obsolete policy version. Runs **while discovery is paused** and spends no CJ points; see [Re-opening decisions after a policy change](#re-opening-decisions-after-a-policy-change)                                                                                                                                                                                 |
 | `/api/webhooks/cj`                                         | CJ webhook receiver: raw-body Base64 HMAC-SHA256 verification (secret = the connection's CJ `openId`, stored encrypted), size-capped, messageId-deduplicated, acknowledged in well under CJ's 3-second window; heavy work happens in the queue                                                                                                                                                                                                                                 |
 | `/api/queues/catalog-discovery`                            | Private Vercel Queues push consumer (air-gapped by the platform - no public URL); every message re-validates and re-authorizes against the database                                                                                                                                                                                                                                                                                                                            |
-| `/api/storefront/products`                                 | Protected product feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `/api/storefront/products/[id]`                            | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `/api/storefront/products`                                 | Protected published-catalogue feed for `sals3-ecommerce` (database only)                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `/api/storefront/products/[id]`                            | Protected single-product lookup by public slug for `sals3-ecommerce`'s PDP                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `/api/storefront/categories`                               | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ## Candidate detail drawer
@@ -1814,12 +1814,14 @@ seller_account_id`. `connectCjSupplier` claims the binding as the first
   unique index allows only one connection per seller per provider) rather than
   blocking it as already-connected.
 - **`CJ_API_KEY` is not read at request time at all.** It is only used by
-  `npm run bootstrap:cj` to seed the one Sals3 Official Dropshipper
-  connection from it once. The
-  [storefront product feed](#storefront-product-feed) — the last runtime
-  consumer of the legacy global-key path — now also reads through that
-  seller's own connection (`src/lib/storefront/supplier-source.ts`); the
-  legacy `src/services/cj/{token,products}.ts` modules are deleted.
+  `npm run bootstrap:cj` to seed the one Sals3 Official Dropshipper connection
+  from it once; the legacy `src/services/cj/{token,products}.ts` modules are
+  deleted. The [storefront product feed](#storefront-product-feed) used to be the
+  last runtime consumer of that path, resolving a headless connection through
+  `src/lib/storefront/supplier-source.ts`. Both that module and the feed's CJ
+  cache were **deleted on 2026-08-13**: the storefront now reads the published
+  catalogue from the database, and its import graph is forbidden from reaching a
+  supplier adapter at all.
 - **Not implemented:** `subscribeProducts` on the adapter interface throws
   deliberately — no CJ webhook/subscription endpoint has been verified
   against the live API. A second provider (AliExpress or otherwise) is not
@@ -1884,12 +1886,12 @@ MCP token in `CJ_MCP_TOKEN` is stored but unused by this REST integration.
 
 ## Storefront product feed
 
-`sals3-ecommerce` reads home page products from the protected storefront API:
+`sals3-ecommerce` reads products from the protected storefront API:
 
 ```text
 GET /api/storefront/products?section=for-you&page=1&limit=14
 GET /api/storefront/products?section=deals&limit=5
-GET /api/storefront/products/<id>
+GET /api/storefront/products/<slug>
 GET /api/storefront/categories
 ```
 
@@ -1899,66 +1901,146 @@ Each request must send:
 Authorization: Bearer <SALS3_STOREFRONT_API_TOKEN>
 ```
 
-The API reads the CJdropshipping supplier feed through the **Sals3 Official
-Dropshipper's own supplier connection** (`src/lib/storefront/supplier-source.ts`
-resolves it headlessly by the shared `SALS3_OFFICIAL_IDENTITY_ID` constant and
-fetches through the same per-connection adapter `/products` uses — see
-[Supplier Apps](#supplier-apps-multi-tenant-provider-connections)). The feed
-therefore needs `DATABASE_URL`, `SUPPLIER_CREDENTIAL_MASTER_KEY_BASE64`, and a
-one-time `npm run bootstrap:cj`; without them every feed request returns `502`
-(same envelope the consumer already tolerates). The routes' own auth stays the
-`SALS3_STOREFRONT_API_TOKEN` bearer check — the legacy dev-session
-`requirePermission('product:read')` call was dropped from this
-machine-to-machine path because it only ever read the synthetic placeholder
-session. A 5-minute in-process response cache still fronts the adapter, so a
-page refresh does not spend a CJ call. It
-skips supplier rows with no usable price, converts the
-supplier USD price to a PHP shopper price with `CJ_USD_TO_PHP_RATE` and
-`CJ_PRICE_MARKUP_PERCENT`, and never exposes the supplier USD price to
-`sals3-ecommerce`. The `deals` section uses CJ `listedCount` as a temporary rank
-when available. Responses use `Cache-Control: private, no-store` because the
-feed is protected and can change when CJ changes.
+### It reads the database, and nothing else
 
-**The USD/PHP rate updates itself.** Shopper prices are no longer computed
-from a hand-typed exchange rate. `src/lib/storefront/fx.ts` fetches the
-European Central Bank's published reference rate (via Frankfurter, falling back
-to `open.er-api.com`), caches it for 12 hours, and adds
-`CJ_FX_BUFFER_PERCENT` (2.5%) on top — money-changer logic, because a mid-market rate
-is not one anyone can actually transact at: paying CJ in dollars costs more
-than mid once the card or wallet takes its own spread. The 2.5% is sized from
-real published rail costs — a PH credit card runs about 1.85% (1% card-network
-assessment plus ~0.85% issuer FX) and PayPal 3–4% — not guessed. ECB publishes
-once per business day on purpose, so shopper prices change at most daily rather
-than drifting all afternoon.
+Owner decision, 2026-08-13. Every value comes from the Sals3 catalogue tables
+via `src/modules/catalog/storefront/read-model.ts`; no supplier adapter is
+reachable from the routes' import graph, which
+`src/modules/catalog/storefront/no-supplier-calls.test.ts` asserts by walking
+that graph rather than by spying on one code path.
 
-Lower it if the CJ wallet is topped up by wire transfer or Payoneer: CJ pays a
-2–3% top-up bonus that offsets most of the FX cost, and those are the only two
-methods that can top the wallet up. Paying per order by card or PayPal instead
-spends that spread every time.
+What this replaced, and why it mattered:
 
-It fails safe and never blocks a page: each source gets a 4-second timeout, an
-implausible rate (outside 30–120, or more than 10% from the last known good) is
-rejected rather than priced on, and a failed refresh falls back to the last
-good rate, then to `CJ_USD_TO_PHP_RATE`, logging `[storefront-fx]` when it does.
-A stale rate silently costs margin, so that log matters.
+- **The storefront was down.** The old feed resolved a headless CJ connection by
+  the shared `SALS3_OFFICIAL_IDENTITY_ID` constant — the literal `'dev-user'`.
+  That seller's connection was purged, so every buyer request answered
+  `502 CJ supplier feed unavailable`. No request path reads that constant now.
+- **Nothing a seller did ever reached a buyer.** The feed served a live CJ
+  `/product/list` response, so `products`, `product_variants`, `product_offers`,
+  and `product_media_sources` had no effect on the shop at all.
+- **Every uncached page view spent CJ points** on the most points-expensive route
+  CJ documents — the budget ADR-013 §5 reserves for checkout and accepted-order
+  protection.
 
-**No comparison price is published.** `oldPriceMinor` always equals
-`priceMinor`, so the storefront renders one price with no strikethrough and no
-percent-off badge. The field remains in the contract because the consumer's
-schema requires it and because a genuine value can fill it once real price
-history exists. It must never be derived from the current price — a was/now
-pair invented by marking the live price up is not evidence of a prior price,
-and ADR-003 prohibits it. The `deals` section is therefore a ranked selection,
+### Publication is the gate, in the `WHERE` clause
+
+Five conditions hold together before a row is public, listed once in
+`publishedScope()` and shared by the page query and its count:
+`products.publication_state = 'PUBLISHED'`, a non-null slug, an `ACTIVE`
+variant, and an offer that is `PUBLISHED` with `pricing_state = 'RESOLVED'` and
+a non-null amount. Approved media with a recorded rights basis is what supplies
+the image (ADR-011 §6).
+
+Two things are deliberately **not** filtered. There is no tenant filter — the
+public catalogue is cross-seller, and scoping it to one seller would hide
+another's genuinely live product with no rule saying so. There is no
+`market_code` filter either; adding one means validating a request parameter
+against `resolveBuyerDestinationCountryPolicy()`, not hardcoding a constant.
+
+### Pagination and caching
+
+Real `LIMIT`/`OFFSET` on the caller's own `limit`. The old feed passed `page`
+straight to CJ while slicing to `limit`, so at `limit=14` items 15–20 of every
+CJ page of 20 were unreachable on any page, and `totalPages` used a different
+denominator than the one being served (finding 1 of the 2026-08-06 code review).
+
+`src/lib/storefront/catalog-cache.ts` memoises reads per request (`React.cache`)
+and across requests (`unstable_cache`, 30 s, tag `storefront-catalog`), matching
+`status-counts-cache.ts` so this repository has one caching idiom rather than
+three. Publishing or pausing a product calls `updateTag` on that tag, so a
+change is visible immediately rather than up to 30 seconds later. The
+unbounded module-level `Map` the CJ feed used — keyed partly by a
+buyer-controlled `pid`, evicted only on a same-key hit (finding 3) — is gone with
+it. Responses stay `Cache-Control: private, no-store`: the payload sits behind a
+bearer token.
+
+### Prices are USD, resolved once at publish time
+
+`product_offers.price_amount_minor` is set by
+`src/modules/pricing/resolver.ts` inside the publish transaction, with its
+policy layers and resolver version frozen onto the row (ADR-015 §7). A buyer
+request performs no FX and no markup arithmetic. ADR-003 phase 1 is USD, and
+`modules/pricing/reference-fx.ts` resolves only the identity rate, so USD is the
+only currency that can currently be produced — see
+`modules/market-config/capabilities.ts` for what AUD would additionally require.
+
+The response carries an explicit `currency` field so the consumer never has to
+assume one. `src/lib/storefront/fx.ts` (USD→PHP) no longer prices anything
+customer-facing and is forbidden to the storefront's import graph.
+
+### The contract is additive-only
+
+`sals3-ecommerce`'s Zod schema **rejects the entire page** if a legacy key is
+missing or empty. So every legacy key stays, every new key is optional, and the
+portal ships first. `ratingLine` and `shipLine` are kept as deprecated
+non-claims — "No reviews yet" and "Delivery quoted at checkout" — because the
+consumer requires non-empty strings, and Sals3 has neither buyer reviews nor a
+delivery estimate. They leave this contract once the consumer makes them
+optional. `src/lib/storefront/catalog-feed.test.ts` locks the required key set.
+
+New fields: `currency`, `availability`, `categoryName`, and — on the single
+product endpoint — `publishedAt`, `categoryPath`, `images[]`, `description`
+blocks from the frozen published revision, `variants[]` with their options, and
+`specs`. Each is **omitted** when its rows do not exist, never defaulted: an
+absent description means nobody has written one, which is a different fact from
+an empty one.
+
+`shipsFrom` is omitted in v1 on purpose. No product, variant, or offer column
+holds a stock-origin country, and the only source is seller-scoped screening
+evidence a public query must not join to. Adding it properly is a migration.
+
+**No comparison price is published.** `oldPriceMinor` equals `priceMinor`, so
+the storefront renders one price with no strikethrough and no percent-off badge.
+It must never be derived from the current price — a was/now pair invented by
+marking the live price up is not evidence of a prior price, and ADR-003
+prohibits it. `product_offers_compare_at_requires_evidence` enforces the same
+rule at the database level. The `deals` section is an ordering (cheapest first),
 not a discount claim.
 
-`/api/storefront/products/<id>` fetches exactly one product by CJ's `pid` (via
-CJ's `product/list?pid=` filter — a single upstream call, one CJ rate-limit
-hit) instead of paging through a section, for `sals3-ecommerce`'s product
-detail page. Returns `404` when no product matches. Added after
-`sals3-ecommerce`'s PDP shipped a client-side workaround that paged through
-whole sections to find one product — safe at small scale, but capable of
-hammering CJ's one-request-per-second limit against the real catalogue; this
-endpoint replaces that workaround with one request.
+### Failure envelopes
+
+`401` without a valid bearer. `404` from the single-product route for a
+non-slug, an unknown slug, and an unpublished product — one indistinguishable
+answer, so a caller cannot enumerate drafts. `503 Catalog temporarily
+unavailable` for anything unexpected, logged server-side and never returned in
+the body. The old handler collapsed a missing credential, a rate limit, and an
+unreachable upstream into one opaque `502` and rethrew everything else —
+including `PermissionError` — into an unhandled 500 (finding 7).
+
+### Getting a product into the shop
+
+The storefront shows only published products, and publication has its own
+prerequisites:
+
+1. `npm run seed:taxonomy` and `npm run seed:taxonomy-presets` — `sals3_categories`
+   starts empty.
+2. `tsx scripts/approve-cj-category-mapping.mts --external-category-id … --sals3-code … --confidence EXACT --reason "…"`
+   — approves one CJ→Sals3 mapping and applies it. A **script**, not a screen:
+   category governance is platform authority, denied to every portal role
+   including `admin` (ADR-014), and `taxonomy/boundaries.test.ts` forbids any
+   `src/app` import of those modules.
+3. Activate a market profile, a category margin policy, and a funding buffer in
+   **Market Rules** — all three already have UI.
+4. Fetch supplier evidence for the candidate from the Product Sourcing detail
+   drawer's "CJ detail evidence" section. This is the one place in the sourcing
+   UI that spends CJ points (three requests per candidate), so it always takes a
+   press, is `product:import`-gated, rate-limited, and audited.
+5. Re-run the draft flow so variants, per-variant costs, and supplier bindings
+   materialise, then press **Publish to storefront** on the Product Catalogue row.
+
+`publishProduct` refuses with a specific reason rather than a constraint error
+whenever a fact is missing: `NO_ACTIVE_VARIANT`, `CATEGORY_UNMAPPED`,
+`NO_APPROVED_MEDIA`, `PRICING_UNRESOLVED` (carrying the resolver's own reason),
+`NO_ACTIVE_MARKET_PROFILE`, `CURRENCY_NOT_AUTHORIZED`, `NO_SUPPLIER_COST`,
+`NO_ACTIVE_SUPPLIER_BINDING`, `NO_PUBLISHABLE_REVISION`, `SLUG_UNAVAILABLE`.
+Nothing is fabricated to get past a gate. `unpublishProduct` pauses a live
+product and keeps its slug, so a republish keeps the same public URL.
+
+Slugs come from `products.title` — the Sals3-owned editorial field — never from
+the CJ `pid` the old feed leaked into every public URL. The slug and the
+publication flip are one statement, because
+`products_public_slug_key` is a partial index over `PUBLISHED` rows and a
+separately written slug could not conflict.
 
 ## Image delivery
 

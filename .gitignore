@@ -35,6 +35,15 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# `.env*` matches only files that START with `.env`, so the real per-environment
+# files this repository actually uses — `prod.env.local`, `dev.env.local`, copied
+# over `.env.local` to switch targets — were NOT ignored. They hold a production
+# `DATABASE_URL` with its password, `CJ_API_KEY`, `BETTER_AUTH_SECRET`,
+# `RESEND_API_KEY`, and `SUPPLIER_CREDENTIAL_MASTER_KEY_BASE64`. One `git add -A`
+# would have published all of it.
+*.env.local
+*.env.production.local
+
 # ...except the template, which holds variable names and no values. Teammates
 # need it to know what to set, so it must be committable.
 !.env.example

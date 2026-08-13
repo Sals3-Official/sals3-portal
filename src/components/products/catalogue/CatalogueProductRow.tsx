@@ -27,6 +27,7 @@ import AvailabilityBadge from './AvailabilityBadge';
 import CatalogueVariantRow from './CatalogueVariantRow';
 import ContentScoreBadge from './ContentScoreBadge';
 import MediaStatusBadge from './MediaStatusBadge';
+import PublishProductButton from './PublishProductButton';
 import SupplierConnectionHealthBadge from './SupplierConnectionHealthBadge';
 
 type CatalogueProductRowProps = {
@@ -206,6 +207,20 @@ export default function CatalogueProductRow({
             >
               Edit
             </Link>
+            {/*
+              Only for a real persisted row. `productVersion` is the
+              compare-and-set token the publish action requires, and an
+              illustrative fixture has no row to contend with — offering the
+              control there would send a guessed version at a product that does
+              not exist.
+            */}
+            {product.productVersion === undefined ? null : (
+              <PublishProductButton
+                productId={product.sals3ProductId}
+                productVersion={product.productVersion}
+                isLive={isLive}
+              />
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={

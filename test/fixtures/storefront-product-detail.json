@@ -1,0 +1,84 @@
+{
+  "product": {
+    "id": "90a329b9-56aa-4f54-abb2-ad843602aa73",
+    "slug": "mens-short-style-cold-weather-waterproof-shell-jacket",
+    "title": "Mens Short-Style Cold-Weather Waterproof Shell Jacket",
+    "currency": "USD",
+    "priceMinor": 4299,
+    "oldPriceMinor": 4299,
+    "imageUrl": "https://cf.cjdropshipping.com/quick/product/a.jpg",
+    "imageAlt": "Mens Short-Style Cold-Weather Waterproof Shell Jacket",
+    "ratingLine": "No reviews yet",
+    "shipLine": "Delivery quoted at checkout",
+    "category": "cat-app-100412",
+    "categoryName": "Men's Jackets",
+    "categoryPath": "Apparel > Outerwear > Men's Jackets",
+    "availability": "AVAILABLE",
+    "publishedAt": "2026-08-13T01:02:03.000Z",
+    "images": [
+      {
+        "url": "https://cf.cjdropshipping.com/quick/product/a.jpg",
+        "alt": "Mens Short-Style Cold-Weather Waterproof Shell Jacket"
+      },
+      {
+        "url": "https://oss-cf.cjdropshipping.com/quick/product/b.jpg",
+        "alt": "Mens Short-Style Cold-Weather Waterproof Shell Jacket"
+      }
+    ],
+    "description": {
+      "blocks": [
+        { "type": "heading", "level": 2, "text": "Built for cold mornings" },
+        {
+          "type": "paragraph",
+          "text": "A short-cut shell jacket with a fleece lining."
+        },
+        {
+          "type": "bulletList",
+          "items": ["Water-resistant outer shell", "Fleece-lined body"]
+        },
+        {
+          "type": "keyValueList",
+          "entries": [
+            { "label": "Material", "value": "Polyester shell, fleece lining" },
+            { "label": "Care", "value": "Machine wash cold" }
+          ]
+        }
+      ]
+    },
+    "variants": [
+      {
+        "id": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+        "sku": "SALS3-JKT-BLK-XL",
+        "priceMinor": 4299,
+        "currency": "USD",
+        "availability": "AVAILABLE",
+        "options": [
+          { "name": "Colour", "value": "Black" },
+          { "name": "Size", "value": "XL" }
+        ]
+      },
+      {
+        "id": "1a2b3c4d-5e6f-7089-9807-f6e5d4c3b2a1",
+        "sku": "SALS3-JKT-NVY-XL",
+        "priceMinor": 4499,
+        "currency": "USD",
+        "availability": "UNKNOWN",
+        "options": [
+          { "name": "Colour", "value": "Navy" },
+          { "name": "Size", "value": "XL" }
+        ]
+      }
+    ],
+    "specs": {
+      "sku": "SALS3-JKT-BLK-XL",
+      "weightGrams": 880,
+      "lengthMillimeters": 300,
+      "widthMillimeters": 250,
+      "heightMillimeters": 80,
+      "gtins": ["09501101530003"],
+      "mpn": "CJYD2718032",
+      "brand": "Sals3 Basics",
+      "condition": "NEW"
+    }
+  }
+}

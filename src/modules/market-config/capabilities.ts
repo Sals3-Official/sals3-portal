@@ -25,11 +25,11 @@ import resolveBuyerDestinationCountryPolicy from '@/lib/country-policy/buyer-des
  * bounded evidence pilot: no payment onboarding, freight quote, tax
  * treatment, or payout rail has been proven for either, so every option
  * carries the list of capabilities still outstanding rather than an implied
- * "launch market". `authorizedSellingCurrencyCodes` is empty on purpose —
- * see its own comment.
+ * "launch market". `authorizedSellingCurrencyCodes` carries only ADR-003's
+ * phase-1 `USD` — see its own comment for why AUD is not there.
  */
 
-const CAPABILITY_VERSION = 'seller-market-capability-v1-au-ph-bounded-pilot';
+const CAPABILITY_VERSION = 'seller-market-capability-v2-au-ph-usd-publishable';
 const SOURCE = 'owner-instruction-2026-08-11-au-ph-bounded-pilot';
 
 /**
@@ -54,11 +54,21 @@ export type MarketDestinationCapability = {
   destinationName: string;
   readiness: MarketReadiness;
   /**
-   * Empty until a per-destination selling currency is actually authorized.
-   * The Portal's reference/display currency (AUD) is a display dimension
-   * that follows Sals3's own business registration — it is not a checkout,
-   * settlement, or conversion contract for a buyer destination, so it must
-   * not be copied in here as if a seller had been approved to sell in it.
+   * The currencies a seller may actually publish a price in for this
+   * destination.
+   *
+   * `USD` is here because ADR-003 §"Phase 1 is USD" already establishes it as
+   * the settlement currency, and `modules/pricing/resolver.ts` is called with
+   * `settlementCurrency: 'USD'` everywhere. Publishing a phase-1 USD price is
+   * that decision applied, not a new one.
+   *
+   * The Portal's reference/display currency (AUD) is deliberately NOT here.
+   * It is a display dimension following Sals3's own business registration
+   * (ADR-014) — not a checkout, settlement, or conversion contract for a buyer
+   * destination — so it must not be copied in as if a seller had been approved
+   * to sell in it. Adding it needs an ADR-003/ADR-015 amendment plus a
+   * platform reference-FX provider: `modules/pricing/reference-fx.ts` resolves
+   * only the identity rate today, so an AUD price cannot be produced at all.
    */
   authorizedSellingCurrencyCodes: readonly string[];
   /** Still outstanding for this destination; never rendered as satisfied. */
@@ -81,14 +91,14 @@ const PILOT_DESTINATIONS: readonly MarketDestinationCapability[] = [
     destinationCountryCode: 'AU',
     destinationName: 'Australia',
     readiness: 'BOUNDED_PILOT',
-    authorizedSellingCurrencyCodes: [],
+    authorizedSellingCurrencyCodes: ['USD'],
     pendingCapabilities: MARKET_CAPABILITY_REQUIREMENTS,
   },
   {
     destinationCountryCode: 'PH',
     destinationName: 'Philippines',
     readiness: 'BOUNDED_PILOT',
-    authorizedSellingCurrencyCodes: [],
+    authorizedSellingCurrencyCodes: ['USD'],
     pendingCapabilities: MARKET_CAPABILITY_REQUIREMENTS,
   },
 ];
@@ -128,8 +138,10 @@ export function findAuthorizedDestination(
 
 /**
  * A currency is acceptable only when the destination itself authorizes it.
- * With `authorizedSellingCurrencyCodes` empty, the only valid answer today is
- * "none declared" — which the caller represents as `null`, never as a guess.
+ * Today that means ADR-003 phase-1 `USD` and nothing else — in particular not
+ * the Portal's AUD display currency, which no destination has approved for
+ * selling. A caller that wants a different currency must be refused, never
+ * defaulted.
  */
 export function isAuthorizedSellingCurrency(
   destination: MarketDestinationCapability,

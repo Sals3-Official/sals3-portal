@@ -558,6 +558,7 @@ function buildCatalogueProducts(
       attentionReasons,
       editorFixtureKey: 'pass',
       editorHref: `/listings/new?productId=${product.id}`,
+      productVersion: product.version,
       variants: catalogueVariants,
     };
   });

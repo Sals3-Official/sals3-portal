@@ -266,6 +266,13 @@ export type CatalogueProductFixture = {
   editorFixtureKey: string;
   /** Real persisted catalogue rows open by product id; fixtures keep using `editorFixtureKey`. */
   editorHref?: string;
+  /**
+   * `products.version`, the compare-and-set token a publish or pause must
+   * state. Absent on illustrative fixtures, which have no row to contend
+   * with — so the publish control is only offered where a real version exists,
+   * rather than sending a guessed one.
+   */
+  productVersion?: number;
   variants: CatalogueVariantFixture[];
 };
 

@@ -3,12 +3,18 @@
  * account that owns the platform's own CJ supplier connection (seeded by
  * `npm run bootstrap:cj`).
  *
- * Three call sites must agree on this value: the placeholder dev session
- * (`session.ts`), the bootstrap script, and the storefront feed's headless
- * connection resolver. Before this constant existed each of them hard-coded
- * the same literal independently. When real authentication lands, the dev
- * session stops using it, but the bootstrap and the storefront resolver keep
- * needing one well-known identity for the official account.
+ * Two call sites must agree on this value: the placeholder dev session
+ * (`session.ts`) and the bootstrap script. Before this constant existed each
+ * of them hard-coded the same literal independently.
+ *
+ * **No request path reads this any more.** The storefront feed used to resolve
+ * a headless CJ connection through it, which is exactly how the public
+ * storefront went down: the `dev-user` connection was purged, the lookup
+ * returned null, and every buyer request answered
+ * `502 CJ supplier feed unavailable`. The storefront now reads the published
+ * catalogue from the database (owner decision 2026-08-13), so a well-known
+ * bootstrap identity is no longer load-bearing for buyers — and must not
+ * become so again.
  *
  * Keep this module free of imports: the bootstrap script loads it through
  * tsx outside the Next.js module graph.
