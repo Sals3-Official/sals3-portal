@@ -163,6 +163,7 @@ queue delivery needs self-healing.
 | `npm run approve:portal-user -- --email seller@example.com --role seller_manager` | Approve/promote one verified portal user                                        |
 | `npm run seed:taxonomy`                                                           | Seed Sals3 Taxonomy v0 category identities (one-time, idempotent)               |
 | `npm run seed:taxonomy-presets`                                                   | Seed Sals3 Taxonomy v0 form presets (run after `seed:taxonomy`)                 |
+| `npx tsx scripts/backfill-draft-supplier-media.mts --dry-run`                     | Record the supplier photo for products imported before drafts projected media   |
 
 ## Deployment and performance
 
@@ -1705,14 +1706,80 @@ result carries explicit codes:
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `NO_PERSISTED_SUPPLIER_EVIDENCE`               | A screening-stage block never reached the evidence fetch, so there is no `vid` to build a variant from — and none is invented         |
 | `NO_SUPPLIER_VARIANTS_IN_EVIDENCE`             | Evidence exists but lists no variants                                                                                                 |
-| `CATEGORY_MAPPING_REQUIRED`                    | No CJ-to-Sals3 taxonomy crosswalk exists                                                                                              |
+| `CATEGORY_MAPPING_REQUIRED`                    | No `ACTIVE`, `APPROVED` crosswalk mapping covers this product's provider category — the crosswalk itself is asked on every import     |
 | `PRODUCT_OPTIONS_UNMAPPED`                     | CJ supplies one combined label per variant (`"Black-1XL"`), which is preserved verbatim and never split into option axes by guesswork |
 | `PRICING_UNRESOLVED`                           | The ADR-015 resolver declined; its exact reason is recorded on the offer                                                              |
 | `NO_ACTIVE_MARKET_PROFILE`                     | No active profile for a currently authorized destination, so no offer                                                                 |
 | `SUPPLIER_CONNECTION_UNHEALTHY`                | The connection is not workable, so no fulfillment binding is truthful                                                                 |
-| `MEDIA_SOURCE_NOT_RECORDED`                    | Stored evidence records a usable-image count, never the image URLs                                                                    |
+| `MEDIA_SOURCE_NOT_RECORDED`                    | The database holds no supplier image address for this candidate at all                                                                |
 | `STRUCTURED_DESCRIPTION_REQUIRED`              | Supplier description HTML is never copied into a Sals3 product                                                                        |
 | `EDITORIAL_RECORD_STEWARDED_BY_ANOTHER_SELLER` | The canonical product exists and another account owns its editorial record                                                            |
+
+### What the import carries over from Product Sourcing
+
+Added 2026-08-14, after the owner reported that a draft created from a Ready
+candidate arrived nearly empty — no category, and no photo above Basic
+Information. The data was never missing. `create-draft.ts` read exactly one
+field (`name`) out of the thirteen in
+`candidate_evaluations.feed_snapshot`, and the media projection ran only at
+publication. Both are fixed, and still with **zero supplier calls** — every
+value below is a stored row:
+
+- **The product photo.** `projectSupplierMediaForProduct()` now runs inside the
+  draft transaction, the same call `publish.ts` makes, under the one shared
+  `SUPPLIER_MEDIA_RIGHTS` declaration (`SUPPLIER_TERMS` / `APPROVED`, owner
+  decision 2026-08-13). It prefers the detail snapshot's full `imageUrls` set
+  and falls back to the discovery snapshot's single `imageUrl`, so a candidate
+  that only ever went through screening still gets the one honest photo the
+  database holds. The Product Editor renders it in Basic Information and in
+  Media; a tile with no address stays a labelled placeholder.
+- **The Sals3 category.** The draft flow asks the ADR-002 crosswalk
+  (`resolveCategoryMapping` → `assignProductCategory`, inside the same
+  transaction) instead of hard-coding `UNMAPPED`. It has no category parameter,
+  so an unmapped, ambiguous, or superseded answer leaves the product `UNMAPPED`
+  and reports `CATEGORY_MAPPING_REQUIRED` — a correct outcome, never a guess.
+  Approving a mapping remains a platform action in
+  `scripts/approve-cj-category-mapping.mts`.
+- **The supplier's own facts**, shown as evidence and never as Sals3 decisions:
+  CJ's category name, supplier SKU, packed weight (verbatim, including a range
+  like `1180.00-1300.00 g` — never parsed into one number), ships-from origins,
+  and the feed's lowest variant price as a labelled "from" reference.
+
+The supplier evidence block previously printed the _Sals3_ category where CJ's
+own category name belonged, so an unmapped draft claimed the supplier had said
+"Unmapped category". The two are now separate fields.
+
+The Sals3 category field in Basic Information is **read-only**. It was a
+dropdown over three hard-coded example paths, which for a real catalogue product
+offered options its actual value was never among — and a seller choosing their
+own category is a seller choosing which pricing policy applies to their product,
+which `modules/catalog/taxonomy/authorization.ts` denies to every portal role
+including `admin`.
+
+#### Backfilling products imported before this
+
+```bash
+npx tsx scripts/backfill-draft-supplier-media.mts --dry-run
+```
+
+Reports, per product, which source would be used and how many addresses it would
+record; it runs the real projection inside a transaction it always rolls back,
+so the dry run cannot disagree with the apply. Re-run with
+`ALLOW_REMOTE_DB_WRITE=1` and no `--dry-run` to write. Idempotent — the
+projection dedupes by URL, so a second run inserts nothing.
+
+Category backfill needs no new script: `approve-cj-category-mapping.mts` already
+re-resolves every `UNMAPPED` product sourced from the category it approves.
+
+> Neither the photo nor the category makes a draft complete. Verified against
+> production on 2026-08-14: `sals3_categories` and
+> `provider_category_mappings` are both empty, so no category can resolve until
+> `npm run seed:taxonomy` and one approved mapping have run;
+> `seller_market_profiles` and `pricing_category_policies` are both empty, so no
+> offer and no price exist yet; and none of the four existing drafts has a
+> `supplier_snapshots` row, so they have zero variants and no description —
+> only a CJ detail fetch (evidence capture, which spends CJ points) can supply
+> those. Each of these is stated on the screen rather than hidden.
 
 ### Pricing and market boundaries
 
@@ -1742,16 +1809,24 @@ The description is a structured allow-listed block format
 and no string passthrough. Markup-shaped text is rejected at the server
 boundary instead of being stored and escaped later; `a < b` still passes.
 
-### Not wired to any screen yet
+### What is wired, and what still is not
 
-The Product Editor and `/listings` remain fixture screens. Pointing their
-existing controls at partial real persistence would make unsaved fields look
-saved, so this ships as a protected contract plus tests and no UI change. No
-navigation item was added.
+`/listings` reads real catalogue rows, and
+`/listings/new?productId=<uuid>` renders one of them in the Product Editor
+(`dataMode="database"`), so the photo, supplier facts, variants, offers, and
+readiness issues on that screen are database values rather than fixtures. Every
+other entry mode — no query, or `?fixture=<key>` — is still the fictional design
+preview, and says so in a banner.
 
-Also still absent, and not faked anywhere: publication, approval, media
-storage, freight, checkout, supplier synchronization, attention issues, and any
-storefront read of a Sals3 revision.
+**Editor edits are still not saved.** `saveProductDraftAction` exists and is
+tested, but the editor's own controls are not pointed at it: wiring some fields
+and not others would make unsaved input look saved. The banner states this on
+every render.
+
+Also still absent, and not faked anywhere: approval, media storage, freight,
+checkout, and supplier synchronization. Publication now exists
+(`publish.ts` + the storefront read model) but is gated on facts most drafts do
+not have yet — see the note at the end of the draft-flow section above.
 
 ## Supplier Apps (multi-tenant provider connections)
 

@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import { OctagonAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,12 +19,6 @@ import SupplierSourceBadge from './SupplierSourceBadge';
 
 const PRODUCT_NAME_MAX = 120;
 
-const CATEGORY_OPTIONS = [
-  'Bags & Travel / Backpacks / Daypacks',
-  'Bags & Travel / Backpacks / Hiking packs',
-  'Outdoor / Hiking / Packs',
-];
-
 const BRAND_OPTIONS = [
   'No brand / generic',
   'Own brand — authorisation on file',
@@ -33,8 +28,6 @@ type BasicInformationSectionProps = {
   fixture: ProductEditorFixture;
   productName: string;
   onProductNameChange: (value: string) => void;
-  sals3Category: string;
-  onSals3CategoryChange: (value: string) => void;
   sellerSku: string;
   onSellerSkuChange: (value: string) => void;
   brandDeclaration: string;
@@ -55,8 +48,6 @@ export default function BasicInformationSection({
   fixture,
   productName,
   onProductNameChange,
-  sals3Category,
-  onSals3CategoryChange,
   sellerSku,
   onSellerSkuChange,
   brandDeclaration,
@@ -71,6 +62,10 @@ export default function BasicInformationSection({
     (item) => item.rightsCheck === 'REJECTED',
   ).length;
 
+  const isCategoryUnmapped =
+    fixture.categoryMappingConfidence === 'UNMAPPED' ||
+    fixture.categoryMappingConfidence === 'AMBIGUOUS';
+
   return (
     <div className="flex flex-col gap-5">
       <div>
@@ -83,22 +78,44 @@ export default function BasicInformationSection({
 
         {/* A summary only - each image's rights check and storage state are
             full detail that belongs in the Media section, not repeated here
-            as a second copy that could drift from it. */}
+            as a second copy that could drift from it.
+
+            The thumbnails carry the real address when there is one. They used
+            to be empty 44px squares in every case, so a product whose photo the
+            catalogue genuinely stored still showed nothing above this section. */}
         <ul className="mt-2.5 flex list-none flex-wrap gap-1.5 p-0">
           {fixture.media.map((item) => (
             <li
               key={item.id}
-              aria-hidden="true"
-              className={`flex size-11 items-center justify-center rounded-md border text-center text-xs font-medium text-muted-foreground ${
+              className={`relative flex size-11 items-center justify-center overflow-hidden rounded-md border text-center text-xs font-medium text-muted-foreground ${
                 item.rightsCheck === 'REJECTED'
                   ? 'border-2 border-red-600 bg-danger-surface/40'
                   : 'border-border bg-muted'
               }`}
             >
-              {item.isCover ? 'Cover' : ''}
+              {item.sourceUrl === null ? (
+                <span aria-hidden="true">{item.isCover ? 'Cover' : ''}</span>
+              ) : (
+                <Image
+                  src={item.sourceUrl}
+                  alt={item.altText}
+                  width={44}
+                  height={44}
+                  loading="lazy"
+                  className="size-full object-cover"
+                />
+              )}
             </li>
           ))}
         </ul>
+
+        {fixture.media.length === 0 ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            No image address is recorded for this product yet, so there is
+            nothing to show. Nothing was fetched from the supplier to fill this
+            in.
+          </p>
+        ) : null}
 
         {rejectedMediaCount > 0 ? (
           <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-red-600">
@@ -135,26 +152,41 @@ export default function BasicInformationSection({
           </p>
         </div>
 
+        {/* Read-only, and not a dropdown.
+
+            A Sals3 category comes from an approved, active mapping in the
+            taxonomy crosswalk, keyed to the supplier's own category id.
+            `modules/catalog/taxonomy/authorization.ts` denies that authority to
+            every portal role including admin - a seller choosing their own
+            category is a seller choosing which pricing policy applies to their
+            product (ADR-002/ADR-015).
+
+            This was a Select over three hard-coded example paths, which for a
+            real catalogue product offered options its actual value was never
+            among. */}
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="editor-category">Sals3 category</Label>
-          <Select
-            value={sals3Category}
-            onValueChange={(value) => onSals3CategoryChange(value ?? '')}
+          <span id="editor-category-label" className="text-sm font-medium">
+            Sals3 category
+          </span>
+          <p
+            aria-labelledby="editor-category-label"
+            className={`rounded-md border px-3 py-2 text-sm ${
+              isCategoryUnmapped
+                ? 'border-dashed border-border-strong bg-muted text-muted-foreground'
+                : 'border-border bg-muted'
+            }`}
           >
-            <SelectTrigger id="editor-category" className="w-full bg-card">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {CATEGORY_OPTIONS.map((option) => (
-                <SelectItem key={option} value={option}>
-                  {option}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            {isCategoryUnmapped ? 'Not mapped yet' : fixture.sals3CategoryPath}
+            {fixture.sals3CategoryCode === null ? null : (
+              <span className="ml-2 font-mono text-xs text-ink-muted">
+                {fixture.sals3CategoryCode}
+              </span>
+            )}
+          </p>
           <p className="text-xs text-muted-foreground">
-            Mapped from the supplier category. Changing it may change which
-            specifications are required.
+            {isCategoryUnmapped
+              ? 'No approved mapping covers this supplier category yet. Category-driven attributes and pricing stay unavailable until one exists.'
+              : 'Resolved from the supplier category through the approved Sals3 taxonomy mapping. Not editable here.'}
           </p>
         </div>
 

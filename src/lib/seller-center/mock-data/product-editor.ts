@@ -168,10 +168,21 @@ const BASE_MARKETS: MarketEvidenceFixture[] = [
   },
 ];
 
+/**
+ * `sourceUrl: null` on every tile, deliberately.
+ *
+ * These fixtures describe a fictional product. Pointing one at a real CJ image
+ * address would show a real supplier's photograph under an invented listing,
+ * and the tiles exist here to demonstrate the rights/storage label families,
+ * not the imagery. The editor renders a labelled placeholder for a tile with no
+ * address, which is what these previews have always shown.
+ */
 const BASE_MEDIA: MediaItemFixture[] = [
   {
     id: 'm1',
     label: 'Cover image',
+    sourceUrl: null,
+    altText: 'Cover image placeholder',
     rightsCheck: 'VERIFIED',
     storageState: 'SUPPLIER_HOSTED_SOURCE',
     pixelWidth: 1200,
@@ -182,6 +193,8 @@ const BASE_MEDIA: MediaItemFixture[] = [
   {
     id: 'm2',
     label: 'Image 2',
+    sourceUrl: null,
+    altText: 'Image 2 placeholder',
     rightsCheck: 'VERIFIED',
     storageState: 'SUPPLIER_HOSTED_SOURCE',
     pixelWidth: 1200,
@@ -192,6 +205,8 @@ const BASE_MEDIA: MediaItemFixture[] = [
   {
     id: 'm3',
     label: 'Image 3',
+    sourceUrl: null,
+    altText: 'Image 3 placeholder',
     rightsCheck: 'VERIFIED',
     storageState: 'SUPPLIER_HOSTED_SOURCE',
     pixelWidth: 1000,
@@ -202,6 +217,8 @@ const BASE_MEDIA: MediaItemFixture[] = [
   {
     id: 'm4',
     label: 'Image 4',
+    sourceUrl: null,
+    altText: 'Image 4 placeholder',
     rightsCheck: 'VERIFIED',
     storageState: 'SUPPLIER_HOSTED_SOURCE',
     pixelWidth: 900,
@@ -212,6 +229,8 @@ const BASE_MEDIA: MediaItemFixture[] = [
   {
     id: 'm5',
     label: 'Image 5',
+    sourceUrl: null,
+    altText: 'Image 5 placeholder',
     rightsCheck: 'PENDING_VERIFICATION',
     storageState: 'PENDING_IMPORT',
     pixelWidth: 640,

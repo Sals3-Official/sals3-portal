@@ -96,7 +96,8 @@ export default function ProductEditorWorkspace({
   const router = useRouter();
 
   const [productName, setProductName] = useState(fixture.productName);
-  const [sals3Category, setSals3Category] = useState(fixture.sals3CategoryPath);
+  // No `sals3Category` state: the Sals3 category is not seller-editable (see
+  // BasicInformationSection), so there is nothing for this shell to hold.
   const [sellerSku, setSellerSku] = useState(fixture.sellerSku);
   const [brandDeclaration, setBrandDeclaration] = useState(
     fixture.brandDeclaration,
@@ -392,11 +393,6 @@ export default function ProductEditorWorkspace({
               productName={productName}
               onProductNameChange={(value) => {
                 setProductName(value);
-                touch();
-              }}
-              sals3Category={sals3Category}
-              onSals3CategoryChange={(value) => {
-                setSals3Category(value);
                 touch();
               }}
               sellerSku={sellerSku}

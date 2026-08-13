@@ -228,9 +228,36 @@ export type CatalogueProductFixture = {
   /** Structured description rendered as plain text for the existing editor UI. */
   descriptionText?: string;
   hasImage: boolean;
+  /**
+   * The supplier image address this product actually has, host-checked on the
+   * read path. Absent on the illustrative fixtures, which carry no imagery.
+   */
+  coverImageUrl?: string | null;
   status: ListingStatus;
   categoryPath: string;
   categoryCode?: string | null;
+  /**
+   * The supplier's own facts, shown as evidence and never as Sals3 decisions
+   * (ADR-013). All optional: the illustrative fixtures have no candidate row
+   * behind them, and a catalogue row written before discovery recorded a field
+   * renders a neutral placeholder rather than forcing a backfill.
+   *
+   * `supplierCategoryPath` is CJ's category *name*. It is deliberately not the
+   * Sals3 `categoryPath` above — those were the same value until 2026-08-14,
+   * which made the supplier evidence block print "Unmapped category" as though
+   * the supplier had said it.
+   */
+  supplierCategoryPath?: string | null;
+  supplierCategoryId?: string | null;
+  supplierSku?: string | null;
+  supplierWeightLabel?: string | null;
+  /**
+   * The feed's lowest variant price — a "from" reference, verified 2026-08-13.
+   * Never a selling price and never an input to one.
+   */
+  supplierFromPrice?: MoneyValue | null;
+  supplierShipsFrom?: string[];
+  supplierListedCount?: number | null;
   createdAt: string;
   supplierProviderCode: string;
   supplierProviderName: string;

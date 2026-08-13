@@ -23,7 +23,10 @@ import {
 } from '@/modules/market-config/capabilities';
 import { findActiveProfileForSeller } from '@/modules/market-config/repository';
 import { resolveProductPricing } from '@/modules/pricing/resolver';
-import projectSupplierMediaForProduct from './media-projection';
+import {
+  projectSupplierMediaForProduct,
+  SUPPLIER_MEDIA_RIGHTS,
+} from './media-projection';
 import { candidateSlugsFromTitle } from './slug';
 
 /**
@@ -107,18 +110,6 @@ const AUDIT_ACTIONS = {
   productPublished: 'catalog_product.published',
   offerPublished: 'catalog_product_offer.published',
   productUnpublished: 'catalog_product.unpublished',
-} as const;
-
-/**
- * ADR-011 §6 requires a rights basis before publication. The owner declared on
- * 2026-08-13 that CJ's supplier terms are that basis for displaying CJ product
- * imagery on Sals3, so a projected supplier image is recorded as
- * `SUPPLIER_TERMS` / `APPROVED`. That declaration is what the row carries;
- * `product_media_sources_approved_requires_rights` makes the pair inseparable.
- */
-const MEDIA_RIGHTS = {
-  rightsBasis: 'SUPPLIER_TERMS',
-  reviewState: 'APPROVED',
 } as const;
 
 type PublishableVariant = {
@@ -388,7 +379,7 @@ export default async function publishProduct(input: {
       productId: input.productId,
       candidateId: priceable[0].supplierCandidateId ?? '',
       actorId: input.actorId,
-      rights: MEDIA_RIGHTS,
+      rights: SUPPLIER_MEDIA_RIGHTS,
     });
     const approvedMedia = await tx
       .select({ id: productMediaSources.id })
@@ -591,7 +582,7 @@ export default async function publishProduct(input: {
         availability,
         imagesProjected: media.inserted,
         mediaSource: media.source,
-        rightsBasis: MEDIA_RIGHTS.rightsBasis,
+        rightsBasis: SUPPLIER_MEDIA_RIGHTS.rightsBasis,
       },
     });
 

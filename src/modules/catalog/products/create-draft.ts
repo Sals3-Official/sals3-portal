@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import getDb, { type Database } from '@/lib/db/client';
 import uniqueViolationConstraint from '@/lib/db/constraint-errors';
+import { ACTIVE_TAXONOMY_VERSION, type ProductRow } from '@/lib/db/schema';
 import {
   appendAuditEvent,
   findEvaluationByCandidateId,
@@ -10,6 +11,13 @@ import {
   insertIdempotencyRecordIfAbsent,
   type Executor,
 } from '@/modules/catalog/candidates/repository';
+import { feedSnapshotSchema } from '@/modules/catalog/candidates/rules/contracts';
+import {
+  assignProductCategory,
+  findCategoryByCode,
+} from '@/modules/catalog/taxonomy/repository';
+import { resolveCategoryMapping } from '@/modules/catalog/taxonomy/resolver';
+import { isMappedDecision } from '@/modules/catalog/taxonomy/types';
 import {
   findAuthorizedDestination,
   resolveSellerMarketCapabilities,
@@ -29,6 +37,10 @@ import {
   emptyDescriptionDocument,
 } from './description-document';
 import { canonicalRequestHash, deriveSals3Sku } from './identity';
+import {
+  projectSupplierMediaForProduct,
+  SUPPLIER_MEDIA_RIGHTS,
+} from './media-projection';
 import {
   findBinding,
   findCandidateSourceForSeller,
@@ -106,11 +118,27 @@ const storedVariantSchema = z.object({
 
 const storedEvidenceSchema = z.object({
   name: z.string().nullish(),
+  /** CJ's own category name. Read for provenance, never as a Sals3 category. */
+  categoryName: z.string().nullish(),
   variants: z.array(storedVariantSchema).default([]),
   capturedAt: z.string().nullish(),
 });
 
-const storedFeedSnapshotSchema = z.object({ name: z.string().nullish() });
+/**
+ * The discovery feed snapshot is read through its own canonical schema
+ * (`rules/contracts.ts`) rather than a local one-field subset.
+ *
+ * It used to be `z.object({ name })`, and that single missing line is what made
+ * an imported draft look empty: every candidate carries a `category`,
+ * `categoryId`, `imageUrl`, `sku`, `weight`, and feed price here — the exact
+ * facts the Product Sourcing row displays — while only 19 of ~88,000
+ * candidates have the richer detail snapshot. Reading one field out of thirteen
+ * threw the rest away.
+ *
+ * Sharing the canonical schema also means a field added to the discovery write
+ * path is readable here without a second definition drifting behind it.
+ */
+const storedFeedSnapshotSchema = feedSnapshotSchema;
 
 const MAX_TITLE_LENGTH = 200;
 const USD = 'USD';
@@ -207,6 +235,100 @@ async function resolveOfferableDestinations(
     }));
 }
 
+/**
+ * Asks the taxonomy crosswalk which Sals3 category this supplier category
+ * means, and writes the answer when there is one.
+ *
+ * `modules/catalog/taxonomy/` has been complete since the mapping pilot, and
+ * its own module comment recorded the gap this closes: "There is no Server
+ * Action, route handler, or UI calling this today." So every draft was created
+ * `UNMAPPED` even when an approved, active mapping existed for its CJ category.
+ *
+ * Three properties are kept exactly as that module defines them:
+ *
+ * - **Nothing here can choose a category.** There is no category parameter.
+ *   The resolver's only path to one is an `ACTIVE`, `APPROVED` mapping row
+ *   keyed to the provider's own category id, so an unmapped, ambiguous, or
+ *   superseded answer leaves the product `UNMAPPED` — a correct outcome, not a
+ *   failure, and never a best guess.
+ * - **Governance is untouched.** Approving a mapping stays a platform action in
+ *   `scripts/approve-cj-category-mapping.mts`; this only *applies* one that was
+ *   already approved. `taxonomy/authorization.ts` still denies governance to
+ *   every portal role, and `taxonomy/boundaries.test.ts` still holds because no
+ *   file under `src/app` imports the taxonomy repository — this module does.
+ * - **It runs inside the caller's transaction.** `applyResolvedCategoryToProduct`
+ *   is deliberately not used: it opens its own transaction, and the draft flow
+ *   needs the category, the audit event, and the idempotency record to commit
+ *   or roll back together.
+ *
+ * Returns whether a category is now on the product, so the caller reports
+ * `CATEGORY_MAPPING_REQUIRED` from the real outcome instead of assuming it.
+ */
+async function assignResolvedCategory(
+  executor: Executor,
+  input: {
+    product: ProductRow;
+    stewardSellerAccountId: string;
+    externalCategoryId: string | null;
+    observedCategoryPath: string | null;
+    actorId: string;
+  },
+): Promise<boolean> {
+  const decision = await resolveCategoryMapping(executor, {
+    provider: 'CJ_DROPSHIPPING',
+    externalCategoryId: input.externalCategoryId,
+    observedCategoryPath: input.observedCategoryPath,
+    taxonomyVersion: ACTIVE_TAXONOMY_VERSION,
+    // A draft being created has recorded no mapping version of its own yet, so
+    // there is nothing to revalidate against.
+    expectedMappingVersion: input.product.categoryMappingVersion,
+  });
+
+  if (!isMappedDecision(decision)) return false;
+
+  const category = await findCategoryByCode(
+    executor,
+    decision.sals3CategoryCode,
+  );
+
+  // Unreachable while the resolver's own guarantees hold; treated as "not
+  // mapped" rather than trusted, because a missing target row is a data
+  // problem and inventing a category id from it would be worse.
+  if (category === null) return false;
+
+  const updated = await assignProductCategory(executor, {
+    productId: input.product.id,
+    stewardSellerAccountId: input.stewardSellerAccountId,
+    expectedVersion: input.product.version,
+    categoryId: category.id,
+    categoryMappingConfidence: decision.confidence,
+    categoryMappingId: decision.mappingId,
+    categoryMappingVersion: decision.mappingVersion,
+    actorId: input.actorId,
+  });
+
+  if (updated === null) return false;
+
+  await appendAuditEvent(executor, {
+    actorId: input.actorId,
+    action: PRODUCT_AUDIT_ACTIONS.categoryAssigned,
+    entityType: 'Product',
+    entityId: updated.id,
+    payload: {
+      categoryCode: category.code,
+      categoryPath: category.path,
+      confidence: decision.confidence,
+      mappingId: decision.mappingId,
+      mappingVersion: decision.mappingVersion,
+      taxonomyVersion: decision.taxonomyVersion,
+      externalCategoryId: input.externalCategoryId,
+      resolverVersion: decision.resolverVersion,
+    },
+  });
+
+  return true;
+}
+
 async function runDraftTransaction(
   database: Database,
   input: {
@@ -239,11 +361,12 @@ async function runDraftTransaction(
       snapshot === null
         ? null
         : (storedEvidenceSchema.safeParse(snapshot.evidence).data ?? null);
-    const feedName =
+    const feed =
       evaluation === null
         ? null
-        : (storedFeedSnapshotSchema.safeParse(evaluation.feedSnapshot).data
-            ?.name ?? null);
+        : (storedFeedSnapshotSchema.safeParse(evaluation.feedSnapshot).data ??
+          null);
+    const feedName = feed?.name ?? null;
 
     if (evidence === null) missing.add('NO_PERSISTED_SUPPLIER_EVIDENCE');
 
@@ -364,8 +487,33 @@ async function runDraftTransaction(
       }
 
       missing.add('STRUCTURED_DESCRIPTION_REQUIRED');
-      missing.add('CATEGORY_MAPPING_REQUIRED');
     }
+
+    // --- Sals3 category, through the approved crosswalk ---------------------
+
+    // Only the steward may write the editorial record, and `products.category_id`
+    // is part of it (see that table's own comment). A seller reusing another
+    // account's product gets offers, never a category write.
+    //
+    // Placed after the revision block on purpose: `assignProductCategory` bumps
+    // `products.version` on success, and `insertDraftRevision` above records the
+    // version it forked from.
+    const categoryMapped =
+      isSteward &&
+      (product.categoryId !== null ||
+        (await assignResolvedCategory(tx, {
+          product,
+          stewardSellerAccountId: input.sellerAccountId,
+          externalCategoryId: source.providerCategoryId,
+          // CJ's own category name, kept as the observed path the mapping was
+          // recorded against. Evidence first: it comes from a product-detail
+          // fetch, while the feed snapshot is a list-level summary.
+          observedCategoryPath:
+            evidence?.categoryName ?? feed?.category ?? null,
+          actorId: input.actorId,
+        })));
+
+    if (isSteward && !categoryMapped) missing.add('CATEGORY_MAPPING_REQUIRED');
 
     // --- Variants + provider variant references -----------------------------
 
@@ -462,8 +610,28 @@ async function runDraftTransaction(
 
     if (variantIds.length > 0) missing.add('PRODUCT_OPTIONS_UNMAPPED');
 
-    // Stored evidence records a usable-image count, never the image URLs.
-    missing.add('MEDIA_SOURCE_NOT_RECORDED');
+    // --- Supplier media provenance ------------------------------------------
+
+    // The same projection `publish.ts` runs, run at import time instead of only
+    // at publication. It reads `supplier_snapshots.evidence.imageUrls` first and
+    // falls back to `candidate_evaluations.feed_snapshot.imageUrl`, so a
+    // candidate that only ever went through discovery still gets the one honest
+    // photo the database holds. Zero supplier calls: both are stored rows.
+    //
+    // Steward-only, for the same reason as the category above — this writes to
+    // another tenant's product record otherwise.
+    if (isSteward) {
+      const media = await projectSupplierMediaForProduct(tx, {
+        productId: product.id,
+        candidateId: source.candidateId,
+        actorId: input.actorId,
+        rights: SUPPLIER_MEDIA_RIGHTS,
+      });
+
+      if (media.source === 'NONE') missing.add('MEDIA_SOURCE_NOT_RECORDED');
+    } else {
+      missing.add('MEDIA_SOURCE_NOT_RECORDED');
+    }
 
     // --- Pricing (server-owned, ADR-015) ------------------------------------
 

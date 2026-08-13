@@ -168,6 +168,17 @@ export type MediaStorageState =
 export type MediaItemFixture = {
   id: string;
   label: string;
+  /**
+   * The image address to render, host-checked by whoever built this item.
+   *
+   * `null` on the illustrative fixtures — no product imagery is supplied with
+   * them, and inventing a remote address for a fictional product would put a
+   * real supplier's photo behind a made-up listing. A tile with no address
+   * renders its label in a placeholder box instead.
+   */
+  sourceUrl: string | null;
+  /** Meaningful alternative text. Required whenever `sourceUrl` is set. */
+  altText: string;
   rightsCheck: MediaRightsCheck;
   storageState: MediaStorageState;
   pixelWidth: number;
