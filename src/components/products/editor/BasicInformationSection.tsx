@@ -154,19 +154,15 @@ export default function BasicInformationSection({
 
         {/* Read-only, and not a dropdown.
 
-            A Sals3 category comes from an approved, active mapping in the
-            taxonomy crosswalk, keyed to the supplier's own category id.
-            `modules/catalog/taxonomy/authorization.ts` denies that authority to
-            every portal role including admin - a seller choosing their own
-            category is a seller choosing which pricing policy applies to their
-            product (ADR-002/ADR-015).
-
-            This was a Select over three hard-coded example paths, which for a
-            real catalogue product offered options its actual value was never
-            among. */}
+            The CJ Category is the supplier's own catalogue category, and it
+            IS the Sals3 category (owner decision 2026-08-14). It comes from
+            persisted discovery facts keyed to CJ's stable category id - a
+            seller choosing their own category would be a seller choosing
+            which pricing policy applies to their product (ADR-015), so it
+            stays non-editable. */}
         <div className="flex flex-col gap-1.5">
           <span id="editor-category-label" className="text-sm font-medium">
-            Sals3 category
+            CJ Category
           </span>
           <p
             aria-labelledby="editor-category-label"
@@ -176,7 +172,9 @@ export default function BasicInformationSection({
                 : 'border-border bg-muted'
             }`}
           >
-            {isCategoryUnmapped ? 'Not mapped yet' : fixture.sals3CategoryPath}
+            {isCategoryUnmapped
+              ? 'No CJ category recorded'
+              : fixture.sals3CategoryPath}
             {fixture.sals3CategoryCode === null ? null : (
               <span className="ml-2 font-mono text-xs text-ink-muted">
                 {fixture.sals3CategoryCode}
@@ -185,8 +183,8 @@ export default function BasicInformationSection({
           </p>
           <p className="text-xs text-muted-foreground">
             {isCategoryUnmapped
-              ? 'No approved mapping covers this supplier category yet. Category-driven attributes and pricing stay unavailable until one exists.'
-              : 'Resolved from the supplier category through the approved Sals3 taxonomy mapping. Not editable here.'}
+              ? 'Discovery captured no CJ category for this product, so category-driven attributes and pricing stay unavailable.'
+              : 'The supplier’s own catalogue category. Publication categorises the product with it. Not editable here.'}
           </p>
         </div>
 

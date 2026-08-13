@@ -35,6 +35,10 @@ vi.mock('@/modules/catalog/taxonomy/repository', () => ({
   findCategoryByCode: vi.fn(),
 }));
 
+vi.mock('@/modules/catalog/taxonomy/cj-mirror', () => ({
+  ensureCjCategoryMirror: vi.fn(),
+}));
+
 vi.mock('./media-projection', () => ({
   projectSupplierMediaForProduct: vi.fn(),
   SUPPLIER_MEDIA_RIGHTS: {
@@ -77,6 +81,7 @@ import {
 } from '@/modules/market-config/capabilities';
 import { listProfilesForSeller } from '@/modules/market-config/repository';
 import { resolveProductPricing } from '@/modules/pricing/resolver';
+import { ensureCjCategoryMirror } from '@/modules/catalog/taxonomy/cj-mirror';
 import {
   assignProductCategory,
   findCategoryByCode,
@@ -285,7 +290,10 @@ beforeEach(() => {
   });
   // The environment as it actually stands: no approved mapping and no stored
   // image address. Every test that cares about the opposite says so locally.
+  // The mirror answering `null` models a candidate with nothing to mirror —
+  // the one case that still leaves a draft UNMAPPED.
   asMock(resolveCategoryMapping).mockResolvedValue(UNMAPPED_DECISION);
+  asMock(ensureCjCategoryMirror).mockResolvedValue(null);
   asMock(findCategoryByCode).mockResolvedValue(null);
   asMock(assignProductCategory).mockResolvedValue(null);
   asMock(projectSupplierMediaForProduct).mockResolvedValue({
@@ -737,7 +745,56 @@ describe('createProductDraftFromCandidate — Sals3 category from the crosswalk'
     );
   });
 
-  it('leaves the product UNMAPPED and says so when no mapping covers the category', async () => {
+  it('mirrors the CJ category when no reviewed mapping covers it', async () => {
+    // Owner decision 2026-08-14: the CJ category IS the Sals3 category, so
+    // an unmapped resolver answer triggers the mirror instead of leaving the
+    // draft uncategorised.
+    asMock(ensureCjCategoryMirror).mockResolvedValue({
+      mapping: {
+        id: 'mirror-mapping-1',
+        mappingVersion: 1,
+        confidence: 'EXACT',
+        taxonomyVersion: 'sals3-taxonomy-v0',
+      },
+      category: {
+        id: 'category-cj-1',
+        code: 'CJ-CJ-CATEGORY-1',
+        path: "Men's Jackets",
+      },
+    });
+    asMock(assignProductCategory).mockResolvedValue({
+      ...PRODUCT,
+      categoryId: 'category-cj-1',
+      version: 2,
+    });
+
+    const outcome = await run();
+
+    expect(ensureCjCategoryMirror).toHaveBeenCalledWith(
+      { marker: 'tx' },
+      expect.objectContaining({
+        provider: 'CJ_DROPSHIPPING',
+        externalCategoryId: 'CJ-CATEGORY-1',
+        actorId: 'actor-1',
+      }),
+    );
+    expect(assignProductCategory).toHaveBeenCalledWith(
+      { marker: 'tx' },
+      expect.objectContaining({
+        categoryId: 'category-cj-1',
+        categoryMappingConfidence: 'EXACT',
+        categoryMappingId: 'mirror-mapping-1',
+        categoryMappingVersion: 1,
+      }),
+    );
+    expect(outcome.ok && outcome.result.missingRequirements).not.toContain(
+      'CATEGORY_MAPPING_REQUIRED',
+    );
+  });
+
+  it('leaves the product UNMAPPED only when there is no CJ category to mirror', async () => {
+    // The default mirror answer is `null` — the candidate carries no provider
+    // category, so there is genuinely nothing to categorise the product with.
     const outcome = await run();
 
     expect(assignProductCategory).not.toHaveBeenCalled();

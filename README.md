@@ -1455,10 +1455,23 @@ interface review only.
 
 ## CJ-to-Sals3 category mapping (ADR-002)
 
-A supplier category only becomes a Sals3 category through an approved,
-versioned mapping. There is no fallback that guesses one. This is the
-crosswalk `product-catalog.ts` refers to when it says a CJ-sourced draft
-starts `UNMAPPED`.
+> **Superseded in part, 2026-08-14 (owner decision, Bogs): the CJ category IS
+> the Sals3 category.** When no reviewed rule covers a supplier category,
+> `src/modules/catalog/taxonomy/cj-mirror.ts` automatically creates a 1:1
+> mirror — a `sals3_categories` row (`code = CJ-<external id>`, `path` = the
+> observed CJ name) plus an `ACTIVE`, `APPROVED`, `EXACT` `EXTERNAL_ID_RULE`
+> mapping — at draft creation and, for older `UNMAPPED` drafts, inside the
+> publish transaction (`products/category-mirror.ts`). The listing composer
+> field is labelled **CJ Category** and shows the supplier's category; the
+> old "Sals3 category is not mapped" blocker survives only as "CJ category is
+> missing", raised when a product has no CJ category on record at all. A
+> reviewed mapping that names a category still outranks the mirror, guessing
+> from category _names_ is still unrepresentable, and pricing still requires
+> a per-category margin policy before a price resolves.
+
+A supplier category otherwise becomes a Sals3 category through an approved,
+versioned mapping. This is the crosswalk `product-catalog.ts` refers to when
+it says a CJ-sourced draft starts `UNMAPPED`.
 
 | Piece                                       | File                                                  |
 | ------------------------------------------- | ----------------------------------------------------- |

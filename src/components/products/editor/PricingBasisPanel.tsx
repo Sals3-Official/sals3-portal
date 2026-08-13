@@ -77,8 +77,8 @@ export default function PricingBasisPanel({
             aria-hidden="true"
             className="mt-0.5 size-4 shrink-0"
           />
-          Category mapping requires review. This product cannot receive price
-          guidance until its Sals3 category mapping is confirmed.
+          No CJ category is on record for this product, so it cannot receive
+          price guidance.
         </p>
       ) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">

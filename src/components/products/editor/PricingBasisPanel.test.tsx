@@ -17,7 +17,7 @@ describe('PricingBasisPanel', () => {
     );
 
     expect(
-      screen.getByText(/Category mapping requires review/i),
+      screen.getByText(/No CJ category is on record for this product/i),
     ).toBeInTheDocument();
     // The per-variant grid never renders for a mapping that needs review.
     expect(screen.queryByText('Variant 1')).not.toBeInTheDocument();

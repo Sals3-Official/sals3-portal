@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   resolveProductPricing: vi.fn(),
   projectSupplierMedia: vi.fn(),
   appendAuditEvent: vi.fn(),
+  ensureProductCjCategory: vi.fn(),
 }));
 
 vi.mock('@/modules/market-config/repository', () => ({
@@ -42,6 +43,10 @@ vi.mock('./media-projection', () => ({
 
 vi.mock('@/modules/catalog/candidates/repository', () => ({
   appendAuditEvent: mocks.appendAuditEvent,
+}));
+
+vi.mock('./category-mirror', () => ({
+  ensureProductCjCategory: mocks.ensureProductCjCategory,
 }));
 
 const publishProduct = (await import('./publish')).default;
@@ -230,6 +235,8 @@ describe('publishProduct', () => {
       skipped: 0,
       source: 'DETAIL_EVIDENCE',
     });
+    // No CJ category to mirror unless a test says otherwise.
+    mocks.ensureProductCjCategory.mockResolvedValue(null);
   });
 
   it('publishes a product that satisfies every gate', async () => {
@@ -328,11 +335,62 @@ describe('publishProduct', () => {
   it.each([
     ['UNMAPPED', 'CATEGORY_UNMAPPED'],
     ['AMBIGUOUS', 'CATEGORY_UNMAPPED'],
-  ])('refuses a %s category mapping', async (confidence, reason) => {
-    const { db } = transactionalDb({ product: productRow({ confidence }) });
+  ])(
+    'refuses a %s category mapping when the candidate has no CJ category to mirror',
+    async (confidence, reason) => {
+      const { db } = transactionalDb({ product: productRow({ confidence }) });
 
-    expect(await publish(db)).toEqual({ ok: false, reason });
-    expect(mocks.resolveProductPricing).not.toHaveBeenCalled();
+      expect(await publish(db)).toEqual({ ok: false, reason });
+      // The mirror was consulted with the variant's source candidate before
+      // refusing — refusal means it really had nothing, not that nobody asked.
+      expect(mocks.ensureProductCjCategory).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          productId: PRODUCT_ID,
+          stewardSellerAccountId: SELLER_ID,
+          candidateId: 'candidate-1',
+          expectedProductVersion: 1,
+        }),
+      );
+      expect(mocks.resolveProductPricing).not.toHaveBeenCalled();
+    },
+  );
+
+  it('categorises an UNMAPPED product from its CJ category, then publishes', async () => {
+    const { db, writes } = transactionalDb({
+      product: productRow({
+        categoryId: null,
+        categoryCode: null,
+        confidence: 'UNMAPPED',
+      }),
+    });
+
+    mocks.ensureProductCjCategory.mockResolvedValue({
+      categoryCode: 'CJ-2409230540351618000',
+      categoryMappingConfidence: 'EXACT',
+      // The assignment's own compare-and-set bumped the product version.
+      productVersion: 2,
+    });
+
+    const result = await publish(db);
+
+    expect(result).toMatchObject({ ok: true, slug: 'waterproof-shell-jacket' });
+    // Pricing ran on the mirrored category, not on the NULL the row carried.
+    expect(mocks.resolveProductPricing).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        categoryCode: 'CJ-2409230540351618000',
+        categoryMappingConfidence: 'EXACT',
+      }),
+    );
+    // The publication flip compared against the bumped version.
+    const productWrite = writes.find((write) => write.table === products)
+      ?.values as Record<string, unknown>;
+
+    expect(productWrite).toMatchObject({
+      publicationState: 'PUBLISHED',
+      version: 3,
+    });
   });
 
   it('refuses when the product has no active variant', async () => {

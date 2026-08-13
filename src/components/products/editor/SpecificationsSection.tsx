@@ -111,9 +111,8 @@ export default function SpecificationsSection({
           aria-hidden="true"
           className="mt-0.5 size-3.5 shrink-0 text-primary"
         />
-        Changing the Sals3 category may change which specifications are
-        required. Values already entered are kept where the attribute still
-        applies.
+        Changing the CJ Category may change which specifications are required.
+        Values already entered are kept where the attribute still applies.
       </p>
 
       {GROUP_ORDER.map((requirement) => {

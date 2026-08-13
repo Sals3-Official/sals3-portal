@@ -23,6 +23,7 @@ import {
 } from '@/modules/market-config/capabilities';
 import { findActiveProfileForSeller } from '@/modules/market-config/repository';
 import { resolveProductPricing } from '@/modules/pricing/resolver';
+import { ensureProductCjCategory } from './category-mirror';
 import {
   projectSupplierMediaForProduct,
   SUPPLIER_MEDIA_RIGHTS,
@@ -344,18 +345,50 @@ export default async function publishProduct(input: {
       return { ok: false, reason: 'version_conflict' };
     }
 
-    if (
-      product.categoryCode === null ||
-      product.confidence === 'UNMAPPED' ||
-      product.confidence === 'AMBIGUOUS'
-    ) {
-      return { ok: false, reason: 'CATEGORY_UNMAPPED' };
-    }
-
     const variants = await loadPublishableVariants(tx, input.productId);
 
     if (variants.length === 0) {
       return { ok: false, reason: 'NO_ACTIVE_VARIANT' };
+    }
+
+    let { categoryCode } = product;
+    let categoryConfidence = product.confidence;
+    let productVersion = input.expectedProductVersion;
+
+    if (
+      categoryCode === null ||
+      categoryConfidence === 'UNMAPPED' ||
+      categoryConfidence === 'AMBIGUOUS'
+    ) {
+      // The CJ category is the Sals3 category (owner decision 2026-08-14).
+      // A product still `UNMAPPED` here predates that decision, so it is
+      // categorised now, from the same persisted supplier facts a new draft
+      // would use — inside this transaction, so a later refusal undoes it.
+      const candidateId =
+        variants.find((variant) => variant.supplierCandidateId !== null)
+          ?.supplierCandidateId ?? null;
+      const mirrored =
+        candidateId === null
+          ? null
+          : await ensureProductCjCategory(tx, {
+              productId: input.productId,
+              stewardSellerAccountId: input.sellerAccountId,
+              expectedProductVersion: input.expectedProductVersion,
+              candidateId,
+              actorId: input.actorId,
+            });
+
+      // Still a real refusal: this candidate has no CJ category on record,
+      // so there is nothing to categorise or price the product with.
+      if (mirrored === null) {
+        return { ok: false, reason: 'CATEGORY_UNMAPPED' };
+      }
+
+      categoryCode = mirrored.categoryCode;
+      categoryConfidence = mirrored.categoryMappingConfidence;
+      // The assignment bumped `products.version`; every later write must
+      // compare against the bumped value, not the one the screen read.
+      productVersion = mirrored.productVersion;
     }
 
     // A published offer with no fulfilment authority is a checkout that
@@ -406,8 +439,8 @@ export default async function publishProduct(input: {
       // eslint-disable-next-line no-await-in-loop
       const decision = await resolveProductPricing(tx, {
         sellerAccountId: input.sellerAccountId,
-        categoryCode: product.categoryCode,
-        categoryMappingConfidence: product.confidence,
+        categoryCode,
+        categoryMappingConfidence: categoryConfidence,
         supplierCandidateId: variant.supplierCandidateId,
         supplierVariantId: variant.supplierVariantId,
         supplierCost: {
@@ -563,7 +596,7 @@ export default async function publishProduct(input: {
       title: product.title,
       existingSlug: product.slug,
       revisionId: revision.id,
-      expectedProductVersion: input.expectedProductVersion,
+      expectedProductVersion: productVersion,
       actorId: input.actorId,
       now,
     });
