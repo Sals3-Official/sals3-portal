@@ -88,7 +88,7 @@ describe('pricing_variant_overrides constraints', () => {
 });
 
 describe('pricing_fx_adjustment_policies constraints', () => {
-  it('holds at most one ACTIVE policy per seller+currency pair+funding rail', () => {
+  it('holds at most one ACTIVE funding buffer per seller', () => {
     const index = indexNamed(
       pricingFxAdjustmentPolicies,
       'pricing_fx_adjustment_policies_active_key',
@@ -100,12 +100,7 @@ describe('pricing_fx_adjustment_policies constraints', () => {
         pricingFxAdjustmentPolicies,
         'pricing_fx_adjustment_policies_active_key',
       ),
-    ).toEqual([
-      'seller_account_id',
-      'source_currency',
-      'target_currency',
-      'funding_rail',
-    ]);
+    ).toEqual(['seller_account_id']);
     expect(index?.config.where).toBeDefined();
   });
 });

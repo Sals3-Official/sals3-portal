@@ -7,19 +7,12 @@ const mocks = vi.hoisted(() => ({
   findActiveCategoryPolicy: vi.fn(),
   findActiveProductOverride: vi.fn(),
   findActiveVariantOverride: vi.fn(),
-  findActiveFxAdjustmentPolicy: vi.fn(),
+  findActiveFundingBufferPolicy: vi.fn(),
   resolveReferenceFxRate: vi.fn(),
 }));
 
 vi.mock('./repository', () => mocks);
 
-// `resolveReferenceFxRate` only returns non-null for an identical currency
-// pair today (no approved cross-currency provider exists - see
-// `reference-fx.ts`), which means the FX-adjustment-policy branch below is
-// currently unreachable through the real function. Mocking it here to
-// simulate a future approved provider is the only way to prove that branch
-// (funding-rail requirement, policy lookup, expiry, and the actual
-// adjustment math) is correct before it ever activates for real.
 vi.mock('./reference-fx', () => ({
   resolveReferenceFxRate: mocks.resolveReferenceFxRate,
 }));
@@ -35,7 +28,6 @@ const BASE_INPUT: PricingResolutionInput = {
   supplierCost: { amountMinor: 1000, currency: 'USD' },
   supplierCostObservedAt: '2026-08-11T00:00:00.000Z',
   settlementCurrency: 'USD',
-  fundingRail: null,
 };
 
 const CATEGORY = {
@@ -57,13 +49,28 @@ function categoryPolicy(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+function fundingBufferPolicy(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 'buffer-1',
+    sellerAccountId: 'seller-1',
+    adjustmentRate: '0.000000',
+    version: 1,
+    effectiveTo: null,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.findCategoryByCode.mockResolvedValue(CATEGORY);
   mocks.findActiveCategoryPolicy.mockResolvedValue(categoryPolicy());
   mocks.findActiveProductOverride.mockResolvedValue(null);
   mocks.findActiveVariantOverride.mockResolvedValue(null);
-  mocks.findActiveFxAdjustmentPolicy.mockResolvedValue(null);
+  // Every happy-path test needs a resolvable buffer now that it always
+  // applies — a zero-rate buffer is a real, deliberate value (see the
+  // dedicated "funding buffer" describe block below for the non-zero
+  // cases), distinct from no policy at all.
+  mocks.findActiveFundingBufferPolicy.mockResolvedValue(fundingBufferPolicy());
   // Real identity behavior for same-currency, matching `reference-fx.ts`.
   mocks.resolveReferenceFxRate.mockImplementation(
     (source: string, target: string) =>
@@ -215,21 +222,7 @@ describe('resolveProductPricing', () => {
     }
   });
 
-  it('same-currency (identity) resolution never requires a funding rail or FX policy', async () => {
-    const result = await resolveProductPricing(EXECUTOR, {
-      ...BASE_INPUT,
-      fundingRail: null,
-    });
-
-    expect(mocks.findActiveFxAdjustmentPolicy).not.toHaveBeenCalled();
-    expect(result.outcome).toBe('PRODUCT_MARGIN_ESTIMATE');
-    if (result.outcome === 'PRODUCT_MARGIN_ESTIMATE') {
-      expect(result.fxAdjustmentRate).toBeNull();
-      expect(result.referenceFxRate).toBe('1.000000');
-    }
-  });
-
-  it('fails closed with REFERENCE_FX_UNAVAILABLE for a currency pair no approved provider covers', async () => {
+  it('fails closed with REFERENCE_FX_UNAVAILABLE for a currency pair no approved provider covers, before ever looking up a funding buffer', async () => {
     const result = await resolveProductPricing(EXECUTOR, {
       ...BASE_INPUT,
       supplierCost: { amountMinor: 1000, currency: 'USD' },
@@ -242,8 +235,10 @@ describe('resolveProductPricing', () => {
       reasonLabel: 'Reference FX unavailable',
       resolverVersion: expect.any(String),
     });
-    // Never falls back to zero adjustment or an unrelated pair's policy.
-    expect(mocks.findActiveFxAdjustmentPolicy).not.toHaveBeenCalled();
+    // Never falls back to zero adjustment or an unrelated pair's policy —
+    // and the reference-FX step and the funding-buffer step stay distinct:
+    // a currency mismatch is caught before the buffer is ever consulted.
+    expect(mocks.findActiveFundingBufferPolicy).not.toHaveBeenCalled();
   });
 
   it('returns SUPPLIER_COST_UNAVAILABLE rather than treating a missing cost as zero', async () => {
@@ -309,99 +304,75 @@ describe('resolveProductPricing', () => {
 });
 
 /**
- * The FX-adjustment-policy branch (funding-rail requirement, policy
- * lookup, expiry, and the actual adjustment math) is unreachable through
- * the real `resolveReferenceFxRate` today, since no approved cross-currency
- * provider exists yet. These tests simulate one becoming available so the
- * branch is proven correct before it ever activates for real.
+ * The funding buffer (ADR-015 §4) always applies as a cost-basis uplift —
+ * unconditionally, regardless of whether the settlement currency matches
+ * the supplier cost currency. It is a distinct step from the reference-FX
+ * conversion above: never merge a buyer-settlement conversion with the
+ * seller's own funding-cost buffer.
  */
-describe('resolveProductPricing — FX adjustment (simulated future cross-currency provider)', () => {
-  const CROSS_CURRENCY_INPUT: PricingResolutionInput = {
-    ...BASE_INPUT,
-    supplierCost: { amountMinor: 1000, currency: 'USD' },
-    settlementCurrency: 'AUD',
-    fundingRail: 'CJ_WALLET_WIRE_TRANSFER',
-  };
+describe('resolveProductPricing — funding buffer (always applied)', () => {
+  it('returns FUNDING_BUFFER_REQUIRED when no buffer is configured, even under same-currency identity resolution', async () => {
+    mocks.findActiveFundingBufferPolicy.mockResolvedValue(null);
 
-  beforeEach(() => {
-    mocks.resolveReferenceFxRate.mockReturnValue({
-      rateScaled: BigInt(1_500_000), // 1 USD = 1.5 AUD, hypothetical
-      source: 'SIMULATED',
-      observedAt: '2026-08-11T00:00:00.000Z',
-    });
-  });
-
-  it('requires a funding rail before it will even look up an FX policy', async () => {
-    const result = await resolveProductPricing(EXECUTOR, {
-      ...CROSS_CURRENCY_INPUT,
-      fundingRail: null,
-    });
+    const result = await resolveProductPricing(EXECUTOR, BASE_INPUT);
 
     expect(result).toEqual({
       outcome: 'PRICING_UNAVAILABLE',
-      reason: 'FX_ADJUSTMENT_POLICY_REQUIRED',
-      reasonLabel: 'FX adjustment policy required',
+      reason: 'FUNDING_BUFFER_REQUIRED',
+      reasonLabel: 'Funding buffer required',
       resolverVersion: expect.any(String),
     });
-    expect(mocks.findActiveFxAdjustmentPolicy).not.toHaveBeenCalled();
   });
 
-  it('fails closed with FX_ADJUSTMENT_POLICY_REQUIRED when no active policy exists for the pair+rail', async () => {
-    mocks.findActiveFxAdjustmentPolicy.mockResolvedValue(null);
-
-    const result = await resolveProductPricing(EXECUTOR, CROSS_CURRENCY_INPUT);
-
-    expect(result.outcome).toBe('PRICING_UNAVAILABLE');
-    if (result.outcome === 'PRICING_UNAVAILABLE') {
-      expect(result.reason).toBe('FX_ADJUSTMENT_POLICY_REQUIRED');
-    }
-    expect(mocks.findActiveFxAdjustmentPolicy).toHaveBeenCalledWith(
-      EXECUTOR,
-      'seller-1',
-      'USD',
-      'AUD',
-      'CJ_WALLET_WIRE_TRANSFER',
+  it('fails closed with FUNDING_BUFFER_EXPIRED for a lapsed buffer rather than using a stale rate', async () => {
+    mocks.findActiveFundingBufferPolicy.mockResolvedValue(
+      fundingBufferPolicy({
+        adjustmentRate: '0.025000',
+        effectiveTo: new Date('2020-01-01T00:00:00.000Z'),
+      }),
     );
-  });
 
-  it('fails closed with POLICY_EXPIRED for a lapsed FX adjustment rather than using a stale rate', async () => {
-    mocks.findActiveFxAdjustmentPolicy.mockResolvedValue({
-      id: 'fx-1',
-      version: 1,
-      adjustmentRate: '0.025000',
-      effectiveTo: new Date('2020-01-01T00:00:00.000Z'),
-    });
-
-    const result = await resolveProductPricing(EXECUTOR, CROSS_CURRENCY_INPUT);
+    const result = await resolveProductPricing(EXECUTOR, BASE_INPUT);
 
     expect(result.outcome).toBe('PRICING_UNAVAILABLE');
     if (result.outcome === 'PRICING_UNAVAILABLE') {
-      expect(result.reason).toBe('POLICY_EXPIRED');
+      expect(result.reason).toBe('FUNDING_BUFFER_EXPIRED');
     }
   });
 
-  it('applies the active FX adjustment on top of the reference rate, separate from margin', async () => {
-    mocks.findActiveFxAdjustmentPolicy.mockResolvedValue({
-      id: 'fx-1',
-      version: 2,
-      adjustmentRate: '0.025000',
-      effectiveTo: null,
-    });
+  it('applies a non-zero buffer on top of the reference rate under identity (same-currency) settlement, separate from margin', async () => {
+    mocks.findActiveFundingBufferPolicy.mockResolvedValue(
+      fundingBufferPolicy({ adjustmentRate: '0.030000', version: 4 }),
+    );
 
-    const result = await resolveProductPricing(EXECUTOR, CROSS_CURRENCY_INPUT);
+    const result = await resolveProductPricing(EXECUTOR, BASE_INPUT);
 
     expect(result.outcome).toBe('PRODUCT_MARGIN_ESTIMATE');
     if (result.outcome === 'PRODUCT_MARGIN_ESTIMATE') {
-      expect(result.fxAdjustmentRate).toBe('0.025000');
-      expect(result.fxAdjustmentPolicyId).toBe('fx-1');
-      expect(result.fxAdjustmentPolicyVersion).toBe(2);
-      // cost 1000 USD * (1.5 * 1.025) = 1537.5 -> round half up = 1538
-      // effective cost 1538 AUD / (1 - 0.20 margin) = 1922.5 -> 1923
+      expect(result.fundingBufferRate).toBe('0.030000');
+      expect(result.fundingBufferPolicyId).toBe('buffer-1');
+      expect(result.fundingBufferPolicyVersion).toBe(4);
+      // reference rate 1.0 * 1.03 = 1.03; cost 1000 * 1.03 = 1030
       expect(result.effectiveProductCost).toEqual({
-        amountMinor: 1538,
-        currency: 'AUD',
+        amountMinor: 1030,
+        currency: 'USD',
       });
-      expect(result.suggestedItemPrice.amountMinor).toBe(1923);
+      // 1030 / (1 - 0.20 margin) = 1287.5 -> round half up = 1288
+      expect(result.suggestedItemPrice.amountMinor).toBe(1288);
+    }
+  });
+
+  it('a zero-rate buffer is a real, deliberately-chosen value distinct from no policy at all', async () => {
+    mocks.findActiveFundingBufferPolicy.mockResolvedValue(
+      fundingBufferPolicy({ adjustmentRate: '0.000000' }),
+    );
+
+    const result = await resolveProductPricing(EXECUTOR, BASE_INPUT);
+
+    expect(result.outcome).toBe('PRODUCT_MARGIN_ESTIMATE');
+    if (result.outcome === 'PRODUCT_MARGIN_ESTIMATE') {
+      expect(result.fundingBufferRate).toBe('0.000000');
+      expect(result.suggestedItemPrice.amountMinor).toBe(1250);
     }
   });
 });

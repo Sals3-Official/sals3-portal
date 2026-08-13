@@ -17,9 +17,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { candidateDrawerHref } from '@/lib/portal/pipeline-params';
 import { cn } from '@/lib/utils';
 import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
 import type { ReasonCode } from '@/modules/catalog/candidates/rules/contracts';
+import CandidateRow from './CandidateRow';
 import {
   displayName,
   formatUsd,
@@ -30,6 +32,11 @@ import CustomizeAndListButton from './CustomizeAndListButton';
 
 type QualifiedCandidatesTableProps = {
   candidates: EvaluatedCandidateRow[];
+  /**
+   * The page's current `?tab=`/`?q=`/`?page=`, so a row click adds
+   * `?candidate=` without losing the view behind the drawer.
+   */
+  currentParams: Record<string, string>;
   /** Whether to show the "Attention reasons" column (Needs Attention only). */
   showReasons: boolean;
   cataloguedCandidateIds?: string[];
@@ -47,6 +54,7 @@ function idempotencyKey(candidateId: string): string {
 
 type QualifiedCandidateRowProps = {
   candidate: EvaluatedCandidateRow;
+  currentParams: Record<string, string>;
   showReasons: boolean;
   alreadyInCatalogue: boolean;
   selected: boolean;
@@ -56,6 +64,7 @@ type QualifiedCandidateRowProps = {
 
 function QualifiedCandidateRow({
   candidate,
+  currentParams,
   showReasons,
   alreadyInCatalogue,
   selected,
@@ -70,7 +79,9 @@ function QualifiedCandidateRow({
   }, [candidate.candidateId, onToggleSelected]);
 
   return (
-    <TableRow
+    <CandidateRow
+      href={candidateDrawerHref(currentParams, candidate.candidateId)}
+      label={`Open candidate detail for ${name}`}
       className={cn(
         alreadyInCatalogue &&
           'bg-sky-50/80 hover:bg-sky-50 dark:bg-sky-950/20 dark:hover:bg-sky-950/30',
@@ -117,7 +128,7 @@ function QualifiedCandidateRow({
       {showReasons ? (
         <TableCell>
           {reasonCodes.length === 0 ? (
-            '-'
+            '—'
           ) : (
             <ul className="flex flex-col gap-1">
               {reasonCodes.map((code) => (
@@ -139,7 +150,7 @@ function QualifiedCandidateRow({
       <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
         {candidate.evaluation.evaluatedAt
           ? new Date(candidate.evaluation.evaluatedAt).toLocaleString()
-          : '-'}
+          : '—'}
       </TableCell>
       <TableCell>
         <CustomizeAndListButton
@@ -147,7 +158,7 @@ function QualifiedCandidateRow({
           disabled={alreadyInCatalogue}
         />
       </TableCell>
-    </TableRow>
+    </CandidateRow>
   );
 }
 
@@ -158,6 +169,7 @@ function QualifiedCandidateRow({
  */
 export default function QualifiedCandidatesTable({
   candidates,
+  currentParams,
   showReasons,
   cataloguedCandidateIds = [],
 }: QualifiedCandidatesTableProps) {
@@ -277,6 +289,7 @@ export default function QualifiedCandidatesTable({
               <QualifiedCandidateRow
                 key={candidate.candidateId}
                 candidate={candidate}
+                currentParams={currentParams}
                 showReasons={showReasons}
                 alreadyInCatalogue={cataloguedIds.has(candidate.candidateId)}
                 selected={selectedIds.has(candidate.candidateId)}

@@ -112,7 +112,15 @@ export default function getDb(): Database {
   }
 
   const sql = createSql();
-  const db = drizzle(sql, { schema });
+  // `SALS3_DB_LOG=1 npm run dev` prints every statement, so the query cost of a
+  // navigation can be counted rather than guessed. Off by default, and left in
+  // permanently on purpose: this repo has no other query instrumentation, and
+  // the alternative is re-adding it by hand every time a page feels slow.
+  // Better Auth shares this client, so its own reads appear too.
+  const db = drizzle(sql, {
+    schema,
+    logger: process.env.SALS3_DB_LOG === '1',
+  });
 
   // Cache in development so hot-reload does not leak pools. In production the
   // module itself is evaluated once per instance, so a local const suffices —

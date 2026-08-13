@@ -40,12 +40,19 @@
   --color-green-700: #15683d;
   /* Border for an exception row sitting on `danger-surface`. */
   --color-danger-border: #f5c9c6;
+  /* `amber-600` on `warning-surface` measures 3.6:1, under 4.5:1 - the same
+     gap `green-700`/`red-700` above already close for their own surfaces.
+     Market Rules pricing (2026-08-13) is the first caller; existing
+     `StatusPill`/`DisclosureBanner` usages of `-600` are a separate,
+     pre-existing follow-up, not fixed here. */
+  --color-amber-700: #7a4e00;
 
   /* Tinted status surfaces. Each is paired with a text token that clears
      4.5:1, and every status also carries a written label. */
   --color-success-surface: #e4f2ea;
   --color-danger-surface: #fdeceb;
   --color-warning-surface: #fbf1de;
+  --color-warning-border: #f0d6a8;
 
   /* Semantic ink and surfaces - shared with the storefront */
   --color-ink: #14181c;

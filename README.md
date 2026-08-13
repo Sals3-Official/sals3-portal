@@ -233,6 +233,152 @@ Redis, KV, or paid cache service is used for this path.
 | `/api/storefront/products/[id]`                            | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `/api/storefront/categories`                               | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
+## Candidate detail drawer
+
+Clicking any row on `/products/pipeline`, in any tab, opens a read-only detail
+drawer at 85% of the viewport width showing everything the database holds for
+that candidate.
+
+The open drawer lives in the URL as `?candidate=<uuid>`, alongside the page's
+existing `?tab=`/`?q=`/`?page=`, so the view is shareable and the back button
+behaves (`MASTER.md` §6 rule 9). It is validated with
+`z.string().trim().uuid().catch('')`, so a hand-typed value degrades to "no
+drawer" instead of reaching a uuid database predicate.
+
+Five tabs, grouped by the question a reviewer is asking rather than by the table
+a field lives in: **Overview** (identity, decision, reason codes, price),
+**Stock** (manual attestation, inspection history, per-origin CJ inventory),
+**Supplier evidence** (feed snapshot, CJ detail evidence, snapshot provenance),
+**Screening & queue** (screening findings, retry/lease mechanics, discovery
+signals, provider freshness), and **History** (audit trail, pricing overrides,
+whether it was ever drafted into a Sals3 product).
+
+### Three absences that must never look alike
+
+Only **19 of 87,966** candidates have a captured `supplier_snapshots` row
+(measured 2026-08-12). So most sections a reviewer opens are empty, and
+`CandidateAbsentSection` keeps three different reasons structurally distinct:
+
+| Kind             | Means                                | Treatment                                                 |
+| ---------------- | ------------------------------------ | --------------------------------------------------------- |
+| `not-fetched`    | We never called CJ for this          | Dashed border, `role="note"`, **no timestamp**            |
+| `reported-zero`  | CJ answered, and the answer was none | Solid border, warning pill, **capture time always shown** |
+| `never-recorded` | An append-only table has no rows     | Plain text, no pill                                       |
+
+The timestamp is the discriminator: a real observation has one, a fetch that
+never happened cannot. A zero from CJ is a fact about the product; an absent
+fetch is a fact about our pipeline. Conflating them is how a reviewer concludes
+"this has no stock" when nobody ever looked.
+
+Two related rules: a missing scalar inside a populated section renders
+`Not captured`, never `—` (a dash reads as "the value is empty"); and
+`candidate_evaluations.score` is never rendered as a value at all, because the
+column is reserved and always null - a `—` beside a label called "Score" reads
+as "scored zero".
+
+### The product photo
+
+The Supplier evidence tab shows one photo at 320px, from
+`candidate_evaluations.feed_snapshot.imageUrl` - **the only image address this
+database holds**. `supplier_snapshots.evidence` keeps `usableImageCount` and
+discards CJ's `productImageSet` inside `countUsableImages()`, and
+`product_media_sources` is empty and keyed to `products.id`. So there is no
+gallery, and there cannot be one until someone funds a CJ re-fetch and persists
+the addresses.
+
+Three implementation details that are easy to "fix" into a regression:
+
+- **No `sizes`, deliberately.** Without it Next takes the `x` branch of
+  `getWidths` and emits `384w` @1x + `640w` @2x for a 320px box. Add any `vw`
+  token and it switches to the `w` branch, whose _smallest_ candidate is 640w -
+  so the CDN gets asked for 640px to fill 320px. `CandidateFeedImage.test.tsx`
+  asserts the density descriptors for exactly this reason.
+- **No `priority`.** base-ui's `Tabs.Panel` defaults to `keepMounted = false`, so
+  the image does not exist in the DOM until that tab is opened. Nothing to
+  preload, and it is never the LCP element.
+- **An absent address is a capture gap, not "no photo".** The copy names all
+  three real causes, including that a non-allow-listed host is dropped and is
+  therefore indistinguishable from an absent one. When evidence counted usable
+  images but stored no address, the copy says so rather than leaving the reviewer
+  to reconcile "3 usable images" with an empty box.
+
+`imageUrl()` in `candidate-view.ts` now **re-checks the host on the read path.**
+It previously claimed the address "was allow-listed at intake", which was an
+assertion about a different code path: `feedSnapshotSchema.imageUrl` is a plain
+string, `images.loader: 'custom'` means `remotePatterns` enforces nothing at
+request time, and the loader passes a non-CJ address through unchanged. So any
+value that reached that column - a manual `UPDATE`, a backfill, a script - became
+a browser `GET` from the seller's session. Three lines close it for both call
+sites.
+
+### Open/close cost
+
+Measured with `SALS3_DB_LOG=1 npm run dev`, one render of `/products/pipeline`:
+
+|                             | Statements                 |
+| --------------------------- | -------------------------- |
+| Before                      | **12** (close) / 19 (open) |
+| After `React.cache` dedup   | **10**                     |
+| After the count cache, warm | **4**                      |
+
+What was being wasted: the same `seller_accounts` row was read **three times**
+per render, and `countCandidateStatusSummary` - three statements - ran **twice**,
+once for the nav rail badges and once for the tab bar. Six scans for one answer,
+on every navigation including every drawer open and close. With one seller
+account the `sellerAccountId` filter narrows nothing, so each scan reads the whole
+table.
+
+Four changes, none of them a migration:
+
+- `React.cache` on `getRawAuthSession`, `getSession`, and a new
+  `src/lib/auth/seller-account.ts` reader. `seller-account.guard.test.ts` scans
+  the auth and portal layers so a future direct repository call cannot silently
+  opt out. Note what must NOT be wrapped: `findSellerAccountByIdentityId` itself
+  takes an executor and is called with a transaction, so memoizing it would serve
+  a pre-insert value to a read that must see its own write.
+- `status-counts-cache.ts` - `unstable_cache` at 30s, tagged, wrapped in
+  `React.cache`. The seller id travels as an _argument_, so it is part of the
+  cache key and tenant isolation is structural. `resolveCandidateDetail` must
+  never go here: the cache persists via `JSON.stringify` and its `Date` fields
+  would come back as strings with a green typecheck.
+- Invalidation differs by caller, and the difference matters: route handlers use
+  `revalidateTag(tag, 'max')` (stale-while-revalidate, so a queue message cannot
+  stall the next render), while the `recheckCandidateNow` **Server Action** uses
+  `updateTag` for read-your-own-writes - the person who clicked must see the row
+  leave its bucket on the response they are already waiting for. That action had
+  no revalidation at all before.
+- `useTransition` + `aria-busy` + a `data-pending` row tint, and an instant local
+  close on the sheet. The affordance has to live on the `<tr>` itself: cells
+  arrive as opaque `children` from five tables with five column counts, so a
+  spinner cell would break that row's alignment.
+
+**Known consequence of caching the counts:** the same value feeds the pipeline's
+`total`, so for up to 30 seconds a tab can read "412" above 413 rows, and on a
+page boundary a seller can be clamped back one page. Both self-heal. That is the
+argument for the short TTL, and the reason `revalidate: false` would be wrong even
+with correct invalidation.
+
+### Notes for whoever changes this
+
+- **The drawer is strictly read-only.** No Customize & List, no Recheck now, no
+  stock attestation. Controls that already live inside a row keep working: the
+  row's click handler ignores events from `a`/`button`/`input`/`select`/
+  `[role=menuitem]` descendants.
+- **`resolveCandidateDetail` is the authorization boundary.** Its seller filter
+  is in the same `WHERE` as the lookup, and a cross-tenant or unknown id costs
+  exactly one statement, so no child table - including `audit_events`, which has
+  no tenant column - is ever read for an id that is not the seller's.
+- **`audit_events.payload` is now rendered to a seller.** Safe today by audit,
+  not by construction: every candidate-scoped writer records shallow,
+  credential-free scalars. Check any new audit payload against this surface.
+- **Every row click re-runs the whole page render** (`force-dynamic` plus a URL
+  change), so opening the drawer re-executes the tab's count and page queries as
+  well as the seven detail statements. If that latency bites, the escape hatch
+  is a parallel route slot so only the drawer re-renders.
+- **Middle-click and open-in-new-tab do not work on a row.** A `<tr>` cannot
+  hold an anchor spanning every cell without breaking table semantics, so the
+  row navigates via `router.push`. The resulting URL is still shareable.
+
 ## Product Sourcing paging and search
 
 `/products/pipeline` is one screen with six tabs (`?tab=all|ready|needs-attention|evaluating|blocked|exception`).

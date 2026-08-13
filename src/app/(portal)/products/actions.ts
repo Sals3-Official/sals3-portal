@@ -1,11 +1,12 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, updateTag } from 'next/cache';
 import { z } from 'zod';
 import { can, PermissionError } from '@/lib/auth/permissions';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { checkRateLimit } from '@/lib/rate-limit';
 import getDb from '@/lib/db/client';
+import { CANDIDATE_STATUS_COUNTS_TAG } from '@/modules/catalog/candidates/status-counts-cache';
 import {
   appendAuditEvent,
   candidateBelongsToSeller,
@@ -91,6 +92,17 @@ export async function recheckCandidateNow(
 
       return eligible;
     });
+
+    if (requeued) {
+      // `updateTag`, not `revalidateTag`: this is a Server Action, and the
+      // seller who just clicked "Recheck now" must see the row leave its bucket
+      // on the response they are already waiting for - that is exactly the
+      // read-your-own-writes semantic `updateTag` exists for. `revalidateTag`
+      // with `'max'` would serve them the stale count once more.
+      //
+      // This action had no revalidation of any kind before.
+      updateTag(CANDIDATE_STATUS_COUNTS_TAG);
+    }
 
     return requeued ? { ok: true } : { ok: false, reason: 'not_eligible' };
   } catch (error) {

@@ -128,6 +128,25 @@ export async function findProviderProductReference(
   return rows[0] ?? null;
 }
 
+/**
+ * Provenance only: whether this candidate was ever drafted into a Sals3
+ * product, and against which snapshot checksum.
+ *
+ * `provider_product_references` is global rather than connection-scoped (see
+ * that table's own comment), so the caller must already have proven the
+ * candidate belongs to the reading seller. No product id is offered for
+ * navigation from here for the same reason.
+ */
+export async function listProviderReferencesForSourceCandidate(
+  executor: Executor,
+  sourceCandidateId: string,
+): Promise<ProviderProductReferenceRow[]> {
+  return executor
+    .select()
+    .from(providerProductReferences)
+    .where(eq(providerProductReferences.sourceCandidateId, sourceCandidateId));
+}
+
 export async function findProductById(
   executor: Executor,
   productId: string,

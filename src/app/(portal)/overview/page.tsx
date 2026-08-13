@@ -13,7 +13,6 @@ import OverviewSupplierAppsHealth, {
 } from '@/components/seller-center/overview/OverviewSupplierAppsHealth';
 import { requirePermission } from '@/lib/auth/session';
 import {
-  countCandidateStatusSummary,
   oldestExceptionAgeMs,
   oldestInStatusAgeMs,
   type CandidateStatusCounts,
@@ -23,6 +22,7 @@ import {
   listActiveProviders,
   listConnectionsBySeller,
 } from '@/modules/suppliers/repository';
+import readCandidateStatusCounts from '@/modules/catalog/candidates/status-counts-cache';
 
 export const metadata: Metadata = { title: 'Overview · Seller Center' };
 export const dynamic = 'force-dynamic';
@@ -82,7 +82,7 @@ export default async function OverviewPage() {
 
     const [sourcingCounts, providers, connections] = isEligibleSeller
       ? await Promise.all([
-          countCandidateStatusSummary(sellerAccount.id),
+          readCandidateStatusCounts(sellerAccount.id),
           listActiveProviders(db),
           listConnectionsBySeller(db, sellerAccount.id),
         ])

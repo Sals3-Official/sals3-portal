@@ -1,5 +1,4 @@
 import type { Executor } from '@/modules/catalog/candidates/repository';
-import type { FundingRail as SchemaFundingRail } from '@/lib/db/schema';
 import {
   applyFxAdjustment,
   applyRounding,
@@ -13,7 +12,7 @@ import {
 import { resolveReferenceFxRate } from './reference-fx';
 import {
   findActiveCategoryPolicy,
-  findActiveFxAdjustmentPolicy,
+  findActiveFundingBufferPolicy,
   findActiveProductOverride,
   findActiveVariantOverride,
   findCategoryByCode,
@@ -41,8 +40,10 @@ function unavailable(reason: PricingUnavailableReason): PricingDecision {
 
 /**
  * Resolves product-only price guidance from category → product override →
- * variant override (ADR-015 §3), applying the seller's own FX adjustment on
- * top of the platform reference rate (ADR-015 §4). Server-side only — never
+ * variant override (ADR-015 §3), always applying the seller's own funding
+ * buffer on top of the platform reference rate (ADR-015 §4) — a real,
+ * unconditional cost-basis uplift, not gated on a buyer-settlement
+ * currency mismatch. Server-side only — never
  * trusts a browser-supplied margin, rate, cost, or policy id (this function
  * takes exactly one caller-controlled input, `supplierCost`, and treats it
  * as evidence to validate, not as something to price directly).
@@ -140,45 +141,35 @@ export async function resolveProductPricing(
     return unavailable('REFERENCE_FX_UNAVAILABLE');
   }
 
-  let effectiveRateScaled = referenceRate.rateScaled;
-  let fxAdjustmentRate: string | null = null;
-  let fxAdjustmentPolicyId: string | null = null;
-  let fxAdjustmentPolicyVersion: number | null = null;
+  // Unconditional: every dollar of supplier cost was originally converted
+  // from the seller's own funding currency (e.g. AUD topping up a CJ
+  // Wallet that only accepts USD/EUR), regardless of whether this
+  // resolution's settlement currency happens to match the supplier cost
+  // currency. This is a distinct step from the reference-FX conversion
+  // above — never merge a buyer-settlement conversion with the seller's
+  // own funding-cost buffer (ADR-015 §4).
+  const bufferPolicy = await findActiveFundingBufferPolicy(
+    executor,
+    input.sellerAccountId,
+  );
 
-  const needsFxAdjustment =
-    input.supplierCost.currency !== input.settlementCurrency;
-
-  if (needsFxAdjustment) {
-    if (input.fundingRail === null) {
-      return unavailable('FX_ADJUSTMENT_POLICY_REQUIRED');
-    }
-
-    const fxPolicy = await findActiveFxAdjustmentPolicy(
-      executor,
-      input.sellerAccountId,
-      input.supplierCost.currency,
-      input.settlementCurrency,
-      input.fundingRail as SchemaFundingRail,
-    );
-
-    if (fxPolicy === null) {
-      return unavailable('FX_ADJUSTMENT_POLICY_REQUIRED');
-    }
-
-    if (fxPolicy.effectiveTo !== null && fxPolicy.effectiveTo < new Date()) {
-      return unavailable('POLICY_EXPIRED');
-    }
-
-    const adjustmentRateScaled = parseScaledRate(fxPolicy.adjustmentRate);
-
-    effectiveRateScaled = applyFxAdjustment(
-      referenceRate.rateScaled,
-      adjustmentRateScaled,
-    );
-    fxAdjustmentRate = fxPolicy.adjustmentRate;
-    fxAdjustmentPolicyId = fxPolicy.id;
-    fxAdjustmentPolicyVersion = fxPolicy.version;
+  if (bufferPolicy === null) {
+    return unavailable('FUNDING_BUFFER_REQUIRED');
   }
+
+  if (
+    bufferPolicy.effectiveTo !== null &&
+    bufferPolicy.effectiveTo < new Date()
+  ) {
+    return unavailable('FUNDING_BUFFER_EXPIRED');
+  }
+
+  const bufferRateScaled = parseScaledRate(bufferPolicy.adjustmentRate);
+
+  const effectiveRateScaled = applyFxAdjustment(
+    referenceRate.rateScaled,
+    bufferRateScaled,
+  );
 
   const effectiveProductCostMinor = convertAmountMinor(
     input.supplierCost.amountMinor,
@@ -211,9 +202,9 @@ export async function resolveProductPricing(
     referenceFxRate: formatScaledRate(referenceRate.rateScaled),
     referenceFxSource: referenceRate.source,
     referenceFxObservedAt: referenceRate.observedAt,
-    fxAdjustmentRate,
-    fxAdjustmentPolicyId,
-    fxAdjustmentPolicyVersion,
+    fundingBufferRate: bufferPolicy.adjustmentRate,
+    fundingBufferPolicyId: bufferPolicy.id,
+    fundingBufferPolicyVersion: bufferPolicy.version,
     effectiveProductCost: {
       amountMinor: Number(effectiveProductCostMinor),
       currency: input.settlementCurrency,

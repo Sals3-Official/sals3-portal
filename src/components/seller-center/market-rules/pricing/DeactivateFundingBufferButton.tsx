@@ -15,35 +15,33 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
-import { deactivateFxAdjustmentPolicyAction } from '@/app/(portal)/market-rules/pricing-actions';
+import { deactivateFundingBufferPolicyAction } from '@/app/(portal)/market-rules/pricing-actions';
 
-type DeactivateFxAdjustmentPolicyButtonProps = {
+type DeactivateFundingBufferButtonProps = {
   policyId: string;
   sellerAccountId: string;
-  pairLabel: string;
 };
 
-export default function DeactivateFxAdjustmentPolicyButton({
+export default function DeactivateFundingBufferButton({
   policyId,
   sellerAccountId,
-  pairLabel,
-}: DeactivateFxAdjustmentPolicyButtonProps) {
+}: DeactivateFundingBufferButtonProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   function handleConfirm() {
     startTransition(async () => {
-      const result = await deactivateFxAdjustmentPolicyAction(
+      const result = await deactivateFundingBufferPolicyAction(
         policyId,
         sellerAccountId,
       );
 
       if (!result.ok) {
-        toast.error('Could not deactivate this FX adjustment. Try again.');
+        toast.error('Could not deactivate the funding buffer. Try again.');
         return;
       }
 
-      toast.success('FX adjustment deactivated.');
+      toast.success('Funding buffer deactivated.');
       router.refresh();
     });
   }
@@ -59,11 +57,10 @@ export default function DeactivateFxAdjustmentPolicyButton({
       />
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Deactivate this FX adjustment?</AlertDialogTitle>
+          <AlertDialogTitle>Deactivate this funding buffer?</AlertDialogTitle>
           <AlertDialogDescription>
-            Price guidance for {pairLabel} will show &quot;FX adjustment policy
-            required&quot; until a new one is created for this pair and funding
-            rail.
+            Price guidance will show &quot;Funding buffer required&quot; until a
+            new buffer is set.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
