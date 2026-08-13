@@ -1,7 +1,9 @@
 import { expect, test } from '@playwright/test';
 
 /**
- * The Product Catalogue design preview at `/listings`. These cases cover
+ * The Product Catalogue design preview, relocated to
+ * `/design-preview/product-catalogue` when `/listings` became the real
+ * database-backed catalogue. These cases cover
  * the properties that would be actively misleading if they regressed: the
  * approved listing lifecycle (not a retail Active/Inactive/Pending QC/
  * Violation/Deleted set), Archive replacing Delete, a non-Live row never
@@ -12,7 +14,7 @@ test.describe('Product Catalogue preview', () => {
   test('renders the approved listing-lifecycle tabs, not a retail status set', async ({
     page,
   }) => {
-    await page.goto('/listings');
+    await page.goto('/design-preview/product-catalogue');
 
     const tabs = page.getByRole('tablist', {
       name: 'Filter by listing status',
@@ -34,7 +36,7 @@ test.describe('Product Catalogue preview', () => {
   test('search with no matches renders an honest empty state, not a blank table', async ({
     page,
   }) => {
-    await page.goto('/listings');
+    await page.goto('/design-preview/product-catalogue');
 
     await page
       .getByLabel('Product name', { exact: true })
@@ -46,7 +48,7 @@ test.describe('Product Catalogue preview', () => {
   });
 
   test('row actions offer Archive, never a bare Delete', async ({ page }) => {
-    await page.goto('/listings');
+    await page.goto('/design-preview/product-catalogue');
 
     await page
       .getByRole('button', {
@@ -61,7 +63,7 @@ test.describe('Product Catalogue preview', () => {
   test('a non-Live row disables View Live Page instead of offering a working link', async ({
     page,
   }) => {
-    await page.goto('/listings');
+    await page.goto('/design-preview/product-catalogue');
 
     // Filter to Draft, where no row has a real storefront URL.
     await page.getByRole('tab', { name: /^Draft/ }).click();
@@ -82,7 +84,7 @@ test.describe('Product Catalogue on a phone', () => {
   test.use({ viewport: { width: 375, height: 812 } });
 
   test('never scrolls the page sideways', async ({ page }) => {
-    await page.goto('/listings');
+    await page.goto('/design-preview/product-catalogue');
 
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - window.innerWidth,

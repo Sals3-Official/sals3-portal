@@ -1,66 +1,137 @@
 import type { Metadata } from 'next';
-import { FlaskConical } from 'lucide-react';
 import PageHeader from '@/components/portal/PageHeader';
-import ProductCatalogueWorkspace from '@/components/products/catalogue/ProductCatalogueWorkspace';
-import { requirePermission } from '@/lib/auth/session';
-import { listCatalogueFixtures } from '@/lib/seller-center/mock-data/product-catalogue';
+import CatalogueTable from '@/components/products/catalogue/CatalogueTable';
+import CatalogueTabs from '@/components/products/catalogue/CatalogueTabs';
+import PipelinePagination from '@/components/products/cj/PipelinePagination';
+import PipelineSearchInput from '@/components/products/cj/PipelineSearchInput';
+import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
+import SourcingInfoBanner from '@/components/products/cj/SourcingInfoBanner';
+import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
+import { isDatabaseConfigured } from '@/lib/db/client';
+import { readOrUnavailable } from '@/lib/db/availability';
+import { resolvePageWindow } from '@/lib/portal/pagination';
+import {
+  LISTINGS_PATH,
+  listingsCurrentParams,
+  listingsQuerySchema,
+} from '@/lib/portal/listings-params';
+import { statesForFilter } from '@/lib/seller-center/product-catalogue/status';
+import {
+  CATALOGUE_PAGE_SIZE,
+  countCatalogueByPublicationState,
+  countCatalogueRowsForSteward,
+  listCatalogueRowsForSteward,
+} from '@/modules/catalog/products/catalogue-queries';
 
 export const metadata: Metadata = {
   title: 'Product Catalogue · Sals3 Portal',
   robots: { index: false, follow: false },
 };
+export const dynamic = 'force-dynamic';
 
 /**
- * Product Catalogue design preview.
- *
- * This is where a seller manages Sals3 listings created after sourcing.
- * Sals3 owns the listing and merchandising revision; CJ remains the
- * supplier. Supplier facts such as cost, inventory, variant identity, and
- * source health are observed and protected, not manually invented. Sellers
- * may pause sales, but publication/resume remains gated. Media source and
- * supplier fallback are visible. Supplier changes protect future checkout
- * at the smallest affected scope without deleting history or rewriting
- * accepted orders.
- *
- * Sals3 has no writable catalogue yet (no Product/Variant/Offer table -
- * see [[cj-candidate-to-sals3-product-draft-implementation-spec]]), so this
- * screen is a fictional-fixture UI review, the same posture the Product
- * Editor already uses at `/listings/new?fixture=`. Tabs, search, filters,
- * bulk selection, row expansion, pause, and archive are real client
- * interactions over an in-memory fixture list; "Edit" opens the real
- * Product Editor against one of its existing fixtures. Nothing here reads
- * or writes a database, and a reload discards every change.
+ * The REAL Product Catalogue: the steward seller's `products` rows, straight
+ * from the database. This replaced the fictional-fixture preview, which lives
+ * on unchanged at `/design-preview/product-catalogue` as the reviewed design
+ * artifact. Rows arrive here through Product Sourcing's "Add to Product
+ * Catalogue"; everything starts UNPUBLISHED because publication is a separate,
+ * unbuilt flow with database-enforced gates.
  */
-export default async function ProductCataloguePage() {
-  await requirePermission('product:read');
+export default async function ProductCataloguePage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const query = listingsQuerySchema.parse(await searchParams);
 
-  const products = listCatalogueFixtures();
+  if (!isDatabaseConfigured()) {
+    return (
+      <div className="flex flex-col gap-4">
+        <PageHeader
+          title="Product Catalogue"
+          description="Your Sals3 products"
+        />
+        <SourcingEmptyState
+          title="No database configured in this environment"
+          description="DATABASE_URL is not set here, so catalogue products cannot be read."
+        />
+      </div>
+    );
+  }
+
+  const resolved = await readOrUnavailable('product catalogue', async () => {
+    const { sellerAccount } = await requireDropshipperAccount();
+    const states = statesForFilter(query.status);
+    const [totals, filteredTotal] = await Promise.all([
+      countCatalogueByPublicationState(sellerAccount.id),
+      countCatalogueRowsForSteward(sellerAccount.id, {
+        states,
+        search: query.q,
+      }),
+    ]);
+    const window = resolvePageWindow(
+      filteredTotal,
+      query.page,
+      CATALOGUE_PAGE_SIZE,
+    );
+    const rows = await listCatalogueRowsForSteward(sellerAccount.id, {
+      states,
+      search: query.q,
+      limit: window.pageSize,
+      offset: window.offset,
+    });
+
+    return { totals, window, rows };
+  });
+
+  if (!resolved.ok) {
+    return (
+      <div className="flex flex-col gap-4">
+        <PageHeader
+          title="Product Catalogue"
+          description="Your Sals3 products"
+        />
+        <SourcingEmptyState
+          title="Cannot reach the database right now"
+          description="Catalogue products could not be loaded because the database did not respond. Nothing has been changed. Check that Postgres is running, then reload."
+        />
+      </div>
+    );
+  }
+
+  const { totals, window, rows } = resolved.data;
+  const currentParams = listingsCurrentParams(query);
+  const noun = window.total === 1 ? 'product' : 'products';
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Product Catalogue"
-        description="Sals3-managed listings created after sourcing and customization. CJ remains the supplier - its facts are observed and protected, not manually invented."
+        description={`${window.total.toLocaleString()} ${noun}`}
       />
-      <p
-        role="status"
-        className="flex items-start gap-2 rounded-lg border border-primary/20 bg-accent px-3 py-2 text-sm text-brand-900"
-      >
-        <FlaskConical
-          aria-hidden="true"
-          className="mt-0.5 size-4 shrink-0 text-primary"
+      <SourcingInfoBanner>
+        These are your real Sals3 product drafts. Publishing is not built yet,
+        so nothing here is live on a storefront - and stock, media, and price
+        facts that are not tracked yet say so instead of showing a guess.
+      </SourcingInfoBanner>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <CatalogueTabs
+          active={query.status}
+          totals={totals}
+          currentParams={currentParams}
         />
-        <span>
-          UI preview using fictional listing data. Changes are not saved.
-          <span className="block text-xs text-ink-muted">
-            No writable Sals3 catalogue exists yet - pause is real in-memory
-            state; publish and resume stay disabled/unbuilt because they need
-            server-side gates this preview does not have.
-          </span>
-        </span>
-      </p>
-
-      <ProductCatalogueWorkspace initialProducts={products} />
+        <PipelineSearchInput value={query.q} path={LISTINGS_PATH} />
+      </div>
+      <CatalogueTable rows={rows} />
+      {window.totalPages > 1 ? (
+        <PipelinePagination
+          path={LISTINGS_PATH}
+          page={window.page}
+          totalPages={window.totalPages}
+          total={window.total}
+          currentParams={currentParams}
+        />
+      ) : null}
     </div>
   );
 }

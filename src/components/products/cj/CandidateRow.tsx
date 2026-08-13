@@ -10,6 +10,8 @@ type CandidateRowProps = {
   href: string;
   /** The row's accessible name, e.g. `Open candidate detail for Blue mug`. */
   label: string;
+  /** Tints the row: this candidate is already drafted into the catalogue. */
+  inCatalogue?: boolean;
   children: ReactNode;
 };
 
@@ -35,8 +37,13 @@ type CandidateRowProps = {
  * drawer. `closest` cannot match the row itself: a `<tr>` carrying
  * `role="button"` is not an `a` or `button` element.
  */
+// `[role="checkbox"]` is load-bearing: base-ui's Checkbox renders a `<button>`
+// while enabled but a `<span role="checkbox">` while DISABLED - without the
+// role selector, clicking a disabled checkbox would fall through to the row
+// and open the drawer, while the enabled one would not. Same click, two
+// behaviours, discovered by the selection tests.
 const INTERACTIVE_DESCENDANTS =
-  'a,button,input,select,textarea,[role="menuitem"]';
+  'a,button,input,select,textarea,[role="menuitem"],[role="checkbox"]';
 
 /** True when the event came from a control inside the row rather than the row itself. */
 function fromNestedControl(event: MouseEvent<HTMLTableRowElement>): boolean {
@@ -55,6 +62,7 @@ function isActivationKey(event: KeyboardEvent<HTMLTableRowElement>): boolean {
 export default function CandidateRow({
   href,
   label,
+  inCatalogue = false,
   children,
 }: CandidateRowProps) {
   const router = useRouter();
@@ -80,6 +88,7 @@ export default function CandidateRow({
       // the interval in between is silent.
       aria-busy={pending}
       data-pending={pending ? '' : undefined}
+      data-in-catalogue={inCatalogue ? '' : undefined}
       onClick={(event) => {
         if (fromNestedControl(event)) return;
 
@@ -98,7 +107,11 @@ export default function CandidateRow({
       // on" surface, `TableRow` already carries `transition-colors`, and
       // `globals.css` neutralises the pulse under `prefers-reduced-motion` -
       // leaving colour as the signal, so motion is never the only cue.
-      className="cursor-pointer data-pending:animate-pulse data-pending:cursor-wait data-pending:bg-accent"
+      // `bg-primary/5` (brand blue at 5%), not `bg-accent` - accent is the pending
+      // tint, and `not-data-pending:` makes the precedence deterministic rather
+      // than an accident of stylesheet order. The colour is never the only
+      // signal: the "In catalogue" pill and the disabled checkbox carry it too.
+      className="cursor-pointer data-pending:animate-pulse data-pending:cursor-wait data-pending:bg-accent data-in-catalogue:not-data-pending:bg-primary/5"
     >
       {children}
     </TableRow>
