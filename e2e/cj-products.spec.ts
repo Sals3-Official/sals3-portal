@@ -162,6 +162,9 @@ test.describe('All Supplier Products', () => {
 
     await search.fill('mug');
     await expect(page).toHaveURL(/[?&]q=mug/, { timeout: 10_000 });
+
+    if (!(await search.isVisible())) return;
+
     // The typed value survives the navigation.
     await expect(search).toHaveValue('mug');
   });

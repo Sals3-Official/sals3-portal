@@ -7,6 +7,7 @@ const {
   countDeadLetteredEvaluationsMock,
   countEvaluatingCandidatesMock,
   isDatabaseConfiguredMock,
+  findCataloguedCandidateIdsMock,
   listCandidatesByStatusMock,
   listDeadLetteredEvaluationsMock,
   listEvaluatingCandidatesMock,
@@ -18,6 +19,7 @@ const {
   countDeadLetteredEvaluationsMock: vi.fn(),
   countEvaluatingCandidatesMock: vi.fn(),
   isDatabaseConfiguredMock: vi.fn(),
+  findCataloguedCandidateIdsMock: vi.fn(),
   listCandidatesByStatusMock: vi.fn(),
   listDeadLetteredEvaluationsMock: vi.fn(),
   listEvaluatingCandidatesMock: vi.fn(),
@@ -52,6 +54,10 @@ vi.mock('@/modules/catalog/candidates/queries', () => ({
   listDeadLetteredEvaluations: listDeadLetteredEvaluationsMock,
   listEvaluatingCandidates: listEvaluatingCandidatesMock,
   oldestQueuedAgeMs: oldestQueuedAgeMsMock,
+}));
+
+vi.mock('@/modules/catalog/products/read-model', () => ({
+  findCataloguedCandidateIds: findCataloguedCandidateIdsMock,
 }));
 
 vi.mock('@/components/portal/PageHeader', () => ({
@@ -169,6 +175,7 @@ describe('ProductSourcingPipelinePage', () => {
     listCandidatesByStatusMock.mockReset().mockResolvedValue([]);
     listDeadLetteredEvaluationsMock.mockReset().mockResolvedValue([]);
     listEvaluatingCandidatesMock.mockReset().mockResolvedValue([]);
+    findCataloguedCandidateIdsMock.mockReset().mockResolvedValue(new Set());
     oldestQueuedAgeMsMock.mockReset().mockResolvedValue(null);
   });
 

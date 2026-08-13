@@ -127,4 +127,13 @@ describe('CjTokenManager', () => {
       reason: 'authentication-failed',
     });
   });
+
+  it('maps network and timeout failures to upstream-unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('timeout')));
+    const manager = new CjTokenManager(secretStore());
+
+    await expect(manager.getAccessToken('connection-1')).rejects.toMatchObject({
+      reason: 'upstream-unavailable',
+    });
+  });
 });

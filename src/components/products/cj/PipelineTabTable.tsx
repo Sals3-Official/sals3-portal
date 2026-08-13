@@ -18,6 +18,7 @@ type PipelineTabTableProps = {
   tabIsEmpty: boolean;
   search: string;
   currentParams: Record<string, string>;
+  cataloguedCandidateIds?: string[];
 };
 
 /**
@@ -37,6 +38,7 @@ export default function PipelineTabTable({
   tabIsEmpty,
   search,
   currentParams,
+  cataloguedCandidateIds = [],
 }: PipelineTabTableProps) {
   if (candidates.length === 0) {
     if (tabIsEmpty) {
@@ -62,6 +64,7 @@ export default function PipelineTabTable({
           candidates={candidates}
           currentParams={currentParams}
           showReasons={false}
+          cataloguedCandidateIds={cataloguedCandidateIds}
         />
       );
     case 'needs-attention':
@@ -70,6 +73,7 @@ export default function PipelineTabTable({
           candidates={candidates}
           currentParams={currentParams}
           showReasons
+          cataloguedCandidateIds={cataloguedCandidateIds}
         />
       );
     case 'evaluating':

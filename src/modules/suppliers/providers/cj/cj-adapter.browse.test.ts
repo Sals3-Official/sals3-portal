@@ -132,6 +132,14 @@ describe('listBrowsePage - the seller-facing live browse read', () => {
     ).rejects.toMatchObject({ reason: 'rate-limited' });
   });
 
+  it('maps network and timeout failures to upstream-unavailable', async () => {
+    fetchMock.mockRejectedValue(new Error('timeout'));
+
+    await expect(
+      adapter().listBrowsePage('connection-1', { pageNum: 1, pageSize: 200 }),
+    ).rejects.toMatchObject({ reason: 'upstream-unavailable' });
+  });
+
   it('maps an envelope code 401 to authentication-failed', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ code: 401, message: 'expired' }),

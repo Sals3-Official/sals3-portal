@@ -23,6 +23,7 @@ import {
 } from '@/lib/portal/pipeline-params';
 import { countForTab, parsePipelineTab } from '@/lib/portal/pipeline-tabs';
 import resolvePipelinePageData from '@/modules/catalog/candidates/pipeline-page-data';
+import { findCataloguedCandidateIds } from '@/modules/catalog/products/read-model';
 
 export const metadata: Metadata = { title: 'Product Sourcing · Sals3 Portal' };
 export const dynamic = 'force-dynamic';
@@ -62,13 +63,24 @@ export default async function ProductSourcingPipelinePage({
   // would be a second auth query per row click.
   const resolved = await readOrUnavailable('candidate pipeline', async () => {
     const { sellerAccount } = await requireDropshipperAccount();
+    const pageData = await resolvePipelinePageData(sellerAccount.id, tab, {
+      search,
+      requestedPage: parsePageParam(query.page),
+    });
+    const cataloguedCandidateIds =
+      tab === 'ready' || tab === 'needs-attention'
+        ? [
+            ...(await findCataloguedCandidateIds(
+              sellerAccount.id,
+              pageData.candidates.map((candidate) => candidate.candidateId),
+            )),
+          ]
+        : [];
 
     return {
       sellerAccountId: sellerAccount.id,
-      pageData: await resolvePipelinePageData(sellerAccount.id, tab, {
-        search,
-        requestedPage: parsePageParam(query.page),
-      }),
+      pageData,
+      cataloguedCandidateIds,
     };
   });
 
@@ -76,7 +88,7 @@ export default async function ProductSourcingPipelinePage({
     return <PipelineUnavailable reason="unreachable" tab={tab} />;
   }
 
-  const { sellerAccountId, pageData } = resolved.data;
+  const { sellerAccountId, pageData, cataloguedCandidateIds } = resolved.data;
   const { counts, candidates, queueAgeMs, window } = pageData;
   const isStale =
     tab === 'exception' &&
@@ -127,6 +139,7 @@ export default async function ProductSourcingPipelinePage({
         tabIsEmpty={countForTab(tab, counts) === 0}
         search={search}
         currentParams={currentParams}
+        cataloguedCandidateIds={cataloguedCandidateIds}
       />
       {window.totalPages > 1 ? (
         <PipelinePagination

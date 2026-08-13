@@ -1,13 +1,17 @@
 'use server';
 
+import { revalidatePath } from 'next/cache';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
 import {
+  bulkCreateProductDraftsInputSchema,
   createProductDraftInputSchema,
   saveProductDraftInputSchema,
+  type BulkProductDraftActionResult,
   type ProductDraftActionResult,
+  type ProductDraftFailureReason,
 } from '@/modules/catalog/products/contracts';
 import createProductDraftFromCandidate from '@/modules/catalog/products/create-draft';
 import saveProductDraft from '@/modules/catalog/products/save-draft';
@@ -124,6 +128,62 @@ export async function createProductDraftAction(
     // return a constraint name, driver message, or stack to the client.
     // eslint-disable-next-line no-console
     console.error('[portal] create product draft failed', {
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+
+    return { ok: false, reason: 'failed' };
+  }
+}
+
+export async function bulkCreateProductDraftsAction(
+  input: unknown,
+): Promise<BulkProductDraftActionResult> {
+  const parsed = bulkCreateProductDraftsInputSchema.safeParse(input);
+
+  if (!parsed.success) return { ok: false, reason: 'invalid_input' };
+
+  const auth = await authorize('product:import', 'catalog-draft:bulk-create');
+
+  if (!auth.ok) return auth;
+
+  try {
+    let created = 0;
+    let replayed = 0;
+    const failed: Array<{
+      candidateId: string;
+      reason: ProductDraftFailureReason;
+    }> = [];
+
+    // Sequential by design: one bounded server action owns the batch, and each
+    // candidate keeps its own idempotency key.
+    // eslint-disable-next-line no-restricted-syntax -- ordered writes keep load bounded and toasts deterministic.
+    for (const request of parsed.data.requests) {
+      // eslint-disable-next-line no-await-in-loop
+      const outcome = await createProductDraftFromCandidate({
+        candidateId: request.candidateId,
+        sellerAccountId: auth.sellerAccountId,
+        actorId: auth.actorId,
+        idempotencyKey: request.idempotencyKey,
+      });
+
+      if (outcome.ok) {
+        if (outcome.result.replayed) replayed += 1;
+        else created += 1;
+      } else {
+        failed.push({
+          candidateId: request.candidateId,
+          reason: outcome.reason,
+        });
+      }
+    }
+
+    revalidatePath('/products/pipeline');
+    revalidatePath('/listings');
+
+    return { ok: true, created, replayed, failed };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] bulk create product drafts failed', {
       error: error instanceof Error ? error.message : 'unknown',
     });
 

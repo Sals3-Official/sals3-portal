@@ -129,7 +129,11 @@ export default function CatalogueVariantRow({
       </TableCell>
       <TableCell>
         <div className="text-sm">
-          <div>{formatMoney(variant.sellingPrice)}</div>
+          <div>
+            {variant.sellingPrice === null
+              ? 'Not available'
+              : formatMoney(variant.sellingPrice)}
+          </div>
           <div className="text-xs text-muted-foreground">
             Supplier cost: {formatMoney(variant.supplierCost)}
           </div>
@@ -138,7 +142,9 @@ export default function CatalogueVariantRow({
               Est. margin:{' '}
               {formatMoney({
                 amountMinor: margin,
-                currency: variant.sellingPrice.currency,
+                currency:
+                  variant.sellingPrice?.currency ??
+                  variant.supplierCost.currency,
               })}{' '}
               (illustrative, excludes freight/fees)
             </div>

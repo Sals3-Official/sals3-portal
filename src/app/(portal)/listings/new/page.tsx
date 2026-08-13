@@ -7,6 +7,7 @@ import ProductEditor from '@/components/products/editor/ProductEditor';
 import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
 import AddProductModeChooser from '@/components/seller-center/listings/AddProductModeChooser';
 import BlankListingWorkspace from '@/components/seller-center/listings/BlankListingWorkspace';
+import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { requirePermission } from '@/lib/auth/session';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
 import resolveFixtureVariantGuidance from '@/lib/seller-center/product-editor/pricing-guidance';
@@ -14,6 +15,7 @@ import {
   editorLifecycleParamSchema,
   lifecycleFromParam,
 } from '@/lib/seller-center/product-editor/query';
+import { findProductEditorFixtureForSeller } from '@/modules/catalog/products/read-model';
 
 /**
  * Add Product. One route, two entry modes:
@@ -21,6 +23,8 @@ import {
  * - no query    - the blank essentials-first wizard.
  * - `?fixture=` - the Product Editor design preview, prefilled from a
  *                 fictional qualified supplier product. Development only.
+ * - `?productId=` - persisted Product Catalogue record, rendered into the
+ *                 same editor UI from database data.
  * - `?supplierCandidateId=` - reserved for the real integration. It is
  *                 parsed and acknowledged, never answered with fixture
  *                 data, because a real candidate id must not resolve to a
@@ -32,6 +36,7 @@ import {
 
 const querySchema = z.object({
   fixture: z.string().max(64).optional().catch(undefined),
+  productId: z.string().uuid().optional().catch(undefined),
   supplierCandidateId: z.string().max(128).optional().catch(undefined),
   state: editorLifecycleParamSchema,
 });
@@ -51,7 +56,9 @@ export async function generateMetadata({
 }: PageProps): Promise<Metadata> {
   const query = querySchema.parse(await searchParams);
   const isPreview =
-    query.fixture !== undefined || query.supplierCandidateId !== undefined;
+    query.fixture !== undefined ||
+    query.productId !== undefined ||
+    query.supplierCandidateId !== undefined;
 
   return {
     title: 'Add Product · Sals3 Portal',
@@ -116,6 +123,25 @@ export default async function AddProductPage({ searchParams }: PageProps) {
         fixture={fixture}
         initialLifecycle={lifecycleFromParam(query.state)}
         variantGuidance={variantGuidance}
+      />
+    );
+  }
+
+  if (query.productId !== undefined) {
+    const { sellerAccount } = await requireDropshipperAccount();
+    const record = await findProductEditorFixtureForSeller(
+      sellerAccount.id,
+      query.productId,
+    );
+
+    if (record === null) notFound();
+
+    return (
+      <ProductEditor
+        fixture={record.fixture}
+        initialLifecycle={lifecycleFromParam(query.state)}
+        variantGuidance={record.variantGuidance}
+        dataMode="database"
       />
     );
   }

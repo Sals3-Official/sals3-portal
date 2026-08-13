@@ -37,6 +37,22 @@ export type CreateProductDraftInput = z.infer<
   typeof createProductDraftInputSchema
 >;
 
+export const bulkCreateProductDraftsInputSchema = z.object({
+  requests: z
+    .array(
+      z.object({
+        candidateId: z.string().uuid(),
+        idempotencyKey: idempotencyKeySchema,
+      }),
+    )
+    .min(1)
+    .max(50),
+});
+
+export type BulkCreateProductDraftsInput = z.infer<
+  typeof bulkCreateProductDraftsInputSchema
+>;
+
 const MAX_TITLE_LENGTH = 200;
 
 export const saveProductDraftInputSchema = z.object({
@@ -168,6 +184,18 @@ export type ProductDraftFailureReason =
 
 export type ProductDraftActionResult =
   | { ok: true; result: ProductDraftResult }
+  | { ok: false; reason: ProductDraftFailureReason };
+
+export type BulkProductDraftActionResult =
+  | {
+      ok: true;
+      created: number;
+      replayed: number;
+      failed: Array<{
+        candidateId: string;
+        reason: ProductDraftFailureReason;
+      }>;
+    }
   | { ok: false; reason: ProductDraftFailureReason };
 
 /** Audit action names. Stable strings — a rename breaks historical queries. */

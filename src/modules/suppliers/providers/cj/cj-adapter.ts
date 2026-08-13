@@ -44,6 +44,7 @@ import CjTokenManager from './cj-auth';
  */
 
 const REQUEST_SPACING_MS = 1_100;
+const CJ_REQUEST_TIMEOUT_MS = 8_000;
 const COMMENT_SAMPLE_SIZE = 20;
 /** Documented legacy `/product/list` per-page maximum. */
 const CATALOG_PAGE_SIZE_MAX = 200;
@@ -63,6 +64,10 @@ function delay(ms: number): Promise<void> {
   });
 }
 
+function timeoutSignal(): AbortSignal {
+  return AbortSignal.timeout(CJ_REQUEST_TIMEOUT_MS);
+}
+
 export type FetchImpl = typeof fetch;
 
 export default class CjSupplierAdapter implements SupplierProviderAdapter {
@@ -79,10 +84,17 @@ export default class CjSupplierAdapter implements SupplierProviderAdapter {
 
   private async getJson(connectionId: string, path: string): Promise<unknown> {
     const token = await this.tokenManager.getAccessToken(connectionId);
-    const response = await this.fetchImpl(`${CJ_BASE_URL}${path}`, {
-      headers: { 'CJ-Access-Token': token },
-      cache: 'no-store',
-    });
+    let response: Response;
+
+    try {
+      response = await this.fetchImpl(`${CJ_BASE_URL}${path}`, {
+        headers: { 'CJ-Access-Token': token },
+        cache: 'no-store',
+        signal: timeoutSignal(),
+      });
+    } catch {
+      throw new CjApiError('upstream-unavailable');
+    }
 
     if (response.status === 429) throw new CjApiError('rate-limited');
     if (!response.ok) throw new CjApiError('upstream-unavailable');
@@ -96,15 +108,22 @@ export default class CjSupplierAdapter implements SupplierProviderAdapter {
     body: unknown,
   ): Promise<unknown> {
     const token = await this.tokenManager.getAccessToken(connectionId);
-    const response = await this.fetchImpl(`${CJ_BASE_URL}${path}`, {
-      method: 'POST',
-      headers: {
-        'CJ-Access-Token': token,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      cache: 'no-store',
-    });
+    let response: Response;
+
+    try {
+      response = await this.fetchImpl(`${CJ_BASE_URL}${path}`, {
+        method: 'POST',
+        headers: {
+          'CJ-Access-Token': token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        cache: 'no-store',
+        signal: timeoutSignal(),
+      });
+    } catch {
+      throw new CjApiError('upstream-unavailable');
+    }
 
     if (response.status === 429) throw new CjApiError('rate-limited');
     if (!response.ok) throw new CjApiError('upstream-unavailable');

@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useTransition } from 'react';
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { TableRow } from '@/components/ui/table';
+import { cn } from '@/lib/utils';
 
 type CandidateRowProps = {
   /** Already carries the current tab, search, and page - see `candidateDrawerHref`. */
@@ -11,6 +12,7 @@ type CandidateRowProps = {
   /** The row's accessible name, e.g. `Open candidate detail for Blue mug`. */
   label: string;
   children: ReactNode;
+  className?: string;
 };
 
 /**
@@ -56,6 +58,7 @@ export default function CandidateRow({
   href,
   label,
   children,
+  className,
 }: CandidateRowProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -98,7 +101,10 @@ export default function CandidateRow({
       // on" surface, `TableRow` already carries `transition-colors`, and
       // `globals.css` neutralises the pulse under `prefers-reduced-motion` -
       // leaving colour as the signal, so motion is never the only cue.
-      className="cursor-pointer data-pending:animate-pulse data-pending:cursor-wait data-pending:bg-accent"
+      className={cn(
+        'cursor-pointer data-pending:animate-pulse data-pending:cursor-wait data-pending:bg-accent',
+        className,
+      )}
     >
       {children}
     </TableRow>

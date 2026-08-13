@@ -201,7 +201,7 @@ export type CatalogueVariantFixture = {
   cjVariantId: string;
   hasImage: boolean;
   /** Seller-managed customer-facing price. */
-  sellingPrice: MoneyValue;
+  sellingPrice: MoneyValue | null;
   /** Observed supplier fact, never the customer price. */
   supplierCost: MoneyValue;
   availability: Availability;
@@ -225,12 +225,16 @@ export type CatalogueProductFixture = {
   /** Canonical Sals3 catalog identity - never a CJ id. */
   sals3ProductId: string;
   name: string;
+  /** Structured description rendered as plain text for the existing editor UI. */
+  descriptionText?: string;
   hasImage: boolean;
   status: ListingStatus;
   categoryPath: string;
+  categoryCode?: string | null;
   createdAt: string;
   supplierProviderCode: string;
   supplierProviderName: string;
+  sourceCandidateId?: string | null;
   /**
    * Health of the underlying supplier connection - independently filterable
    * from `availability`. See the `SupplierConnectionHealth` doc comment.
@@ -239,7 +243,7 @@ export type CatalogueProductFixture = {
   /** Supplier reference only, shown read-only, never labelled "Product ID". */
   cjProductId: string;
   /** Seller-managed customer-facing price for a single-offer product. */
-  sellingPrice: MoneyValue;
+  sellingPrice: MoneyValue | null;
   /**
    * Fallback source-health facts for a single-offer product with no
    * variant list. When `variants.length > 0`, the product's real
@@ -260,6 +264,8 @@ export type CatalogueProductFixture = {
   attentionReasons: AttentionReasonFixture[];
   /** Links "Edit" to a real fixture already built in the Product Editor. */
   editorFixtureKey: string;
+  /** Real persisted catalogue rows open by product id; fixtures keep using `editorFixtureKey`. */
+  editorHref?: string;
   variants: CatalogueVariantFixture[];
 };
 

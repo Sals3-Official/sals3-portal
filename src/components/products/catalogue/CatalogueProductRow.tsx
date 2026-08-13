@@ -76,7 +76,8 @@ export default function CatalogueProductRow({
   onToggleVariantPaused,
 }: CatalogueProductRowProps) {
   const hasVariants = product.variants.length > 0;
-  const editHref = `/listings/new?fixture=${product.editorFixtureKey}`;
+  const editHref =
+    product.editorHref ?? `/listings/new?fixture=${product.editorFixtureKey}`;
   const availability = deriveProductAvailability(
     product.variants,
     product.availability,
@@ -175,7 +176,9 @@ export default function CatalogueProductRow({
         </TableCell>
         <TableCell>
           <div className="flex items-center gap-1.5">
-            {formatMoney(product.sellingPrice)}
+            {product.sellingPrice === null
+              ? 'Not available'
+              : formatMoney(product.sellingPrice)}
             <button
               type="button"
               onClick={() => announceUnbuilt('Editing price', product.name)}
