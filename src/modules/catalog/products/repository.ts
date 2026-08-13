@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 
 import {
   offerSupplierBindings,
@@ -126,6 +126,46 @@ export async function findProviderProductReference(
     .limit(1);
 
   return rows[0] ?? null;
+}
+
+/**
+ * Which of these candidates already have a Sals3 product, and which product.
+ *
+ * Feeds the Product Sourcing pipeline's "In catalogue" row treatment: one
+ * batched read per rendered page instead of one per row. Returns at most one
+ * entry per candidate - `provider_product_references` is unique on
+ * `(productId, supplierProviderId)` and a candidate seeds one product, so a
+ * duplicate here would indicate corrupted provenance, and the LAST write wins
+ * in the map the caller builds.
+ *
+ * Same tenancy posture as `listProviderReferencesForSourceCandidate` below:
+ * this table is global, so the candidate ids MUST already be tenant-scoped by
+ * the caller. The pipeline satisfies that - its ids come from
+ * `listCandidatesByStatus`, which filters by the owning connection's seller.
+ */
+export async function listCandidateIdsWithProducts(
+  executor: Executor,
+  sourceCandidateIds: string[],
+): Promise<Array<{ sourceCandidateId: string; productId: string }>> {
+  if (sourceCandidateIds.length === 0) return [];
+
+  const rows = await executor
+    .selectDistinct({
+      sourceCandidateId: providerProductReferences.sourceCandidateId,
+      productId: providerProductReferences.productId,
+    })
+    .from(providerProductReferences)
+    .where(
+      inArray(providerProductReferences.sourceCandidateId, sourceCandidateIds),
+    );
+
+  // `sourceCandidateId` is nullable in the schema (set null on candidate
+  // delete); the inArray predicate cannot match null, but the type does not
+  // know that.
+  return rows.filter(
+    (row): row is { sourceCandidateId: string; productId: string } =>
+      row.sourceCandidateId !== null,
+  );
 }
 
 /**

@@ -1,9 +1,5 @@
 'use server';
 
-import { PermissionError } from '@/lib/auth/permissions';
-import { requirePermission } from '@/lib/auth/session';
-import { isDatabaseConfigured } from '@/lib/db/client';
-import { checkRateLimit } from '@/lib/rate-limit';
 import {
   createProductDraftInputSchema,
   saveProductDraftInputSchema,
@@ -11,7 +7,7 @@ import {
 } from '@/modules/catalog/products/contracts';
 import createProductDraftFromCandidate from '@/modules/catalog/products/create-draft';
 import saveProductDraft from '@/modules/catalog/products/save-draft';
-import type { PortalPermission } from '@/lib/auth/permissions';
+import authorizeDraftAction from './draft-action-auth';
 
 /**
  * The protected boundary for the canonical catalog draft flow.
@@ -28,69 +24,19 @@ import type { PortalPermission } from '@/lib/auth/permissions';
  * id, and its ownership is re-derived server-side through the supplier
  * connection that owns it.
  *
- * These actions have **no UI wiring yet**, on purpose. The Product Editor and
- * `/listings` are still fixture screens; pointing their existing controls at
- * partial real persistence would make unsaved fields look saved. A protected
- * contract plus tests is the honest state until the editor is wired
- * deliberately.
+ * Wiring: `saveProductDraftAction` is called by the real product editor at
+ * `/listings/[productId]`; bulk creation goes through `bulk-draft-action.ts`,
+ * which shares `authorizeDraftAction` and loops the same domain module.
+ * `createProductDraftAction` remains the single-candidate contract.
  *
  * Next.js verifies the request origin for Server Actions, which is the CSRF
  * control for these cookie-backed mutations (spec §3.2).
  */
 
+// Authorization (permission, ADR-006 business-model gate, rate limit) lives in
+// `./draft-action-auth` so the bulk action shares one implementation without
+// this `'use server'` file exporting it as an endpoint.
 const RATE_LIMIT = { capacity: 30, refillIntervalMs: 60_000 };
-
-type Authorized = {
-  ok: true;
-  sellerAccountId: string;
-  actorId: string;
-};
-
-type AuthorizationFailure = {
-  ok: false;
-  reason: 'denied' | 'rate_limited' | 'not_configured';
-};
-
-async function authorize(
-  permission: PortalPermission,
-  rateLimitKey: string,
-): Promise<Authorized | AuthorizationFailure> {
-  // An environment with no database is a real, expected condition (CI,
-  // preview deploys). Degrade honestly rather than letting a query throw.
-  if (!isDatabaseConfigured()) {
-    return { ok: false, reason: 'not_configured' };
-  }
-
-  let session;
-
-  try {
-    session = await requirePermission(permission);
-  } catch (error) {
-    if (error instanceof PermissionError)
-      return { ok: false, reason: 'denied' };
-    throw error;
-  }
-
-  // ADR-006: sourcing from a supplier is a Dropshipper capability. A Retailer
-  // account holding `product:import` still may not create supplier-backed
-  // catalog records.
-  if (session.sellerBusinessModel !== 'DROPSHIPPER') {
-    return { ok: false, reason: 'denied' };
-  }
-
-  const limit = checkRateLimit(
-    `${rateLimitKey}:${session.sellerId}`,
-    RATE_LIMIT,
-  );
-
-  if (!limit.allowed) return { ok: false, reason: 'rate_limited' };
-
-  return {
-    ok: true,
-    sellerAccountId: session.sellerId,
-    actorId: session.userId,
-  };
-}
 
 /**
  * Creates — or returns — the Sals3 product draft for a candidate this seller
@@ -104,7 +50,11 @@ export async function createProductDraftAction(
 
   if (!parsed.success) return { ok: false, reason: 'invalid_input' };
 
-  const auth = await authorize('product:import', 'catalog-draft:create');
+  const auth = await authorizeDraftAction(
+    'product:import',
+    'catalog-draft:create',
+    RATE_LIMIT,
+  );
 
   if (!auth.ok) return auth;
 
@@ -160,7 +110,11 @@ export async function saveProductDraftAction(
 
   if (!parsed.success) return { ok: false, reason: 'invalid_input' };
 
-  const auth = await authorize('product:edit', 'catalog-draft:save');
+  const auth = await authorizeDraftAction(
+    'product:edit',
+    'catalog-draft:save',
+    RATE_LIMIT,
+  );
 
   if (!auth.ok) return auth;
 

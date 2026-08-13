@@ -232,6 +232,62 @@ Redis, KV, or paid cache service is used for this path.
 | `/api/storefront/products/[id]`                            | Protected single-product lookup by CJ `pid` for `sals3-ecommerce`'s PDP                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `/api/storefront/categories`                               | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
+## Add to Product Catalogue, and the real catalogue
+
+Ready and Needs Attention rows on `/products/pipeline` carry a checkbox column
+and an **Add to Product Catalogue** button (top right, above the table). The
+selection is page-scoped - select-all covers the visible page's eligible rows,
+capped at 100, the page size. Adding creates REAL `products` rows through the
+existing `createProductDraftFromCandidate` flow, one idempotent transaction per
+candidate, sequentially (`bulk-draft-action.ts` documents why not in parallel).
+
+Facts worth knowing before filing bugs:
+
+- **Added candidates do not leave the pipeline.** A candidate is a sourcing
+  record. An added row is marked three ways - a light-blue row tint
+  (`bg-primary/5`), an "In catalogue" pill, and a disabled checkbox - and its
+  Action column becomes a real "Open in catalogue" link.
+- **Every product starts as `UNPUBLISHED` ("Draft").** Nothing can make it
+  Live today: the database itself rejects `PUBLISHED` without a slug and an
+  approved frozen revision (`products_published_requires_slug`/`_revision`),
+  and the storefront never reads the `products` table. See the parked ticket
+  below.
+- **Most drafts have no variants and no price.** Variants come only from
+  persisted CJ evidence (~19 of ~114k candidates have any), and pricing always
+  declines while the category is `UNMAPPED`. The catalogue and the editor say
+  "No variants" and "Not priced yet" instead of inventing figures.
+- A retry of a timed-out batch replays the same per-candidate idempotency
+  keys, so nothing is created twice. Failed rows stay selected for a one-click
+  retry.
+
+`/listings` is now the REAL Product Catalogue: the steward seller's products
+out of the database, with server-side status tabs, SQL search, and pagination
+(`CATALOGUE_PAGE_SIZE` 50). The fictional 11-fixture preview - including the
+richer ADR-011 lifecycle vocabulary (`Live · Needs Attention`, `Auto-paused`,
+availability states, media status) that no column backs yet - moved unchanged
+to `/design-preview/product-catalogue`.
+
+`/listings/[productId]` is the REAL product editor: title and structured
+description are editable (the only real write surface, via
+`saveProductDraftAction` with optimistic concurrency); variants, supplier
+provenance, and the derived "Before this can publish" requirements render
+read-only from real rows. A description that already holds structured blocks
+is shown read-only and saved back VERBATIM on a title-only save - never
+silently flattened to paragraphs. The fixture editor preview stays at
+`/listings/new?fixture=`.
+
+### Parked ticket: the real publish flow
+
+`UNPUBLISHED → PUBLISHED` needs, in order: (1) slug minting at publication
+(unique among published products); (2) revision freeze/approval with
+`contentSnapshot` + `frozenAt` + a recorded `approvalMode` - the CHECK
+constraints demand it; (3) gates over the `DraftMissingRequirement` codes - at
+minimum variants, resolved pricing, media provenance, structured description;
+(4) **category mapping**, the critical path: the pricing resolver refuses
+`UNMAPPED`, and the CJ→Sals3 crosswalk is blocked on the owner-level pilot
+rule pack (hot.md's highest open item); (5) a storefront read path for
+published products, which does not exist.
+
 ## Candidate detail drawer
 
 Clicking any row on `/products/pipeline`, in any tab, opens a read-only detail

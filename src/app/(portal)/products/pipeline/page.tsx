@@ -26,6 +26,8 @@ import resolvePipelinePageData from '@/modules/catalog/candidates/pipeline-page-
 
 export const metadata: Metadata = { title: 'Product Sourcing · Sals3 Portal' };
 export const dynamic = 'force-dynamic';
+/** Bulk "Add to Product Catalogue" is invoked from this page and runs up to 100 sequential draft transactions. */
+export const maxDuration = 60;
 
 /** ~6 ticks at the default 5-minute GitHub Actions schedule (evaluate-tick.yml). */
 const STALE_QUEUE_THRESHOLD_MS = 30 * 60 * 1000;
@@ -77,7 +79,7 @@ export default async function ProductSourcingPipelinePage({
   }
 
   const { sellerAccountId, pageData } = resolved.data;
-  const { counts, candidates, queueAgeMs, window } = pageData;
+  const { counts, candidates, queueAgeMs, window, inCatalogue } = pageData;
   const isStale =
     tab === 'exception' &&
     queueAgeMs !== null &&
@@ -87,8 +89,7 @@ export default async function ProductSourcingPipelinePage({
     ...(search === '' ? {} : { q: search }),
   };
   // Carries `page` too, so opening the drawer does not reset the list. Paging
-  // and switching tabs keep using `tabParams`, which has no `candidate` - so
-  // both correctly close the drawer.
+  // and tab switches use `tabParams` (no `candidate`), correctly closing it.
   const currentParams = pipelineCurrentParams({ ...query, tab });
 
   return (
@@ -127,6 +128,7 @@ export default async function ProductSourcingPipelinePage({
         tabIsEmpty={countForTab(tab, counts) === 0}
         search={search}
         currentParams={currentParams}
+        inCatalogue={inCatalogue}
       />
       {window.totalPages > 1 ? (
         <PipelinePagination

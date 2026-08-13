@@ -95,7 +95,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: 'package',
         permission: 'product:read',
         description:
-          'The seller’s authoritative list of Sals3 listings - distinct from the raw supplier feed. Currently a design preview on fictional data; no writable Sals3 catalogue exists yet.',
+          'The seller’s authoritative list of Sals3 products - real database rows created from Product Sourcing. Everything starts as a draft; publication is a separate, unbuilt flow.',
       },
       {
         href: '/listings/new?fixture=attention',
@@ -103,7 +103,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: 'plus',
         permission: 'product:create',
         description:
-          'The Product Editor, prefilled from a qualified supplier product - currently a design preview on fictional data. The blank essentials-first wizard is still reachable at /listings/new directly.',
+          'The Product Editor design preview on fictional data. Real drafts open from the Product Catalogue; the blank essentials-first wizard is still reachable at /listings/new directly.',
       },
     ],
   },
