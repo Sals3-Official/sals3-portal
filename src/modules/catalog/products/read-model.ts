@@ -618,7 +618,13 @@ function buildCatalogueProducts(
       hasImage: media.length > 0,
       coverImageUrl: supplier.imageUrl,
       status,
-      categoryPath: categoryPath ?? 'Unmapped category',
+      // The CJ category is the Sals3 category (owner decision 2026-08-14):
+      // a row not yet carrying a mapped category shows the supplier's own
+      // category, which is exactly what publication will categorise it as.
+      // 'Unmapped category' survives only for a row with no CJ category at
+      // all — the one case that still blocks.
+      categoryPath:
+        categoryPath ?? supplier.categoryPath ?? 'Unmapped category',
       categoryCode,
       supplierCategoryPath: supplier.categoryPath,
       supplierCategoryId: supplier.categoryId,
@@ -731,16 +737,33 @@ function catalogueIssue(
   };
 }
 
+/**
+ * The category this product will actually be published under: the mapped
+ * Sals3 category when one is recorded, otherwise the supplier's own category
+ * — which IS the Sals3 category since the 2026-08-14 owner decision, applied
+ * server-side at draft creation and publication through the CJ mirror. The
+ * sentinel survives only when the row has no CJ category anywhere.
+ */
+function effectiveCategoryPath(product: CatalogueProductFixture): string {
+  if (product.categoryPath !== 'Unmapped category') return product.categoryPath;
+
+  return product.supplierCategoryPath ?? 'Unmapped category';
+}
+
 function editorIssues(product: CatalogueProductFixture): ReadinessIssue[] {
   const issues: ReadinessIssue[] = [];
 
-  if (product.categoryPath === 'Unmapped category') {
+  // Only a product with no CJ category anywhere — no mapped category AND no
+  // supplier category on record — is blocked. When the supplier category
+  // exists, it IS the category (owner decision 2026-08-14), and publication
+  // applies it server-side.
+  if (effectiveCategoryPath(product) === 'Unmapped category') {
     issues.push(
       catalogueIssue(
         `${product.id}-category`,
         'BLOCKER',
-        'Sals3 category is not mapped',
-        'This product has no confirmed Sals3 category in the catalogue database.',
+        'CJ category is missing',
+        'No CJ category was captured for this product, so it cannot be categorised.',
         'specs',
       ),
     );
@@ -863,7 +886,7 @@ function editorMarkets(
 /**
  * The attributes the database can actually answer for this product.
  *
- * The Sals3 category is the only `REQUIRED` one, because it is the only one a
+ * The CJ Category is the only `REQUIRED` one, because it is the only one a
  * publication gate depends on. The rest are the supplier's own facts, marked
  * `SUPPLIER` so the editor shows them as evidence rather than as something the
  * seller filled in — and omitted entirely when the row does not carry them,
@@ -876,22 +899,31 @@ function editorMarkets(
 function editorSpecifications(
   product: CatalogueProductFixture,
 ): SpecificationFixture[] {
-  const unmapped = product.categoryPath === 'Unmapped category';
+  const categoryPath = effectiveCategoryPath(product);
+  const unmapped = categoryPath === 'Unmapped category';
   const specifications: SpecificationFixture[] = [
     {
       key: 'category',
-      label: 'Sals3 category',
-      value: product.categoryPath,
+      label: 'CJ Category',
+      value: categoryPath,
       requirement: 'REQUIRED',
-      // Never `SELLER`: a Sals3 category comes from an approved taxonomy
-      // mapping, which is platform authority, not a seller entry.
-      source: unmapped ? 'NOT_PROVIDED' : 'INFERRED',
+      // Never `SELLER`: the category is the supplier's own catalogue
+      // category (owner decision 2026-08-14), not a seller entry.
+      source: unmapped ? 'NOT_PROVIDED' : 'SUPPLIER',
       unresolved: unmapped,
     },
   ];
 
   const supplierFields: [string, string, string | null | undefined][] = [
-    ['supplier_category', 'Supplier category', product.supplierCategoryPath],
+    [
+      'supplier_category',
+      'Supplier category',
+      // Omitted when it would repeat the CJ Category field above verbatim —
+      // shown only when a reviewed mapping made the two diverge.
+      product.supplierCategoryPath === categoryPath
+        ? null
+        : product.supplierCategoryPath,
+    ],
     ['supplier_sku', 'Supplier SKU', product.supplierSku],
     ['packed_weight', 'Packed weight (supplier)', product.supplierWeightLabel],
     [
@@ -982,10 +1014,12 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
     // until 2026-08-14, which made the supplier evidence block report
     // "Unmapped category" as if the supplier had said it.
     supplierCategoryPath: product.supplierCategoryPath ?? 'Not recorded',
-    sals3CategoryPath: product.categoryPath,
+    sals3CategoryPath: effectiveCategoryPath(product),
     sals3CategoryCode: product.categoryCode ?? null,
     categoryMappingConfidence:
-      product.categoryPath === 'Unmapped category' ? 'UNMAPPED' : 'ACCEPTABLE',
+      effectiveCategoryPath(product) === 'Unmapped category'
+        ? 'UNMAPPED'
+        : 'ACCEPTABLE',
     realSupplierCandidateId: product.sourceCandidateId ?? null,
     sellerSku: variants[0]?.sellerSku ?? product.sals3ProductId,
     brandDeclaration: 'No brand / generic',

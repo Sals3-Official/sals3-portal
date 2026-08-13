@@ -416,21 +416,22 @@ describe('Product Editor - the photo a real product actually has', () => {
     expect(screen.getByText('Image 3')).toBeInTheDocument();
   });
 
-  it('shows the Sals3 category read-only, with no invented options to pick from', () => {
+  it('shows the CJ Category read-only, with no invented options to pick from', () => {
     renderWithCover();
 
-    // Taxonomy governance is denied to every portal role, so there is no
-    // category control for the seller to operate.
+    // The category is the supplier's own catalogue category and drives which
+    // pricing policy applies, so there is no category control for the seller
+    // to operate.
     expect(
-      screen.queryByRole('combobox', { name: /Sals3 category/i }),
+      screen.queryByRole('combobox', { name: /CJ Category/i }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText('Sals3 category')).toBeInTheDocument();
+    expect(screen.getByText('CJ Category')).toBeInTheDocument();
     expect(
-      screen.getByText(/Resolved from the supplier category/i),
+      screen.getByText(/The supplier’s own catalogue category/i),
     ).toBeInTheDocument();
   });
 
-  it('says an unmapped category is not mapped, instead of showing a blank field', () => {
+  it('says when no CJ category is recorded, instead of showing a blank field', () => {
     const resolved = withCoverAddress();
 
     render(
@@ -447,11 +448,9 @@ describe('Product Editor - the photo a real product actually has', () => {
       />,
     );
 
-    expect(screen.getByText('Not mapped yet')).toBeInTheDocument();
+    expect(screen.getByText('No CJ category recorded')).toBeInTheDocument();
     expect(
-      screen.getByText(
-        /No approved mapping covers this supplier category yet/i,
-      ),
+      screen.getByText(/Discovery captured no CJ category for this product/i),
     ).toBeInTheDocument();
   });
 });

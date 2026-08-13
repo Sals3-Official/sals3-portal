@@ -12,6 +12,7 @@ import {
   type Executor,
 } from '@/modules/catalog/candidates/repository';
 import { feedSnapshotSchema } from '@/modules/catalog/candidates/rules/contracts';
+import { ensureCjCategoryMirror } from '@/modules/catalog/taxonomy/cj-mirror';
 import {
   assignProductCategory,
   findCategoryByCode,
@@ -244,18 +245,24 @@ async function resolveOfferableDestinations(
  * Action, route handler, or UI calling this today." So every draft was created
  * `UNMAPPED` even when an approved, active mapping existed for its CJ category.
  *
- * Three properties are kept exactly as that module defines them:
+ * Since 2026-08-14 (owner decision, Bogs), a supplier category with no
+ * reviewed rule no longer leaves the product `UNMAPPED`: the CJ category IS
+ * the Sals3 category, so `ensureCjCategoryMirror` creates a 1:1 mirror rule
+ * and the product is categorised by the supplier's own category. Only a
+ * candidate with no provider category id at all stays `UNMAPPED`.
+ *
+ * Properties kept from the taxonomy module's design:
  *
  * - **Nothing here can choose a category.** There is no category parameter.
- *   The resolver's only path to one is an `ACTIVE`, `APPROVED` mapping row
- *   keyed to the provider's own category id, so an unmapped, ambiguous, or
- *   superseded answer leaves the product `UNMAPPED` — a correct outcome, not a
- *   failure, and never a best guess.
- * - **Governance is untouched.** Approving a mapping stays a platform action in
- *   `scripts/approve-cj-category-mapping.mts`; this only *applies* one that was
- *   already approved. `taxonomy/authorization.ts` still denies governance to
- *   every portal role, and `taxonomy/boundaries.test.ts` still holds because no
- *   file under `src/app` imports the taxonomy repository — this module does.
+ *   A category comes from an `ACTIVE` mapping row keyed to the provider's own
+ *   category id — reviewed when one exists, the automatic mirror otherwise.
+ *   A seller still cannot hand-pick which pricing policy applies.
+ * - **A reviewed rule outranks the mirror.** The resolver is asked first, and
+ *   the mirror only fills absence — it never overwrites an owner-reviewed
+ *   mapping. `taxonomy/authorization.ts` still denies interactive governance
+ *   to every portal role, and `taxonomy/boundaries.test.ts` still holds
+ *   because no file under `src/app` imports the taxonomy repository — this
+ *   module does.
  * - **It runs inside the caller's transaction.** `applyResolvedCategoryToProduct`
  *   is deliberately not used: it opens its own transaction, and the draft flow
  *   needs the category, the audit event, and the idempotency record to commit
@@ -284,26 +291,70 @@ async function assignResolvedCategory(
     expectedMappingVersion: input.product.categoryMappingVersion,
   });
 
-  if (!isMappedDecision(decision)) return false;
+  let assignment: {
+    category: { id: string; code: string; path: string };
+    confidence: 'EXACT' | 'ACCEPTABLE';
+    mappingId: string;
+    mappingVersion: number;
+    taxonomyVersion: string;
+  } | null = null;
 
-  const category = await findCategoryByCode(
-    executor,
-    decision.sals3CategoryCode,
-  );
+  if (isMappedDecision(decision)) {
+    const category = await findCategoryByCode(
+      executor,
+      decision.sals3CategoryCode,
+    );
 
-  // Unreachable while the resolver's own guarantees hold; treated as "not
-  // mapped" rather than trusted, because a missing target row is a data
-  // problem and inventing a category id from it would be worse.
-  if (category === null) return false;
+    // Unreachable while the resolver's own guarantees hold; treated as "not
+    // mapped" rather than trusted, because a missing target row is a data
+    // problem and inventing a category id from it would be worse.
+    if (category === null) return false;
+
+    assignment = {
+      category,
+      confidence: decision.confidence,
+      mappingId: decision.mappingId,
+      mappingVersion: decision.mappingVersion,
+      taxonomyVersion: decision.taxonomyVersion,
+    };
+  } else {
+    // No reviewed rule covers this supplier category, so the supplier's own
+    // category becomes the Sals3 category through the mirror (owner decision
+    // 2026-08-14). `null` still means "not mapped" — a candidate with no
+    // provider category id has nothing to mirror.
+    const mirrored = await ensureCjCategoryMirror(executor, {
+      provider: 'CJ_DROPSHIPPING',
+      externalCategoryId: input.externalCategoryId,
+      observedCategoryPath: input.observedCategoryPath,
+      actorId: input.actorId,
+    });
+
+    if (
+      mirrored === null ||
+      mirrored.category === null ||
+      (mirrored.mapping.confidence !== 'EXACT' &&
+        mirrored.mapping.confidence !== 'ACCEPTABLE')
+    ) {
+      return false;
+    }
+
+    assignment = {
+      category: mirrored.category,
+      confidence: mirrored.mapping.confidence,
+      mappingId: mirrored.mapping.id,
+      mappingVersion: mirrored.mapping.mappingVersion,
+      taxonomyVersion: mirrored.mapping.taxonomyVersion,
+    };
+  }
 
   const updated = await assignProductCategory(executor, {
     productId: input.product.id,
     stewardSellerAccountId: input.stewardSellerAccountId,
     expectedVersion: input.product.version,
-    categoryId: category.id,
-    categoryMappingConfidence: decision.confidence,
-    categoryMappingId: decision.mappingId,
-    categoryMappingVersion: decision.mappingVersion,
+    categoryId: assignment.category.id,
+    categoryMappingConfidence: assignment.confidence,
+    categoryMappingId: assignment.mappingId,
+    categoryMappingVersion: assignment.mappingVersion,
     actorId: input.actorId,
   });
 
@@ -315,12 +366,12 @@ async function assignResolvedCategory(
     entityType: 'Product',
     entityId: updated.id,
     payload: {
-      categoryCode: category.code,
-      categoryPath: category.path,
-      confidence: decision.confidence,
-      mappingId: decision.mappingId,
-      mappingVersion: decision.mappingVersion,
-      taxonomyVersion: decision.taxonomyVersion,
+      categoryCode: assignment.category.code,
+      categoryPath: assignment.category.path,
+      confidence: assignment.confidence,
+      mappingId: assignment.mappingId,
+      mappingVersion: assignment.mappingVersion,
+      taxonomyVersion: assignment.taxonomyVersion,
       externalCategoryId: input.externalCategoryId,
       resolverVersion: decision.resolverVersion,
     },

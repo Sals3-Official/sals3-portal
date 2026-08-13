@@ -102,26 +102,68 @@ describe('productToEditorFixture — supplier media', () => {
   });
 });
 
-describe('productToEditorFixture — supplier evidence versus Sals3 decisions', () => {
-  it('reports the supplier’s own category, never the Sals3 mapping state', () => {
+describe('productToEditorFixture — the CJ category is the category', () => {
+  it('shows the CJ category as the category when no mapped row exists yet', () => {
+    // Owner decision 2026-08-14: the CJ category IS the Sals3 category. A
+    // row not yet carrying a mapped category shows the supplier's own
+    // category — exactly what publication will categorise it as.
     const { fixture } = productToEditorFixture(CATALOGUE_PRODUCT);
 
     expect(fixture.supplierCategoryPath).toBe("Men's Jackets");
-    expect(fixture.sals3CategoryPath).toBe('Unmapped category');
-    expect(fixture.categoryMappingConfidence).toBe('UNMAPPED');
+    expect(fixture.sals3CategoryPath).toBe("Men's Jackets");
+    expect(fixture.categoryMappingConfidence).toBe('ACCEPTABLE');
   });
 
-  it('says "Not recorded" rather than borrowing the Sals3 value', () => {
+  it('stays honestly unmapped only when no CJ category exists anywhere', () => {
     const { fixture } = productToEditorFixture({
       ...CATALOGUE_PRODUCT,
       supplierCategoryPath: null,
     });
 
     expect(fixture.supplierCategoryPath).toBe('Not recorded');
+    expect(fixture.sals3CategoryPath).toBe('Unmapped category');
+    expect(fixture.categoryMappingConfidence).toBe('UNMAPPED');
   });
 
-  it('never attributes an unmapped Sals3 category to the seller', () => {
+  it('raises the category blocker only when there is no CJ category at all', () => {
+    const blocked = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      supplierCategoryPath: null,
+    });
+    const publishable = productToEditorFixture(CATALOGUE_PRODUCT);
+
+    expect(
+      blocked.fixture.issues.some((issue) =>
+        issue.title.includes('CJ category is missing'),
+      ),
+    ).toBe(true);
+    expect(
+      publishable.fixture.issues.some((issue) =>
+        issue.title.toLowerCase().includes('category'),
+      ),
+    ).toBe(false);
+  });
+
+  it('marks the CJ-provided category as supplier-sourced, filled and required', () => {
     const { fixture } = productToEditorFixture(CATALOGUE_PRODUCT);
+    const category = fixture.specifications.find(
+      (specification) => specification.key === 'category',
+    );
+
+    expect(category).toMatchObject({
+      label: 'CJ Category',
+      value: "Men's Jackets",
+      requirement: 'REQUIRED',
+      source: 'SUPPLIER',
+      unresolved: false,
+    });
+  });
+
+  it('never attributes a missing category to the seller', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      supplierCategoryPath: null,
+    });
     const category = fixture.specifications.find(
       (specification) => specification.key === 'category',
     );
@@ -142,24 +184,40 @@ describe('productToEditorFixture — supplier evidence versus Sals3 decisions', 
       ]),
     );
 
-    expect(byKey.get('supplier_category')?.value).toBe("Men's Jackets");
+    // `supplier_category` is deliberately absent: it would repeat the CJ
+    // Category field verbatim now that the CJ category is the category.
+    expect(byKey.has('supplier_category')).toBe(false);
     expect(byKey.get('supplier_sku')?.value).toBe('CJPK2718027');
     expect(byKey.get('packed_weight')?.value).toBe('1180.00-1300.00 g');
     expect(byKey.get('ships_from')?.value).toBe('CN, CN_US');
     // Supplier evidence, so no unresolved-required blocker is invented from a
     // field the seller has no way to fill in.
-    [
-      'supplier_category',
-      'supplier_sku',
-      'packed_weight',
-      'ships_from',
-    ].forEach((key) => {
+    ['supplier_sku', 'packed_weight', 'ships_from'].forEach((key) => {
       expect(byKey.get(key)).toMatchObject({
         source: 'SUPPLIER',
         requirement: 'OPTIONAL',
         unresolved: false,
       });
     });
+  });
+
+  it('still shows the supplier category separately when a mapped category diverges', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      categoryPath: "Men's Apparel & Tactical Wear > Jackets",
+      categoryCode: 'CAT-MEN-100230',
+    });
+    const byKey = new Map(
+      fixture.specifications.map((specification) => [
+        specification.key,
+        specification,
+      ]),
+    );
+
+    expect(byKey.get('category')?.value).toBe(
+      "Men's Apparel & Tactical Wear > Jackets",
+    );
+    expect(byKey.get('supplier_category')?.value).toBe("Men's Jackets");
   });
 
   it('omits a supplier attribute the row does not carry, rather than printing a blank', () => {
@@ -173,7 +231,7 @@ describe('productToEditorFixture — supplier evidence versus Sals3 decisions', 
       (specification) => specification.key,
     );
 
-    expect(keys).toEqual(['category', 'supplier_category']);
+    expect(keys).toEqual(['category']);
   });
 
   it('carries the supplier packed weight into the shipping evidence block', () => {

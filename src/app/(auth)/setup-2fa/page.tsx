@@ -1,8 +1,11 @@
 import { redirect } from 'next/navigation';
 import AuthShell from '@/components/auth/AuthShell';
 import SetupTotpForm from '@/components/auth/SetupTotpForm';
-import { authStepRedirect, safeAuthRedirect } from '@/lib/auth/redirect';
-import { getRawAuthSession } from '@/lib/auth/session';
+import {
+  authStepRedirect,
+  resolvePortalEntryRedirect,
+} from '@/lib/auth/redirect';
+import { getPortalAccessState } from '@/lib/auth/session';
 
 export const metadata = {
   title: 'Set up two-factor | Sals3 Seller Center',
@@ -18,18 +21,11 @@ export default async function SetupTwoFactorPage({
   searchParams,
 }: SetupTwoFactorPageProps) {
   const params = await searchParams;
-  const data = await getRawAuthSession();
+  const accessState = await getPortalAccessState();
+  const destination = resolvePortalEntryRedirect(accessState, params.next);
 
-  if (data === null) {
-    redirect(authStepRedirect('/login', params.next));
-  }
-
-  if (data.user.emailVerified !== true) {
-    redirect(authStepRedirect('/login', params.next));
-  }
-
-  if (data.user.twoFactorEnabled === true) {
-    redirect(safeAuthRedirect(params.next));
+  if (destination !== authStepRedirect('/setup-2fa', params.next)) {
+    redirect(destination);
   }
 
   return (
