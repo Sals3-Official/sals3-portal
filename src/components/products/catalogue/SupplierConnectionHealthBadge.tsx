@@ -11,20 +11,15 @@ import {
   SUPPLIER_CONNECTION_HEALTH_LABELS,
   type SupplierConnectionHealth,
 } from '@/lib/seller-center/product-catalogue/types';
-import type { Tracked } from '@/lib/seller-center/product-catalogue/view';
-import NotTrackedPill from './NotTrackedPill';
 
 type SupplierConnectionHealthBadgeProps = {
-  health: Tracked<SupplierConnectionHealth>;
+  health: SupplierConnectionHealth;
 };
 
 const TONE_BY_HEALTH: Record<SupplierConnectionHealth, StatusPillTone> = {
-  PENDING: 'neutral',
   CONNECTED: 'success',
   DEGRADED: 'warning',
-  REAUTH_REQUIRED: 'warning',
   DISCONNECTED: 'danger',
-  REVOKED: 'danger',
 };
 
 /**
@@ -37,12 +32,6 @@ const TONE_BY_HEALTH: Record<SupplierConnectionHealth, StatusPillTone> = {
  * field states that is the actual known reason.
  */
 const TIP_BY_HEALTH: Record<SupplierConnectionHealth, string> = {
-  PENDING:
-    'The connection has been created but has never completed a successful supplier call, so no evidence can be refreshed through it yet.',
-  REAUTH_REQUIRED:
-    'The supplier revoked or expired this connection’s authorization. Reauthorize it in Supplier Apps - unlike a generic degradation, this one has a specific action.',
-  REVOKED:
-    'This connection was revoked and will not recover on its own. A new connection must be created in Supplier Apps.',
   CONNECTED:
     'The supplier connection is healthy and can refresh evidence on request.',
   DEGRADED:
@@ -54,27 +43,23 @@ const TIP_BY_HEALTH: Record<SupplierConnectionHealth, string> = {
 export default function SupplierConnectionHealthBadge({
   health,
 }: SupplierConnectionHealthBadgeProps) {
-  if (health.kind !== 'value') return <NotTrackedPill tracked={health} />;
-
-  const state = health.value;
-
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <span className="inline-flex items-center gap-1">
             <StatusPill
-              label={SUPPLIER_CONNECTION_HEALTH_LABELS[state]}
-              tone={TONE_BY_HEALTH[state]}
+              label={SUPPLIER_CONNECTION_HEALTH_LABELS[health]}
+              tone={TONE_BY_HEALTH[health]}
             />
             <Info
-              aria-label={`What "${SUPPLIER_CONNECTION_HEALTH_LABELS[state]}" means`}
+              aria-label={`What "${SUPPLIER_CONNECTION_HEALTH_LABELS[health]}" means`}
               className="size-3.5 text-muted-foreground"
             />
           </span>
         }
       />
-      <TooltipContent>{TIP_BY_HEALTH[state]}</TooltipContent>
+      <TooltipContent>{TIP_BY_HEALTH[health]}</TooltipContent>
     </Tooltip>
   );
 }

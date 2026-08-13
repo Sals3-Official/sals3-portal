@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { and, eq, inArray, type SQL } from 'drizzle-orm';
+import { and, eq, type SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 
 import { supplierCandidates } from '@/lib/db/schema/catalog';
@@ -7,7 +7,6 @@ import { productRevisions, products } from '@/lib/db/schema/product-catalog';
 import { supplierConnections } from '@/lib/db/schema/supplier-connections';
 
 import {
-  archiveProductForSteward,
   findCandidateSourceForSeller,
   findProductForSteward,
   saveDraftRevisionContent,
@@ -166,57 +165,6 @@ describe('saveDraftRevisionContent', () => {
 
     await expect(
       saveDraftRevisionContent(executor as never, request),
-    ).resolves.toBeNull();
-  });
-});
-
-describe('archiveProductForSteward', () => {
-  const request = {
-    productId: 'product-a',
-    stewardSellerAccountId: 'seller-a',
-    expectedVersion: 7,
-    actorId: 'actor-a',
-  };
-
-  it('gates the update on id, steward, expected version, and source state', async () => {
-    const executor = updateExecutor([{ id: 'product-a', version: 8 }]);
-
-    await archiveProductForSteward(executor as never, request);
-
-    const actual = renderSql(executor.where.mock.calls[0][0] as SQL);
-    const expected = renderSql(
-      and(
-        eq(products.id, 'product-a'),
-        // Without this term any seller could archive any product by id.
-        eq(products.stewardSellerAccountId, 'seller-a'),
-        // Without this term a stale table clobbers a concurrent change.
-        eq(products.version, 7),
-        // PUBLISHED is deliberately absent: taking a live listing down is the
-        // publish flow's decision, not this one's.
-        inArray(products.publicationState, ['UNPUBLISHED', 'PAUSED']),
-      ),
-    );
-
-    expect(actual.sql).toBe(expected.sql);
-    expect(actual.params).toEqual(expected.params);
-  });
-
-  it('advances the version by exactly one', async () => {
-    const executor = updateExecutor([{ id: 'product-a', version: 8 }]);
-
-    await archiveProductForSteward(executor as never, request);
-
-    expect(executor.set.mock.calls[0][0]).toMatchObject({
-      publicationState: 'ARCHIVED',
-      version: 8,
-    });
-  });
-
-  it('returns null when the compare-and-set matched nothing', async () => {
-    const executor = updateExecutor([]);
-
-    await expect(
-      archiveProductForSteward(executor as never, request),
     ).resolves.toBeNull();
   });
 });

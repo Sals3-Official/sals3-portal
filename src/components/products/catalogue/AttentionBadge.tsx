@@ -13,11 +13,9 @@ import {
   type AttentionReasonFixture,
   type AttentionSeverity,
 } from '@/lib/seller-center/product-catalogue/types';
-import type { Tracked } from '@/lib/seller-center/product-catalogue/view';
-import NotTrackedPill from './NotTrackedPill';
 
 type AttentionBadgeProps = {
-  reasons: Tracked<AttentionReasonFixture[]>;
+  reasons: AttentionReasonFixture[];
 };
 
 const TONE_BY_SEVERITY: Record<AttentionSeverity, StatusPillTone> = {
@@ -34,23 +32,16 @@ const TONE_BY_SEVERITY: Record<AttentionSeverity, StatusPillTone> = {
  * affected scope.
  */
 export default function AttentionBadge({ reasons }: AttentionBadgeProps) {
-  // The "Clear" arm below MUST stay behind the `value` check: printing
-  // "Clear" for a dimension nothing measures is exactly the fabricated
-  // all-good signal this whole view model exists to prevent.
-  if (reasons.kind !== 'value') return <NotTrackedPill tracked={reasons} />;
-
-  const list = reasons.value;
-
-  if (list.length === 0) {
+  if (reasons.length === 0) {
     return <StatusPill label="Clear" tone="success" />;
   }
 
-  const worst = worstAttentionSeverity(list);
+  const worst = worstAttentionSeverity(reasons);
 
   if (worst === null) return <StatusPill label="Clear" tone="success" />;
 
-  const label = `${ATTENTION_SEVERITY_LABELS[worst]} (${list.length})`;
-  const blocksCheckout = list.some((reason) => !reason.checkoutAllowed);
+  const label = `${ATTENTION_SEVERITY_LABELS[worst]} (${reasons.length})`;
+  const blocksCheckout = reasons.some((reason) => !reason.checkoutAllowed);
 
   return (
     <Tooltip>
@@ -59,7 +50,7 @@ export default function AttentionBadge({ reasons }: AttentionBadgeProps) {
           <span className="inline-flex items-center gap-1">
             <StatusPill label={label} tone={TONE_BY_SEVERITY[worst]} />
             <Info
-              aria-label={`${list.length} open attention ${list.length === 1 ? 'issue' : 'issues'}, worst severity ${ATTENTION_SEVERITY_LABELS[worst]}`}
+              aria-label={`${reasons.length} open attention ${reasons.length === 1 ? 'issue' : 'issues'}, worst severity ${ATTENTION_SEVERITY_LABELS[worst]}`}
               className="size-3.5 text-muted-foreground"
             />
           </span>
@@ -67,7 +58,7 @@ export default function AttentionBadge({ reasons }: AttentionBadgeProps) {
       />
       <TooltipContent>
         <ul className="m-0 list-disc pl-4">
-          {list.map((reason) => (
+          {reasons.map((reason) => (
             <li key={reason.id}>{reason.summary}</li>
           ))}
         </ul>

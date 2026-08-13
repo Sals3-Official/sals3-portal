@@ -16,8 +16,6 @@ import type {
   CatalogueProductFixture,
   ListingStatus,
 } from '@/lib/seller-center/product-catalogue/types';
-import adaptFixtureRows from '@/lib/seller-center/product-catalogue/adapt-fixture';
-import announceUnbuilt from '@/lib/seller-center/product-catalogue/announce-unbuilt';
 import {
   countByStatus,
   countNeedsAttention,
@@ -26,10 +24,6 @@ import {
   uniqueCategories,
   uniqueSupplierProviders,
 } from '@/lib/seller-center/product-catalogue/filter';
-import type {
-  CatalogueRowAction,
-  VariantActionView,
-} from '@/lib/seller-center/product-catalogue/view';
 import CatalogueBulkActionBar from './CatalogueBulkActionBar';
 import CatalogueFilterBar, {
   type CatalogueFilters,
@@ -56,23 +50,6 @@ const DEFAULT_FILTERS: CatalogueFilters = {
 };
 
 const MANUAL_PAUSE_REASON = 'Manually paused by seller';
-
-/** Row controls this preview cannot honestly perform, and what to call them. */
-const UNBUILT_ROW_ACTIONS: Partial<Record<CatalogueRowAction, string>> = {
-  editPrice: 'Editing price',
-  resume: 'Review & resume',
-  publish: 'Publish',
-  restore: 'Restore as new draft',
-  duplicate: 'Duplicate as new draft',
-  viewLive: 'View Live Page',
-};
-
-const UNBUILT_VARIANT_ACTIONS: Partial<
-  Record<VariantActionView['kind'], string>
-> = {
-  RESUME: 'Review & resume',
-  RECHECK: 'Request fresh check',
-};
 
 /**
  * Holds every piece of state this design preview actually needs to be
@@ -110,12 +87,6 @@ export default function ProductCatalogueWorkspace({
   const visibleProducts = useMemo(
     () => filterAndSortProducts(products, activeTab, filters),
     [products, activeTab, filters],
-  );
-  // The fixtures stay the source of truth for filtering; the adapter runs last,
-  // at the render boundary, so this preview and the real page share one table.
-  const rows = useMemo(
-    () => adaptFixtureRows(visibleProducts),
-    [visibleProducts],
   );
 
   function toggleSet(
@@ -192,30 +163,6 @@ export default function ProductCatalogueWorkspace({
     });
   }, [selectedIds]);
 
-  const handleRowAction = useCallback(
-    (id: string, action: CatalogueRowAction) => {
-      if (action === 'pause') {
-        handlePauseListing(id);
-
-        return;
-      }
-
-      if (action === 'archive') {
-        setArchiveTargetId(id);
-
-        return;
-      }
-
-      const name =
-        products.find((product) => product.id === id)?.name ?? 'this listing';
-
-      announceUnbuilt(
-        `${UNBUILT_ROW_ACTIONS[action]} isn't built yet for "${name}".`,
-      );
-    },
-    [handlePauseListing, products],
-  );
-
   const toggleVariantPaused = useCallback(
     (productId: string, variantId: string) => {
       let nowPaused = false;
@@ -241,19 +188,6 @@ export default function ProductCatalogueWorkspace({
       });
     },
     [],
-  );
-
-  const handleVariantAction = useCallback(
-    (productId: string, variantId: string, kind: VariantActionView['kind']) => {
-      if (kind === 'PAUSE') {
-        toggleVariantPaused(productId, variantId);
-
-        return;
-      }
-
-      announceUnbuilt(`${UNBUILT_VARIANT_ACTIONS[kind]} isn't built yet.`);
-    },
-    [toggleVariantPaused],
   );
 
   const archiveTarget =
@@ -282,13 +216,14 @@ export default function ProductCatalogueWorkspace({
         onBulkArchive={handleBulkArchive}
       />
       <CatalogueProductTable
-        rows={rows}
+        products={visibleProducts}
         selectedIds={selectedIds}
         expandedIds={expandedIds}
         onToggleSelected={(id) => toggleSet(selectedIds, setSelectedIds, id)}
         onToggleExpanded={(id) => toggleSet(expandedIds, setExpandedIds, id)}
-        onAction={handleRowAction}
-        onVariantAction={handleVariantAction}
+        onPauseListing={handlePauseListing}
+        onArchive={setArchiveTargetId}
+        onToggleVariantPaused={toggleVariantPaused}
       />
 
       <AlertDialog

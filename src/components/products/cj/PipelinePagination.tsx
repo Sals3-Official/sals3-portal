@@ -3,8 +3,6 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { buildHref } from '@/lib/portal/search-params';
 
 type PipelinePaginationProps = {
-  /** The list route the page links target. Defaults to the pipeline. */
-  path?: string;
   page: number;
   totalPages: number;
   total: number;
@@ -25,7 +23,6 @@ const LINK_CLASSES =
  * button behaves.
  */
 export default function PipelinePagination({
-  path = '/products/pipeline',
   page,
   totalPages,
   total,
@@ -46,7 +43,7 @@ export default function PipelinePagination({
       <div className="flex items-center gap-2">
         {hasPrevious ? (
           <Link
-            href={buildHref(path, currentParams, {
+            href={buildHref('/products/pipeline', currentParams, {
               page: page - 1,
             })}
             className={LINK_CLASSES}
@@ -57,7 +54,7 @@ export default function PipelinePagination({
         ) : null}
         {hasNext ? (
           <Link
-            href={buildHref(path, currentParams, {
+            href={buildHref('/products/pipeline', currentParams, {
               page: page + 1,
             })}
             className={LINK_CLASSES}

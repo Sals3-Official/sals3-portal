@@ -100,23 +100,10 @@ export const AVAILABILITY_LABELS: Record<Availability, string> = {
  * the last trusted stock read. Never derive this from `Availability`, and
  * never derive `Availability` from this alone.
  */
-/**
- * All six real `supplier_connection_status` values, not a narrowed three.
- *
- * Widened when the real catalogue started rendering through this vocabulary.
- * Mapping `REAUTH_REQUIRED` down to `DEGRADED` would have hidden the one state
- * with a concrete seller action, and `PENDING`/`REVOKED` are equally real - so
- * the display vocabulary matches the column instead of the column being
- * flattened to fit the display. The fixtures use three of the six and keep
- * working unchanged.
- */
 export const SUPPLIER_CONNECTION_HEALTH_STATES = [
-  'PENDING',
   'CONNECTED',
   'DEGRADED',
-  'REAUTH_REQUIRED',
   'DISCONNECTED',
-  'REVOKED',
 ] as const;
 
 export type SupplierConnectionHealth =
@@ -126,12 +113,9 @@ export const SUPPLIER_CONNECTION_HEALTH_LABELS: Record<
   SupplierConnectionHealth,
   string
 > = {
-  PENDING: 'Connection pending',
   CONNECTED: 'Connected',
   DEGRADED: 'Degraded',
-  REAUTH_REQUIRED: 'Reauthorization required',
   DISCONNECTED: 'Disconnected',
-  REVOKED: 'Revoked',
 };
 
 /**

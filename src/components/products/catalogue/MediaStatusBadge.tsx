@@ -11,11 +11,9 @@ import {
   MEDIA_STATUS_LABELS,
   type MediaStatus,
 } from '@/lib/seller-center/product-catalogue/types';
-import type { Tracked } from '@/lib/seller-center/product-catalogue/view';
-import NotTrackedPill from './NotTrackedPill';
 
 type MediaStatusBadgeProps = {
-  mediaStatus: Tracked<MediaStatus>;
+  mediaStatus: MediaStatus;
 };
 
 const TONE_BY_MEDIA_STATUS: Record<MediaStatus, StatusPillTone> = {
@@ -52,28 +50,23 @@ const TIP_BY_MEDIA_STATUS: Record<MediaStatus, string> = {
 export default function MediaStatusBadge({
   mediaStatus,
 }: MediaStatusBadgeProps) {
-  if (mediaStatus.kind !== 'value')
-    return <NotTrackedPill tracked={mediaStatus} />;
-
-  const state = mediaStatus.value;
-
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <span className="inline-flex items-center gap-1">
             <StatusPill
-              label={MEDIA_STATUS_LABELS[state]}
-              tone={TONE_BY_MEDIA_STATUS[state]}
+              label={MEDIA_STATUS_LABELS[mediaStatus]}
+              tone={TONE_BY_MEDIA_STATUS[mediaStatus]}
             />
             <Info
-              aria-label={`What "${MEDIA_STATUS_LABELS[state]}" means`}
+              aria-label={`What "${MEDIA_STATUS_LABELS[mediaStatus]}" means`}
               className="size-3.5 text-muted-foreground"
             />
           </span>
         }
       />
-      <TooltipContent>{TIP_BY_MEDIA_STATUS[state]}</TooltipContent>
+      <TooltipContent>{TIP_BY_MEDIA_STATUS[mediaStatus]}</TooltipContent>
     </Tooltip>
   );
 }
