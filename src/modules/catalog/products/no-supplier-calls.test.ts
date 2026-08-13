@@ -36,6 +36,33 @@ const FORBIDDEN_PATH_FRAGMENTS = [
   'modules/catalog/candidates/capture-evidence',
 ];
 
+/**
+ * The only two `lib/cj/` modules the draft flow may reach, and the reason the
+ * blanket ban above needs an exception at all.
+ *
+ * Draft creation projects supplier media, which means re-checking a stored
+ * image address against the CJ host allow-list. That list lives in
+ * `lib/cj/image-hosts.ts` and its Zod gate in `lib/cj/primitives.ts`, and
+ * `media-projection.ts`'s own comment records why there must not be a fourth
+ * copy: the list already has to agree across three places, and a duplicate here
+ * would be the one that silently falls behind.
+ *
+ * Both are pure validators — no client, no adapter, no `fetch` — which is not
+ * taken on trust: `keeps its own allowance honest` below asserts it against
+ * their real source, so the exception cannot quietly grow into a network path.
+ */
+const ALLOWED_PURE_CJ_MODULES = ['lib/cj/primitives', 'lib/cj/image-hosts'];
+
+function forbidden(specifier: string): boolean {
+  if (ALLOWED_PURE_CJ_MODULES.some((allowed) => specifier.endsWith(allowed))) {
+    return false;
+  }
+
+  return FORBIDDEN_PATH_FRAGMENTS.some((fragment) =>
+    specifier.includes(fragment),
+  );
+}
+
 const IMPORT_PATTERN = /(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g;
 
 function resolveSpecifier(specifier: string, fromFile: string): string | null {
@@ -95,17 +122,31 @@ describe('candidate-to-draft flow makes no supplier calls', () => {
 
     graph.forEach((specifiers, file) => {
       specifiers.forEach((specifier) => {
-        if (
-          FORBIDDEN_PATH_FRAGMENTS.some((fragment) =>
-            specifier.includes(fragment),
-          )
-        ) {
-          offenders.push(`${file} -> ${specifier}`);
-        }
+        if (forbidden(specifier)) offenders.push(`${file} -> ${specifier}`);
       });
     });
 
     expect(offenders).toEqual([]);
+  });
+
+  it('keeps its own allowance honest: the permitted CJ modules cannot reach the network', () => {
+    ALLOWED_PURE_CJ_MODULES.forEach((allowed) => {
+      const file = resolve(SRC_ROOT, `${allowed}.ts`);
+
+      expect(existsSync(file), `${allowed} must exist`).toBe(true);
+
+      const source = readFileSync(file, 'utf8');
+      const specifiers = [...source.matchAll(IMPORT_PATTERN)].map(
+        (match) => match[1],
+      );
+
+      // No request of any kind, and no import that could make one — including
+      // another `lib/cj/` module that is not itself on the allowance.
+      expect(source).not.toMatch(/\bfetch\s*\(/);
+      expect(specifiers.filter((specifier) => forbidden(specifier))).toEqual(
+        [],
+      );
+    });
   });
 
   it('actually walked a non-trivial graph, so an empty result is meaningful', () => {

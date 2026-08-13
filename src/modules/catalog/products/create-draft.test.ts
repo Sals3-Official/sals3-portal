@@ -26,6 +26,23 @@ vi.mock('@/modules/pricing/resolver', () => ({
   resolveProductPricing: vi.fn(),
 }));
 
+vi.mock('@/modules/catalog/taxonomy/resolver', () => ({
+  resolveCategoryMapping: vi.fn(),
+}));
+
+vi.mock('@/modules/catalog/taxonomy/repository', () => ({
+  assignProductCategory: vi.fn(),
+  findCategoryByCode: vi.fn(),
+}));
+
+vi.mock('./media-projection', () => ({
+  projectSupplierMediaForProduct: vi.fn(),
+  SUPPLIER_MEDIA_RIGHTS: {
+    rightsBasis: 'SUPPLIER_TERMS',
+    reviewState: 'APPROVED',
+  },
+}));
+
 vi.mock('./repository', () => ({
   findBinding: vi.fn(),
   findCandidateSourceForSeller: vi.fn(),
@@ -60,9 +77,15 @@ import {
 } from '@/modules/market-config/capabilities';
 import { listProfilesForSeller } from '@/modules/market-config/repository';
 import { resolveProductPricing } from '@/modules/pricing/resolver';
+import {
+  assignProductCategory,
+  findCategoryByCode,
+} from '@/modules/catalog/taxonomy/repository';
+import { resolveCategoryMapping } from '@/modules/catalog/taxonomy/resolver';
 
 import { CREATE_PRODUCT_DRAFT_OPERATION } from './contracts';
 import createProductDraftFromCandidate from './create-draft';
+import { projectSupplierMediaForProduct } from './media-projection';
 import { canonicalRequestHash, deriveSals3Sku } from './identity';
 import {
   findBinding,
@@ -105,6 +128,33 @@ const SOURCE = {
   connectionStatus: 'CONNECTED' as const,
   supplierProviderId: 'provider-1',
   supplierProviderCode: 'CJ_DROPSHIPPING',
+  providerCategoryId: 'CJ-CATEGORY-1',
+};
+
+/** The resolver's normal answer while no approved mapping covers a category. */
+const UNMAPPED_DECISION = {
+  outcome: 'UNMAPPED' as const,
+  needsReview: true,
+  reason: 'NO_ACTIVE_MAPPING',
+  reasonLabel: 'No active mapping',
+  mappingId: null,
+  mappingVersion: null,
+  resolverVersion: 'category-mapping-resolver-v1',
+};
+
+const MAPPED_DECISION = {
+  outcome: 'MAPPED_ACCEPTABLE' as const,
+  needsReview: false,
+  sals3CategoryCode: 'CAT-MEN-100230',
+  sals3CategoryPath: "Men's Apparel & Tactical Wear > Jackets > -",
+  taxonomyVersion: 'sals3-taxonomy-v0',
+  mappingId: 'mapping-1',
+  mappingVersion: 1,
+  method: 'EXTERNAL_ID_RULE',
+  confidence: 'ACCEPTABLE' as const,
+  reviewStatus: 'APPROVED',
+  observedCategoryPath: "Men's Jackets",
+  resolverVersion: 'category-mapping-resolver-v1',
 };
 
 const EVIDENCE_VARIANT = {
@@ -137,6 +187,8 @@ const PRODUCT = {
   version: 1,
   publicationState: 'UNPUBLISHED' as const,
   title: 'Supplier hoodie',
+  categoryId: null,
+  categoryMappingVersion: null,
 };
 
 const REFERENCE = {
@@ -230,6 +282,16 @@ beforeEach(() => {
     reason: 'CATEGORY_MAPPING_REQUIRES_REVIEW',
     reasonLabel: 'Category mapping requires review',
     resolverVersion: 'pricing-resolver-v1',
+  });
+  // The environment as it actually stands: no approved mapping and no stored
+  // image address. Every test that cares about the opposite says so locally.
+  asMock(resolveCategoryMapping).mockResolvedValue(UNMAPPED_DECISION);
+  asMock(findCategoryByCode).mockResolvedValue(null);
+  asMock(assignProductCategory).mockResolvedValue(null);
+  asMock(projectSupplierMediaForProduct).mockResolvedValue({
+    inserted: 0,
+    skipped: 0,
+    source: 'NONE',
   });
 });
 
@@ -548,6 +610,154 @@ describe('createProductDraftFromCandidate — honesty of the result', () => {
         'CATEGORY_MAPPING_REQUIRED',
       ]),
     );
+  });
+});
+
+describe('createProductDraftFromCandidate — supplier media provenance', () => {
+  it('projects the stored supplier image into the draft, with the owner’s rights basis', async () => {
+    asMock(projectSupplierMediaForProduct).mockResolvedValue({
+      inserted: 1,
+      skipped: 0,
+      source: 'FEED_SNAPSHOT',
+    });
+
+    const outcome = await run();
+
+    expect(projectSupplierMediaForProduct).toHaveBeenCalledWith(
+      { marker: 'tx' },
+      {
+        productId: PRODUCT.id,
+        candidateId: CANDIDATE,
+        actorId: 'actor-1',
+        rights: { rightsBasis: 'SUPPLIER_TERMS', reviewState: 'APPROVED' },
+      },
+    );
+    // The gap is reported from the projection's real answer, not assumed.
+    expect(outcome.ok && outcome.result.missingRequirements).not.toContain(
+      'MEDIA_SOURCE_NOT_RECORDED',
+    );
+  });
+
+  it('still reports the gap when the database holds no image address', async () => {
+    const outcome = await run();
+
+    expect(outcome.ok && outcome.result.missingRequirements).toContain(
+      'MEDIA_SOURCE_NOT_RECORDED',
+    );
+  });
+
+  it('writes no media onto a product another seller stewards', async () => {
+    asMock(findProviderProductReference).mockResolvedValue(REFERENCE);
+    asMock(findProductById).mockResolvedValue({
+      ...PRODUCT,
+      stewardSellerAccountId: SELLER_B,
+    });
+
+    const outcome = await run();
+
+    expect(projectSupplierMediaForProduct).not.toHaveBeenCalled();
+    expect(outcome.ok && outcome.result.missingRequirements).toContain(
+      'MEDIA_SOURCE_NOT_RECORDED',
+    );
+  });
+});
+
+describe('createProductDraftFromCandidate — Sals3 category from the crosswalk', () => {
+  it('assigns the category an approved, active mapping resolves to', async () => {
+    asMock(resolveCategoryMapping).mockResolvedValue(MAPPED_DECISION);
+    asMock(findCategoryByCode).mockResolvedValue({
+      id: 'category-1',
+      code: 'CAT-MEN-100230',
+      path: MAPPED_DECISION.sals3CategoryPath,
+    });
+    asMock(assignProductCategory).mockResolvedValue({
+      ...PRODUCT,
+      categoryId: 'category-1',
+      version: 2,
+    });
+
+    const outcome = await run();
+
+    expect(assignProductCategory).toHaveBeenCalledWith(
+      { marker: 'tx' },
+      expect.objectContaining({
+        productId: PRODUCT.id,
+        stewardSellerAccountId: SELLER_A,
+        expectedVersion: PRODUCT.version,
+        categoryId: 'category-1',
+        categoryMappingConfidence: 'ACCEPTABLE',
+        categoryMappingId: 'mapping-1',
+        categoryMappingVersion: 1,
+      }),
+    );
+    expect(outcome.ok && outcome.result.missingRequirements).not.toContain(
+      'CATEGORY_MAPPING_REQUIRED',
+    );
+  });
+
+  it('resolves from the provider category id and CJ’s own category name', async () => {
+    asMock(findSnapshotByCandidateId).mockResolvedValue({
+      ...evidenceSnapshot(),
+      evidence: {
+        ...evidenceSnapshot().evidence,
+        categoryName: "Men's Jackets",
+      },
+    });
+
+    await run();
+
+    expect(resolveCategoryMapping).toHaveBeenCalledWith(
+      { marker: 'tx' },
+      expect.objectContaining({
+        provider: 'CJ_DROPSHIPPING',
+        externalCategoryId: 'CJ-CATEGORY-1',
+        observedCategoryPath: "Men's Jackets",
+      }),
+    );
+  });
+
+  it('falls back to the feed snapshot category when no detail evidence exists', async () => {
+    asMock(findSnapshotByCandidateId).mockResolvedValue(null);
+    asMock(findEvaluationByCandidateId).mockResolvedValue({
+      feedSnapshot: {
+        name: 'Feed name',
+        category: "Men's Jackets",
+        categoryId: 'CJ-CATEGORY-1',
+        priceUsdCents: 1526,
+        listedCount: 17,
+        shipsFrom: ['CN'],
+      },
+    });
+
+    await run();
+
+    expect(resolveCategoryMapping).toHaveBeenCalledWith(
+      { marker: 'tx' },
+      expect.objectContaining({ observedCategoryPath: "Men's Jackets" }),
+    );
+  });
+
+  it('leaves the product UNMAPPED and says so when no mapping covers the category', async () => {
+    const outcome = await run();
+
+    expect(assignProductCategory).not.toHaveBeenCalled();
+    expect(outcome.ok && outcome.result.missingRequirements).toContain(
+      'CATEGORY_MAPPING_REQUIRED',
+    );
+  });
+
+  it('writes no category onto a product another seller stewards', async () => {
+    asMock(resolveCategoryMapping).mockResolvedValue(MAPPED_DECISION);
+    asMock(findProviderProductReference).mockResolvedValue(REFERENCE);
+    asMock(findProductById).mockResolvedValue({
+      ...PRODUCT,
+      stewardSellerAccountId: SELLER_B,
+    });
+
+    await run();
+
+    expect(resolveCategoryMapping).not.toHaveBeenCalled();
+    expect(assignProductCategory).not.toHaveBeenCalled();
   });
 });
 

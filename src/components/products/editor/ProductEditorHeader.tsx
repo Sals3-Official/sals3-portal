@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import Link from 'next/link';
 import { CircleDot, Eye, FileSearch, ListChecks } from 'lucide-react';
 import presentEvaluationStatus from '@/components/products/cj/evaluation-status';
@@ -41,6 +42,14 @@ export default function ProductEditorHeader({
   onOpenSourceDrawer,
 }: ProductEditorHeaderProps) {
   const status = presentEvaluationStatus(fixture.evaluationStatus);
+  // The cover tile, but only when it carries a real address. The fixture
+  // previews carry none, so they keep the placeholder they always had.
+  const coverItem =
+    fixture.media.find((item) => item.isCover) ?? fixture.media[0];
+  const cover =
+    coverItem === undefined || coverItem.sourceUrl === null
+      ? null
+      : { sourceUrl: coverItem.sourceUrl, altText: coverItem.altText };
 
   return (
     <div className="flex flex-col gap-3">
@@ -68,12 +77,33 @@ export default function ProductEditorHeader({
       </nav>
 
       <div className="flex flex-wrap items-start gap-3.5">
-        <span
-          aria-hidden="true"
-          className="flex size-14 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-xs text-muted-foreground"
-        >
-          No image
-        </span>
+        {/* The product's own photo, when the catalogue records one. This square
+            was a hard-coded "No image" placeholder for every product, including
+            one whose address the database held all along — it is the image the
+            owner reported missing above Basic Information on 2026-08-14.
+
+            `priority`, unlike every other image in this editor: it sits at the
+            top of the page and is the likely LCP element, so lazy-loading it
+            would delay the one image that is already in view. */}
+        {cover === null ? (
+          <span
+            aria-hidden="true"
+            className="flex size-14 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-xs text-muted-foreground"
+          >
+            No image
+          </span>
+        ) : (
+          <span className="block size-14 shrink-0 overflow-hidden rounded-md border border-border bg-muted">
+            <Image
+              src={cover.sourceUrl}
+              alt={cover.altText}
+              width={56}
+              height={56}
+              priority
+              className="size-full object-cover"
+            />
+          </span>
+        )}
 
         <div className="min-w-0 flex-1">
           <h1 className="font-display text-[22px] leading-tight font-semibold tracking-tight break-words sm:text-2xl">

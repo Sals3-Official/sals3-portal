@@ -337,3 +337,121 @@ describe('Product Editor - structure', () => {
     );
   });
 });
+
+describe('Product Editor - the photo a real product actually has', () => {
+  const ADDRESS =
+    'https://cf.cjdropshipping.com/quick/product/697a2372-330c-4a72-8837-6ca100d99fab.jpg';
+
+  function withCoverAddress(): ProductEditorFixture {
+    const resolved = fixture('pass');
+
+    return {
+      ...resolved,
+      media: resolved.media.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              sourceUrl: ADDRESS,
+              altText: `Supplier listing photo for ${resolved.productName}`,
+            }
+          : item,
+      ),
+    };
+  }
+
+  function renderWithCover() {
+    const resolved = withCoverAddress();
+
+    return render(
+      <ProductEditor
+        fixture={resolved}
+        initialLifecycle="IDLE"
+        variantGuidance={[]}
+        dataMode="database"
+      />,
+    );
+  }
+
+  it('renders the recorded address in all three places the editor shows a photo', () => {
+    renderWithCover();
+
+    const rendered = screen
+      .getAllByRole('img')
+      .filter((image) => image.getAttribute('src')?.includes('697a2372'));
+
+    // Three on purpose: the page header above Basic Information - the square
+    // that was a hard-coded "No image" for every product - plus the summary
+    // strip inside Basic Information and the full tile in the Media section.
+    expect(rendered).toHaveLength(3);
+    rendered.forEach((image) => {
+      expect(image).toHaveAccessibleName(/Supplier listing photo/);
+    });
+    expect(screen.queryByText('No image')).not.toBeInTheDocument();
+  });
+
+  it('keeps the header placeholder when no address is recorded', () => {
+    const resolved = fixture('pass');
+
+    render(
+      <ProductEditor
+        fixture={resolved}
+        initialLifecycle="IDLE"
+        variantGuidance={[]}
+      />,
+    );
+
+    expect(screen.getByText('No image')).toBeInTheDocument();
+  });
+
+  it('keeps a fixture tile with no address as a labelled placeholder', () => {
+    renderWithCover();
+
+    // Only the one tile given an address renders an image; the rest are the
+    // fictional fixtures, which must not borrow a real supplier photo.
+    expect(
+      screen
+        .getAllByRole('img')
+        .filter((image) => image.getAttribute('src')?.includes('697a2372')),
+    ).toHaveLength(3);
+    expect(screen.getByText('Image 3')).toBeInTheDocument();
+  });
+
+  it('shows the Sals3 category read-only, with no invented options to pick from', () => {
+    renderWithCover();
+
+    // Taxonomy governance is denied to every portal role, so there is no
+    // category control for the seller to operate.
+    expect(
+      screen.queryByRole('combobox', { name: /Sals3 category/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Sals3 category')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Resolved from the supplier category/i),
+    ).toBeInTheDocument();
+  });
+
+  it('says an unmapped category is not mapped, instead of showing a blank field', () => {
+    const resolved = withCoverAddress();
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          sals3CategoryPath: 'Unmapped category',
+          sals3CategoryCode: null,
+          categoryMappingConfidence: 'UNMAPPED',
+        }}
+        initialLifecycle="IDLE"
+        variantGuidance={[]}
+        dataMode="database"
+      />,
+    );
+
+    expect(screen.getByText('Not mapped yet')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /No approved mapping covers this supplier category yet/i,
+      ),
+    ).toBeInTheDocument();
+  });
+});

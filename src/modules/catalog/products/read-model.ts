@@ -4,6 +4,7 @@ import { and, asc, desc, eq, inArray, or } from 'drizzle-orm';
 import { z } from 'zod';
 
 import getDb, { type Database } from '@/lib/db/client';
+import { cjImageUrl } from '@/lib/cj/primitives';
 import {
   candidateEvaluations,
   offerSupplierBindings,
@@ -46,6 +47,7 @@ import type {
   VariantFixture,
   VariantPricingGuidance,
 } from '@/lib/seller-center/product-editor/types';
+import { feedSnapshotSchema } from '@/modules/catalog/candidates/rules/contracts';
 import { descriptionDocumentSchema } from './description-document';
 
 type Executor = Database;
@@ -64,9 +66,93 @@ const evidenceVariantSchema = z.object({
 
 const evidenceSchema = z.object({
   name: z.string().nullish(),
+  categoryName: z.string().nullish(),
   capturedAt: z.string().nullish(),
   variants: z.array(evidenceVariantSchema).default([]),
 });
+
+/**
+ * The supplier's own facts about a product, as the database already holds them.
+ *
+ * Everything here comes from `candidate_evaluations.feed_snapshot` — the row
+ * discovery writes for every candidate — with the richer detail snapshot
+ * preferred where it exists. It is read through the canonical
+ * `feedSnapshotSchema` rather than a local subset, so a field added on the
+ * write path is readable here without a second definition drifting behind it.
+ *
+ * These are shown as supplier evidence and never as Sals3 decisions. A CJ
+ * category name is not a Sals3 category, and a feed price is not a selling
+ * price: `priceUsdCents` was verified on 2026-08-13 to be the *lowest* variant
+ * price, so it is labelled a "from" reference and never used to price anything.
+ */
+type SupplierFacts = {
+  categoryPath: string | null;
+  categoryId: string | null;
+  sku: string | null;
+  weightLabel: string | null;
+  fromPrice: MoneyValue | null;
+  shipsFrom: string[];
+  listedCount: number | null;
+  imageUrl: string | null;
+};
+
+const NO_SUPPLIER_FACTS: SupplierFacts = {
+  categoryPath: null,
+  categoryId: null,
+  sku: null,
+  weightLabel: null,
+  fromPrice: null,
+  shipsFrom: [],
+  listedCount: null,
+  imageUrl: null,
+};
+
+/**
+ * Re-checks a stored image address against the CJ host allow-list on the way
+ * out of the database.
+ *
+ * Not redundant with the check at intake: `feed_snapshot.imageUrl` is a plain
+ * string column, `next.config.ts` sets `images.loader: 'custom'` so
+ * `remotePatterns` enforces nothing at request time, and whatever string
+ * reaches a rendered `src` becomes a browser `GET` from the seller's own
+ * session. Same reasoning, and the same `cjImageUrl` gate, as
+ * `components/products/cj/candidate-view.ts`'s `imageUrl()` on the pipeline
+ * read path.
+ */
+function allowedImageUrl(value: unknown): string | null {
+  const parsed = cjImageUrl.safeParse(value);
+
+  return parsed.success ? parsed.data : null;
+}
+
+function supplierFacts(
+  feedSnapshot: unknown,
+  evidence: z.infer<typeof evidenceSchema> | null,
+  mediaUrl: string | null,
+): SupplierFacts {
+  const feed = feedSnapshotSchema.safeParse(feedSnapshot);
+
+  if (!feed.success) {
+    return { ...NO_SUPPLIER_FACTS, imageUrl: allowedImageUrl(mediaUrl) };
+  }
+
+  const cents = feed.data.priceUsdCents;
+
+  return {
+    // Evidence first: a product-detail fetch is more specific than the
+    // list-level summary discovery wrote.
+    categoryPath: evidence?.categoryName ?? feed.data.category ?? null,
+    categoryId: feed.data.categoryId ?? null,
+    sku: feed.data.sku ?? null,
+    weightLabel: feed.data.weight ?? null,
+    fromPrice: cents === null ? null : { amountMinor: cents, currency: USD },
+    shipsFrom: feed.data.shipsFrom,
+    listedCount: feed.data.listedCount,
+    // A recorded media row outranks the feed field: it is the address that
+    // carries a rights basis and an observation time.
+    imageUrl: allowedImageUrl(mediaUrl) ?? allowedImageUrl(feed.data.imageUrl),
+  };
+}
 
 function toNumber(value: bigint | null): number | null {
   if (value === null) return null;
@@ -475,6 +561,15 @@ function buildCatalogueProducts(
       source?.snapshot?.evidence,
     );
     const evidenceCapturedAt = productEvidence.data?.capturedAt ?? null;
+    // Product-level media (`variant_id is null`) is the cover, matching the
+    // storefront read model's own ordering.
+    const coverMedia =
+      media.find((item) => item.variantId === null) ?? media[0];
+    const supplier = supplierFacts(
+      source?.evaluation?.feedSnapshot,
+      productEvidence.data ?? null,
+      coverMedia?.sourceUrl ?? null,
+    );
 
     const catalogueVariants: CatalogueVariantFixture[] = variants.map(
       (variant) => {
@@ -521,9 +616,17 @@ function buildCatalogueProducts(
       name: product.title,
       descriptionText: descriptionText(revision),
       hasImage: media.length > 0,
+      coverImageUrl: supplier.imageUrl,
       status,
       categoryPath: categoryPath ?? 'Unmapped category',
       categoryCode,
+      supplierCategoryPath: supplier.categoryPath,
+      supplierCategoryId: supplier.categoryId,
+      supplierSku: supplier.sku,
+      supplierWeightLabel: supplier.weightLabel,
+      supplierFromPrice: supplier.fromPrice,
+      supplierShipsFrom: supplier.shipsFrom,
+      supplierListedCount: supplier.listedCount,
       createdAt: product.createdAt.toISOString(),
       supplierProviderCode: source?.provider.code ?? 'unknown-provider',
       supplierProviderName: source?.provider.displayName ?? 'Unknown supplier',
@@ -737,8 +840,15 @@ function editorMarkets(
           ? 'ELIGIBLE_STALE_EVIDENCE'
           : 'NO_ROUTE',
       affectedVariantsLabel: `${Math.max(product.variants.length, 1)} variant${product.variants.length === 1 ? '' : 's'}`,
-      sourceWarehouse: 'Not recorded',
-      packageWeightLabel: 'Not recorded',
+      sourceWarehouse:
+        product.supplierShipsFrom === undefined ||
+        product.supplierShipsFrom.length === 0
+          ? 'Not recorded'
+          : product.supplierShipsFrom.join(', '),
+      // The supplier's own packed-weight string, verbatim (it is a range, e.g.
+      // "1180.00-1300.00 g"). Not parsed into a number: a freight calculation
+      // must not silently pick one end of a range.
+      packageWeightLabel: product.supplierWeightLabel ?? 'Not recorded',
       packageDimensionsLabel: null,
       routeEvidence:
         'No freight route evidence is stored on this catalogue row.',
@@ -750,18 +860,108 @@ function editorMarkets(
   ];
 }
 
+/**
+ * The attributes the database can actually answer for this product.
+ *
+ * The Sals3 category is the only `REQUIRED` one, because it is the only one a
+ * publication gate depends on. The rest are the supplier's own facts, marked
+ * `SUPPLIER` so the editor shows them as evidence rather than as something the
+ * seller filled in — and omitted entirely when the row does not carry them,
+ * instead of printed as an empty required field the seller cannot resolve.
+ *
+ * Before this, the list held one entry. Everything the Product Sourcing row had
+ * already shown the seller — CJ's category, its SKU, its packed weight, where
+ * it ships from — was dropped on import and never displayed again.
+ */
+function editorSpecifications(
+  product: CatalogueProductFixture,
+): SpecificationFixture[] {
+  const unmapped = product.categoryPath === 'Unmapped category';
+  const specifications: SpecificationFixture[] = [
+    {
+      key: 'category',
+      label: 'Sals3 category',
+      value: product.categoryPath,
+      requirement: 'REQUIRED',
+      // Never `SELLER`: a Sals3 category comes from an approved taxonomy
+      // mapping, which is platform authority, not a seller entry.
+      source: unmapped ? 'NOT_PROVIDED' : 'INFERRED',
+      unresolved: unmapped,
+    },
+  ];
+
+  const supplierFields: [string, string, string | null | undefined][] = [
+    ['supplier_category', 'Supplier category', product.supplierCategoryPath],
+    ['supplier_sku', 'Supplier SKU', product.supplierSku],
+    ['packed_weight', 'Packed weight (supplier)', product.supplierWeightLabel],
+    [
+      'ships_from',
+      'Ships from (supplier)',
+      product.supplierShipsFrom === undefined ||
+      product.supplierShipsFrom.length === 0
+        ? null
+        : product.supplierShipsFrom.join(', '),
+    ],
+  ];
+
+  supplierFields.forEach(([key, label, value]) => {
+    if (value === null || value === undefined || value === '') return;
+
+    specifications.push({
+      key,
+      label,
+      value,
+      requirement: 'OPTIONAL',
+      source: 'SUPPLIER',
+      unresolved: false,
+    });
+  });
+
+  return specifications;
+}
+
+/**
+ * The product's real media rows, as editor tiles.
+ *
+ * This used to return a single label-only placeholder even when
+ * `product_media_sources` held an address, and `MediaItemFixture` had no URL
+ * field at all — so a draft with a perfectly good supplier photo rendered an
+ * empty grey square. The address now travels with the tile.
+ *
+ * `pixelWidth`/`pixelHeight` stay `0`, honestly: no bytes are fetched anywhere
+ * in this path, so no dimensions exist. `storageState` is
+ * `SUPPLIER_HOSTED_SOURCE` because that is literally where the file lives —
+ * nothing in this repository copies supplier media into Sals3-controlled
+ * storage, and no label here may imply that it has.
+ *
+ * `rightsCheck` follows `mediaStatus`, which is `OWN_PICTURES` only when a
+ * `product_media_sources` row exists. An address shown from the discovery
+ * snapshot alone is `PENDING_VERIFICATION` and says so: it is a preview of what
+ * the seller sourced, not a publishable asset with a recorded basis (ADR-011
+ * §6).
+ */
 function editorMedia(product: CatalogueProductFixture): MediaItemFixture[] {
-  if (!product.hasImage) return [];
+  if (product.coverImageUrl === null || product.coverImageUrl === undefined) {
+    return [];
+  }
 
   return [
     {
       id: `${product.id}-media`,
-      label: 'Recorded media source',
-      rightsCheck: 'PENDING_VERIFICATION',
-      storageState: 'STORAGE_STATUS_UNAVAILABLE',
+      label: 'Supplier photo',
+      sourceUrl: product.coverImageUrl,
+      altText: `Supplier listing photo for ${product.name}`,
+      rightsCheck:
+        product.mediaStatus === 'OWN_PICTURES'
+          ? 'VERIFIED'
+          : 'PENDING_VERIFICATION',
+      storageState: 'SUPPLIER_HOSTED_SOURCE',
       pixelWidth: 0,
       pixelHeight: 0,
-      note: 'Media provenance row exists, but dimensions are not rendered in this read model yet.',
+      note:
+        product.mediaStatus === 'OWN_PICTURES'
+          ? 'Supplier-hosted address with a recorded rights basis. Sals3 holds no copy of the file, so its dimensions are unknown.'
+          : 'Shown from the stored discovery snapshot. No media provenance row exists for it yet, so it is not publishable.',
       isCover: true,
     },
   ];
@@ -778,7 +978,10 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
     scenarioLabel: `Database product - ${product.status}`,
     productName: product.name,
     supplierProductName: product.name,
-    supplierCategoryPath: product.categoryPath,
+    // CJ's own category name, not the Sals3 one. These were the same value
+    // until 2026-08-14, which made the supplier evidence block report
+    // "Unmapped category" as if the supplier had said it.
+    supplierCategoryPath: product.supplierCategoryPath ?? 'Not recorded',
     sals3CategoryPath: product.categoryPath,
     sals3CategoryCode: product.categoryCode ?? null,
     categoryMappingConfidence:
@@ -822,19 +1025,7 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
         : null,
     issues,
     sourceChanges: [],
-    specifications: [
-      {
-        key: 'category',
-        label: 'Category',
-        value: product.categoryPath,
-        requirement: 'REQUIRED',
-        source:
-          product.categoryPath === 'Unmapped category'
-            ? 'NOT_PROVIDED'
-            : 'SELLER',
-        unresolved: product.categoryPath === 'Unmapped category',
-      },
-    ] satisfies SpecificationFixture[],
+    specifications: editorSpecifications(product),
     variants,
     markets: editorMarkets(product),
     marketsNotEnabledCount: 0,
@@ -849,15 +1040,22 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
 
   return {
     fixture,
+    /**
+     * `decision: null` — "the resolver did not run here" — rather than a
+     * hard-coded `CATEGORY_MAPPING_REQUIRES_REVIEW`.
+     *
+     * This read model makes no pricing decision, and stating one would be a
+     * second pricing opinion that can disagree with ADR-015's resolver. It did:
+     * once draft creation started resolving categories through the approved
+     * crosswalk, a mapped product still reported "category mapping requires
+     * review" from this line, when the real refusal is a missing category
+     * policy. `/listings/new` calls `resolveFixtureVariantGuidance` for the
+     * real answer.
+     */
     variantGuidance: variants.map((variant) => ({
       variantId: variant.id,
       optionLabel: variant.optionLabel,
-      decision: {
-        outcome: 'PRICING_UNAVAILABLE',
-        reason: 'CATEGORY_MAPPING_REQUIRES_REVIEW',
-        reasonLabel: 'Category mapping requires review',
-        resolverVersion: 'pricing-resolver-v1',
-      },
+      decision: null,
     })),
   };
 }

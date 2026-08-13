@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { candidateEvaluations, supplierSnapshots } from '@/lib/db/schema';
-import projectSupplierMediaForProduct from './media-projection';
+import { projectSupplierMediaForProduct } from './media-projection';
 
 const PRODUCT_ID = '90a329b9-56aa-4f54-abb2-ad843602aa73';
 const CANDIDATE_ID = 'cb9bc366-63d6-42d5-9bd2-38384de8e5d4';

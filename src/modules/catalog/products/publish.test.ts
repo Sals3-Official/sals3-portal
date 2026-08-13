@@ -32,7 +32,13 @@ vi.mock('@/modules/pricing/resolver', () => ({
   resolveProductPricing: mocks.resolveProductPricing,
 }));
 
-vi.mock('./media-projection', () => ({ default: mocks.projectSupplierMedia }));
+vi.mock('./media-projection', () => ({
+  projectSupplierMediaForProduct: mocks.projectSupplierMedia,
+  SUPPLIER_MEDIA_RIGHTS: {
+    rightsBasis: 'SUPPLIER_TERMS',
+    reviewState: 'APPROVED',
+  },
+}));
 
 vi.mock('@/modules/catalog/candidates/repository', () => ({
   appendAuditEvent: mocks.appendAuditEvent,

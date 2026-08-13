@@ -53,6 +53,24 @@ export type MediaRightsDecision = {
   reviewState: 'APPROVED' | 'NOT_REVIEWED';
 };
 
+/**
+ * The one declaration every caller projects under.
+ *
+ * ADR-011 §6 requires a rights basis before publication. The owner declared on
+ * 2026-08-13 that CJ's supplier terms are that basis for displaying CJ product
+ * imagery on Sals3, so a projected supplier image is recorded as
+ * `SUPPLIER_TERMS` / `APPROVED`. That declaration is what the row carries;
+ * `product_media_sources_approved_requires_rights` makes the pair inseparable.
+ *
+ * It lives here rather than in `publish.ts` because draft creation projects
+ * media too. Two private copies of a rights declaration is exactly the drift
+ * that ends with one path recording a basis the owner never gave.
+ */
+export const SUPPLIER_MEDIA_RIGHTS: MediaRightsDecision = {
+  rightsBasis: 'SUPPLIER_TERMS',
+  reviewState: 'APPROVED',
+};
+
 export type MediaProjectionResult = {
   inserted: number;
   /** Already present, or rejected by the host allow-list. */
@@ -151,7 +169,16 @@ async function findObservedImages(
   };
 }
 
-export default async function projectSupplierMediaForProduct(
+/**
+ * A named export, not a default one.
+ *
+ * `scripts/backfill-draft-supplier-media.mts` is a `.mts` file, and a default
+ * import of a `.ts` module from one resolves to the module namespace object
+ * under `tsx` rather than to the function — measured, not assumed. Every other
+ * script in this repository happens to use named imports only, which is why the
+ * interop quirk had not surfaced before.
+ */
+export async function projectSupplierMediaForProduct(
   executor: Executor,
   input: {
     productId: string;

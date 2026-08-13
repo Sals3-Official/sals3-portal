@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import { ArrowLeft, ArrowRight, Upload, Video } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatPixels } from '@/lib/seller-center/product-editor/format';
@@ -31,10 +32,11 @@ type MediaSectionProps = {
  * why: there is no media upload or storage backend, and a control that
  * silently did nothing would be worse than one that admits it.
  *
- * The tiles are placeholders rather than `next/image` calls: no product
- * imagery is supplied with these fixtures, and rendering a real remote
- * supplier URL would mean allow-listing a host in `next.config.ts` for
- * fictional data.
+ * A tile with a `sourceUrl` renders that photo; a tile without one renders its
+ * label in a placeholder box. Both cases are real: a database-backed product
+ * carries the supplier address the catalogue actually stores, while the
+ * illustrative fixtures carry none, because a fictional product must not be
+ * illustrated with a real supplier's photograph.
  */
 export default function MediaSection({
   media,
@@ -61,12 +63,28 @@ export default function MediaSection({
                   : 'border-border bg-card'
               }`}
             >
-              <span
-                aria-hidden="true"
-                className="flex aspect-square items-center justify-center rounded-md border border-border bg-muted font-mono text-xs text-muted-foreground"
-              >
-                {item.label}
-              </span>
+              {item.sourceUrl === null ? (
+                <span
+                  aria-hidden="true"
+                  className="flex aspect-square items-center justify-center rounded-md border border-border bg-muted font-mono text-xs text-muted-foreground"
+                >
+                  {item.label}
+                </span>
+              ) : (
+                <span className="block aspect-square overflow-hidden rounded-md border border-border bg-muted">
+                  <Image
+                    src={item.sourceUrl}
+                    alt={item.altText}
+                    width={192}
+                    height={192}
+                    loading="lazy"
+                    /* `object-contain` rather than `cover`: cropping a photo in
+                       the tool used to review it can hide the thing being
+                       reviewed. `bg-muted` letterboxes a non-square photo. */
+                    className="size-full object-contain"
+                  />
+                </span>
+              )}
 
               <div className="flex flex-wrap gap-1.5">
                 <EditorStatusPill

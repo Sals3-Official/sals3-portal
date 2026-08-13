@@ -140,7 +140,17 @@ export default async function AddProductPage({ searchParams }: PageProps) {
       <ProductEditor
         fixture={record.fixture}
         initialLifecycle={lifecycleFromParam(query.state)}
-        variantGuidance={record.variantGuidance}
+        // The same real resolver the fixture branch uses, against this
+        // product's own category and observed supplier costs. The read model
+        // deliberately returns `decision: null` instead of naming a reason it
+        // did not compute - it does not call the resolver, and a mapped
+        // category resolved here can produce a different, correct answer
+        // (typically "no category policy") than "category mapping requires
+        // review".
+        variantGuidance={await resolveFixtureVariantGuidance(
+          record.fixture,
+          sellerAccount.id,
+        )}
         dataMode="database"
       />
     );

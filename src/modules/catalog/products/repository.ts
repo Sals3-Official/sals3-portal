@@ -61,6 +61,14 @@ export type CandidateSourceContext = {
   connectionStatus: SupplierConnectionRow['status'];
   supplierProviderId: string;
   supplierProviderCode: string;
+  /**
+   * The provider's own category id, as discovery recorded it. Null on a row
+   * written before that column existed. It is the only input the taxonomy
+   * resolver accepts, and it is deliberately the id rather than the category
+   * *name*: a name is a string CJ can reword, while an approved mapping is
+   * keyed to this value (`scripts/approve-cj-category-mapping.mts`).
+   */
+  providerCategoryId: string | null;
 };
 
 /**
@@ -86,6 +94,7 @@ export async function findCandidateSourceForSeller(
       connectionStatus: supplierConnections.status,
       supplierProviderId: supplierProviders.id,
       supplierProviderCode: supplierProviders.code,
+      providerCategoryId: supplierCandidates.providerCategoryId,
     })
     .from(supplierCandidates)
     .innerJoin(

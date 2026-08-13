@@ -87,8 +87,17 @@ export const DRAFT_MISSING_REQUIREMENTS = [
   /** Evidence exists but carries no variants; nothing sellable can be modelled. */
   'NO_SUPPLIER_VARIANTS_IN_EVIDENCE',
   /**
-   * No CJ-to-Sals3 taxonomy crosswalk exists (spec §26). Without a category
-   * there is no ADR-015 category policy, so no price can resolve.
+   * The CJ-to-Sals3 taxonomy crosswalk has no `ACTIVE`, `APPROVED` mapping for
+   * this product's provider category — or has one whose confidence is
+   * `AMBIGUOUS`/`UNMAPPED`, or a version that has since been superseded.
+   * Without a category there is no ADR-015 category policy, so no price can
+   * resolve.
+   *
+   * Corrected 2026-08-14: this said "No CJ-to-Sals3 taxonomy crosswalk exists
+   * (spec §26)", which stopped being true when the mapping pilot shipped
+   * `modules/catalog/taxonomy/`. Draft creation now asks that resolver, so this
+   * code means "no approved mapping covers this category", not "no crosswalk
+   * was ever built".
    */
   'CATEGORY_MAPPING_REQUIRED',
   /** Each CJ variant carries one unstructured label; Sals3 option axes are unmapped. */
@@ -100,8 +109,15 @@ export const DRAFT_MISSING_REQUIREMENTS = [
   /** The owning supplier connection is not CONNECTED/DEGRADED, so no binding is truthful. */
   'SUPPLIER_CONNECTION_UNHEALTHY',
   /**
-   * Stored CJ evidence records a usable-image *count*, never the image URLs,
-   * so there is no media provenance to record and nothing publishable.
+   * No supplier image address is stored for this candidate, so there is no
+   * media provenance to record and nothing publishable.
+   *
+   * Corrected 2026-08-14: this said stored evidence "records a usable-image
+   * *count*, never the image URLs". That stopped being true with
+   * `cj-evidence-v3`, and the discovery feed snapshot always carried an
+   * `imageUrl`. Draft creation now projects both into
+   * `product_media_sources`, so this code means the database genuinely holds no
+   * address for this candidate.
    */
   'MEDIA_SOURCE_NOT_RECORDED',
   /** The structured description is still empty; supplier HTML is never copied in. */
@@ -202,6 +218,12 @@ export type BulkProductDraftActionResult =
 export const PRODUCT_AUDIT_ACTIONS = {
   productCreated: 'catalog_product.created',
   productReused: 'catalog_product.reused',
+  /**
+   * Matches `taxonomy/product-category.ts`'s own action name, so a category
+   * assignment reads identically in the audit trail whether the platform
+   * remap script or draft creation applied the approved mapping.
+   */
+  categoryAssigned: 'product.category_assigned',
   revisionCreated: 'catalog_product_revision.created',
   revisionSaved: 'catalog_product_revision.saved',
   revisionSaveRejected: 'catalog_product_revision.save_rejected_stale',
