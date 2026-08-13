@@ -18,6 +18,19 @@ import { describe, expect, it } from 'vitest';
  * budgeted product-detail fetch during real draft conversion is future work
  * that will call it, and forbidding the adapter from having the method would
  * be forbidding the wrong thing.
+ *
+ * ## The one exempt caller (2026-08-13)
+ *
+ * That future work has now landed as `candidates/capture-evidence.ts`, which
+ * is exactly the "deliberate, separately budgeted" fetch the paragraph above
+ * anticipated - not intake, and not review. The rule it must still satisfy is
+ * that browsing, screening, and discovery cannot reach it, which the third
+ * test below asserts directly.
+ *
+ * The exemption is a named file, not a relaxed pattern: every other file in
+ * the scanned tree is still forbidden from naming a paid endpoint, so adding
+ * a second spender is a visible, reviewable edit to this list rather than a
+ * silent one.
  */
 
 const REPO_SRC = join(__dirname, '..', '..');
@@ -51,6 +64,13 @@ const FORBIDDEN_PATTERNS: { label: string; pattern: RegExp }[] = [
 const SKIPPED_FILE_SUFFIXES = ['.test.ts', '.test.tsx'];
 
 /**
+ * Files permitted to spend evidence budget, each because it is an explicit,
+ * permission-gated, rate-limited operator action rather than intake or review.
+ * See the module doc. Keep this list as short as the policy allows.
+ */
+const EVIDENCE_SPENDER_EXEMPTIONS = ['capture-evidence.ts'];
+
+/**
  * Strips block and line comments before matching. Without this the guard
  * would trip on its own subject matter: the files that REMOVED these calls
  * necessarily name them in the comments explaining why. What matters is that
@@ -82,13 +102,44 @@ describe('raw supplier intake and review spend no supplier evidence budget', () 
 
     expect(files.length).toBeGreaterThan(0);
 
-    const offenders = files.flatMap((file) => {
-      const content = stripComments(readFileSync(file, 'utf8'));
+    const offenders = files
+      .filter(
+        (file) =>
+          !EVIDENCE_SPENDER_EXEMPTIONS.some((exempt) => file.endsWith(exempt)),
+      )
+      .flatMap((file) => {
+        const content = stripComments(readFileSync(file, 'utf8'));
 
-      return FORBIDDEN_PATTERNS.filter(({ pattern }) =>
-        pattern.test(content),
-      ).map(({ label }) => `${file}: ${label}`);
-    });
+        return FORBIDDEN_PATTERNS.filter(({ pattern }) =>
+          pattern.test(content),
+        ).map(({ label }) => `${file}: ${label}`);
+      });
+
+    expect(offenders).toEqual([]);
+  });
+
+  /**
+   * The exemption above is only sound while nothing on a browse, screening, or
+   * discovery path can reach the spender. A page render that transitively
+   * imported it would put three CJ requests behind a navigation - which is the
+   * precise failure ADR-013 §1a exists to prevent - so this asserts the
+   * import graph rather than trusting the review that added the exemption.
+   */
+  it('keeps the exempt evidence spender out of browse, screening, and discovery', () => {
+    const spender = 'capture-evidence';
+    const importers = [
+      ...collectTsFiles(
+        join(REPO_SRC, 'components', 'products', 'supplier-products'),
+      ),
+      ...collectTsFiles(join(REPO_SRC, 'modules', 'catalog', 'discovery')),
+      ...collectTsFiles(join(REPO_SRC, 'modules', 'catalog', 'candidates')),
+    ].filter((file) => !file.endsWith('capture-evidence.ts'));
+
+    const offenders = importers.filter((file) =>
+      new RegExp(`from\\s+['"][^'"]*${spender}['"]`).test(
+        stripComments(readFileSync(file, 'utf8')),
+      ),
+    );
 
     expect(offenders).toEqual([]);
   });

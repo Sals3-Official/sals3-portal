@@ -54,6 +54,11 @@ function evidence(overrides: Partial<CandidateEvidence>): CandidateEvidence {
     isTestProduct: false,
     listedCount: 10,
     usableImageCount: 3,
+    imageUrls: [
+      'https://cf.cjdropshipping.com/quick/product/a.jpg',
+      'https://cf.cjdropshipping.com/quick/product/b.jpg',
+      'https://cf.cjdropshipping.com/quick/product/c.jpg',
+    ],
     variants: [
       variant({
         vid: 'v1',

@@ -1,119 +1,106 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CjProductPage } from '@/lib/storefront/cj-feed';
+import type { StorefrontDetailRow } from '@/modules/catalog/storefront/read-model';
 
 const mocks = vi.hoisted(() => ({
-  getStorefrontCjProducts: vi.fn(),
+  readStorefrontProduct: vi.fn(),
 }));
 
-vi.mock('@/lib/storefront/cj-feed', () => ({
-  getStorefrontCjProducts: mocks.getStorefrontCjProducts,
+vi.mock('@/lib/storefront/catalog-cache', () => ({
+  readStorefrontProduct: mocks.readStorefrontProduct,
 }));
 
 const { GET } = await import('./route');
 
-function request(token?: string) {
-  return new Request(
-    'https://portal.test/api/storefront/products/cjyd3038814',
-    {
-      headers:
-        token === undefined ? undefined : { authorization: `Bearer ${token}` },
-    },
+function call(slug: string, token = 'secret') {
+  return GET(
+    new Request(
+      `https://portal.test/api/storefront/products/${encodeURIComponent(slug)}`,
+      { headers: { authorization: `Bearer ${token}` } },
+    ),
+    { params: Promise.resolve({ id: slug }) },
   );
 }
 
-function context(id: string) {
-  return { params: Promise.resolve({ id }) };
-}
-
-function cjPage(overrides: Partial<CjProductPage> = {}): CjProductPage {
+function row(): StorefrontDetailRow {
   return {
-    products: [
-      {
-        id: 'CJYD3038814',
-        name: 'Insole For Flat-foot Correction Pure Blue',
-        sku: 'CJYD3038814',
-        imageUrl: 'https://cf.cjdropshipping.com/image.webp',
-        category: "Men's Insoles",
-        priceCentsUsd: 72,
-        weight: '60.00-85.00 g',
-        productType: 'ordinary',
-        supplier: 'CJ',
-        freeShipping: false,
-        shipsFrom: ['CN', 'CN_US'],
-        listedCount: 4,
-        createdAt: '2026-08-05',
-      },
-    ],
-    page: 1,
-    pageSize: 20,
-    total: 1,
-    totalPages: 1,
-    ...overrides,
+    id: '90a329b9-56aa-4f54-abb2-ad843602aa73',
+    slug: 'waterproof-shell-jacket',
+    title: 'Mens Short-Style Cold-Weather Waterproof Shell Jacket',
+    priceMinor: 4299,
+    priceCurrency: 'USD',
+    availabilityState: 'AVAILABLE',
+    categoryCode: 'CAT-APP-100412',
+    categoryPath: "Apparel > Outerwear > Men's Jackets",
+    primaryImageUrl: 'https://cf.cjdropshipping.com/quick/product/a.jpg',
+    publishedAt: '2026-08-13T00:00:00.000Z',
+    images: [{ url: 'https://cf.cjdropshipping.com/quick/product/a.jpg' }],
   };
 }
 
 describe('storefront single-product API', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
-    mocks.getStorefrontCjProducts.mockReset();
+    mocks.readStorefrontProduct.mockReset();
   });
 
   it('rejects requests without the storefront token', async () => {
     vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
 
-    const response = await GET(request(), context('cjyd3038814'));
+    const response = await call('waterproof-shell-jacket', 'wrong');
 
     expect(response.status).toBe(401);
-    expect(mocks.getStorefrontCjProducts).not.toHaveBeenCalled();
+    expect(mocks.readStorefrontProduct).not.toHaveBeenCalled();
   });
 
-  it('returns the matching product, case-insensitively, in one CJ call', async () => {
+  it('serves a published product by slug', async () => {
     vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
-    mocks.getStorefrontCjProducts.mockResolvedValue(cjPage());
+    mocks.readStorefrontProduct.mockResolvedValue(row());
 
-    const response = await GET(request('secret'), context('cjyd3038814'));
+    const response = await call('waterproof-shell-jacket');
     const payload = await response.json();
 
     expect(response.status).toBe(200);
-    expect(payload.product.title).toBe(
-      'Insole For Flat-foot Correction Pure Blue',
+    expect(payload.product.slug).toBe('waterproof-shell-jacket');
+    expect(payload.product.currency).toBe('USD');
+    expect(mocks.readStorefrontProduct).toHaveBeenCalledWith(
+      'waterproof-shell-jacket',
     );
-    expect(payload.product.slug).toBe('cjyd3038814');
-    expect(mocks.getStorefrontCjProducts).toHaveBeenCalledTimes(1);
-    expect(mocks.getStorefrontCjProducts).toHaveBeenCalledWith({
-      cjPage: 1,
-      cjSearch: '',
-      cjPid: 'cjyd3038814',
-    });
   });
 
-  it('returns 404 when no product matches the id', async () => {
+  it('answers 404 for an unpublished or unknown slug', async () => {
     vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
-    mocks.getStorefrontCjProducts.mockResolvedValue(cjPage({ products: [] }));
+    mocks.readStorefrontProduct.mockResolvedValue(null);
 
-    const response = await GET(request('secret'), context('missing-id'));
+    const response = await call('no-such-product');
 
     expect(response.status).toBe(404);
   });
 
-  it('returns 404 for an empty id without calling the CJ feed', async () => {
+  /**
+   * A non-slug path segment must not reach a query at all — and it must answer
+   * exactly as "not found" does, so a caller cannot probe which drafts exist.
+   */
+  it.each(['Not A Slug', '../../etc/passwd', '', 'a'.repeat(200)])(
+    'rejects %j without querying',
+    async (slug) => {
+      vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
+
+      const response = await call(slug);
+
+      expect(response.status).toBe(404);
+      expect(mocks.readStorefrontProduct).not.toHaveBeenCalled();
+    },
+  );
+
+  it('answers a database failure with a generic 503', async () => {
     vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    mocks.readStorefrontProduct.mockRejectedValue(new Error('connection lost'));
 
-    const response = await GET(request('secret'), context('  '));
+    const response = await call('waterproof-shell-jacket');
+    const payload = await response.json();
 
-    expect(response.status).toBe(404);
-    expect(mocks.getStorefrontCjProducts).not.toHaveBeenCalled();
-  });
-
-  it('reports a typed error when the CJ feed is unavailable', async () => {
-    vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
-    const { CjApiError } = await import('@/services/cj/config');
-    mocks.getStorefrontCjProducts.mockRejectedValue(
-      new CjApiError('rate-limited'),
-    );
-
-    const response = await GET(request('secret'), context('cjyd3038814'));
-
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(503);
+    expect(payload).toEqual({ error: 'Catalog temporarily unavailable' });
   });
 });

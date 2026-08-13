@@ -94,6 +94,7 @@ export const descriptionDocumentSchema = z.object({
   blocks: z.array(descriptionBlockSchema).max(MAX_BLOCKS),
 });
 
+export type DescriptionBlock = z.infer<typeof descriptionBlockSchema>;
 export type DescriptionDocument = z.infer<typeof descriptionDocumentSchema>;
 
 export function emptyDescriptionDocument(): DescriptionDocument {

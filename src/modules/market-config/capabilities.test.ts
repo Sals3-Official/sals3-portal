@@ -40,7 +40,7 @@ describe('resolveSellerMarketCapabilities', () => {
 
   it('carries a version so a stored profile can be audited against what approved it', () => {
     expect(resolveSellerMarketCapabilities().capabilityVersion).toBe(
-      'seller-market-capability-v1-au-ph-bounded-pilot',
+      'seller-market-capability-v2-au-ph-usd-publishable',
     );
   });
 
@@ -55,11 +55,12 @@ describe('resolveSellerMarketCapabilities', () => {
     });
   });
 
-  it('authorizes no selling currency, rather than inventing one per country', () => {
+  it('authorizes only ADR-003 phase-1 USD, rather than inventing one per country', () => {
     // AUD is the portal's reference/display currency and PHP is nothing at
-    // all here — neither is an approved per-destination selling currency.
+    // all here — neither is an approved per-destination selling currency, and
+    // `reference-fx.ts` cannot even produce a non-USD price today.
     resolveSellerMarketCapabilities().destinations.forEach((destination) => {
-      expect(destination.authorizedSellingCurrencyCodes).toEqual([]);
+      expect(destination.authorizedSellingCurrencyCodes).toEqual(['USD']);
     });
   });
 
@@ -144,11 +145,16 @@ describe('separation from candidate screening', () => {
 });
 
 describe('isAuthorizedSellingCurrency', () => {
-  it('rejects every currency while none is authorized, including AUD and PHP', () => {
+  it('accepts phase-1 USD and rejects everything else, including AUD and PHP', () => {
     const australia = findAuthorizedDestination('AU');
     expect(australia).not.toBeNull();
 
-    ['AUD', 'PHP', 'USD', 'XXX'].forEach((code) => {
+    expect(isAuthorizedSellingCurrency(australia!, 'USD')).toBe(true);
+
+    // AUD is the portal's display currency (ADR-014), not an approved selling
+    // currency; authorizing it needs an ADR amendment and a real reference-FX
+    // provider, not a list edit.
+    ['AUD', 'PHP', 'XXX', 'usd'].forEach((code) => {
       expect(isAuthorizedSellingCurrency(australia!, code)).toBe(false);
     });
   });

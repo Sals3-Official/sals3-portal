@@ -1,24 +1,28 @@
+import isStorefrontRequestAuthorized from '@/lib/storefront/auth';
+import { readStorefrontFeed } from '@/lib/storefront/catalog-cache';
 import {
-  resolveStorefrontPricingConfig,
   storefrontFeedQuerySchema,
   toStorefrontProductFeed,
-} from '@/lib/storefront/feed';
-import isStorefrontRequestAuthorized from '@/lib/storefront/auth';
-import { getStorefrontCjProducts } from '@/lib/storefront/cj-feed';
-import { CjApiError } from '@/services/cj/config';
+} from '@/lib/storefront/catalog-feed';
+import {
+  storefrontErrorResponse,
+  STOREFRONT_HEADERS,
+  unauthorizedResponse,
+} from '../responses';
 
+/**
+ * The published Sals3 catalogue feed. Reads the database and nothing else —
+ * no supplier call is reachable from this module's import graph, which
+ * `modules/catalog/storefront/no-supplier-calls.test.ts` asserts.
+ *
+ * `force-dynamic` because the response is per-request authorized; the caching
+ * that matters happens in `catalog-cache.ts`, behind the auth check.
+ */
 export const dynamic = 'force-dynamic';
-
-const HEADERS = {
-  'Cache-Control': 'private, no-store',
-};
 
 export async function GET(request: Request) {
   if (!isStorefrontRequestAuthorized(request)) {
-    return Response.json(
-      { error: 'Unauthorized' },
-      { status: 401, headers: HEADERS },
-    );
+    return unauthorizedResponse();
   }
 
   try {
@@ -28,33 +32,16 @@ export async function GET(request: Request) {
       page: searchParams.get('page') ?? undefined,
       limit: searchParams.get('limit') ?? undefined,
     });
-    const [cjPage, pricing] = await Promise.all([
-      getStorefrontCjProducts({
-        cjPage: query.page,
-        cjSearch: '',
-        cjPid: '',
-      }),
-      resolveStorefrontPricingConfig(),
-    ]);
-
-    return Response.json(
-      toStorefrontProductFeed(
-        cjPage.products,
-        query,
-        cjPage.total,
-        cjPage.totalPages,
-        pricing,
-      ),
-      { headers: HEADERS },
+    const page = await readStorefrontFeed(
+      query.section,
+      query.page,
+      query.limit,
     );
-  } catch (error) {
-    if (error instanceof CjApiError) {
-      return Response.json(
-        { error: 'CJ supplier feed unavailable' },
-        { status: 502, headers: HEADERS },
-      );
-    }
 
-    throw error;
+    return Response.json(toStorefrontProductFeed(page, query), {
+      headers: STOREFRONT_HEADERS,
+    });
+  } catch (error) {
+    return storefrontErrorResponse('products', error);
   }
 }

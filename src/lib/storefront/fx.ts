@@ -1,16 +1,22 @@
 /**
- * USD to PHP rate for shopper pricing, on money-changer logic.
+ * USD to PHP rate on money-changer logic.
  *
- * This is the real, currently-live `sals3-ecommerce` storefront checkout
- * pricing contract - a cross-repository dependency, not Portal's own
- * seller-facing operating currency. It stays PHP/deferred as its own future
- * migration (ADR-014): Sals3's business/seller-operating country is now
- * Australia and Portal's own seller-facing screens show AUD reference
- * conversions instead (`src/lib/products/catalog-fx.ts`), but changing what
- * customers are actually charged is a coordinated, separately-reviewed
- * change across both repositories, not something this task does. Do not
- * reuse this module for a Portal-only seller-facing display estimate - see
- * `catalog-fx.ts`'s own isolated resolvers for that.
+ * ## This no longer prices anything customer-facing
+ *
+ * It used to be the live `sals3-ecommerce` storefront pricing contract: the
+ * feed multiplied a CJ USD cost by this rate and a flat markup percent on
+ * every buyer request. As of 2026-08-13 the storefront serves published
+ * `product_offers`, whose price is resolved once at publish time by
+ * `modules/pricing/resolver.ts` and frozen onto the row with its policy
+ * layers and resolver version. A buyer request performs no FX at all, and
+ * `modules/catalog/storefront/no-supplier-calls.test.ts` forbids this module
+ * from re-entering that path.
+ *
+ * What still uses it: `src/lib/products/catalog-fx.ts`, for Portal's own
+ * seller-facing reference conversions. That is a display estimate, not an
+ * approved commercial rate — and it is deliberately NOT
+ * `modules/pricing/reference-fx.ts`, which is the platform-owned rate a
+ * commercial price may be built from.
  *
  * A quoted mid-market rate (what Google, Morningstar, or a central bank
  * publishes) is not a rate anyone can actually transact at. Paying CJ in

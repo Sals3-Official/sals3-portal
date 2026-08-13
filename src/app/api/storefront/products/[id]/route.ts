@@ -1,73 +1,59 @@
 import isStorefrontRequestAuthorized from '@/lib/storefront/auth';
-import { getStorefrontCjProducts } from '@/lib/storefront/cj-feed';
+import { readStorefrontProduct } from '@/lib/storefront/catalog-cache';
 import {
-  resolveStorefrontPricingConfig,
-  toStorefrontProduct,
-} from '@/lib/storefront/feed';
-import { CjApiError } from '@/services/cj/config';
+  isPublicSlug,
+  toStorefrontProductDetail,
+} from '@/lib/storefront/catalog-feed';
+import {
+  notFoundResponse,
+  storefrontErrorResponse,
+  STOREFRONT_HEADERS,
+  unauthorizedResponse,
+} from '../../responses';
 
+/**
+ * One published product, resolved **by its public slug**.
+ *
+ * The route folder is `[id]` for historical reasons — `sals3-ecommerce`'s
+ * `fetchProductBySlug` puts the slug in this path segment and its cards link
+ * by slug. Renaming the folder is a coordinated cross-repository change, so
+ * the name stays and the parameter is read as what it is.
+ *
+ * There is no supplier lookup and no id guessing. The old handler asked CJ for
+ * a `pid` using our own slugified form of it, then re-matched
+ * case-insensitively because the filter could not be trusted — a guess by its
+ * own admission. A slug is now a real, unique, indexed column.
+ */
 export const dynamic = 'force-dynamic';
-
-const HEADERS = {
-  'Cache-Control': 'private, no-store',
-};
 
 type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
-function notFound() {
-  return Response.json(
-    { error: 'Not found' },
-    { status: 404, headers: HEADERS },
-  );
-}
-
 export async function GET(request: Request, { params }: RouteContext) {
   if (!isStorefrontRequestAuthorized(request)) {
-    return Response.json(
-      { error: 'Unauthorized' },
-      { status: 401, headers: HEADERS },
-    );
+    return unauthorizedResponse();
   }
 
   const { id } = await params;
 
-  if (id.trim() === '') {
-    return notFound();
+  // Validate the shape before touching the database: an unbounded or
+  // non-slug string is not a lookup, and rejecting it here keeps a
+  // buyer-controlled value from reaching a query at all.
+  if (!isPublicSlug(id)) {
+    return notFoundResponse();
   }
 
   try {
-    const page = await getStorefrontCjProducts({
-      cjPage: 1,
-      cjSearch: '',
-      cjPid: id,
-    });
-    // CJ's `pid` filter is documented as an exact-identifier filter, but the
-    // id this route receives is our own slugified form of it (lowercased,
-    // non-alphanumeric runs collapsed to a hyphen) - confirm the match
-    // case-insensitively rather than trusting CJ's filter alone.
-    const match = page.products.find(
-      (product) => product.id.toLowerCase() === id.toLowerCase(),
-    );
-    const product =
-      match === undefined
-        ? null
-        : toStorefrontProduct(match, await resolveStorefrontPricingConfig());
+    const row = await readStorefrontProduct(id);
+    const product = row === null ? null : toStorefrontProductDetail(row);
 
     if (product === null) {
-      return notFound();
+      return notFoundResponse();
     }
 
-    return Response.json({ product }, { headers: HEADERS });
+    return Response.json({ product }, { headers: STOREFRONT_HEADERS });
   } catch (error) {
-    if (error instanceof CjApiError) {
-      return Response.json(
-        { error: 'CJ supplier feed unavailable' },
-        { status: 502, headers: HEADERS },
-      );
-    }
-
-    throw error;
+    return storefrontErrorResponse('products/[id]', error);
   }
 }

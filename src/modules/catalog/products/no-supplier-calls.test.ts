@@ -30,6 +30,10 @@ const FORBIDDEN_PATH_FRAGMENTS = [
   'lib/cj/',
   'modules/catalog/discovery/governed-fetch',
   'modules/catalog/candidates/evaluate',
+  // Added 2026-08-13 with the module itself: it fetches CJ evidence, so the
+  // draft flow reaching it would turn "read the saved snapshot" back into
+  // three supplier requests — the exact inversion of ADR-013 §1a.
+  'modules/catalog/candidates/capture-evidence',
 ];
 
 const IMPORT_PATTERN = /(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g;

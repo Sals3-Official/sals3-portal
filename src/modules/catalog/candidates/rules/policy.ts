@@ -37,8 +37,14 @@ export function composeEvaluationPolicyVersion(
  * `stockByOrigin[]` (raw `cjInventory`/`factoryInventory`/`totalInventory`/
  * `verifiedWarehouse` per country) plus a derived `stockEvidence` label,
  * instead of a bare summed `totalInventory`.
+ *
+ * `v3` (2026-08-13): adds `imageUrls[]` — the allow-listed image URLs that
+ * `countUsableImages` already computed and discarded. Every reader parses
+ * snapshots with `safeParse` and treats absent fields as absent, so `v2` rows
+ * stay readable and need no backfill; they simply have no gallery until their
+ * candidate's evidence is captured again.
  */
-export const EVIDENCE_SCHEMA_VERSION = 'cj-evidence-v2';
+export const EVIDENCE_SCHEMA_VERSION = 'cj-evidence-v3';
 
 /**
  * Category/product-name keyword denylist, verbatim from spec section 14.1's

@@ -1,12 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CjProductPage } from '@/lib/storefront/cj-feed';
 
 const mocks = vi.hoisted(() => ({
-  getStorefrontCjProducts: vi.fn(),
+  readStorefrontCategories: vi.fn(),
 }));
 
-vi.mock('@/lib/storefront/cj-feed', () => ({
-  getStorefrontCjProducts: mocks.getStorefrontCjProducts,
+vi.mock('@/lib/storefront/catalog-cache', () => ({
+  readStorefrontCategories: mocks.readStorefrontCategories,
 }));
 
 const { GET } = await import('./route');
@@ -18,36 +17,10 @@ function request(token?: string) {
   });
 }
 
-function cjPage(): CjProductPage {
-  return {
-    products: [
-      {
-        id: 'CJYD3038814',
-        name: 'Insole For Flat-foot Correction Pure Blue',
-        sku: 'CJYD3038814',
-        imageUrl: 'https://cf.cjdropshipping.com/image.webp',
-        category: "Men's Insoles",
-        priceCentsUsd: 72,
-        weight: '60.00-85.00 g',
-        productType: 'ordinary',
-        supplier: 'CJ',
-        freeShipping: false,
-        shipsFrom: ['CN'],
-        listedCount: 4,
-        createdAt: '2026-08-05',
-      },
-    ],
-    page: 1,
-    pageSize: 20,
-    total: 1,
-    totalPages: 1,
-  };
-}
-
 describe('storefront categories API', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
-    mocks.getStorefrontCjProducts.mockReset();
+    mocks.readStorefrontCategories.mockReset();
   });
 
   it('rejects requests without the storefront token', async () => {
@@ -56,19 +29,33 @@ describe('storefront categories API', () => {
     const response = await GET(request());
 
     expect(response.status).toBe(401);
-    expect(mocks.getStorefrontCjProducts).not.toHaveBeenCalled();
+    expect(mocks.readStorefrontCategories).not.toHaveBeenCalled();
   });
 
-  it('returns categories from the protected CJ supplier feed', async () => {
+  it('serves the categories that have a published product', async () => {
     vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
-    mocks.getStorefrontCjProducts.mockResolvedValue(cjPage());
+    mocks.readStorefrontCategories.mockResolvedValue([
+      { code: 'CAT-APP-100412', path: "Apparel > Outerwear > Men's Jackets" },
+      { code: 'CAT-HOM-100123', path: 'Home & Garden > Kitchen > Cookware' },
+    ]);
 
     const response = await GET(request('secret'));
     const payload = await response.json();
 
     expect(response.status).toBe(200);
     expect(payload).toEqual([
-      { id: 'men-s-insoles', code: 'MI', name: "Men's Insoles" },
+      { id: 'cat-app-100412', code: 'MJ', name: "Men's Jackets" },
+      { id: 'cat-hom-100123', code: 'CO', name: 'Cookware' },
     ]);
+  });
+
+  it('serves an empty list rather than an error when nothing is published', async () => {
+    vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
+    mocks.readStorefrontCategories.mockResolvedValue([]);
+
+    const response = await GET(request('secret'));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
   });
 });

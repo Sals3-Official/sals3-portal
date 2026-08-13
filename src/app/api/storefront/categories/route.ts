@@ -1,40 +1,30 @@
 import isStorefrontRequestAuthorized from '@/lib/storefront/auth';
-import { getStorefrontCjProducts } from '@/lib/storefront/cj-feed';
-import { listStorefrontCategories } from '@/lib/storefront/feed';
-import { CjApiError } from '@/services/cj/config';
+import { readStorefrontCategories } from '@/lib/storefront/catalog-cache';
+import { toStorefrontCategories } from '@/lib/storefront/catalog-feed';
+import {
+  storefrontErrorResponse,
+  STOREFRONT_HEADERS,
+  unauthorizedResponse,
+} from '../responses';
 
+/**
+ * The Sals3 categories that actually have a published product behind them.
+ * Derived from the catalogue, so no empty category tile can render.
+ */
 export const dynamic = 'force-dynamic';
-
-const HEADERS = {
-  'Cache-Control': 'private, no-store',
-};
 
 export async function GET(request: Request) {
   if (!isStorefrontRequestAuthorized(request)) {
-    return Response.json(
-      { error: 'Unauthorized' },
-      { status: 401, headers: HEADERS },
-    );
+    return unauthorizedResponse();
   }
 
   try {
-    const page = await getStorefrontCjProducts({
-      cjPage: 1,
-      cjSearch: '',
-      cjPid: '',
-    });
+    const rows = await readStorefrontCategories();
 
-    return Response.json(listStorefrontCategories(page.products), {
-      headers: HEADERS,
+    return Response.json(toStorefrontCategories(rows), {
+      headers: STOREFRONT_HEADERS,
     });
   } catch (error) {
-    if (error instanceof CjApiError) {
-      return Response.json(
-        { error: 'CJ supplier feed unavailable' },
-        { status: 502, headers: HEADERS },
-      );
-    }
-
-    throw error;
+    return storefrontErrorResponse('categories', error);
   }
 }
