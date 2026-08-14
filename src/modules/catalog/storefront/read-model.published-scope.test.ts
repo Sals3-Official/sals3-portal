@@ -16,7 +16,7 @@ import {
  * and assert two things that a passing behavioural test could not:
  *
  * 1. Every condition that makes a row public is present. An unpublished
- *    product, a draft variant, an unpriced offer, or unreviewed media leaking
+ *    product, an unpriced offer, or unreviewed media leaking
  *    into a public feed is not a cosmetic bug.
  * 2. The count query's predicate is **identical** to the list query's.
  *    A count over a wider predicate invents pages that render empty; a count
@@ -72,7 +72,6 @@ function recordingExecutor(resultsPerSelect: unknown[][]) {
 const REQUIRED_CONDITIONS = [
   { label: 'product is published', fragment: `"publication_state" = ` },
   { label: 'product has a public slug', fragment: `"slug" is not null` },
-  { label: 'variant is active', fragment: `"product_variants"."status" = ` },
   {
     label: 'offer is published',
     fragment: `"product_offers"."publish_state" = `,

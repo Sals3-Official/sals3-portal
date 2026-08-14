@@ -428,6 +428,13 @@ export default function ProductEditorWorkspace({
       const result = await publishAction({
         productId: fixture.publishTarget.productId,
         expectedProductVersion: fixture.publishTarget.expectedProductVersion,
+        variantRetailPrices: variants
+          .filter((variant) => UUID_PATTERN.test(variant.id))
+          .map((variant) => ({
+            variantId: variant.id,
+            amountMinor: variant.retailPrice.amountMinor,
+            currency: variant.retailPrice.currency,
+          })),
       });
 
       if (result.ok) {

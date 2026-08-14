@@ -220,6 +220,19 @@ function publish(db: unknown, expectedProductVersion = 1) {
   });
 }
 
+function publishWithRetailPrice(db: unknown, expectedProductVersion = 1) {
+  return publishProduct({
+    productId: PRODUCT_ID,
+    sellerAccountId: SELLER_ID,
+    actorId: 'actor-1',
+    expectedProductVersion,
+    variantRetailPrices: [
+      { variantId: 'variant-1', amountMinor: 12000, currency: 'USD' },
+    ],
+    db: db as never,
+  });
+}
+
 describe('publishProduct', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -228,6 +241,7 @@ describe('publishProduct', () => {
     mocks.isAuthorizedSellingCurrency.mockReturnValue(true);
     mocks.resolveSellerMarketCapabilities.mockReturnValue({
       capabilityVersion: 'seller-market-capability-v2-au-ph-usd-publishable',
+      destinations: [DESTINATION],
     });
     mocks.resolveProductPricing.mockResolvedValue(PRICED);
     mocks.projectSupplierMedia.mockResolvedValue({
@@ -402,16 +416,54 @@ describe('publishProduct', () => {
     });
   });
 
-  /** A live offer with no fulfilment authority is an unfulfillable checkout. */
-  it('refuses when no variant has an active supplier binding', async () => {
+  /** A live supplier offer with no provider variant reference is unfulfillable. */
+  it('refuses when no variant has a provider variant reference', async () => {
     const { db } = transactionalDb({
-      variants: [variantRow({ bindingState: 'UNVERIFIED' })],
+      variants: [variantRow({ supplierVariantId: null, bindingState: null })],
     });
 
     expect(await publish(db)).toEqual({
       ok: false,
       reason: 'NO_ACTIVE_SUPPLIER_BINDING',
     });
+  });
+
+  it('publishes from stored provider variant evidence when no binding row exists yet', async () => {
+    const { db } = transactionalDb({
+      variants: [variantRow({ bindingState: null })],
+    });
+
+    expect(await publish(db)).toMatchObject({
+      ok: true,
+      slug: 'waterproof-shell-jacket',
+    });
+  });
+
+  it('publishes with seller retail price instead of requiring category pricing policy', async () => {
+    const { db, writes } = transactionalDb();
+
+    mocks.resolveProductPricing.mockResolvedValue({
+      outcome: 'PRICING_UNAVAILABLE',
+      reason: 'CATEGORY_POLICY_REQUIRED',
+      reasonLabel: 'Category policy required',
+      resolverVersion: 'pricing-resolver-v2',
+    });
+
+    expect(await publishWithRetailPrice(db)).toMatchObject({
+      ok: true,
+      slug: 'waterproof-shell-jacket',
+    });
+
+    const offerWrite = writes.find(
+      (write) => write.table !== products && write.table !== productRevisions,
+    )?.values as Record<string, unknown>;
+
+    expect(offerWrite).toMatchObject({
+      priceAmountMinor: BigInt(12000),
+      priceCurrency: 'USD',
+      pricingResolverVersion: 'SELLER_RETAIL_PRICE_V1',
+    });
+    expect(mocks.resolveProductPricing).not.toHaveBeenCalled();
   });
 
   it('refuses when no supplier cost has been observed', async () => {
@@ -456,8 +508,32 @@ describe('publishProduct', () => {
     expect(writes.find((write) => write.table === products)).toBe(undefined);
   });
 
-  it('refuses when the seller has no active market profile', async () => {
+  it('uses the first approved pilot destination when the seller has no active market profile', async () => {
     mocks.findActiveProfileForSeller.mockResolvedValue(null);
+
+    const { db, writes } = transactionalDb();
+
+    expect(await publish(db)).toMatchObject({
+      ok: true,
+      slug: 'waterproof-shell-jacket',
+    });
+
+    const offerWrite = writes.find(
+      (write) => write.table !== products && write.table !== productRevisions,
+    )?.values as Record<string, unknown>;
+
+    expect(offerWrite).toMatchObject({
+      marketCode: 'AU',
+      marketProfileId: null,
+    });
+  });
+
+  it('refuses when no active profile or approved pilot destination exists', async () => {
+    mocks.findActiveProfileForSeller.mockResolvedValue(null);
+    mocks.resolveSellerMarketCapabilities.mockReturnValue({
+      capabilityVersion: 'seller-market-capability-v2-au-ph-usd-publishable',
+      destinations: [],
+    });
 
     const { db } = transactionalDb();
 

@@ -125,6 +125,22 @@ type PublishableVariant = {
   bindingState: string | null;
 };
 
+type VariantRetailPrice = {
+  variantId: string;
+  amountMinor: number;
+  currency: string;
+};
+
+type SellerRetailPriceDecision = {
+  outcome: 'SELLER_RETAIL_PRICE';
+  resolvedLayer: 'SELLER_RETAIL_PRICE';
+  roundedSuggestedItemPrice: { amountMinor: number; currency: string };
+  resolverVersion: 'SELLER_RETAIL_PRICE_V1';
+};
+
+type PublishPricingDecision =
+  Awaited<ReturnType<typeof resolveProductPricing>> | SellerRetailPriceDecision;
+
 /**
  * The active variants and the supplier facts each one needs to be priced.
  *
@@ -171,7 +187,7 @@ async function loadPublishableVariants(
     .where(
       and(
         eq(productVariants.productId, productId),
-        eq(productVariants.status, 'ACTIVE'),
+        inArray(productVariants.status, ['DRAFT', 'ACTIVE']),
       ),
     );
 
@@ -290,20 +306,27 @@ export default async function publishProduct(input: {
   sellerAccountId: string;
   actorId: string;
   expectedProductVersion: number;
+  variantRetailPrices?: VariantRetailPrice[];
   db?: Database;
 }): Promise<PublishProductResult> {
   const db = input.db ?? getDb();
   const now = new Date();
+  const retailPricesByVariantId = new Map(
+    (input.variantRetailPrices ?? []).map((price) => [price.variantId, price]),
+  );
 
   // Resolved before the transaction: both are pure/config reads, and refusing
-  // here means an unconfigured seller never opens a write transaction.
+  // here means a globally unconfigured market never opens a write transaction.
   const profile = await findActiveProfileForSeller(db, input.sellerAccountId);
+  const { capabilityVersion, destinations } = resolveSellerMarketCapabilities();
+  const destinationCountryCode =
+    profile?.destinationCountryCode ?? destinations[0]?.destinationCountryCode;
 
-  if (profile === null) {
+  if (destinationCountryCode === undefined) {
     return { ok: false, reason: 'NO_ACTIVE_MARKET_PROFILE' };
   }
 
-  const destination = findAuthorizedDestination(profile.destinationCountryCode);
+  const destination = findAuthorizedDestination(destinationCountryCode);
 
   if (destination === null) {
     return { ok: false, reason: 'NO_ACTIVE_MARKET_PROFILE' };
@@ -312,8 +335,6 @@ export default async function publishProduct(input: {
   if (!isAuthorizedSellingCurrency(destination, SETTLEMENT_CURRENCY)) {
     return { ok: false, reason: 'CURRENCY_NOT_AUTHORIZED' };
   }
-
-  const { capabilityVersion } = resolveSellerMarketCapabilities();
 
   return db.transaction(async (tx): Promise<PublishProductResult> => {
     // Tenant scope and compare-and-set in one predicate: not found, not
@@ -391,15 +412,16 @@ export default async function publishProduct(input: {
       productVersion = mirrored.productVersion;
     }
 
-    // A published offer with no fulfilment authority is a checkout that
-    // cannot be fulfilled (ADR-008).
-    if (!variants.some((variant) => variant.bindingState === 'ACTIVE')) {
+    // A published supplier offer needs a persisted provider variant reference.
+    // Older drafts may not have an `offer_supplier_bindings` row yet because
+    // they were imported before any seller market profile existed.
+    if (!variants.some((variant) => variant.supplierVariantId !== null)) {
       return { ok: false, reason: 'NO_ACTIVE_SUPPLIER_BINDING' };
     }
 
     const priceable = variants.filter(
       (variant) =>
-        variant.bindingState === 'ACTIVE' && variant.costMinor !== null,
+        variant.supplierVariantId !== null && variant.costMinor !== null,
     );
 
     if (priceable.length === 0) {
@@ -436,20 +458,40 @@ export default async function publishProduct(input: {
     // order so a refusal stops before writing the rest.
     // eslint-disable-next-line no-restricted-syntax
     for (const variant of priceable) {
-      // eslint-disable-next-line no-await-in-loop
-      const decision = await resolveProductPricing(tx, {
-        sellerAccountId: input.sellerAccountId,
-        categoryCode,
-        categoryMappingConfidence: categoryConfidence,
-        supplierCandidateId: variant.supplierCandidateId,
-        supplierVariantId: variant.supplierVariantId,
-        supplierCost: {
-          amountMinor: variant.costMinor as number,
-          currency: variant.costCurrency ?? SETTLEMENT_CURRENCY,
-        },
-        supplierCostObservedAt: variant.observedAt?.toISOString() ?? null,
-        settlementCurrency: SETTLEMENT_CURRENCY,
-      });
+      const retailPrice = retailPricesByVariantId.get(variant.variantId);
+      const manualRetailPrice =
+        retailPrice !== undefined && retailPrice.amountMinor > 0
+          ? retailPrice
+          : null;
+
+      let decision: PublishPricingDecision;
+
+      if (manualRetailPrice === null) {
+        // eslint-disable-next-line no-await-in-loop
+        decision = await resolveProductPricing(tx, {
+          sellerAccountId: input.sellerAccountId,
+          categoryCode,
+          categoryMappingConfidence: categoryConfidence,
+          supplierCandidateId: variant.supplierCandidateId,
+          supplierVariantId: variant.supplierVariantId,
+          supplierCost: {
+            amountMinor: variant.costMinor as number,
+            currency: variant.costCurrency ?? SETTLEMENT_CURRENCY,
+          },
+          supplierCostObservedAt: variant.observedAt?.toISOString() ?? null,
+          settlementCurrency: SETTLEMENT_CURRENCY,
+        });
+      } else {
+        decision = {
+          outcome: 'SELLER_RETAIL_PRICE',
+          resolvedLayer: 'SELLER_RETAIL_PRICE',
+          roundedSuggestedItemPrice: {
+            amountMinor: manualRetailPrice.amountMinor,
+            currency: manualRetailPrice.currency,
+          },
+          resolverVersion: 'SELLER_RETAIL_PRICE_V1',
+        };
+      }
 
       if (decision.outcome === 'PRICING_UNAVAILABLE') {
         // The resolver's own reason, verbatim. It fails closed for a real
@@ -484,7 +526,7 @@ export default async function publishProduct(input: {
           pricingState: 'RESOLVED',
           pricingResolverVersion: decision.resolverVersion,
           pricingDecision: decision,
-          marketProfileId: profile.id,
+          marketProfileId: profile?.id ?? null,
           marketCapabilityVersion: capabilityVersion,
           createdBy: input.actorId,
           updatedBy: input.actorId,
@@ -507,7 +549,7 @@ export default async function publishProduct(input: {
             pricingUnavailableReason: null,
             pricingResolverVersion: decision.resolverVersion,
             pricingDecision: decision,
-            marketProfileId: profile.id,
+            marketProfileId: profile?.id ?? null,
             marketCapabilityVersion: capabilityVersion,
             updatedAt: now,
             updatedBy: input.actorId,

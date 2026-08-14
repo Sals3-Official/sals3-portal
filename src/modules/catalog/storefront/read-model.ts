@@ -144,15 +144,14 @@ export type StorefrontCategoryRow = {
  *   `product_offers_published_requires_price` already forbids a priced-less
  *   published offer; asserting it in the read too means a future schema
  *   relaxation cannot leak an unpriced card.
- * - `variants.status = 'ACTIVE'` — a `DRAFT` variant has no mapped option
- *   combination, so its identity is not yet stable enough to sell.
+ * A published offer is the sellable gate. `Publish with Attention` can expose
+ * a priced CJ-backed draft variant before full Sals3 option mapping exists.
  */
 function publishedScope() {
   return and(
     eq(products.publicationState, 'PUBLISHED'),
     isNotNull(products.slug),
     isNotNull(products.publishedAt),
-    eq(productVariants.status, 'ACTIVE'),
     eq(productOffers.publishState, 'PUBLISHED'),
     eq(productOffers.pricingState, 'RESOLVED'),
     isNotNull(productOffers.priceAmountMinor),
@@ -448,7 +447,6 @@ async function loadPublishedVariants(
     .where(
       and(
         eq(productVariants.productId, productId),
-        eq(productVariants.status, 'ACTIVE'),
         eq(productOffers.publishState, 'PUBLISHED'),
         eq(productOffers.pricingState, 'RESOLVED'),
         isNotNull(productOffers.priceAmountMinor),
@@ -514,8 +512,14 @@ async function loadSpecs(
     })
     .from(products)
     .innerJoin(productVariants, eq(productVariants.productId, products.id))
+    .innerJoin(productOffers, eq(productOffers.variantId, productVariants.id))
     .where(
-      and(eq(products.id, productId), eq(productVariants.status, 'ACTIVE')),
+      and(
+        eq(products.id, productId),
+        eq(productOffers.publishState, 'PUBLISHED'),
+        eq(productOffers.pricingState, 'RESOLVED'),
+        isNotNull(productOffers.priceAmountMinor),
+      ),
     )
     .orderBy(asc(productVariants.sals3Sku))
     .limit(1);
