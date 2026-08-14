@@ -8,6 +8,7 @@ import { isDatabaseConfigured } from '@/lib/db/client';
 import uniqueViolationConstraint from '@/lib/db/constraint-errors';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { STOREFRONT_CATALOG_TAG } from '@/lib/storefront/catalog-cache';
+import { recoverSupplierLabels } from '@/modules/catalog/products/recover-supplier-labels';
 import saveOptionMapping from '@/modules/catalog/products/save-option-mapping';
 
 /**
@@ -218,5 +219,93 @@ export default async function saveOptionMappingAction(
     ok: true,
     axisCount: result.axisCount,
     mappedVariantCount: result.mappedVariantCount,
+  };
+}
+
+const recoverInputSchema = z.object({ productId: z.string().uuid() });
+
+export type RecoverLabelsActionResult =
+  | { ok: true; recoveredCount: number; alreadyLabelledCount: number }
+  | { ok: false; reason: string; message: string };
+
+const RECOVER_MESSAGES: Record<string, string> = {
+  invalid_input: 'That product could not be read.',
+  denied: 'Your account cannot edit this product.',
+  rate_limited: 'Too many attempts. Wait a moment and try again.',
+  not_configured: 'The catalogue database is not available right now.',
+  not_found: 'This product no longer exists, or it is not yours.',
+  NO_STORED_EVIDENCE:
+    'No supplier evidence is stored for this product, so there are no labels to recover. Nothing was changed.',
+  NO_LABELS_IN_EVIDENCE:
+    'The stored supplier evidence for this product carries no variant labels, so there is nothing to recover. Nothing was changed.',
+  failed: 'The supplier labels could not be recovered.',
+};
+
+/**
+ * Recovering supplier labels a draft never recorded, from the editor.
+ *
+ * This exists as a Server Action rather than only as `scripts/`'s backfill
+ * because reaching production from a terminal needs a database URL, and a seller
+ * who can open their own product in the portal already has everything the check
+ * requires: a session, a tenant, and `product:edit` on their own catalogue. The
+ * deployed application holds the connection; the seller holds the authority.
+ *
+ * Scoped to one product, and to the caller's own tenancy, which the domain module
+ * folds into the same predicate that finds the row. It fills only `NULL` — a
+ * recorded label is supplier content and is never overwritten — so pressing it
+ * twice is safe and the second press reports nothing recovered.
+ *
+ * Costs nothing at the supplier: the labels are read from
+ * `supplier_snapshots.evidence`, already in the database (ADR-017).
+ */
+export async function recoverSupplierLabelsAction(
+  input: unknown,
+): Promise<RecoverLabelsActionResult> {
+  const parsed = recoverInputSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      reason: 'invalid_input',
+      message: RECOVER_MESSAGES.invalid_input ?? '',
+    };
+  }
+
+  const authorization = await authorize();
+
+  if (!authorization.ok) {
+    return {
+      ok: false,
+      reason: authorization.reason,
+      message: RECOVER_MESSAGES[authorization.reason] ?? '',
+    };
+  }
+
+  const result = await recoverSupplierLabels({
+    productId: parsed.data.productId,
+    sellerAccountId: authorization.sellerAccountId,
+    actorId: authorization.actorId,
+  });
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      reason: result.reason,
+      message: RECOVER_MESSAGES[result.reason] ?? RECOVER_MESSAGES.failed ?? '',
+    };
+  }
+
+  // A recovered label changes what the editor derives and what a published PDP
+  // renders, so both caches must expire — same reasoning as the mapping save
+  // above, and for the same reason it is done outside the transaction.
+  if (result.recoveredCount > 0) {
+    revalidatePath('/listings');
+    updateTag(STOREFRONT_CATALOG_TAG);
+  }
+
+  return {
+    ok: true,
+    recoveredCount: result.recoveredCount,
+    alreadyLabelledCount: result.alreadyLabelledCount,
   };
 }

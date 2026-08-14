@@ -95,6 +95,16 @@ type ProductEditorWorkspaceProps = {
     | { ok: true; axisCount: number; mappedVariantCount: number }
     | { ok: false; reason: string; message: string }
   >;
+  /**
+   * Recovery boundary for supplier labels a draft never recorded. Omitted for
+   * fixture mode, which has no stored evidence to recover from.
+   */
+  recoverLabelsAction?: (
+    input: unknown,
+  ) => Promise<
+    | { ok: true; recoveredCount: number; alreadyLabelledCount: number }
+    | { ok: false; reason: string; message: string }
+  >;
 };
 
 const EXIT_HREF = '/products/pipeline?tab=ready';
@@ -184,6 +194,7 @@ export default function ProductEditorWorkspace({
   saveDraftAction,
   publishAction,
   optionMappingAction,
+  recoverLabelsAction,
 }: ProductEditorWorkspaceProps) {
   const router = useRouter();
 
@@ -554,6 +565,44 @@ export default function ProductEditorWorkspace({
             : { ok: false, message: result.message };
         };
 
+  /**
+   * Recovery needs only the product id — no version token, because it fills blank
+   * columns rather than replacing a value anyone read. A concurrent write cannot
+   * be lost: the `isNull` predicate means whoever writes first wins and the second
+   * attempt recovers nothing.
+   */
+  const handleRecoverLabels =
+    recoverLabelsAction === undefined || optionMappingTarget === null
+      ? undefined
+      : async () => {
+          const result = await recoverLabelsAction({
+            productId: optionMappingTarget.productId,
+          });
+
+          if (!result.ok) return { ok: false, message: result.message };
+
+          // Nothing recovered is a real outcome, not a failure — the labels were
+          // already there, or the evidence never carried any. Refreshing on zero
+          // would suggest something changed.
+          if (result.recoveredCount === 0) {
+            return {
+              ok: true,
+              message:
+                'No labels needed recovering. Every variant already had one.',
+            };
+          }
+
+          // The section re-derives its proposal from the read-model, so the
+          // recovered labels have to come back through the server, not local
+          // state.
+          router.refresh();
+
+          return {
+            ok: true,
+            message: `Recovered ${result.recoveredCount} supplier label${result.recoveredCount === 1 ? '' : 's'}. Option groups can now be named.`,
+          };
+        };
+
   return (
     <div className="@container flex flex-col gap-4">
       <ProductEditorHeader
@@ -692,7 +741,11 @@ export default function ProductEditorWorkspace({
             proposal={fixture.optionMapping.proposal}
             mappedAxisNames={fixture.optionMapping.mappedAxisNames}
             variantCount={fixture.optionMapping.variantCount}
+            unlabelledVariantCount={
+              fixture.optionMapping.unlabelledVariantCount
+            }
             onSave={handleOptionMappingSave}
+            onRecoverLabels={handleRecoverLabels}
           />
 
           <EditorSectionCard

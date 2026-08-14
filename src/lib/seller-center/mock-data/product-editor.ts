@@ -357,6 +357,10 @@ const BASE: ProductEditorFixture = {
     proposal: [],
     mappedAxisNames: [],
     variantCount: BASE_VARIANTS.length,
+    // Zero, not the variant count: these fixtures have no supplier evidence
+    // behind them, so nothing could be recovered and the section must not offer
+    // a button that would find nothing.
+    unlabelledVariantCount: 0,
   },
   specifications: BASE_SPECIFICATIONS,
   variants: BASE_VARIANTS,
