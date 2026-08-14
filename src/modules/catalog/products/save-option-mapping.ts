@@ -13,7 +13,7 @@ import {
   type Executor,
 } from '@/modules/catalog/candidates/repository';
 import { buildOptionCombinationKey, normalizeOptionToken } from './identity';
-import deriveOptionSplit, { splitLabelTokens } from './option-split';
+import { deriveOptionSplit, splitLabelTokens } from './option-split';
 
 /**
  * Persisting a seller's option mapping — the first writer these three tables

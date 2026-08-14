@@ -94,7 +94,7 @@ import {
   providerVariantReferences,
 } from '../src/lib/db/schema/product-catalog';
 import { supplierSnapshots } from '../src/lib/db/schema/catalog';
-import deriveOptionSplit from '../src/modules/catalog/products/option-split';
+import { deriveOptionSplit } from '../src/modules/catalog/products/option-split';
 import {
   ALLOW_REMOTE_ENV_VAR,
   decideRemoteWrite,

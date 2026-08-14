@@ -75,8 +75,19 @@ export function combinationKeyOf(tokens: string[]): string {
  *
  * `undefined` is a normal, expected answer — most products will need manual
  * mapping — so callers must treat it as "nothing to pre-fill", never an error.
+ *
+ * A named export and not a default, deliberately. `scripts/` runs under `tsx`,
+ * which loads a `.ts` module imported from an `.mts` file through CommonJS
+ * interop: a default export arrives wrapped in the module object rather than as
+ * the function, so `typeof` reports `object` and calling it throws. Nothing warns
+ * first — the types say it is a function, and `npm run verify` executes nothing in
+ * `scripts/`.
+ *
+ * The backfill script hit exactly that, on its first product with a stored
+ * snapshot. Every other working script in `scripts/` imports named bindings from
+ * `src/`; keeping only a named export here means the next one cannot get it wrong.
  */
-export default function deriveOptionSplit(
+export function deriveOptionSplit(
   variants: LabelledVariant[],
 ): OptionSplitProposal | undefined {
   // Two variants is the minimum that can encode a grid, and every variant must
