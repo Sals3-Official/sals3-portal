@@ -64,6 +64,33 @@ function initialDrafts(proposal: OptionMappingProposalAxis[]): AxisDraft[] {
   }));
 }
 
+/**
+ * Reordering with the keyboard must not drop focus.
+ *
+ * Each arrow disables at its end of the list, and `disabled` on the element that
+ * currently holds focus makes the browser drop focus to `<body>`. So the last
+ * press of a run — the one that lands the value where the seller wanted it —
+ * silently loses their place. That hurts most in exactly the case these buttons
+ * exist for: `S, M, L, XL, XXL` is recoverable by no algorithm, so the order is
+ * set by hand, and by keyboard for anyone not using a mouse.
+ *
+ * Focus moves to the opposite arrow in the same row, which is always enabled
+ * after a move that lands on a boundary — an axis carries at least two values, so
+ * the two ends are never the same row. It is handed over before the state update:
+ * the sibling is not unmounted, so React keeps focus on it, and the row carries
+ * that focus with it as it moves.
+ */
+function keepFocusOffDisabledArrow(
+  pressed: HTMLButtonElement,
+  willDisable: boolean,
+): void {
+  if (!willDisable) return;
+
+  const sibling = pressed.nextElementSibling ?? pressed.previousElementSibling;
+
+  if (sibling instanceof HTMLButtonElement) sibling.focus();
+}
+
 function move<T>(items: T[], from: number, to: number): T[] {
   if (to < 0 || to >= items.length) return items;
 
@@ -237,14 +264,20 @@ export default function VariantOptionMappingSection({
                         )
                       }
                     />
-                    <span className="flex gap-1">
+                    {/* gap-2, not gap-1: two opposite-action targets 4px apart
+                        invite a mis-tap that undoes the move just made. */}
+                    <span className="flex gap-2">
                       <Button
                         type="button"
                         variant="outline"
                         size="icon-sm"
                         aria-label={`Move ${value.raw} up`}
                         disabled={valueIndex === 0}
-                        onClick={() =>
+                        onClick={(event) => {
+                          keepFocusOffDisabledArrow(
+                            event.currentTarget,
+                            valueIndex - 1 === 0,
+                          );
                           setAxes((current) =>
                             current.map((item, index) =>
                               index === axisIndex
@@ -258,8 +291,8 @@ export default function VariantOptionMappingSection({
                                   }
                                 : item,
                             ),
-                          )
-                        }
+                          );
+                        }}
                       >
                         <ChevronUp aria-hidden="true" />
                       </Button>
@@ -269,7 +302,11 @@ export default function VariantOptionMappingSection({
                         size="icon-sm"
                         aria-label={`Move ${value.raw} down`}
                         disabled={valueIndex === axis.values.length - 1}
-                        onClick={() =>
+                        onClick={(event) => {
+                          keepFocusOffDisabledArrow(
+                            event.currentTarget,
+                            valueIndex + 1 === axis.values.length - 1,
+                          );
                           setAxes((current) =>
                             current.map((item, index) =>
                               index === axisIndex
@@ -283,8 +320,8 @@ export default function VariantOptionMappingSection({
                                   }
                                 : item,
                             ),
-                          )
-                        }
+                          );
+                        }}
                       >
                         <ChevronDown aria-hidden="true" />
                       </Button>
