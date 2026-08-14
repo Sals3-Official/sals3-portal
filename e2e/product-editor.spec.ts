@@ -219,7 +219,7 @@ test.describe('Listing Readiness - layout', () => {
     expect(probe.tabs.map((tab) => tab.clipped)).toEqual([false, false]);
     // Below the 19rem threshold the labels shorten rather than ellipsize.
     expect(probe.tabs.map((tab) => tab.text)).toEqual([
-      'Issues (4)',
+      'Issues (3)',
       'Changes (0)',
     ]);
   });

@@ -122,8 +122,9 @@ export default function PricingBasisPanel({
       )}
 
       <p className="text-xs text-muted-foreground">
-        This is product-only price guidance; checkout freight is not included.
-        Set a category policy in Settings → Market Rules to enable it.
+        This is product-only price guidance. Final storefront availability is
+        checked server-side. Set a category policy in Settings → Market Rules to
+        enable it.
       </p>
     </div>
   );

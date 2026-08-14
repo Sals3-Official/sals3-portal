@@ -19,11 +19,8 @@ import type { MoneyValue } from './types';
 const FORMATTING_LOCALE = 'en-US';
 const FORMATTING_TIME_ZONE = 'UTC';
 
-/** Missing landed cost or margin. Never rendered as `0`. */
+/** Missing seller-facing value. Never rendered as `0`. */
 export const NOT_AVAILABLE_LABEL = 'Not available';
-
-/** Missing freight estimate. Means "no route evidence", not "free". */
-export const NEEDS_ROUTE_CHECK_LABEL = 'Needs route check';
 
 /**
  * Minor units are scaled by each currency's own fraction digits, so a

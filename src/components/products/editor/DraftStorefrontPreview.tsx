@@ -106,8 +106,6 @@ export default function DraftStorefrontPreview({
   const [device, setDevice] = useState<PreviewDevice>('browser');
   const variant =
     variants.find((item) => item.id === previewVariantId) ?? variants[0];
-  const market =
-    markets.find((item) => item.code === previewMarketCode) ?? markets[0];
   const summary = description.split('\n')[0] ?? '';
   const cover = media.find((item) => item.isCover) ?? media[0];
 
@@ -227,13 +225,6 @@ export default function DraftStorefrontPreview({
             />
           )}
 
-          <p className="text-xs text-ink-muted">
-            {market?.deliveryRangeLabel === undefined ||
-            market?.deliveryRangeLabel === null
-              ? 'Delivery estimate unavailable for this market.'
-              : `Estimated delivery ${market.deliveryRangeLabel}`}
-          </p>
-
           <button
             type="button"
             disabled
@@ -264,8 +255,8 @@ export default function DraftStorefrontPreview({
       </div>
 
       <p className="text-xs leading-relaxed text-muted-foreground">
-        Approximate. Price, delivery and stock shown here come from unvalidated
-        draft data and are confirmed at checkout.
+        Price and stock shown here come from draft data and are confirmed before
+        publication and checkout.
       </p>
     </div>
   );

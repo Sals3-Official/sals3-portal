@@ -1,5 +1,6 @@
 import { FlaskConical } from 'lucide-react';
 import { saveProductDraftAction } from '@/app/(portal)/listings/product-draft-actions';
+import { publishProductAction } from '@/app/(portal)/listings/publish-actions';
 import { sectionSeverity } from '@/lib/seller-center/product-editor/derive';
 import type {
   EditorLifecycle,
@@ -22,7 +23,7 @@ type ProductEditorProps = {
 /**
  * Server entry point for the Product Editor.
  *
- * Markets & Shipping is pure evidence with no client state, so it is
+ * Markets is pure evidence with no client state, so it is
  * rendered here and handed to the interactive shell as a slot - it stays
  * out of the client bundle while the shell still controls where it sits.
  * Media is not treated the same way: ordering and cover selection are real
@@ -75,7 +76,7 @@ export default function ProductEditor({
         marketsSection={
           <EditorSectionCard
             id="markets"
-            title="Markets & Shipping"
+            title="Markets"
             severity={sectionSeverity(fixture.issues, 'markets')}
           >
             <MarketShippingEvidence
@@ -85,6 +86,7 @@ export default function ProductEditor({
           </EditorSectionCard>
         }
         saveDraftAction={isDatabaseBacked ? saveProductDraftAction : undefined}
+        publishAction={isDatabaseBacked ? publishProductAction : undefined}
       />
     </div>
   );

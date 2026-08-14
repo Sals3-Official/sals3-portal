@@ -279,10 +279,9 @@ describe('productToEditorFixture — the CJ category is the category', () => {
     expect(keys).toEqual(['category']);
   });
 
-  it('carries the supplier packed weight into the shipping evidence block', () => {
+  it('carries the supplier packed weight into the market evidence block', () => {
     const { fixture } = productToEditorFixture(CATALOGUE_PRODUCT);
 
     expect(fixture.markets[0].packageWeightLabel).toBe('1180.00-1300.00 g');
-    expect(fixture.markets[0].sourceWarehouse).toBe('CN, CN_US');
   });
 });

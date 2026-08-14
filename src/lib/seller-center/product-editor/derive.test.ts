@@ -1,16 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MARGIN_FLOOR_PERCENT,
   canBulkEnable,
-  landedCost,
-  marginPercent,
-  marginRange,
-  marketsWithRoute,
   publishDecision,
   retailRange,
   sectionSeverity,
   severityForUnresolvedSpecification,
-  variantsBelowMarginFloor,
 } from './derive';
 import { resolveProductEditorFixture } from '../mock-data/product-editor';
 import type { VariantFixture } from './types';
@@ -20,7 +14,6 @@ const BASE_VARIANT: VariantFixture = {
   optionLabel: 'Slate / 20L',
   sellerSku: 'SKU-1',
   supplierCost: { amountMinor: 1000, currency: 'USD' },
-  freightEstimate: { amountMinor: 300, currency: 'USD' },
   retailPrice: { amountMinor: 2000, currency: 'USD' },
   supplierStock: 10,
   warehouseLabel: 'CN Warehouse',
@@ -41,42 +34,6 @@ function fixture(key: string) {
   return resolved;
 }
 
-describe('landed cost and margin', () => {
-  it('adds freight to supplier cost when both are known', () => {
-    expect(landedCost(BASE_VARIANT)).toEqual({
-      amountMinor: 1300,
-      currency: 'USD',
-    });
-    expect(marginPercent(BASE_VARIANT)).toBeCloseTo(35, 5);
-  });
-
-  it('returns null - never zero - when there is no route evidence', () => {
-    const noRoute = { ...BASE_VARIANT, freightEstimate: null };
-
-    expect(landedCost(noRoute)).toBeNull();
-    expect(marginPercent(noRoute)).toBeNull();
-  });
-
-  it('refuses to combine two different currencies', () => {
-    const mixed: VariantFixture = {
-      ...BASE_VARIANT,
-      freightEstimate: { amountMinor: 300, currency: 'PHP' },
-    };
-
-    expect(landedCost(mixed)).toBeNull();
-    expect(marginPercent(mixed)).toBeNull();
-  });
-
-  it('returns null rather than dividing by a zero retail price', () => {
-    expect(
-      marginPercent({
-        ...BASE_VARIANT,
-        retailPrice: { amountMinor: 0, currency: 'USD' },
-      }),
-    ).toBeNull();
-  });
-});
-
 describe('ranges', () => {
   it('gives no retail range when nothing will be listed', () => {
     expect(retailRange([{ ...BASE_VARIANT, enabled: false }])).toBeNull();
@@ -90,12 +47,6 @@ describe('ranges', () => {
     };
 
     expect(retailRange([BASE_VARIANT, other])).toBeNull();
-  });
-
-  it('gives no margin range when no enabled variant has a computable margin', () => {
-    expect(
-      marginRange([{ ...BASE_VARIANT, freightEstimate: null }]),
-    ).toBeNull();
   });
 });
 
@@ -175,20 +126,6 @@ describe('publish decision', () => {
 });
 
 describe('fixtures agree with what is derived from them', () => {
-  it('counts exactly the two below-floor variants the attention warning names', () => {
-    const attention = fixture('attention');
-    const below = variantsBelowMarginFloor(attention.variants);
-
-    expect(below).toHaveLength(2);
-    expect(below.map((variant) => variant.optionLabel)).toEqual([
-      'Slate / 28L',
-      'Clay / 28L',
-    ]);
-    below.forEach((variant) => {
-      expect(marginPercent(variant)).toBeLessThan(MARGIN_FLOOR_PERCENT);
-    });
-  });
-
   it('reports the missing required attribute in the blocked fixture as a section blocker', () => {
     const blocked = fixture('blocked');
     const missingRequired = blocked.specifications.filter(
@@ -210,14 +147,7 @@ describe('fixtures agree with what is derived from them', () => {
     expect(publishDecision(attention).canPublish).toBe(true);
   });
 
-  it('leaves no market with route evidence when every route is gone', () => {
-    expect(marketsWithRoute(fixture('blocked').markets)).toHaveLength(0);
-  });
-
-  it('keeps one routed market when only one market lost its route', () => {
-    const marketRoute = fixture('market-route');
-
-    expect(marketsWithRoute(marketRoute.markets)).toHaveLength(1);
-    expect(publishDecision(marketRoute).canPublish).toBe(true);
+  it('keeps a market warning publishable when it is not a hard blocker', () => {
+    expect(publishDecision(fixture('market-route')).canPublish).toBe(true);
   });
 });

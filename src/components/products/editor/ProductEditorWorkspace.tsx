@@ -17,7 +17,6 @@ import {
   canBulkEnable,
   filledSpecificationCount,
   issuesOfSeverity,
-  landedCost,
   publishDecision,
   sectionSeverity,
 } from '@/lib/seller-center/product-editor/derive';
@@ -51,7 +50,7 @@ import VariantPricingTable from './VariantPricingTable';
 type ProductEditorWorkspaceProps = {
   fixture: ProductEditorFixture;
   /**
-   * Server-rendered evidence, passed in as a slot. Markets & Shipping needs
+   * Server-rendered evidence, passed in as a slot. Markets needs
    * no client state, so rendering it on the server keeps it out of the
    * client bundle while the interactive shell still positions it.
    */
@@ -76,11 +75,33 @@ type ProductEditorWorkspaceProps = {
           | 'failed';
       }
   >;
+  publishAction?: (input: unknown) => Promise<
+    | {
+        ok: true;
+        slug: string;
+        offerCount: number;
+        availability: 'AVAILABLE' | 'UNAVAILABLE' | 'UNKNOWN';
+      }
+    | { ok: false; reason: string; detail?: string }
+  >;
 };
 
 const EXIT_HREF = '/products/pipeline?tab=ready';
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const PUBLISH_FAILURE_MESSAGES: Record<string, string> = {
+  invalid_input: 'The publish request was invalid.',
+  unauthenticated: 'Sign in again before publishing.',
+  denied: 'Your account cannot publish this product.',
+  rate_limited: 'Too many publish attempts. Try again shortly.',
+  not_configured: 'Publishing is not configured for this environment.',
+  not_found: 'This product was not found for this seller.',
+  version_conflict:
+    'This product changed elsewhere. Refresh before publishing again.',
+  validation_failed: 'Server validation blocked publication.',
+  failed: 'No listing was published.',
+};
 
 function descriptionDocumentFromText(description: string) {
   const blocks = description
@@ -150,6 +171,7 @@ export default function ProductEditorWorkspace({
   pricingBasisSection,
   initialLifecycle,
   saveDraftAction,
+  publishAction,
 }: ProductEditorWorkspaceProps) {
   const router = useRouter();
 
@@ -315,13 +337,7 @@ export default function ProductEditorWorkspace({
     () => variants.filter(isBulkPriceable),
     [variants],
   );
-  const bulkAffected = useMemo(() => {
-    if (bulkPricingMode === 'APPLY_MARKUP') {
-      return bulkPriceable.filter((variant) => landedCost(variant) !== null);
-    }
-
-    return bulkPriceable;
-  }, [bulkPricingMode, bulkPriceable]);
+  const bulkAffected = useMemo(() => bulkPriceable, [bulkPriceable]);
 
   const applyBulkPricing = (value: number) => {
     const affectedIds = new Set(bulkAffected.map((variant) => variant.id));
@@ -330,32 +346,14 @@ export default function ProductEditorWorkspace({
       current.map((variant) => {
         if (!affectedIds.has(variant.id)) return variant;
 
-        if (bulkPricingMode === 'SET_PRICE') {
-          return {
-            ...variant,
-            retailPrice: {
-              amountMinor: Math.round(value * 100),
-              currency: variant.retailPrice.currency,
-            },
-            attention:
-              Math.round(value * 100) <= 0 ? 'Retail price required' : null,
-          };
-        }
-
-        const landed = landedCost(variant);
-
-        if (landed === null) return variant;
-
         return {
           ...variant,
           retailPrice: {
-            amountMinor: Math.round(landed.amountMinor * (1 + value / 100)),
+            amountMinor: Math.round(value * 100),
             currency: variant.retailPrice.currency,
           },
           attention:
-            Math.round(landed.amountMinor * (1 + value / 100)) <= 0
-              ? 'Retail price required'
-              : null,
+            Math.round(value * 100) <= 0 ? 'Retail price required' : null,
         };
       }),
     );
@@ -368,7 +366,7 @@ export default function ProductEditorWorkspace({
     if (skipped > 0) {
       toast(`${skipped} variant${skipped === 1 ? '' : 's'} were skipped.`, {
         description:
-          'A bulk price change never touches a blocked or paused variant, or one with no route evidence to price from.',
+          'A bulk price change never touches a blocked or paused variant.',
       });
     }
   };
@@ -423,8 +421,37 @@ export default function ProductEditorWorkspace({
     }, 500);
   };
 
-  const onPublish = () => {
+  const onPublish = async () => {
     setLifecycle('VALIDATING');
+
+    if (publishAction !== undefined && fixture.publishTarget !== null) {
+      const result = await publishAction({
+        productId: fixture.publishTarget.productId,
+        expectedProductVersion: fixture.publishTarget.expectedProductVersion,
+      });
+
+      if (result.ok) {
+        setLifecycle('IDLE');
+        setIsDirty(false);
+        router.refresh();
+        toast('Product published to storefront.', {
+          description: `/p/${result.slug} · ${result.offerCount} offer${result.offerCount === 1 ? '' : 's'}`,
+        });
+
+        return;
+      }
+
+      setLifecycle('VALIDATION_FAILED');
+      toast('Publish failed.', {
+        description:
+          result.detail ??
+          PUBLISH_FAILURE_MESSAGES[result.reason] ??
+          'No listing was published.',
+      });
+
+      return;
+    }
+
     timerRef.current = setTimeout(() => {
       setLifecycle('IDLE');
       toast('Design preview — nothing was published.', {
@@ -648,7 +675,6 @@ export default function ProductEditorWorkspace({
                 updateVariant(variantId, { sellerSku: value })
               }
               onBulkSetPrice={() => setBulkPricingMode('SET_PRICE')}
-              onBulkApplyMarkup={() => setBulkPricingMode('APPLY_MARKUP')}
               onBulkEnableInStock={() => {
                 setVariants((current) =>
                   current.map((variant) =>
@@ -746,6 +772,9 @@ export default function ProductEditorWorkspace({
         onSaveDraft={onSaveDraft}
         onPublish={onPublish}
         onExit={onExit}
+        canRequestPublication={
+          publishAction !== undefined && fixture.publishTarget !== null
+        }
       />
 
       <EditorSheet

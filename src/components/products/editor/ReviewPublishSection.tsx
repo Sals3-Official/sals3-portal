@@ -4,8 +4,6 @@ import { Button } from '@/components/ui/button';
 import {
   enabledVariants,
   issuesOfSeverity,
-  marginRange,
-  marketsWithRoute,
   publishableMediaCount,
   retailRange,
   type PublishDecision,
@@ -14,7 +12,6 @@ import {
   NOT_AVAILABLE_LABEL,
   formatDateTime,
   formatMoneyRange,
-  formatPercent,
 } from '@/lib/seller-center/product-editor/format';
 import type {
   EditorSectionId,
@@ -70,9 +67,7 @@ export default function ReviewPublishSection({
   const status = presentEvaluationStatus(fixture.evaluationStatus);
   const blockers = issuesOfSeverity(fixture.issues, 'BLOCKER');
   const listed = enabledVariants(variants);
-  const routed = marketsWithRoute(fixture.markets);
   const retail = retailRange(variants);
-  const margin = marginRange(variants);
 
   return (
     <div className="flex flex-col gap-3.5">
@@ -92,24 +87,11 @@ export default function ReviewPublishSection({
           tone={listed.length === 0 ? 'danger' : undefined}
         />
         <SummaryRow
-          label="Markets with valid shipping evidence"
-          value={`${routed.length} of ${fixture.markets.length}`}
-          tone={routed.length === 0 ? 'danger' : undefined}
-        />
-        <SummaryRow
           label="Pricing"
           value={
             retail === null
               ? NOT_AVAILABLE_LABEL
               : `${formatMoneyRange(retail.min, retail.max)} retail`
-          }
-        />
-        <SummaryRow
-          label="Margin estimate"
-          value={
-            margin === null
-              ? NOT_AVAILABLE_LABEL
-              : `${formatPercent(margin.min)} – ${formatPercent(margin.max)} est.`
           }
         />
         <SummaryRow
