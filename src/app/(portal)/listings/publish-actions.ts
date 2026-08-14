@@ -37,6 +37,18 @@ const publishInputSchema = z.object({
   productId: z.string().uuid(),
   /** The version the operator's screen read. Compare-and-set, not a hint. */
   expectedProductVersion: z.number().int().positive(),
+  variantRetailPrices: z
+    .array(
+      z.object({
+        variantId: z.string().uuid(),
+        amountMinor: z.number().int().positive(),
+        currency: z
+          .string()
+          .trim()
+          .regex(/^[A-Z]{3}$/),
+      }),
+    )
+    .optional(),
 });
 
 export type PublishActionFailureReason =
@@ -146,6 +158,7 @@ export async function publishProductAction(
       sellerAccountId: auth.sellerAccountId,
       actorId: auth.actorId,
       expectedProductVersion: parsed.data.expectedProductVersion,
+      variantRetailPrices: parsed.data.variantRetailPrices ?? [],
     });
 
     if (!outcome.ok) {
