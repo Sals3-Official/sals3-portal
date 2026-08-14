@@ -59,9 +59,11 @@ const pricingRepositoryMocks = vi.hoisted(() => ({
   deactivateFundingBufferPolicy: vi.fn(),
   findActiveProductOverride: vi.fn(),
   createProductOverride: vi.fn(),
+  reviseProductOverride: vi.fn(),
   removeProductOverride: vi.fn(),
   findActiveVariantOverride: vi.fn(),
   createVariantOverride: vi.fn(),
+  reviseVariantOverride: vi.fn(),
   removeVariantOverride: vi.fn(),
   searchCategories: vi.fn(),
 }));
@@ -83,6 +85,7 @@ import {
   saveCategoryPolicyAction,
   saveFundingBufferPolicyAction,
   saveProductOverrideAction,
+  saveVariantOverrideAction,
 } from './pricing-actions';
 
 const SELLER_A_ID = '11111111-1111-4111-a111-111111111111';
@@ -609,6 +612,184 @@ describe('saveProductOverrideAction — tenant isolation', () => {
       expect.objectContaining({
         action: 'product_pricing_override.created',
         entityId: OVERRIDE_ID,
+      }),
+    );
+  });
+});
+
+/**
+ * Editing an override used to mark the row REMOVED and insert a fresh one at
+ * version 1, which made an edit indistinguishable from a delete plus an
+ * unrelated new record — the version chain the schema promises simply reset.
+ * These pin the corrected behaviour: an edit supersedes, continues the chain,
+ * and is audited as `revised` rather than `created`.
+ */
+describe('saveProductOverrideAction — an edit is a revision, not a delete', () => {
+  const VALID_INPUT = {
+    supplierCandidateId: CANDIDATE_ID,
+    targetMarginRate: '0.52',
+    reason: 'Return rate rose after the first month of orders.',
+  };
+
+  const PREVIOUS = {
+    id: OVERRIDE_ID,
+    supplierCandidateId: CANDIDATE_ID,
+    targetMarginRate: '0.45',
+    version: 1,
+  };
+
+  beforeEach(() => {
+    candidateBelongsToSellerMock.mockResolvedValue(true);
+    pricingRepositoryMocks.findActiveProductOverride.mockResolvedValue(
+      PREVIOUS,
+    );
+    pricingRepositoryMocks.reviseProductOverride.mockResolvedValue({
+      id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      supplierCandidateId: CANDIDATE_ID,
+      version: 2,
+      supersedesId: OVERRIDE_ID,
+    });
+  });
+
+  it('supersedes the previous row instead of removing it', async () => {
+    const result = await saveProductOverrideAction(VALID_INPUT);
+
+    expect(result).toEqual({ ok: true });
+    expect(pricingRepositoryMocks.reviseProductOverride).toHaveBeenCalledWith(
+      TX,
+      PREVIOUS,
+      {
+        targetMarginRate: '0.52',
+        reason: VALID_INPUT.reason,
+        actorId: 'user-1',
+      },
+    );
+    expect(pricingRepositoryMocks.removeProductOverride).not.toHaveBeenCalled();
+    expect(pricingRepositoryMocks.createProductOverride).not.toHaveBeenCalled();
+  });
+
+  it('audits the edit as revised, carrying the version chain and the value it replaced', async () => {
+    await saveProductOverrideAction(VALID_INPUT);
+
+    expect(appendAuditEventMock).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({
+        action: 'product_pricing_override.revised',
+        entityId: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+        payload: expect.objectContaining({
+          version: 2,
+          supersedesId: OVERRIDE_ID,
+          previousTargetMarginRate: '0.45',
+          targetMarginRate: '0.52',
+        }),
+      }),
+    );
+  });
+
+  it('proves ownership inside the same transaction as the write, and writes nothing when it fails', async () => {
+    candidateBelongsToSellerMock.mockResolvedValue(false);
+
+    const result = await saveProductOverrideAction(VALID_INPUT);
+
+    expect(result).toEqual({ ok: false, reason: 'not_found' });
+    expect(candidateBelongsToSellerMock).toHaveBeenCalledWith(
+      TX,
+      CANDIDATE_ID,
+      SELLER_A_ID,
+    );
+    expect(pricingRepositoryMocks.reviseProductOverride).not.toHaveBeenCalled();
+    expect(appendAuditEventMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('saveVariantOverrideAction — an edit is a revision, not a delete', () => {
+  const VALID_INPUT = {
+    supplierCandidateId: CANDIDATE_ID,
+    supplierVariantId: 'Black-1XL',
+    targetMarginRate: '0.60',
+    reason: 'This variant ships heavier than the rest of the range.',
+    additionalJustification:
+      'Freight for the 1XL cut is materially above the others.',
+  };
+
+  const PREVIOUS = {
+    id: OVERRIDE_ID,
+    supplierCandidateId: CANDIDATE_ID,
+    supplierVariantId: 'Black-1XL',
+    targetMarginRate: '0.55',
+    version: 3,
+  };
+
+  beforeEach(() => {
+    candidateBelongsToSellerMock.mockResolvedValue(true);
+    pricingRepositoryMocks.findActiveVariantOverride.mockResolvedValue(
+      PREVIOUS,
+    );
+    pricingRepositoryMocks.reviseVariantOverride.mockResolvedValue({
+      id: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb',
+      supplierCandidateId: CANDIDATE_ID,
+      supplierVariantId: 'Black-1XL',
+      version: 4,
+      supersedesId: OVERRIDE_ID,
+    });
+  });
+
+  it('supersedes and re-supplies the justification rather than inheriting it', async () => {
+    const result = await saveVariantOverrideAction(VALID_INPUT);
+
+    expect(result).toEqual({ ok: true });
+    expect(pricingRepositoryMocks.reviseVariantOverride).toHaveBeenCalledWith(
+      TX,
+      PREVIOUS,
+      {
+        targetMarginRate: '0.60',
+        reason: VALID_INPUT.reason,
+        additionalJustification: VALID_INPUT.additionalJustification,
+        actorId: 'user-1',
+      },
+    );
+    expect(pricingRepositoryMocks.removeVariantOverride).not.toHaveBeenCalled();
+  });
+
+  it('audits the edit as revised and continues the version chain', async () => {
+    await saveVariantOverrideAction(VALID_INPUT);
+
+    expect(appendAuditEventMock).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({
+        action: 'variant_pricing_override.revised',
+        payload: expect.objectContaining({
+          version: 4,
+          supersedesId: OVERRIDE_ID,
+          previousTargetMarginRate: '0.55',
+        }),
+      }),
+    );
+  });
+
+  it('still creates at version 1 when there is no active override', async () => {
+    pricingRepositoryMocks.findActiveVariantOverride.mockResolvedValue(null);
+    pricingRepositoryMocks.createVariantOverride.mockResolvedValue({
+      id: 'cccccccc-cccc-4ccc-cccc-cccccccccccc',
+      supplierCandidateId: CANDIDATE_ID,
+      supplierVariantId: 'Black-1XL',
+      version: 1,
+      supersedesId: null,
+    });
+
+    const result = await saveVariantOverrideAction(VALID_INPUT);
+
+    expect(result).toEqual({ ok: true });
+    expect(pricingRepositoryMocks.reviseVariantOverride).not.toHaveBeenCalled();
+    expect(appendAuditEventMock).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({
+        action: 'variant_pricing_override.created',
+        payload: expect.objectContaining({
+          version: 1,
+          supersedesId: null,
+          previousTargetMarginRate: null,
+        }),
       }),
     );
   });

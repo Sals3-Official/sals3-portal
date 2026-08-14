@@ -411,6 +411,49 @@ export async function createProductOverride(
 }
 
 /**
+ * Supersedes `previous` and inserts the next version — the override analogue
+ * of `reviseCategoryPolicy`. An edit must stay distinguishable from a delete
+ * plus an unrelated new record, so this keeps the `version`/`supersedesId`
+ * chain the schema's doc comment promises instead of resetting to version 1.
+ *
+ * Takes the previous row rather than an id: the caller has already read it to
+ * decide this is an edit at all, and reading it again here would be a second
+ * chance for the two to disagree about which row is being superseded.
+ *
+ * Caller must run this inside a transaction — the supersede and the insert are
+ * only ever correct together.
+ */
+export async function reviseProductOverride(
+  executor: Executor,
+  previous: PricingProductOverrideRow,
+  input: {
+    targetMarginRate: string;
+    reason: string;
+    actorId: string;
+  },
+): Promise<PricingProductOverrideRow> {
+  await executor
+    .update(pricingProductOverrides)
+    .set({ status: 'SUPERSEDED', updatedAt: new Date() })
+    .where(eq(pricingProductOverrides.id, previous.id));
+
+  const [row] = await executor
+    .insert(pricingProductOverrides)
+    .values({
+      supplierCandidateId: previous.supplierCandidateId,
+      targetMarginRate: input.targetMarginRate,
+      reason: input.reason,
+      actorId: input.actorId,
+      version: previous.version + 1,
+      supersedesId: previous.id,
+      status: 'ACTIVE',
+    })
+    .returning();
+
+  return row;
+}
+
+/**
  * Scoped by `supplierCandidateId` — the caller must already have verified
  * (via `candidateBelongsToSeller`) that this candidate belongs to it. An
  * `overrideId` that does not actually belong to that candidate matches
@@ -483,6 +526,45 @@ export async function createVariantOverride(
   const [row] = await executor
     .insert(pricingVariantOverrides)
     .values({ ...input, version: 1, supersedesId: null, status: 'ACTIVE' })
+    .returning();
+
+  return row;
+}
+
+/**
+ * Variant analogue of `reviseProductOverride`. `additionalJustification` is
+ * re-supplied rather than carried over from `previous`: it explains *this*
+ * edit's materially different cost or risk, and silently inheriting the old
+ * one would let a revision keep a justification nobody re-affirmed.
+ */
+export async function reviseVariantOverride(
+  executor: Executor,
+  previous: PricingVariantOverrideRow,
+  input: {
+    targetMarginRate: string;
+    reason: string;
+    additionalJustification: string;
+    actorId: string;
+  },
+): Promise<PricingVariantOverrideRow> {
+  await executor
+    .update(pricingVariantOverrides)
+    .set({ status: 'SUPERSEDED', updatedAt: new Date() })
+    .where(eq(pricingVariantOverrides.id, previous.id));
+
+  const [row] = await executor
+    .insert(pricingVariantOverrides)
+    .values({
+      supplierCandidateId: previous.supplierCandidateId,
+      supplierVariantId: previous.supplierVariantId,
+      targetMarginRate: input.targetMarginRate,
+      reason: input.reason,
+      additionalJustification: input.additionalJustification,
+      actorId: input.actorId,
+      version: previous.version + 1,
+      supersedesId: previous.id,
+      status: 'ACTIVE',
+    })
     .returning();
 
   return row;
