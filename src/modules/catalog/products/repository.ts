@@ -398,12 +398,13 @@ export async function saveDraftRevisionContent(
 }
 
 /** Editorial title lives on the product; kept in step with the draft save. */
-export async function updateProductTitleForSteward(
+export async function updateProductEditorialForSteward(
   executor: Executor,
   input: {
     productId: string;
     stewardSellerAccountId: string;
     title: string;
+    sals3CategoryL1: string | null;
     actorId: string;
   },
 ): Promise<ProductRow | null> {
@@ -411,6 +412,7 @@ export async function updateProductTitleForSteward(
     .update(products)
     .set({
       title: input.title,
+      sals3CategoryL1: input.sals3CategoryL1,
       updatedAt: new Date(),
       updatedBy: input.actorId,
     })

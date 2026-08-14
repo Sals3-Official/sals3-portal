@@ -54,6 +54,10 @@ vi.mock('@/lib/seller-center/product-editor/pricing-guidance', () => ({
   default: vi.fn(async () => []),
 }));
 
+vi.mock('@/app/(portal)/listings/product-draft-actions', () => ({
+  saveProductDraftAction: vi.fn(),
+}));
+
 // eslint-disable-next-line import/first
 import AddProductPage, { generateMetadata } from './page';
 

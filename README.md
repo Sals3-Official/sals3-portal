@@ -525,10 +525,14 @@ dropshipper uses to customize an already-qualified supplier product before
 publishing it, prefilled from the supplier evidence the sourcing pipeline
 captured.
 
-The editor is currently a **design preview backed by fictional fixtures**.
-It reads no database, calls no supplier API, uses no server action, and
-publishes nothing; every change lives in the browser tab and is lost on
-reload. The screen says so in a notice at the top.
+The fixture editor is still a **design preview backed by fictional fixtures**:
+it reads no database, calls no supplier API, and every change lives in the
+browser tab. A real catalogue product opens with `?productId=<uuid>` and reads
+the persisted draft; `Save Draft` stores the product name, structured
+description, and the Basic Information `Sals3 Category` L1 draft field through
+the protected draft-save Server Action. Seller SKU, brand, media, variants, and
+publication controls remain local/editor-only until their dedicated persistence
+paths exist. The screen says which mode it loaded in the notice at the top.
 
 Open a state directly:
 
@@ -1461,13 +1465,17 @@ interface review only.
 > mirror — a `sals3_categories` row (`code = CJ-<external id>`, `path` = the
 > observed CJ name) plus an `ACTIVE`, `APPROVED`, `EXACT` `EXTERNAL_ID_RULE`
 > mapping — at draft creation and, for older `UNMAPPED` drafts, inside the
-> publish transaction (`products/category-mirror.ts`). The listing composer
-> field is labelled **CJ Category** and shows the supplier's category; the
-> old "Sals3 category is not mapped" blocker survives only as "CJ category is
-> missing", raised when a product has no CJ category on record at all. A
-> reviewed mapping that names a category still outranks the mirror, guessing
-> from category _names_ is still unrepresentable, and pricing still requires
-> a per-category margin policy before a price resolves.
+> publish transaction (`products/category-mirror.ts`). The Basic Information
+> composer field is labelled **Sals3 Category** and stores only a seller-facing
+> Sals3 taxonomy L1 draft/display value (`products.sals3_category_l1`). It does
+> **not** write `products.category_id`, which still requires a stable leaf
+> category identity. `Category & Specifications` continues to show **CJ
+> Category** as supplier evidence. The old "Sals3 category is not mapped"
+> blocker survives only as "CJ category is missing", raised when a product has
+> no CJ category on record at all. A reviewed mapping that names a category
+> still outranks the mirror, guessing from category _names_ is still
+> unrepresentable, and pricing still requires a per-category margin policy
+> before a price resolves.
 
 A supplier category otherwise becomes a Sals3 category through an approved,
 versioned mapping. This is the crosswalk `product-catalog.ts` refers to when

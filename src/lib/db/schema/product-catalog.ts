@@ -181,6 +181,12 @@ export const products = pgTable(
     categoryId: uuid('category_id').references(() => sals3Categories.id, {
       onDelete: 'restrict',
     }),
+    /**
+     * Seller-facing draft L1 selection from Sals3 taxonomy v0. This is a
+     * display/editor field only; `category_id` remains the stable leaf identity
+     * used by pricing and publication.
+     */
+    sals3CategoryL1: text('sals3_category_l1'),
     categoryMappingConfidence: categoryMappingConfidenceEnum(
       'category_mapping_confidence',
     )

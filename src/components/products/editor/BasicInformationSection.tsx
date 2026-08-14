@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { formatDateTime } from '@/lib/seller-center/product-editor/format';
+import { SALS3_CATEGORY_L1_OPTIONS } from '@/lib/seller-center/product-editor/sals3-category-l1';
 import type { ProductEditorFixture } from '@/lib/seller-center/product-editor/types';
 import SupplierEvidenceBlock, {
   SupplierEvidenceField,
@@ -28,6 +29,8 @@ type BasicInformationSectionProps = {
   fixture: ProductEditorFixture;
   productName: string;
   onProductNameChange: (value: string) => void;
+  sals3CategoryL1: string;
+  onSals3CategoryL1Change: (value: string) => void;
   sellerSku: string;
   onSellerSkuChange: (value: string) => void;
   brandDeclaration: string;
@@ -48,6 +51,8 @@ export default function BasicInformationSection({
   fixture,
   productName,
   onProductNameChange,
+  sals3CategoryL1,
+  onSals3CategoryL1Change,
   sellerSku,
   onSellerSkuChange,
   brandDeclaration,
@@ -61,10 +66,6 @@ export default function BasicInformationSection({
   const rejectedMediaCount = fixture.media.filter(
     (item) => item.rightsCheck === 'REJECTED',
   ).length;
-
-  const isCategoryUnmapped =
-    fixture.categoryMappingConfidence === 'UNMAPPED' ||
-    fixture.categoryMappingConfidence === 'AMBIGUOUS';
 
   return (
     <div className="flex flex-col gap-5">
@@ -152,39 +153,29 @@ export default function BasicInformationSection({
           </p>
         </div>
 
-        {/* Read-only, and not a dropdown.
-
-            The CJ Category is the supplier's own catalogue category, and it
-            IS the Sals3 category (owner decision 2026-08-14). It comes from
-            persisted discovery facts keyed to CJ's stable category id - a
-            seller choosing their own category would be a seller choosing
-            which pricing policy applies to their product (ADR-015), so it
-            stays non-editable. */}
         <div className="flex flex-col gap-1.5">
-          <span id="editor-category-label" className="text-sm font-medium">
-            CJ Category
-          </span>
-          <p
-            aria-labelledby="editor-category-label"
-            className={`rounded-md border px-3 py-2 text-sm ${
-              isCategoryUnmapped
-                ? 'border-dashed border-border-strong bg-muted text-muted-foreground'
-                : 'border-border bg-muted'
-            }`}
+          <Label htmlFor="editor-sals3-category">Sals3 Category</Label>
+          <Select
+            value={sals3CategoryL1}
+            onValueChange={(value) => onSals3CategoryL1Change(value ?? '')}
           >
-            {isCategoryUnmapped
-              ? 'No CJ category recorded'
-              : fixture.sals3CategoryPath}
-            {fixture.sals3CategoryCode === null ? null : (
-              <span className="ml-2 font-mono text-xs text-ink-muted">
-                {fixture.sals3CategoryCode}
-              </span>
-            )}
-          </p>
+            <SelectTrigger
+              id="editor-sals3-category"
+              className="w-full bg-card"
+            >
+              <SelectValue placeholder="Choose a Sals3 category" />
+            </SelectTrigger>
+            <SelectContent>
+              {SALS3_CATEGORY_L1_OPTIONS.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {option}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <p className="text-xs text-muted-foreground">
-            {isCategoryUnmapped
-              ? 'Discovery captured no CJ category for this product, so category-driven attributes and pricing stay unavailable.'
-              : 'The supplier’s own catalogue category. Publication categorises the product with it. Not editable here.'}
+            Draft L1 category shown in Sals3. Leaf category, pricing, and
+            publication mapping stay unchanged.
           </p>
         </div>
 

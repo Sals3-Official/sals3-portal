@@ -12,17 +12,18 @@ vi.mock('@/modules/catalog/candidates/repository', () => ({
 vi.mock('./repository', () => ({
   findProductForSteward: vi.fn(),
   saveDraftRevisionContent: vi.fn(),
-  updateProductTitleForSteward: vi.fn(),
+  updateProductEditorialForSteward: vi.fn(),
 }));
 
 /* eslint-disable import/first */
 import { appendAuditEvent } from '@/modules/catalog/candidates/repository';
 
 import saveProductDraft from './save-draft';
+import type { SaveProductDraftInput } from './contracts';
 import {
   findProductForSteward,
   saveDraftRevisionContent,
-  updateProductTitleForSteward,
+  updateProductEditorialForSteward,
 } from './repository';
 /* eslint-enable import/first */
 
@@ -39,11 +40,12 @@ const REQUEST = {
   revisionId: '22222222-2222-4222-8222-222222222222',
   expectedRevisionVersion: 3,
   title: 'Merino crew neck',
+  sals3CategoryL1: 'Sports, Fitness & Outdoor Gear',
   descriptionDocument: {
     version: 1 as const,
     blocks: [{ type: 'paragraph' as const, text: 'Soft merino wool.' }],
   },
-};
+} satisfies SaveProductDraftInput;
 
 function run(sellerAccountId = 'seller-a') {
   return saveProductDraft({
@@ -65,7 +67,7 @@ beforeEach(() => {
     id: REQUEST.revisionId,
     version: 4,
   });
-  asMock(updateProductTitleForSteward).mockResolvedValue({
+  asMock(updateProductEditorialForSteward).mockResolvedValue({
     id: REQUEST.productId,
   });
 });
@@ -97,7 +99,7 @@ describe('saveProductDraft', () => {
       reason: 'not_found',
     });
     expect(saveDraftRevisionContent).not.toHaveBeenCalled();
-    expect(updateProductTitleForSteward).not.toHaveBeenCalled();
+    expect(updateProductEditorialForSteward).not.toHaveBeenCalled();
     expect(appendAuditEvent).not.toHaveBeenCalled();
   });
 
@@ -110,7 +112,19 @@ describe('saveProductDraft', () => {
       ok: false,
       reason: 'version_conflict',
     });
-    expect(updateProductTitleForSteward).not.toHaveBeenCalled();
+    expect(updateProductEditorialForSteward).not.toHaveBeenCalled();
+  });
+
+  it('saves the draft L1 category without treating it as the leaf category id', async () => {
+    await run();
+
+    expect(updateProductEditorialForSteward).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        title: REQUEST.title,
+        sals3CategoryL1: 'Sports, Fitness & Outdoor Gear',
+      }),
+    );
   });
 
   it('audits a rejected stale write rather than discarding it silently', async () => {

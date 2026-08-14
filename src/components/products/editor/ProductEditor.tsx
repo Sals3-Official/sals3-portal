@@ -1,4 +1,5 @@
 import { FlaskConical } from 'lucide-react';
+import { saveProductDraftAction } from '@/app/(portal)/listings/product-draft-actions';
 import { sectionSeverity } from '@/lib/seller-center/product-editor/derive';
 import type {
   EditorLifecycle,
@@ -83,6 +84,7 @@ export default function ProductEditor({
             />
           </EditorSectionCard>
         }
+        saveDraftAction={isDatabaseBacked ? saveProductDraftAction : undefined}
       />
     </div>
   );

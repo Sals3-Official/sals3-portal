@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { SALS3_CATEGORY_L1_OPTIONS } from '@/lib/seller-center/product-editor/sals3-category-l1';
 import { descriptionDocumentSchema } from './description-document';
 
 /**
@@ -55,12 +56,15 @@ export type BulkCreateProductDraftsInput = z.infer<
 
 const MAX_TITLE_LENGTH = 200;
 
+export const sals3CategoryL1Schema = z.enum(SALS3_CATEGORY_L1_OPTIONS);
+
 export const saveProductDraftInputSchema = z.object({
   productId: z.string().uuid(),
   revisionId: z.string().uuid(),
   /** Optimistic concurrency: the revision version the editor actually rendered. */
   expectedRevisionVersion: z.number().int().positive(),
   title: z.string().trim().min(3).max(MAX_TITLE_LENGTH),
+  sals3CategoryL1: sals3CategoryL1Schema.nullable(),
   descriptionDocument: descriptionDocumentSchema,
 });
 
