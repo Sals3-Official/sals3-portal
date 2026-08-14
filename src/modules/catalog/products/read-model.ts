@@ -51,7 +51,7 @@ import type {
 } from '@/lib/seller-center/product-editor/types';
 import { feedSnapshotSchema } from '@/modules/catalog/candidates/rules/contracts';
 import { descriptionDocumentSchema } from './description-document';
-import deriveOptionSplit from './option-split';
+import { deriveOptionSplit } from './option-split';
 
 type Executor = Database;
 

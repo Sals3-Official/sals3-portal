@@ -25,7 +25,7 @@ import {
 import { findActiveProfileForSeller } from '@/modules/market-config/repository';
 import { resolveProductPricing } from '@/modules/pricing/resolver';
 import { ensureProductCjCategory } from './category-mirror';
-import deriveOptionSplit from './option-split';
+import { deriveOptionSplit } from './option-split';
 import {
   projectSupplierMediaForProduct,
   SUPPLIER_MEDIA_RIGHTS,

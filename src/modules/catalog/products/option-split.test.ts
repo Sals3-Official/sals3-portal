@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import deriveOptionSplit, {
+import {
   combinationKeyOf,
+  deriveOptionSplit,
   splitLabelTokens,
   type LabelledVariant,
 } from './option-split';
