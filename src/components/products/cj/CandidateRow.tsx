@@ -36,9 +36,20 @@ type CandidateRowProps = {
  * Exception. Without this guard, clicking any of them would also open the
  * drawer. `closest` cannot match the row itself: a `<tr>` carrying
  * `role="button"` is not an `a` or `button` element.
+ *
+ * `[role="checkbox"]` is here because not every control is a native element.
+ * base-ui's `Checkbox.Root` "renders a `<span>` element and a hidden `<input>`
+ * beside" (`nativeButton` defaults to false) - the input is a SIBLING, not a
+ * child - so the click that starts on the visible box matches neither `button`
+ * nor `input`, and the Select column on Product Sourcing opened the drawer on
+ * every tick.
+ *
+ * Do NOT add `[role="button"]` to this list. `closest` includes the element it
+ * starts from, and the row itself carries `role="button"`, so that entry would
+ * swallow every row click rather than only the nested ones.
  */
 const INTERACTIVE_DESCENDANTS =
-  'a,button,input,select,textarea,[role="menuitem"]';
+  'a,button,input,select,textarea,[role="checkbox"],[role="menuitem"]';
 
 /** True when the event came from a control inside the row rather than the row itself. */
 function fromNestedControl(event: MouseEvent<HTMLTableRowElement>): boolean {
