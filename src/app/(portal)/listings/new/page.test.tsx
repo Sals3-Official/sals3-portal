@@ -62,6 +62,12 @@ vi.mock('@/app/(portal)/listings/publish-actions', () => ({
   publishProductAction: vi.fn(),
 }));
 
+// Default export: the module reaches the server-only db client, which throws
+// under jsdom the moment `ProductEditor` imports it.
+vi.mock('@/app/(portal)/listings/option-mapping-actions', () => ({
+  default: vi.fn(),
+}));
+
 // eslint-disable-next-line import/first
 import AddProductPage, { generateMetadata } from './page';
 

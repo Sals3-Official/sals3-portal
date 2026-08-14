@@ -21,6 +21,7 @@ function variant(
 ): CatalogueVariantFixture {
   return {
     optionLabel: 'Size: M',
+    supplierOptionLabel: null,
     sals3VariantId: `SALS3-V-${overrides.id}`,
     sellerSku: `SKU-${overrides.id}`,
     cjVariantId: `CJVID-${overrides.id}`,

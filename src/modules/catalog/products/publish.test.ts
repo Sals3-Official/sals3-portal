@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   productMediaSources,
+  productOptions,
   productRevisions,
   products,
   productVariants,
@@ -79,6 +80,8 @@ type Overrides = {
   variants?: Record<string, unknown>[];
   approvedMedia?: unknown[];
   revisions?: Record<string, unknown>[];
+  /** `product_options` rows. Non-empty means the seller already mapped axes. */
+  options?: Record<string, unknown>[];
 };
 
 function productRow(overrides: Record<string, unknown> = {}) {
@@ -129,6 +132,7 @@ function transactionalDb(overrides: Overrides = {}) {
     }
 
     if (table === productVariants) return overrides.variants ?? [variantRow()];
+    if (table === productOptions) return overrides.options ?? [];
     if (table === productMediaSources) {
       return overrides.approvedMedia ?? [{ id: 'media-1' }];
     }
@@ -369,6 +373,66 @@ describe('publishProduct', () => {
       expect(mocks.resolveProductPricing).not.toHaveBeenCalled();
     },
   );
+
+  /**
+   * Four labels forming an exact 2 × 2 grid, which is the only shape
+   * `deriveOptionSplit` accepts. Every other field comes from `variantRow` so the
+   * earlier refusals still pass and the option gate is what answers.
+   */
+  function griddedVariants() {
+    return ['Black-S', 'Black-M', 'Red-S', 'Red-M'].map((label, index) =>
+      variantRow({ variantId: `variant-${index + 1}`, label }),
+    );
+  }
+
+  it('refuses to publish a derivable grid whose option groups are unnamed', async () => {
+    const { db } = transactionalDb({ variants: griddedVariants() });
+
+    expect(await publish(db)).toEqual({
+      ok: false,
+      reason: 'OPTIONS_UNMAPPED',
+    });
+    // Refused before pricing, so an unmapped product never reaches the resolver.
+    expect(mocks.resolveProductPricing).not.toHaveBeenCalled();
+  });
+
+  it('publishes a derivable grid once its option groups are named', async () => {
+    const { db } = transactionalDb({
+      variants: griddedVariants(),
+      options: [{ id: 'option-1' }],
+    });
+
+    expect(await publish(db)).toMatchObject({ ok: true });
+  });
+
+  /**
+   * The reason the gate is conditional rather than blanket. A single-variant
+   * product cannot be mapped at all — `deriveOptionSplit` refuses fewer than two
+   * variants and `saveOptionMapping` answers `SPLIT_NOT_DERIVABLE` — so
+   * requiring a mapping here would make it permanently unpublishable, including
+   * products already live.
+   */
+  it('publishes a single-variant product with no option mapping', async () => {
+    const { db } = transactionalDb({
+      variants: [variantRow({ label: 'Black' })],
+      options: [],
+    });
+
+    expect(await publish(db)).toMatchObject({ ok: true });
+  });
+
+  it('publishes when supplier labels do not form a complete grid', async () => {
+    const { db } = transactionalDb({
+      // Ragged: two tokens then one. Not an encoding, so nothing to name.
+      variants: [
+        variantRow({ variantId: 'variant-1', label: 'Black-S' }),
+        variantRow({ variantId: 'variant-2', label: 'Red' }),
+      ],
+      options: [],
+    });
+
+    expect(await publish(db)).toMatchObject({ ok: true });
+  });
 
   it('categorises an UNMAPPED product from its CJ category, then publishes', async () => {
     const { db, writes } = transactionalDb({

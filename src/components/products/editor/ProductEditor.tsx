@@ -1,4 +1,5 @@
 import { FlaskConical } from 'lucide-react';
+import saveOptionMappingAction from '@/app/(portal)/listings/option-mapping-actions';
 import { saveProductDraftAction } from '@/app/(portal)/listings/product-draft-actions';
 import { publishProductAction } from '@/app/(portal)/listings/publish-actions';
 import { sectionSeverity } from '@/lib/seller-center/product-editor/derive';
@@ -87,6 +88,9 @@ export default function ProductEditor({
         }
         saveDraftAction={isDatabaseBacked ? saveProductDraftAction : undefined}
         publishAction={isDatabaseBacked ? publishProductAction : undefined}
+        optionMappingAction={
+          isDatabaseBacked ? saveOptionMappingAction : undefined
+        }
       />
     </div>
   );

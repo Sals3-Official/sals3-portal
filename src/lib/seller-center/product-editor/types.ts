@@ -258,6 +258,26 @@ export type ProductEditorFixture = {
   issues: ReadinessIssue[];
   sourceChanges: SourceChangeFixture[];
   specifications: SpecificationFixture[];
+  /**
+   * What the supplier's concatenated variant labels encode, and whether a seller
+   * has already named it.
+   *
+   * `proposal` is derived, never authoritative: it reports how many positions the
+   * labels contain and which supplier tokens sit at each, and deliberately does
+   * not name them. Nothing in CJ's payload says position 0 is a "Colour" — on a
+   * phone the same two slots could be plug type and storage — so names come only
+   * from a person. An empty `proposal` means the labels do not form a clean grid,
+   * which is a normal answer, not an error.
+   *
+   * A non-empty `mappedAxisNames` means the mapping is already committed and the
+   * section reports rather than edits: `saveOptionMapping` is insert-only and
+   * refuses to re-map.
+   */
+  optionMapping: {
+    proposal: { index: number; values: string[] }[];
+    mappedAxisNames: string[];
+    variantCount: number;
+  };
   variants: VariantFixture[];
   markets: MarketEvidenceFixture[];
   /** Markets not enabled for this seller - stated, never rendered as evidence. */

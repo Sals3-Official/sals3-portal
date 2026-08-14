@@ -10,6 +10,7 @@ import {
   offerSupplierBindings,
   productMediaSources,
   productOffers,
+  productOptions,
   productRevisions,
   productVariants,
   products,
@@ -50,6 +51,7 @@ import type {
 } from '@/lib/seller-center/product-editor/types';
 import { feedSnapshotSchema } from '@/modules/catalog/candidates/rules/contracts';
 import { descriptionDocumentSchema } from './description-document';
+import deriveOptionSplit from './option-split';
 
 type Executor = Database;
 
@@ -388,6 +390,7 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
       productRows,
       variantRows: [],
       referenceRows: [],
+      optionRows: [],
       providerVariantRows: [],
       offerRows: [],
       bindingRows: [],
@@ -397,7 +400,7 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
     };
   }
 
-  const [variantRows, referenceRows, revisionRows, mediaRows] =
+  const [variantRows, referenceRows, revisionRows, mediaRows, optionRows] =
     await Promise.all([
       executor
         .select()
@@ -420,6 +423,19 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
           asc(productMediaSources.productId),
           asc(productMediaSources.createdAt),
         ),
+      // Whether a seller has already named this product's option axes. Ordered
+      // by the stored position, which is the order they chose, not
+      // `normalized_name` — `Colour × Size` must not resurface as `Size ×
+      // Colour`.
+      executor
+        .select({
+          productId: productOptions.productId,
+          position: productOptions.position,
+          name: productOptions.name,
+        })
+        .from(productOptions)
+        .where(inArray(productOptions.productId, ids))
+        .orderBy(asc(productOptions.productId), asc(productOptions.position)),
     ]);
 
   const variantIds = variantRows.map((row) => row.id);
@@ -499,6 +515,7 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
     productRows,
     variantRows,
     referenceRows,
+    optionRows,
     providerVariantRows,
     offerRows,
     bindingRows,
@@ -524,6 +541,10 @@ function buildCatalogueProducts(
       reference.variantId,
       reference,
     ]),
+  );
+  const optionsByProduct = groupBy(
+    rows.optionRows,
+    (option) => option.productId,
   );
   const offersByVariant = groupBy(rows.offerRows, (offer) => offer.variantId);
   const bindingsByOffer = groupBy(
@@ -606,6 +627,9 @@ function buildCatalogueProducts(
               providerVariant?.sourceOptionLabel ??
               variant.optionCombinationKey ??
               variant.sals3Sku,
+            // No fallback: the option split is derived from this, and a
+            // stand-in would be split into axes the supplier never sent.
+            supplierOptionLabel: providerVariant?.sourceOptionLabel ?? null,
             sals3VariantId: variant.id,
             sellerSku: variant.sals3Sku,
             cjVariantId: providerVariant?.externalVariantId ?? 'Not recorded',
@@ -697,6 +721,9 @@ function buildCatalogueProducts(
         productVersion: product.version,
         currentRevisionId: revision?.id ?? null,
         currentRevisionVersion: revision?.version ?? null,
+        optionAxisNames: (optionsByProduct.get(product.id) ?? []).map(
+          (option) => option.name,
+        ),
         variants: catalogueVariants,
       };
     },
@@ -1039,6 +1066,15 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
 } {
   const variants = editorVariants(product);
   const issues = editorIssues(product);
+  // Derived from `product.variants`, not from `variants` above: the latter
+  // synthesises a "Default" row for a product with no variant rows at all, and
+  // splitting an invented label would propose an axis no supplier ever sent.
+  const optionSplit = deriveOptionSplit(
+    product.variants.map((variant) => ({
+      variantId: variant.id,
+      label: variant.supplierOptionLabel,
+    })),
+  );
   const fixture: ProductEditorFixture = {
     fixtureKey: product.id,
     scenarioLabel: `Database product - ${product.status}`,
@@ -1094,6 +1130,14 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
         : null,
     issues,
     sourceChanges: [],
+    optionMapping: {
+      // `byCombination` is deliberately not carried: it is a Map, and the client
+      // has no use for it. The server re-derives the whole split from the same
+      // column before writing, so the browser never supplies structure.
+      proposal: optionSplit?.positions ?? [],
+      mappedAxisNames: product.optionAxisNames ?? [],
+      variantCount: product.variants.length,
+    },
     specifications: editorSpecifications(product),
     variants,
     markets: editorMarkets(product),

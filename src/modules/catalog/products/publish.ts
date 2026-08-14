@@ -5,6 +5,7 @@ import {
   offerSupplierBindings,
   productMediaSources,
   productOffers,
+  productOptions,
   productRevisions,
   products,
   productVariants,
@@ -24,6 +25,7 @@ import {
 import { findActiveProfileForSeller } from '@/modules/market-config/repository';
 import { resolveProductPricing } from '@/modules/pricing/resolver';
 import { ensureProductCjCategory } from './category-mirror';
+import deriveOptionSplit from './option-split';
 import {
   projectSupplierMediaForProduct,
   SUPPLIER_MEDIA_RIGHTS,
@@ -66,9 +68,67 @@ import { candidateSlugsFromTitle } from './slug';
  * `PUBLISHED` product with an `UNPUBLISHED` offer renders a card with no price.
  */
 
+/**
+ * Whether this product's supplier labels encode option axes that nobody has
+ * named yet.
+ *
+ * ## Conditional on purpose
+ *
+ * The owner's decision is that mapping is required before publish. Enforcing
+ * that unconditionally would brick every product a mapping cannot be *saved* for:
+ * `deriveOptionSplit` refuses a single-variant product, ragged token counts and
+ * any non-grid label set, and `saveOptionMapping` then refuses
+ * `SPLIT_NOT_DERIVABLE`. A blanket gate would leave those permanently
+ * unpublishable — including products already live — with no path to fix them.
+ *
+ * So the requirement attaches to the case where it means something: the labels
+ * *do* form a clean grid, so a mapping is both possible and worth having, and
+ * none exists. Where no split is derivable there is nothing to name, and the
+ * storefront keeps showing each supplier label whole.
+ *
+ * ## Derived from the same input as the writer
+ *
+ * The query deliberately mirrors `loadVariantLabels` in `save-option-mapping.ts`
+ * — every variant of the product, joined to `provider_variant_references`, with
+ * no status filter and no other join. If the gate derived from a different set
+ * than the writer, a product could be refused here for being unmapped while the
+ * writer refused to map it, which is the deadlock this whole shape avoids.
+ *
+ * Reads only. No CJ call, no points.
+ */
+async function optionMappingRequiredButMissing(
+  executor: Executor,
+  productId: string,
+): Promise<boolean> {
+  const labels = await executor
+    .select({
+      variantId: productVariants.id,
+      label: providerVariantReferences.sourceOptionLabel,
+    })
+    .from(productVariants)
+    // Unique on `variant_id`, so this matches at most one row per variant and
+    // cannot duplicate a label into a false collision.
+    .leftJoin(
+      providerVariantReferences,
+      eq(providerVariantReferences.variantId, productVariants.id),
+    )
+    .where(eq(productVariants.productId, productId));
+
+  if (deriveOptionSplit(labels) === undefined) return false;
+
+  const mapped = await executor
+    .select({ id: productOptions.id })
+    .from(productOptions)
+    .where(eq(productOptions.productId, productId))
+    .limit(1);
+
+  return mapped.length === 0;
+}
+
 export type PublishRefusal =
   | 'NO_ACTIVE_VARIANT'
   | 'CATEGORY_UNMAPPED'
+  | 'OPTIONS_UNMAPPED'
   | 'NO_APPROVED_MEDIA'
   | 'PRICING_UNRESOLVED'
   | 'RETAIL_BELOW_SUPPLIER_COST'
@@ -421,6 +481,10 @@ export default async function publishProduct(input: {
       // The assignment bumped `products.version`; every later write must
       // compare against the bumped value, not the one the screen read.
       productVersion = mirrored.productVersion;
+    }
+
+    if (await optionMappingRequiredButMissing(tx, input.productId)) {
+      return { ok: false, reason: 'OPTIONS_UNMAPPED' };
     }
 
     // A published supplier offer needs a persisted provider variant reference.

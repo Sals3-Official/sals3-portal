@@ -349,6 +349,15 @@ const BASE: ProductEditorFixture = {
   banner: null,
   issues: [SUGGESTION_OPTIONAL_ATTRIBUTES, SUGGESTION_SUPPLIER_COPY],
   sourceChanges: [],
+  // These design-preview variants carry Sals3-authored labels rather than a
+  // supplier's concatenated string, so there is nothing to derive a split from.
+  // An empty proposal is the honest state: the section says so rather than
+  // offering axes this fixture never received.
+  optionMapping: {
+    proposal: [],
+    mappedAxisNames: [],
+    variantCount: BASE_VARIANTS.length,
+  },
   specifications: BASE_SPECIFICATIONS,
   variants: BASE_VARIANTS,
   markets: BASE_MARKETS,
