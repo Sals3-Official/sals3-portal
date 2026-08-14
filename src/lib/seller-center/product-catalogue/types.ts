@@ -236,6 +236,8 @@ export type CatalogueProductFixture = {
   status: ListingStatus;
   categoryPath: string;
   categoryCode?: string | null;
+  /** Seller-facing draft L1 selection. Display only until a real leaf picker exists. */
+  sals3CategoryL1?: string | null;
   /**
    * The supplier's own facts, shown as evidence and never as Sals3 decisions
    * (ADR-013). All optional: the illustrative fixtures have no candidate row
@@ -300,6 +302,10 @@ export type CatalogueProductFixture = {
    * rather than sending a guessed one.
    */
   productVersion?: number;
+  /** Current open draft revision, when this real catalogue row can be saved. */
+  currentRevisionId?: string | null;
+  /** Optimistic-concurrency token for the current open draft revision. */
+  currentRevisionVersion?: number | null;
   variants: CatalogueVariantFixture[];
 };
 

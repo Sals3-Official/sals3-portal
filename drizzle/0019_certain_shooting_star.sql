@@ -1,0 +1,1 @@
+ALTER TABLE "products" ADD COLUMN "sals3_category_l1" text;

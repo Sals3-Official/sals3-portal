@@ -1,6 +1,13 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
+import { SALS3_CATEGORY_L1_OPTIONS } from '@/lib/seller-center/product-editor/sals3-category-l1';
 import type {
   EditorLifecycle,
   ProductEditorFixture,
@@ -9,6 +16,10 @@ import ProductEditor from './ProductEditor';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+}));
+
+vi.mock('@/app/(portal)/listings/product-draft-actions', () => ({
+  saveProductDraftAction: vi.fn(),
 }));
 
 function fixture(key: string): ProductEditorFixture {
@@ -92,6 +103,26 @@ describe('Product Editor - required vs recommended attributes', () => {
       screen.getByText(/Publication requires this\. It is a hard blocker/i),
     ).toBeInTheDocument();
     expect(publishButton()).toBeDisabled();
+  });
+
+  it('clears the hard-blocker message once a value is entered, and restores it on clearing', () => {
+    renderEditor('blocked');
+
+    const input = screen.getByLabelText(/Country of origin/i);
+
+    fireEvent.change(input, { target: { value: 'Philippines' } });
+
+    // A field that plainly has a value must not keep claiming "until a value
+    // is entered" — the stale message is the exact defect this covers.
+    expect(
+      screen.queryByText(/Publication requires this\. It is a hard blocker/i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: '   ' } });
+
+    expect(
+      screen.getByText(/Publication requires this\. It is a hard blocker/i),
+    ).toBeInTheDocument();
   });
 
   it('renders a missing recommended attribute as a still-publishable warning', () => {
@@ -416,22 +447,76 @@ describe('Product Editor - the photo a real product actually has', () => {
     expect(screen.getByText('Image 3')).toBeInTheDocument();
   });
 
-  it('shows the CJ Category read-only, with no invented options to pick from', () => {
+  it('shows the Basic Information category as a Sals3 Category dropdown', () => {
     renderWithCover();
 
-    // The category is the supplier's own catalogue category and drives which
-    // pricing policy applies, so there is no category control for the seller
-    // to operate.
+    const basic = within(document.getElementById('sec-basic') as HTMLElement);
+
     expect(
-      screen.queryByRole('combobox', { name: /CJ Category/i }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText('CJ Category')).toBeInTheDocument();
-    expect(
-      screen.getByText(/The supplier’s own catalogue category/i),
+      basic.getByRole('combobox', { name: /Sals3 Category/i }),
     ).toBeInTheDocument();
+    expect(
+      basic.queryByRole('combobox', { name: /CJ Category/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it('says when no CJ category is recorded, instead of showing a blank field', () => {
+  it('offers all Sals3 taxonomy L1 categories and marks the draft dirty on change', async () => {
+    renderWithCover();
+
+    const category = screen.getByRole('combobox', { name: /Sals3 Category/i });
+
+    fireEvent.click(category);
+
+    SALS3_CATEGORY_L1_OPTIONS.forEach((option) => {
+      expect(screen.getAllByText(option).length).toBeGreaterThan(0);
+    });
+
+    const beautyOption = screen
+      .getByText('Beauty & Personal Care')
+      .closest('[data-slot="select-item"]');
+
+    if (beautyOption === null) throw new Error('missing Beauty option');
+
+    fireEvent.pointerDown(beautyOption);
+    fireEvent.pointerUp(beautyOption);
+    fireEvent.click(beautyOption);
+
+    await waitFor(() =>
+      expect(screen.getAllByText('Unsaved changes').length).toBeGreaterThan(0),
+    );
+  });
+
+  it('keeps the supplier CJ Category in Category & Specifications', () => {
+    const resolved = withCoverAddress();
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          specifications: [
+            {
+              key: 'category',
+              label: 'CJ Category',
+              value: "Men's Jackets",
+              requirement: 'REQUIRED',
+              source: 'SUPPLIER',
+              unresolved: false,
+            },
+            ...resolved.specifications,
+          ],
+        }}
+        initialLifecycle="IDLE"
+        variantGuidance={[]}
+      />,
+    );
+
+    const specs = within(document.getElementById('sec-specs') as HTMLElement);
+
+    expect(specs.getByLabelText(/CJ Category/i)).toBeInTheDocument();
+    expect(specs.getByDisplayValue("Men's Jackets")).toBeInTheDocument();
+  });
+
+  it('keeps an unmapped Basic Information category as a Sals3 dropdown', () => {
     const resolved = withCoverAddress();
 
     render(
@@ -440,6 +525,7 @@ describe('Product Editor - the photo a real product actually has', () => {
           ...resolved,
           sals3CategoryPath: 'Unmapped category',
           sals3CategoryCode: null,
+          sals3CategoryL1: null,
           categoryMappingConfidence: 'UNMAPPED',
         }}
         initialLifecycle="IDLE"
@@ -448,9 +534,8 @@ describe('Product Editor - the photo a real product actually has', () => {
       />,
     );
 
-    expect(screen.getByText('No CJ category recorded')).toBeInTheDocument();
     expect(
-      screen.getByText(/Discovery captured no CJ category for this product/i),
+      screen.getByRole('combobox', { name: /Sals3 Category/i }),
     ).toBeInTheDocument();
   });
 });

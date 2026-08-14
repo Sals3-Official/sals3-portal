@@ -36,6 +36,7 @@ const CATALOGUE_PRODUCT: CatalogueProductFixture = {
   status: 'DRAFT',
   categoryPath: 'Unmapped category',
   categoryCode: null,
+  sals3CategoryL1: null,
   supplierCategoryPath: "Men's Jackets",
   supplierCategoryId: '2409230540351618000',
   supplierSku: 'CJPK2718027',
@@ -61,6 +62,8 @@ const CATALOGUE_PRODUCT: CatalogueProductFixture = {
   storefrontUrl: null,
   attentionReasons: [],
   editorFixtureKey: 'pass',
+  currentRevisionId: '22222222-2222-4222-8222-222222222222',
+  currentRevisionVersion: 3,
   variants: [],
 };
 
@@ -111,7 +114,27 @@ describe('productToEditorFixture — the CJ category is the category', () => {
 
     expect(fixture.supplierCategoryPath).toBe("Men's Jackets");
     expect(fixture.sals3CategoryPath).toBe("Men's Jackets");
+    expect(fixture.sals3CategoryL1).toBeNull();
     expect(fixture.categoryMappingConfidence).toBe('ACCEPTABLE');
+  });
+
+  it('uses the saved Sals3 L1 draft category when one exists', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      sals3CategoryL1: "Men's Apparel & Tactical Wear",
+    });
+
+    expect(fixture.sals3CategoryL1).toBe("Men's Apparel & Tactical Wear");
+  });
+
+  it('exposes the open draft revision token for database saves', () => {
+    const { fixture } = productToEditorFixture(CATALOGUE_PRODUCT);
+
+    expect(fixture.draftSaveTarget).toEqual({
+      productId: CATALOGUE_PRODUCT.id,
+      revisionId: '22222222-2222-4222-8222-222222222222',
+      expectedRevisionVersion: 3,
+    });
   });
 
   it('stays honestly unmapped only when no CJ category exists anywhere', () => {
@@ -122,6 +145,7 @@ describe('productToEditorFixture — the CJ category is the category', () => {
 
     expect(fixture.supplierCategoryPath).toBe('Not recorded');
     expect(fixture.sals3CategoryPath).toBe('Unmapped category');
+    expect(fixture.sals3CategoryL1).toBeNull();
     expect(fixture.categoryMappingConfidence).toBe('UNMAPPED');
   });
 

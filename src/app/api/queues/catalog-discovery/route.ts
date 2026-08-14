@@ -19,24 +19,30 @@ import { CANDIDATE_STATUS_COUNTS_TAG } from '@/modules/catalog/candidates/status
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
-export const POST = handleCallback(async (message, metadata) => {
-  await handleQueueMessage(message, {
-    messageId: metadata.messageId,
-    deliveryCount: metadata.deliveryCount,
-  });
+const handleCatalogDiscoveryQueueCallback = handleCallback(
+  async (message, metadata) => {
+    await handleQueueMessage(message, {
+      messageId: metadata.messageId,
+      deliveryCount: metadata.deliveryCount,
+    });
 
-  // Every ingest, evaluate, and requeue message funnels through here, and each
-  // can move a candidate between pipeline buckets - so this is where the cached
-  // status counts have to be dropped, or a seller reads a stale badge.
-  //
-  // `'max'` is stale-while-revalidate: the next visitor is served the old count
-  // while a fresh one is fetched behind them. That is the right trade for a
-  // background job - the single-argument form is deprecated, and an immediate
-  // blocking expiry here would make every queue message able to stall the next
-  // page render.
-  //
-  // Deliberately unconditional. Threading a "did any count change" signal up
-  // through the dispatcher would cost more complexity than one invalidation per
-  // message, and the fallback for a missed drop is the cache's 30-second TTL.
-  revalidateTag(CANDIDATE_STATUS_COUNTS_TAG, 'max');
-});
+    // Every ingest, evaluate, and requeue message funnels through here, and each
+    // can move a candidate between pipeline buckets - so this is where the cached
+    // status counts have to be dropped, or a seller reads a stale badge.
+    //
+    // `'max'` is stale-while-revalidate: the next visitor is served the old count
+    // while a fresh one is fetched behind them. That is the right trade for a
+    // background job - the single-argument form is deprecated, and an immediate
+    // blocking expiry here would make every queue message able to stall the next
+    // page render.
+    //
+    // Deliberately unconditional. Threading a "did any count change" signal up
+    // through the dispatcher would cost more complexity than one invalidation per
+    // message, and the fallback for a missed drop is the cache's 30-second TTL.
+    revalidateTag(CANDIDATE_STATUS_COUNTS_TAG, 'max');
+  },
+);
+
+export async function POST(request: Request): Promise<Response> {
+  return handleCatalogDiscoveryQueueCallback(request);
+}

@@ -278,6 +278,7 @@ describe('saveProductDraftAction', () => {
     revisionId: '55555555-5555-4555-8555-555555555555',
     expectedRevisionVersion: 3,
     title: 'Merino crew neck',
+    sals3CategoryL1: 'Beauty & Personal Care',
     descriptionDocument: {
       version: 1,
       blocks: [{ type: 'paragraph', text: 'Soft merino wool.' }],
@@ -288,6 +289,30 @@ describe('saveProductDraftAction', () => {
     await saveProductDraftAction(VALID_SAVE);
 
     expect(requirePermission).toHaveBeenCalledWith('product:edit');
+  });
+
+  it('passes the validated draft L1 category to the domain module', async () => {
+    await saveProductDraftAction(VALID_SAVE);
+
+    expect(saveProductDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          sals3CategoryL1: 'Beauty & Personal Care',
+        }),
+        sellerAccountId: SELLER,
+        actorId: 'actor-1',
+      }),
+    );
+  });
+
+  it('rejects a category outside the Sals3 taxonomy L1 list', async () => {
+    await expect(
+      saveProductDraftAction({
+        ...VALID_SAVE,
+        sals3CategoryL1: 'Men Jackets',
+      }),
+    ).resolves.toEqual({ ok: false, reason: 'invalid_input' });
+    expect(saveProductDraft).not.toHaveBeenCalled();
   });
 
   it('rejects a description document containing markup', async () => {

@@ -59,9 +59,35 @@ type ProductEditorWorkspaceProps = {
   pricingBasisSection: React.ReactNode;
   /** Entry state from `?state=`. Development only - see `query.ts`. */
   initialLifecycle: EditorLifecycle;
+  /** Database draft save boundary. Omitted for fixture/design-preview mode. */
+  saveDraftAction?: (input: unknown) => Promise<
+    | { ok: true; revisionVersion: number }
+    | {
+        ok: false;
+        reason:
+          | 'invalid_input'
+          | 'unauthenticated'
+          | 'denied'
+          | 'rate_limited'
+          | 'not_configured'
+          | 'not_found'
+          | 'version_conflict'
+          | 'failed';
+      }
+  >;
 };
 
 const EXIT_HREF = '/products/pipeline?tab=ready';
+
+function descriptionDocumentFromText(description: string) {
+  const blocks = description
+    .split(/\n{2,}/)
+    .map((text) => text.trim())
+    .filter((text) => text.length > 0)
+    .map((text) => ({ type: 'paragraph' as const, text }));
+
+  return { version: 1 as const, blocks };
+}
 
 /** A bulk price change must never touch a variant policy has ruled out. */
 function isBulkPriceable(variant: VariantFixture): boolean {
@@ -92,12 +118,14 @@ export default function ProductEditorWorkspace({
   marketsSection,
   pricingBasisSection,
   initialLifecycle,
+  saveDraftAction,
 }: ProductEditorWorkspaceProps) {
   const router = useRouter();
 
   const [productName, setProductName] = useState(fixture.productName);
-  // No `sals3Category` state: the Sals3 category is not seller-editable (see
-  // BasicInformationSection), so there is nothing for this shell to hold.
+  const [sals3CategoryL1, setSals3CategoryL1] = useState(
+    fixture.sals3CategoryL1 ?? '',
+  );
   const [sellerSku, setSellerSku] = useState(fixture.sellerSku);
   const [brandDeclaration, setBrandDeclaration] = useState(
     fixture.brandDeclaration,
@@ -126,6 +154,9 @@ export default function ProductEditorWorkspace({
   );
   const [previewVariantId, setPreviewVariantId] = useState(
     fixture.variants[0]?.id ?? '',
+  );
+  const [draftRevisionVersion, setDraftRevisionVersion] = useState(
+    fixture.draftSaveTarget?.expectedRevisionVersion ?? null,
   );
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -278,8 +309,43 @@ export default function ProductEditorWorkspace({
     }
   };
 
-  const onSaveDraft = () => {
+  const onSaveDraft = async () => {
     setLifecycle('SAVING');
+
+    if (
+      saveDraftAction !== undefined &&
+      fixture.draftSaveTarget !== null &&
+      draftRevisionVersion !== null
+    ) {
+      const result = await saveDraftAction({
+        productId: fixture.draftSaveTarget.productId,
+        revisionId: fixture.draftSaveTarget.revisionId,
+        expectedRevisionVersion: draftRevisionVersion,
+        title: productName,
+        sals3CategoryL1: sals3CategoryL1 === '' ? null : sals3CategoryL1,
+        descriptionDocument: descriptionDocumentFromText(description),
+      });
+
+      if (result.ok) {
+        setDraftRevisionVersion(result.revisionVersion);
+        setLifecycle('SAVED');
+        setIsDirty(false);
+        toast('Draft saved.');
+
+        return;
+      }
+
+      setLifecycle('SAVE_FAILED');
+      toast('Draft save failed.', {
+        description:
+          result.reason === 'version_conflict'
+            ? 'This draft changed elsewhere. Refresh before saving again.'
+            : 'No database change was made.',
+      });
+
+      return;
+    }
+
     timerRef.current = setTimeout(() => {
       setLifecycle('SAVED');
       setIsDirty(false);
@@ -395,6 +461,11 @@ export default function ProductEditorWorkspace({
                 setProductName(value);
                 touch();
               }}
+              sals3CategoryL1={sals3CategoryL1}
+              onSals3CategoryL1Change={(value) => {
+                setSals3CategoryL1(value);
+                touch();
+              }}
               sellerSku={sellerSku}
               onSellerSkuChange={(value) => {
                 setSellerSku(value);
@@ -426,7 +497,17 @@ export default function ProductEditorWorkspace({
                 setSpecifications((current) =>
                   current.map((spec) =>
                     spec.key === key
-                      ? { ...spec, value, source: 'SELLER' }
+                      ? {
+                          ...spec,
+                          value,
+                          source: 'SELLER',
+                          // A filled field is no longer unresolved — leaving
+                          // the flag stale kept the "hard blocker until a
+                          // value is entered" message under a field that
+                          // plainly had one. Clearing the value brings the
+                          // message back.
+                          unresolved: value.trim() === '',
+                        }
                       : spec,
                   ),
                 );

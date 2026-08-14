@@ -6,7 +6,7 @@ import { checksumOfDescriptionDocument } from './description-document';
 import {
   findProductForSteward,
   saveDraftRevisionContent,
-  updateProductTitleForSteward,
+  updateProductEditorialForSteward,
 } from './repository';
 
 /**
@@ -84,10 +84,11 @@ export default async function saveProductDraft(input: {
       return { ok: false as const, reason: 'version_conflict' };
     }
 
-    await updateProductTitleForSteward(tx, {
+    await updateProductEditorialForSteward(tx, {
       productId: request.productId,
       stewardSellerAccountId: input.sellerAccountId,
       title: request.title,
+      sals3CategoryL1: request.sals3CategoryL1,
       actorId: input.actorId,
     });
 
@@ -102,6 +103,7 @@ export default async function saveProductDraft(input: {
         version: revision.version,
         contentChecksum,
         blockCount: request.descriptionDocument.blocks.length,
+        sals3CategoryL1: request.sals3CategoryL1,
       },
     });
 

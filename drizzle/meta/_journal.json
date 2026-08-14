@@ -134,6 +134,13 @@
       "when": 1786561672759,
       "tag": "0018_rare_william_stryker",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786682135422,
+      "tag": "0019_certain_shooting_star",
+      "breakpoints": true
     }
   ]
 }

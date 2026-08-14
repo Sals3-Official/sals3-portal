@@ -248,6 +248,8 @@ export type ProductEditorFixture = {
   supplierProductName: string;
   supplierCategoryPath: string;
   sals3CategoryPath: string;
+  /** Seller-facing draft L1 selection. Display only, not a leaf category id. */
+  sals3CategoryL1: string | null;
   /**
    * The stable Sals3 universal category code (ADR-002) `sals3CategoryPath`
    * displays. `null` when unmapped — pricing guidance requires this, a
@@ -281,6 +283,12 @@ export type ProductEditorFixture = {
   marketsNotEnabledCount: number;
   media: MediaItemFixture[];
   policyVersion: string;
+  /** Present only for database-backed rows whose open draft can be saved. */
+  draftSaveTarget: {
+    productId: string;
+    revisionId: string;
+    expectedRevisionVersion: number;
+  } | null;
   /** Opaque internal identifiers only. Never a key, token, or secret. */
   advancedIdentifiers: Record<string, string>;
 };

@@ -353,6 +353,7 @@ const BASE: ProductEditorFixture = {
   // unisex daypack does not really belong under "Men's Bags". This is a
   // genuine taxonomy gap, not smoothed over for the preview.
   sals3CategoryCode: 'CAT-MEN-100564',
+  sals3CategoryL1: "Men's Bags & Tactical Backpacks",
   categoryMappingConfidence: 'ACCEPTABLE',
   realSupplierCandidateId: null,
   sellerSku: 'S3-AUR-DP',
@@ -373,6 +374,7 @@ const BASE: ProductEditorFixture = {
   marketsNotEnabledCount: 1,
   media: BASE_MEDIA,
   policyVersion: '2026.08.01',
+  draftSaveTarget: null,
   advancedIdentifiers: {
     draft_id: '8f2c1a7e-6f0b-4a1d-9d3e-77e2c0b41a55',
     supplier_connection_id: '3c9d2f14-2a71-4b09-bb52-1e8a4d770a12',

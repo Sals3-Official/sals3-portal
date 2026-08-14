@@ -47,6 +47,7 @@ import type {
   VariantFixture,
   VariantPricingGuidance,
 } from '@/lib/seller-center/product-editor/types';
+import { SALS3_CATEGORY_L1_OPTIONS } from '@/lib/seller-center/product-editor/sals3-category-l1';
 import { feedSnapshotSchema } from '@/modules/catalog/candidates/rules/contracts';
 import { descriptionDocumentSchema } from './description-document';
 
@@ -365,6 +366,7 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
       product: products,
       categoryPath: sals3Categories.path,
       categoryCode: sals3Categories.code,
+      categoryL1: sals3Categories.l1,
     })
     .from(products)
     .leftJoin(sals3Categories, eq(sals3Categories.id, products.categoryId))
@@ -525,152 +527,162 @@ function buildCatalogueProducts(
     rows.sourceRows.map((row) => [row.candidate.id, row]),
   );
 
-  return rows.productRows.map(({ product, categoryPath, categoryCode }) => {
-    const variants = variantsByProduct.get(product.id) ?? [];
-    const reference = refsByProduct.get(product.id)?.[0];
-    const source =
-      reference?.sourceCandidateId === null || reference === undefined
-        ? undefined
-        : sourceByCandidate.get(reference.sourceCandidateId);
-    const revision =
-      revisionsByProduct
-        .get(product.id)
-        ?.find((row) => row.id === product.currentRevisionId) ??
-      revisionsByProduct.get(product.id)?.[0];
-    const media = mediaByProduct.get(product.id) ?? [];
-    const productOffersForSeller = variants.flatMap(
-      (variant) => offersByVariant.get(variant.id) ?? [],
-    );
-    const firstOffer = productOffersForSeller[0];
-    const hasUnpricedOffer = productOffersForSeller.some(
-      (offer) => offer.pricingState === 'UNRESOLVED',
-    );
-    const attentionReasons = attentionFromUnpublished(
-      product,
-      hasUnpricedOffer,
-    );
-    const status = listingStatus(
-      product.publicationState,
-      firstOffer?.publishState ?? null,
-      attentionReasons,
-    );
-    const productAvailability = availability(
-      firstOffer?.availabilityState ?? null,
-    );
-    const productEvidence = evidenceSchema.safeParse(
-      source?.snapshot?.evidence,
-    );
-    const evidenceCapturedAt = productEvidence.data?.capturedAt ?? null;
-    // Product-level media (`variant_id is null`) is the cover, matching the
-    // storefront read model's own ordering.
-    const coverMedia =
-      media.find((item) => item.variantId === null) ?? media[0];
-    const supplier = supplierFacts(
-      source?.evaluation?.feedSnapshot,
-      productEvidence.data ?? null,
-      coverMedia?.sourceUrl ?? null,
-    );
+  return rows.productRows.map(
+    ({ product, categoryPath, categoryCode, categoryL1 }) => {
+      const variants = variantsByProduct.get(product.id) ?? [];
+      const reference = refsByProduct.get(product.id)?.[0];
+      const source =
+        reference?.sourceCandidateId === null || reference === undefined
+          ? undefined
+          : sourceByCandidate.get(reference.sourceCandidateId);
+      const revision =
+        revisionsByProduct
+          .get(product.id)
+          ?.find((row) => row.id === product.currentRevisionId) ??
+        revisionsByProduct.get(product.id)?.[0];
+      const media = mediaByProduct.get(product.id) ?? [];
+      const productOffersForSeller = variants.flatMap(
+        (variant) => offersByVariant.get(variant.id) ?? [],
+      );
+      const firstOffer = productOffersForSeller[0];
+      const hasUnpricedOffer = productOffersForSeller.some(
+        (offer) => offer.pricingState === 'UNRESOLVED',
+      );
+      const attentionReasons = attentionFromUnpublished(
+        product,
+        hasUnpricedOffer,
+      );
+      const status = listingStatus(
+        product.publicationState,
+        firstOffer?.publishState ?? null,
+        attentionReasons,
+      );
+      const productAvailability = availability(
+        firstOffer?.availabilityState ?? null,
+      );
+      const productEvidence = evidenceSchema.safeParse(
+        source?.snapshot?.evidence,
+      );
+      const evidenceCapturedAt = productEvidence.data?.capturedAt ?? null;
+      // Product-level media (`variant_id is null`) is the cover, matching the
+      // storefront read model's own ordering.
+      const coverMedia =
+        media.find((item) => item.variantId === null) ?? media[0];
+      const supplier = supplierFacts(
+        source?.evaluation?.feedSnapshot,
+        productEvidence.data ?? null,
+        coverMedia?.sourceUrl ?? null,
+      );
 
-    const catalogueVariants: CatalogueVariantFixture[] = variants.map(
-      (variant) => {
-        const providerVariant = providerVariantByVariant.get(variant.id);
-        const offer = offersByVariant.get(variant.id)?.[0];
-        const observedQuantity = providerVariant?.lastObservedInventory ?? null;
-        const observedAt = providerVariant?.lastObservedAt ?? null;
-        const bindingState = bindingsByOffer.get(offer?.id ?? '')?.[0]?.state;
+      const catalogueVariants: CatalogueVariantFixture[] = variants.map(
+        (variant) => {
+          const providerVariant = providerVariantByVariant.get(variant.id);
+          const offer = offersByVariant.get(variant.id)?.[0];
+          const observedQuantity =
+            providerVariant?.lastObservedInventory ?? null;
+          const observedAt = providerVariant?.lastObservedAt ?? null;
+          const bindingState = bindingsByOffer.get(offer?.id ?? '')?.[0]?.state;
 
-        return {
-          id: variant.id,
-          optionLabel:
-            providerVariant?.sourceOptionLabel ??
-            variant.optionCombinationKey ??
-            variant.sals3Sku,
-          sals3VariantId: variant.id,
-          sellerSku: variant.sals3Sku,
-          cjVariantId: providerVariant?.externalVariantId ?? 'Not recorded',
-          hasImage: media.some((item) => item.variantId === variant.id),
-          sellingPrice: money(
-            offer?.priceAmountMinor ?? null,
-            offer?.priceCurrency ?? null,
-          ),
-          supplierCost:
-            money(
-              providerVariant?.lastObservedCostMinor ?? null,
-              providerVariant?.lastObservedCostCurrency ?? null,
-            ) ?? ZERO_USD,
-          availability: availability(offer?.availabilityState ?? null),
-          stockEvidence: stockEvidence(observedQuantity),
-          supplierObservedQuantity: observedQuantity,
-          lastCheckedAt: iso(observedAt ?? evidenceCapturedAt),
-          evidenceFreshness: evidenceFreshness(observedAt),
-          manuallyPaused:
-            offer?.publishState === 'PAUSED' ||
-            bindingState === ('SUSPENDED' satisfies OfferSupplierBindingState),
-        };
-      },
-    );
+          return {
+            id: variant.id,
+            optionLabel:
+              providerVariant?.sourceOptionLabel ??
+              variant.optionCombinationKey ??
+              variant.sals3Sku,
+            sals3VariantId: variant.id,
+            sellerSku: variant.sals3Sku,
+            cjVariantId: providerVariant?.externalVariantId ?? 'Not recorded',
+            hasImage: media.some((item) => item.variantId === variant.id),
+            sellingPrice: money(
+              offer?.priceAmountMinor ?? null,
+              offer?.priceCurrency ?? null,
+            ),
+            supplierCost:
+              money(
+                providerVariant?.lastObservedCostMinor ?? null,
+                providerVariant?.lastObservedCostCurrency ?? null,
+              ) ?? ZERO_USD,
+            availability: availability(offer?.availabilityState ?? null),
+            stockEvidence: stockEvidence(observedQuantity),
+            supplierObservedQuantity: observedQuantity,
+            lastCheckedAt: iso(observedAt ?? evidenceCapturedAt),
+            evidenceFreshness: evidenceFreshness(observedAt),
+            manuallyPaused:
+              offer?.publishState === 'PAUSED' ||
+              bindingState ===
+                ('SUSPENDED' satisfies OfferSupplierBindingState),
+          };
+        },
+      );
 
-    return {
-      id: product.id,
-      sals3ProductId: product.id,
-      name: product.title,
-      descriptionText: descriptionText(revision),
-      hasImage: media.length > 0,
-      coverImageUrl: supplier.imageUrl,
-      status,
-      // The CJ category is the Sals3 category (owner decision 2026-08-14):
-      // a row not yet carrying a mapped category shows the supplier's own
-      // category, which is exactly what publication will categorise it as.
-      // 'Unmapped category' survives only for a row with no CJ category at
-      // all — the one case that still blocks.
-      categoryPath:
-        categoryPath ?? supplier.categoryPath ?? 'Unmapped category',
-      categoryCode,
-      supplierCategoryPath: supplier.categoryPath,
-      supplierCategoryId: supplier.categoryId,
-      supplierSku: supplier.sku,
-      supplierWeightLabel: supplier.weightLabel,
-      supplierFromPrice: supplier.fromPrice,
-      supplierShipsFrom: supplier.shipsFrom,
-      supplierListedCount: supplier.listedCount,
-      createdAt: product.createdAt.toISOString(),
-      supplierProviderCode: source?.provider.code ?? 'unknown-provider',
-      supplierProviderName: source?.provider.displayName ?? 'Unknown supplier',
-      sourceCandidateId: reference?.sourceCandidateId ?? null,
-      supplierConnectionHealth: connectionHealth(source?.connection.status),
-      cjProductId: reference?.externalProductId ?? 'Not recorded',
-      sellingPrice: money(
-        firstOffer?.priceAmountMinor ?? null,
-        firstOffer?.priceCurrency ?? null,
-      ),
-      availability: productAvailability,
-      stockEvidence: stockEvidence(
-        catalogueVariants[0]?.supplierObservedQuantity ?? null,
-      ),
-      supplierObservedQuantity:
-        catalogueVariants.length === 0
-          ? null
-          : catalogueVariants.reduce<number | null>((total, variant) => {
-              if (variant.supplierObservedQuantity === null) return total;
+      return {
+        id: product.id,
+        sals3ProductId: product.id,
+        name: product.title,
+        descriptionText: descriptionText(revision),
+        hasImage: media.length > 0,
+        coverImageUrl: supplier.imageUrl,
+        status,
+        // The CJ category is the Sals3 category (owner decision 2026-08-14):
+        // a row not yet carrying a mapped category shows the supplier's own
+        // category, which is exactly what publication will categorise it as.
+        // 'Unmapped category' survives only for a row with no CJ category at
+        // all — the one case that still blocks.
+        categoryPath:
+          categoryPath ?? supplier.categoryPath ?? 'Unmapped category',
+        categoryCode,
+        sals3CategoryL1: product.sals3CategoryL1 ?? categoryL1 ?? null,
+        supplierCategoryPath: supplier.categoryPath,
+        supplierCategoryId: supplier.categoryId,
+        supplierSku: supplier.sku,
+        supplierWeightLabel: supplier.weightLabel,
+        supplierFromPrice: supplier.fromPrice,
+        supplierShipsFrom: supplier.shipsFrom,
+        supplierListedCount: supplier.listedCount,
+        createdAt: product.createdAt.toISOString(),
+        supplierProviderCode: source?.provider.code ?? 'unknown-provider',
+        supplierProviderName:
+          source?.provider.displayName ?? 'Unknown supplier',
+        sourceCandidateId: reference?.sourceCandidateId ?? null,
+        supplierConnectionHealth: connectionHealth(source?.connection.status),
+        cjProductId: reference?.externalProductId ?? 'Not recorded',
+        sellingPrice: money(
+          firstOffer?.priceAmountMinor ?? null,
+          firstOffer?.priceCurrency ?? null,
+        ),
+        availability: productAvailability,
+        stockEvidence: stockEvidence(
+          catalogueVariants[0]?.supplierObservedQuantity ?? null,
+        ),
+        supplierObservedQuantity:
+          catalogueVariants.length === 0
+            ? null
+            : catalogueVariants.reduce<number | null>((total, variant) => {
+                if (variant.supplierObservedQuantity === null) return total;
 
-              return (total ?? 0) + variant.supplierObservedQuantity;
-            }, null),
-      lastCheckedAt: iso(evidenceCapturedAt),
-      evidenceFreshness: evidenceFreshness(
-        firstOffer?.updatedAt ?? product.updatedAt,
-      ),
-      mediaStatus: media.length > 0 ? 'OWN_PICTURES' : 'NEEDS_MEDIA_REVIEW',
-      contentReadiness:
-        descriptionText(revision).trim() === '' ? 'NEEDS_IMPROVEMENT' : 'GOOD',
-      pauseReason: status === 'AUTO_PAUSED' ? 'Listing is paused.' : null,
-      storefrontUrl: status === 'LIVE' ? product.slug : null,
-      attentionReasons,
-      editorFixtureKey: 'pass',
-      editorHref: `/listings/new?productId=${product.id}`,
-      productVersion: product.version,
-      variants: catalogueVariants,
-    };
-  });
+                return (total ?? 0) + variant.supplierObservedQuantity;
+              }, null),
+        lastCheckedAt: iso(evidenceCapturedAt),
+        evidenceFreshness: evidenceFreshness(
+          firstOffer?.updatedAt ?? product.updatedAt,
+        ),
+        mediaStatus: media.length > 0 ? 'OWN_PICTURES' : 'NEEDS_MEDIA_REVIEW',
+        contentReadiness:
+          descriptionText(revision).trim() === ''
+            ? 'NEEDS_IMPROVEMENT'
+            : 'GOOD',
+        pauseReason: status === 'AUTO_PAUSED' ? 'Listing is paused.' : null,
+        storefrontUrl: status === 'LIVE' ? product.slug : null,
+        attentionReasons,
+        editorFixtureKey: 'pass',
+        editorHref: `/listings/new?productId=${product.id}`,
+        productVersion: product.version,
+        currentRevisionId: revision?.id ?? null,
+        currentRevisionVersion: revision?.version ?? null,
+        variants: catalogueVariants,
+      };
+    },
+  );
 }
 
 export async function listCatalogueProductsForSeller(
@@ -748,6 +760,21 @@ function effectiveCategoryPath(product: CatalogueProductFixture): string {
   if (product.categoryPath !== 'Unmapped category') return product.categoryPath;
 
   return product.supplierCategoryPath ?? 'Unmapped category';
+}
+
+function effectiveSals3CategoryL1(
+  product: CatalogueProductFixture,
+): string | null {
+  if (product.sals3CategoryL1 !== undefined && product.sals3CategoryL1 !== null)
+    return product.sals3CategoryL1;
+
+  const effective = effectiveCategoryPath(product);
+
+  if (effective === 'Unmapped category') return null;
+
+  const l1 = effective.split(' > ')[0] ?? null;
+
+  return SALS3_CATEGORY_L1_OPTIONS.some((option) => option === l1) ? l1 : null;
 }
 
 function editorIssues(product: CatalogueProductFixture): ReadinessIssue[] {
@@ -1015,6 +1042,7 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
     // "Unmapped category" as if the supplier had said it.
     supplierCategoryPath: product.supplierCategoryPath ?? 'Not recorded',
     sals3CategoryPath: effectiveCategoryPath(product),
+    sals3CategoryL1: effectiveSals3CategoryL1(product),
     sals3CategoryCode: product.categoryCode ?? null,
     categoryMappingConfidence:
       effectiveCategoryPath(product) === 'Unmapped category'
@@ -1065,6 +1093,17 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
     marketsNotEnabledCount: 0,
     media: editorMedia(product),
     policyVersion: 'database',
+    draftSaveTarget:
+      product.currentRevisionId === undefined ||
+      product.currentRevisionId === null ||
+      product.currentRevisionVersion === undefined ||
+      product.currentRevisionVersion === null
+        ? null
+        : {
+            productId: product.id,
+            revisionId: product.currentRevisionId,
+            expectedRevisionVersion: product.currentRevisionVersion,
+          },
     advancedIdentifiers: {
       product_id: product.id,
       sals3_product_id: product.sals3ProductId,
