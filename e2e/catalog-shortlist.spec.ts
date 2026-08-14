@@ -446,6 +446,43 @@ test.describe('candidate detail drawer', () => {
 
     await expect(page).not.toHaveURL(/[?&]candidate=/);
   });
+
+  /**
+   * The Select column, which is the same guard but not the same DOM: base-ui
+   * renders a checkbox as a `<span role="checkbox">` with the real input as a
+   * sibling, so the row's `closest('button,input,...)` test used to miss it and
+   * every tick also opened the drawer over the list the seller was picking from.
+   */
+  test('ticking a row checkbox selects it without opening the drawer', async ({
+    page,
+  }) => {
+    test.skip(
+      !isDatabaseConfigured(),
+      'DATABASE_URL not configured in this environment',
+    );
+
+    await page.goto('/products/pipeline?tab=ready');
+    await page
+      .getByRole('heading', { name: 'Product Sourcing', level: 1 })
+      .waitFor({ timeout: 30_000 });
+
+    // `data-disabled` is base-ui's own marker; a candidate already in the
+    // catalogue renders its checkbox disabled and would never tick.
+    const checkbox = page
+      .locator('tbody [role="checkbox"]:not([data-disabled])')
+      .first();
+
+    test.skip(
+      (await checkbox.count()) === 0,
+      'no selectable candidate on the Ready tab',
+    );
+
+    await checkbox.click();
+
+    await expect(checkbox).toBeChecked();
+    await expect(page).not.toHaveURL(/[?&]candidate=/);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
 });
 
 test.describe('candidate detail drawer feedback', () => {

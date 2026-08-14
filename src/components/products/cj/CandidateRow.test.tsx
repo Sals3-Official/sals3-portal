@@ -72,6 +72,27 @@ describe('CandidateRow', () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  /**
+   * The Select column on Product Sourcing. A bare `role="checkbox"` span rather
+   * than the real `Checkbox`: what must hold is the DOM base-ui emits, so this
+   * survives a restyle of our wrapper and fails if the selector ever goes back
+   * to native elements only.
+   */
+  it('does not open when a checkbox inside the row is clicked', () => {
+    renderRow(
+      <span
+        role="checkbox"
+        aria-checked="false"
+        aria-label="Select Blue mug"
+        tabIndex={0}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Blue mug' }));
+
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it('does not open when a link inside the row is clicked', () => {
     renderRow(<a href="/somewhere">Source details</a>);
 
