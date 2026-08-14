@@ -5,6 +5,9 @@ import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
+import captureCandidateEvidence, {
+  type CaptureEvidenceResult,
+} from '@/modules/catalog/candidates/capture-evidence';
 import {
   bulkCreateProductDraftsInputSchema,
   createProductDraftInputSchema,
@@ -43,6 +46,8 @@ import type { PortalPermission } from '@/lib/auth/permissions';
  */
 
 const RATE_LIMIT = { capacity: 30, refillIntervalMs: 60_000 };
+/** Same point-spend ceiling as the explicit evidence-capture action. */
+const EVIDENCE_CAPTURE_RATE_LIMIT = { capacity: 12, refillIntervalMs: 60_000 };
 
 type Authorized = {
   ok: true;
@@ -96,6 +101,55 @@ async function authorize(
   };
 }
 
+type DraftCaptureFailure = Extract<ProductDraftActionResult, { ok: false }>;
+
+async function createCjEvidenceAdapter() {
+  const [
+    { default: CjSupplierAdapter },
+    { default: CjTokenManager },
+    { default: PostgresSupplierSecretStore },
+  ] = await Promise.all([
+    import('@/modules/suppliers/providers/cj/cj-adapter'),
+    import('@/modules/suppliers/providers/cj/cj-auth'),
+    import('@/lib/secrets/postgres-supplier-secret-store'),
+  ]);
+  const secretStore = new PostgresSupplierSecretStore();
+
+  return new CjSupplierAdapter(secretStore, new CjTokenManager(secretStore));
+}
+
+function mapCaptureFailure(
+  outcome: Extract<CaptureEvidenceResult, { ok: false }>,
+): DraftCaptureFailure {
+  if (outcome.reason === 'rate_limited') {
+    return { ok: false, reason: 'rate_limited' };
+  }
+
+  if (outcome.reason === 'not_found') {
+    return { ok: false, reason: 'not_found' };
+  }
+
+  return { ok: false, reason: outcome.reason };
+}
+
+async function captureEvidenceBeforeDraft(input: {
+  candidateId: string;
+  sellerAccountId: string;
+  actorId: string;
+  adapter: Awaited<ReturnType<typeof createCjEvidenceAdapter>>;
+}): Promise<DraftCaptureFailure | null> {
+  const outcome = await captureCandidateEvidence(
+    { adapter: input.adapter },
+    {
+      candidateId: input.candidateId,
+      sellerAccountId: input.sellerAccountId,
+      actorId: input.actorId,
+    },
+  );
+
+  return outcome.ok ? null : mapCaptureFailure(outcome);
+}
+
 /**
  * Creates — or returns — the Sals3 product draft for a candidate this seller
  * owns. Idempotent: the same key with the same canonical request replays the
@@ -113,6 +167,23 @@ export async function createProductDraftAction(
   if (!auth.ok) return auth;
 
   try {
+    const evidenceLimit = checkRateLimit(
+      `catalog-evidence:create-draft:${auth.sellerAccountId}`,
+      EVIDENCE_CAPTURE_RATE_LIMIT,
+    );
+
+    if (!evidenceLimit.allowed) return { ok: false, reason: 'rate_limited' };
+
+    const adapter = await createCjEvidenceAdapter();
+    const captureFailure = await captureEvidenceBeforeDraft({
+      candidateId: parsed.data.candidateId,
+      sellerAccountId: auth.sellerAccountId,
+      actorId: auth.actorId,
+      adapter,
+    });
+
+    if (captureFailure !== null) return captureFailure;
+
     const outcome = await createProductDraftFromCandidate({
       candidateId: parsed.data.candidateId,
       sellerAccountId: auth.sellerAccountId,
@@ -147,6 +218,14 @@ export async function bulkCreateProductDraftsAction(
   if (!auth.ok) return auth;
 
   try {
+    const evidenceLimit = checkRateLimit(
+      `catalog-evidence:bulk-create-draft:${auth.sellerAccountId}`,
+      EVIDENCE_CAPTURE_RATE_LIMIT,
+    );
+
+    if (!evidenceLimit.allowed) return { ok: false, reason: 'rate_limited' };
+
+    const adapter = await createCjEvidenceAdapter();
     let created = 0;
     let replayed = 0;
     const failed: Array<{
@@ -158,6 +237,31 @@ export async function bulkCreateProductDraftsAction(
     // candidate keeps its own idempotency key.
     // eslint-disable-next-line no-restricted-syntax -- ordered writes keep load bounded and toasts deterministic.
     for (const request of parsed.data.requests) {
+      // eslint-disable-next-line no-await-in-loop
+      const captureFailure = await captureEvidenceBeforeDraft({
+        candidateId: request.candidateId,
+        sellerAccountId: auth.sellerAccountId,
+        actorId: auth.actorId,
+        adapter,
+      });
+
+      if (captureFailure !== null) {
+        failed.push({
+          candidateId: request.candidateId,
+          reason: captureFailure.reason,
+        });
+
+        if (
+          captureFailure.reason === 'rate_limited' ||
+          captureFailure.reason === 'supplier_unavailable'
+        ) {
+          break;
+        }
+
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+
       // eslint-disable-next-line no-await-in-loop
       const outcome = await createProductDraftFromCandidate({
         candidateId: request.candidateId,
