@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
+import uniqueViolationConstraint from '@/lib/db/constraint-errors';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { STOREFRONT_CATALOG_TAG } from '@/lib/storefront/catalog-cache';
 import saveOptionMapping from '@/modules/catalog/products/save-option-mapping';
@@ -174,9 +175,15 @@ export default async function saveOptionMappingAction(
   } catch (error) {
     // A unique-violation here is a real, explainable outcome rather than a bug,
     // so it is translated instead of surfacing as an unhandled action error.
-    const text = error instanceof Error ? error.message : String(error);
-
-    if (text.includes(COMBINATION_CONSTRAINT)) {
+    //
+    // Read through `uniqueViolationConstraint`, not by substring-matching the
+    // message. Drizzle wraps the driver error and hangs the original off `cause`,
+    // so the constraint name lives in `cause.constraint_name` and never reaches
+    // the wrapper's `message` — an INSERT does not name its own indexes. Matching
+    // on the message therefore never fires, which is the exact failure that
+    // helper's doc comment warns about, and the seller would have seen an
+    // unhandled action error instead of a sentence.
+    if (uniqueViolationConstraint(error) === COMBINATION_CONSTRAINT) {
       return refuse('duplicate_combination');
     }
 
