@@ -1,11 +1,12 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, updateTag } from 'next/cache';
 import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { STOREFRONT_CATALOG_TAG } from '@/lib/storefront/catalog-cache';
 import saveOptionMapping from '@/modules/catalog/products/save-option-mapping';
 
 /**
@@ -187,6 +188,24 @@ export default async function saveOptionMappingAction(
   // The editor reads option groups through the catalogue read-model, so the
   // listing views must re-read rather than serve the pre-mapping render.
   revalidatePath('/listings');
+
+  /**
+   * The storefront cache must expire too, and this is not theoretical.
+   *
+   * `loadPublishedVariants` already reads the three option tables and folds them
+   * into named axes, so a mapping changes what a PDP renders. A product that is
+   * *already live* can be mapped — the publish gate only guards publish — and
+   * without this the PDP keeps serving the pre-mapping payload, showing one opaque
+   * `Army Green-XL` after the seller successfully named Colour and Size. The save
+   * worked and the page says otherwise, which reads as a broken save.
+   *
+   * `updateTag` rather than `revalidateTag`, and outside the domain module's
+   * transaction, for the same two reasons `publish-actions.ts` gives: Next
+   * reserves the former for immediate expiry inside a Server Action, and
+   * announcing a change that could still roll back would publish a state that
+   * never committed.
+   */
+  updateTag(STOREFRONT_CATALOG_TAG);
 
   return {
     ok: true,
