@@ -22,6 +22,7 @@ import {
   supplierSnapshots,
   type OfferPublishState,
   type OfferSupplierBindingState,
+  type ProductMediaSourceRow,
   type ProductPublicationState,
   type ProductRevisionRow,
   type ProductRow,
@@ -47,7 +48,6 @@ import type {
   VariantFixture,
   VariantPricingGuidance,
 } from '@/lib/seller-center/product-editor/types';
-import { SALS3_CATEGORY_L1_OPTIONS } from '@/lib/seller-center/product-editor/sals3-category-l1';
 import { feedSnapshotSchema } from '@/modules/catalog/candidates/rules/contracts';
 import { descriptionDocumentSchema } from './description-document';
 
@@ -153,6 +153,14 @@ function supplierFacts(
     // carries a rights basis and an observation time.
     imageUrl: allowedImageUrl(mediaUrl) ?? allowedImageUrl(feed.data.imageUrl),
   };
+}
+
+function productImageUrls(media: ProductMediaSourceRow[]): string[] {
+  const urls = media
+    .map((item) => allowedImageUrl(item.sourceUrl))
+    .filter((url): url is string => url !== null);
+
+  return [...new Set(urls)];
 }
 
 function toNumber(value: bigint | null): number | null {
@@ -407,7 +415,11 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
       executor
         .select()
         .from(productMediaSources)
-        .where(inArray(productMediaSources.productId, ids)),
+        .where(inArray(productMediaSources.productId, ids))
+        .orderBy(
+          asc(productMediaSources.productId),
+          asc(productMediaSources.createdAt),
+        ),
     ]);
 
   const variantIds = variantRows.map((row) => row.id);
@@ -541,6 +553,7 @@ function buildCatalogueProducts(
           ?.find((row) => row.id === product.currentRevisionId) ??
         revisionsByProduct.get(product.id)?.[0];
       const media = mediaByProduct.get(product.id) ?? [];
+      const imageUrls = productImageUrls(media);
       const productOffersForSeller = variants.flatMap(
         (variant) => offersByVariant.get(variant.id) ?? [],
       );
@@ -573,6 +586,10 @@ function buildCatalogueProducts(
         productEvidence.data ?? null,
         coverMedia?.sourceUrl ?? null,
       );
+      const mediaImageUrls =
+        imageUrls.length === 0 && supplier.imageUrl !== null
+          ? [supplier.imageUrl]
+          : imageUrls;
 
       const catalogueVariants: CatalogueVariantFixture[] = variants.map(
         (variant) => {
@@ -620,8 +637,9 @@ function buildCatalogueProducts(
         sals3ProductId: product.id,
         name: product.title,
         descriptionText: descriptionText(revision),
-        hasImage: media.length > 0,
+        hasImage: mediaImageUrls.length > 0,
         coverImageUrl: supplier.imageUrl,
+        mediaImageUrls,
         status,
         // The CJ category is the Sals3 category (owner decision 2026-08-14):
         // a row not yet carrying a mapped category shows the supplier's own
@@ -765,16 +783,7 @@ function effectiveCategoryPath(product: CatalogueProductFixture): string {
 function effectiveSals3CategoryL1(
   product: CatalogueProductFixture,
 ): string | null {
-  if (product.sals3CategoryL1 !== undefined && product.sals3CategoryL1 !== null)
-    return product.sals3CategoryL1;
-
-  const effective = effectiveCategoryPath(product);
-
-  if (effective === 'Unmapped category') return null;
-
-  const l1 = effective.split(' > ')[0] ?? null;
-
-  return SALS3_CATEGORY_L1_OPTIONS.some((option) => option === l1) ? l1 : null;
+  return product.sals3CategoryL1 ?? null;
 }
 
 function editorIssues(product: CatalogueProductFixture): ReadinessIssue[] {
@@ -801,8 +810,8 @@ function editorIssues(product: CatalogueProductFixture): ReadinessIssue[] {
       catalogueIssue(
         `${product.id}-price`,
         'BLOCKER',
-        'Selling price is not resolved',
-        'At least one offer has no server-resolved selling price.',
+        'Retail price is required',
+        'Enter a retail price greater than zero for every variant.',
         'variants',
       ),
     );
@@ -850,7 +859,8 @@ function editorVariants(product: CatalogueProductFixture): VariantFixture[] {
         hasImage: product.hasImage,
         enabled: product.status === 'LIVE',
         listingState: product.status === 'LIVE' ? 'WILL_LIST' : 'NOT_LISTED',
-        attention: product.sellingPrice === null ? 'Pricing unresolved' : null,
+        attention:
+          product.sellingPrice === null ? 'Retail price required' : null,
         supplierVariantId: product.cjProductId,
         packedWeightGrams: 0,
         evidenceCapturedAt: product.lastCheckedAt,
@@ -870,7 +880,7 @@ function editorVariants(product: CatalogueProductFixture): VariantFixture[] {
     hasImage: variant.hasImage,
     enabled: product.status === 'LIVE' && variant.availability === 'AVAILABLE',
     listingState: editorVariantListingState(product, variant),
-    attention: variant.sellingPrice === null ? 'Pricing unresolved' : null,
+    attention: variant.sellingPrice === null ? 'Retail price required' : null,
     supplierVariantId: variant.cjVariantId,
     packedWeightGrams: 0,
     evidenceCapturedAt: variant.lastCheckedAt,
@@ -1000,30 +1010,42 @@ function editorSpecifications(
  * §6).
  */
 function editorMedia(product: CatalogueProductFixture): MediaItemFixture[] {
-  if (product.coverImageUrl === null || product.coverImageUrl === undefined) {
+  let imageUrls: string[] = [];
+
+  if (
+    product.mediaImageUrls !== undefined &&
+    product.mediaImageUrls.length > 0
+  ) {
+    imageUrls = product.mediaImageUrls;
+  } else if (
+    product.coverImageUrl !== null &&
+    product.coverImageUrl !== undefined
+  ) {
+    imageUrls = [product.coverImageUrl];
+  }
+
+  if (imageUrls.length === 0) {
     return [];
   }
 
-  return [
-    {
-      id: `${product.id}-media`,
-      label: 'Supplier photo',
-      sourceUrl: product.coverImageUrl,
-      altText: `Supplier listing photo for ${product.name}`,
-      rightsCheck:
-        product.mediaStatus === 'OWN_PICTURES'
-          ? 'VERIFIED'
-          : 'PENDING_VERIFICATION',
-      storageState: 'SUPPLIER_HOSTED_SOURCE',
-      pixelWidth: 0,
-      pixelHeight: 0,
-      note:
-        product.mediaStatus === 'OWN_PICTURES'
-          ? 'Supplier-hosted address with a recorded rights basis. Sals3 holds no copy of the file, so its dimensions are unknown.'
-          : 'Shown from the stored discovery snapshot. No media provenance row exists for it yet, so it is not publishable.',
-      isCover: true,
-    },
-  ];
+  return imageUrls.map((imageUrl, index) => ({
+    id: `${product.id}-media-${index + 1}`,
+    label: `Supplier photo ${index + 1}`,
+    sourceUrl: imageUrl,
+    altText: `Supplier listing photo for ${product.name}`,
+    rightsCheck:
+      product.mediaStatus === 'OWN_PICTURES'
+        ? 'VERIFIED'
+        : 'PENDING_VERIFICATION',
+    storageState: 'SUPPLIER_HOSTED_SOURCE',
+    pixelWidth: 0,
+    pixelHeight: 0,
+    note:
+      product.mediaStatus === 'OWN_PICTURES'
+        ? 'Supplier-hosted address with a recorded rights basis. Sals3 holds no copy of the file, so its dimensions are unknown.'
+        : 'Shown from the stored discovery snapshot. No media provenance row exists for it yet, so it is not publishable.',
+    isCover: index === 0,
+  }));
 }
 
 export function productToEditorFixture(product: CatalogueProductFixture): {

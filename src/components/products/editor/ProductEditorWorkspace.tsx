@@ -27,6 +27,7 @@ import {
   type EditorSectionId,
   type MediaItemFixture,
   type ProductEditorFixture,
+  type ReadinessIssue,
   type SpecificationFixture,
   type VariantFixture,
 } from '@/lib/seller-center/product-editor/types';
@@ -78,6 +79,8 @@ type ProductEditorWorkspaceProps = {
 };
 
 const EXIT_HREF = '/products/pipeline?tab=ready';
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function descriptionDocumentFromText(description: string) {
   const blocks = description
@@ -94,6 +97,34 @@ function isBulkPriceable(variant: VariantFixture): boolean {
   return (
     variant.listingState !== 'BLOCKED' && variant.listingState !== 'PAUSED'
   );
+}
+
+function retailPriceIssue(fixture: ProductEditorFixture): ReadinessIssue {
+  return {
+    id: `${fixture.fixtureKey}-retail-price`,
+    severity: 'BLOCKER',
+    title: 'Retail price is required',
+    explanation: 'Enter a retail price greater than zero for every variant.',
+    affectedScope: 'Variants & Pricing',
+    source: 'AUTOMATED_VALIDATION',
+    section: 'variants',
+    reasonCode: null,
+    resolution: 'Set the retail price.',
+  };
+}
+
+function sals3CategoryIssue(fixture: ProductEditorFixture): ReadinessIssue {
+  return {
+    id: `${fixture.fixtureKey}-sals3-category-l1`,
+    severity: 'BLOCKER',
+    title: 'Sals3 category is required',
+    explanation: 'Choose one Sals3 category from the Basic Information list.',
+    affectedScope: 'Basic Information',
+    source: 'AUTOMATED_VALIDATION',
+    section: 'basic',
+    reasonCode: null,
+    resolution: 'Select a Sals3 category.',
+  };
 }
 
 /**
@@ -244,13 +275,40 @@ export default function ProductEditorWorkspace({
     [touch],
   );
 
+  const currentIssues = useMemo(() => {
+    const hasMissingRetailPrice = variants.some(
+      (variant) => variant.retailPrice.amountMinor <= 0,
+    );
+    const hasMissingSals3Category = sals3CategoryL1.trim() === '';
+    const withoutLocalIssues = fixture.issues.filter(
+      (issue) =>
+        issue.title !== 'Selling price is not resolved' &&
+        issue.title !== 'Retail price is required' &&
+        issue.title !== 'Sals3 category is required',
+    );
+    const localIssues = [
+      ...(hasMissingRetailPrice ? [retailPriceIssue(fixture)] : []),
+      ...(hasMissingSals3Category ? [sals3CategoryIssue(fixture)] : []),
+    ];
+
+    return [...withoutLocalIssues, ...localIssues];
+  }, [fixture, sals3CategoryL1, variants]);
+
+  const currentFixture = useMemo(
+    () => ({
+      ...fixture,
+      issues: currentIssues,
+    }),
+    [currentIssues, fixture],
+  );
+
   const decision = useMemo(
-    () => publishDecision(fixture, lifecycle),
-    [fixture, lifecycle],
+    () => publishDecision(currentFixture, lifecycle),
+    [currentFixture, lifecycle],
   );
   const warnings = useMemo(
-    () => issuesOfSeverity(fixture.issues, 'WARNING'),
-    [fixture.issues],
+    () => issuesOfSeverity(currentIssues, 'WARNING'),
+    [currentIssues],
   );
 
   const bulkPriceable = useMemo(
@@ -279,6 +337,8 @@ export default function ProductEditorWorkspace({
               amountMinor: Math.round(value * 100),
               currency: variant.retailPrice.currency,
             },
+            attention:
+              Math.round(value * 100) <= 0 ? 'Retail price required' : null,
           };
         }
 
@@ -292,6 +352,10 @@ export default function ProductEditorWorkspace({
             amountMinor: Math.round(landed.amountMinor * (1 + value / 100)),
             currency: variant.retailPrice.currency,
           },
+          attention:
+            Math.round(landed.amountMinor * (1 + value / 100)) <= 0
+              ? 'Retail price required'
+              : null,
         };
       }),
     );
@@ -324,6 +388,13 @@ export default function ProductEditorWorkspace({
         title: productName,
         sals3CategoryL1: sals3CategoryL1 === '' ? null : sals3CategoryL1,
         descriptionDocument: descriptionDocumentFromText(description),
+        variantRetailPrices: variants
+          .filter((variant) => UUID_PATTERN.test(variant.id))
+          .map((variant) => ({
+            variantId: variant.id,
+            amountMinor: variant.retailPrice.amountMinor,
+            currency: variant.retailPrice.currency,
+          })),
       });
 
       if (result.ok) {
@@ -380,7 +451,7 @@ export default function ProductEditorWorkspace({
    */
   const renderReadiness = (showHeading: boolean) => (
     <ListingReadinessPanel
-      fixture={fixture}
+      fixture={currentFixture}
       blockerCount={decision.blockerCount}
       warningCount={decision.warningCount}
       suggestionCount={decision.suggestionCount}
@@ -395,6 +466,7 @@ export default function ProductEditorWorkspace({
       description={description}
       variants={variants}
       markets={fixture.markets}
+      media={media}
       specifications={specifications}
       previewMarketCode={previewMarketCode}
       onPreviewMarketChange={setPreviewMarketCode}
@@ -407,7 +479,7 @@ export default function ProductEditorWorkspace({
   return (
     <div className="@container flex flex-col gap-4">
       <ProductEditorHeader
-        fixture={fixture}
+        fixture={currentFixture}
         productName={productName}
         isDirty={isDirty}
         onOpenReadiness={() => setReadinessOpen(true)}
@@ -416,7 +488,7 @@ export default function ProductEditorWorkspace({
       />
 
       <EditorStateBanners
-        banner={fixture.banner}
+        banner={currentFixture.banner}
         lifecycle={lifecycle}
         onRetry={() => setLifecycle('IDLE')}
       />
@@ -431,7 +503,7 @@ export default function ProductEditorWorkspace({
       <div className="grid grid-cols-1 items-start gap-4 @min-[86.5rem]:grid-cols-[17rem_minmax(47.5rem,1fr)_20rem]">
         <aside className="sticky top-20 hidden max-h-[calc(100vh-6rem)] overflow-x-hidden overflow-y-auto @min-[86.5rem]:block">
           <ListingReadinessPanel
-            fixture={fixture}
+            fixture={currentFixture}
             blockerCount={decision.blockerCount}
             warningCount={decision.warningCount}
             suggestionCount={decision.suggestionCount}
@@ -444,7 +516,7 @@ export default function ProductEditorWorkspace({
 
         <div className="@container flex min-w-0 flex-col gap-4">
           <EditorSectionNavigation
-            issues={fixture.issues}
+            issues={currentIssues}
             activeSection={activeSection}
             onGoToSection={goToSection}
           />
@@ -452,7 +524,7 @@ export default function ProductEditorWorkspace({
           <EditorSectionCard
             id="basic"
             title="Basic Information"
-            severity={sectionSeverity(fixture.issues, 'basic')}
+            severity={sectionSeverity(currentIssues, 'basic')}
           >
             <BasicInformationSection
               fixture={fixture}
@@ -483,7 +555,7 @@ export default function ProductEditorWorkspace({
           <EditorSectionCard
             id="specs"
             title="Category & Specifications"
-            severity={sectionSeverity(fixture.issues, 'specs')}
+            severity={sectionSeverity(currentIssues, 'specs')}
             meta={
               <span className="text-xs text-muted-foreground">
                 {filledSpecificationCount(specifications)} of{' '}
@@ -519,7 +591,7 @@ export default function ProductEditorWorkspace({
           <EditorSectionCard
             id="description"
             title="Description"
-            severity={sectionSeverity(fixture.issues, 'description')}
+            severity={sectionSeverity(currentIssues, 'description')}
           >
             <DescriptionSection
               description={description}
@@ -534,7 +606,7 @@ export default function ProductEditorWorkspace({
           <EditorSectionCard
             id="variants"
             title="Variants & Pricing"
-            severity={sectionSeverity(fixture.issues, 'variants')}
+            severity={sectionSeverity(currentIssues, 'variants')}
             meta={
               <span className="text-xs text-muted-foreground">
                 {variants.filter((variant) => variant.enabled).length} of{' '}
@@ -569,6 +641,7 @@ export default function ProductEditorWorkspace({
                     amountMinor,
                     currency: target.retailPrice.currency,
                   },
+                  attention: amountMinor <= 0 ? 'Retail price required' : null,
                 });
               }}
               onSellerSkuChange={(variantId, value) =>
@@ -608,7 +681,7 @@ export default function ProductEditorWorkspace({
           <EditorSectionCard
             id="media"
             title="Media"
-            severity={sectionSeverity(fixture.issues, 'media')}
+            severity={sectionSeverity(currentIssues, 'media')}
             meta={
               <span className="text-xs text-muted-foreground">
                 {media.length} images · 0 videos
@@ -649,10 +722,10 @@ export default function ProductEditorWorkspace({
           <EditorSectionCard
             id="review"
             title="Review & Publish"
-            severity={sectionSeverity(fixture.issues, 'review')}
+            severity={sectionSeverity(currentIssues, 'review')}
           >
             <ReviewPublishSection
-              fixture={fixture}
+              fixture={currentFixture}
               variants={variants}
               decision={decision}
               onGoToSection={goToSection}

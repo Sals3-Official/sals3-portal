@@ -1,4 +1,5 @@
 import { Monitor, Smartphone } from 'lucide-react';
+import Image from 'next/image';
 import { useState } from 'react';
 import { Label } from '@/components/ui/label';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
@@ -13,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { formatMoney } from '@/lib/seller-center/product-editor/format';
 import type {
   MarketEvidenceFixture,
+  MediaItemFixture,
   SpecificationFixture,
   VariantFixture,
 } from '@/lib/seller-center/product-editor/types';
@@ -66,6 +68,7 @@ type DraftStorefrontPreviewProps = {
   description: string;
   variants: VariantFixture[];
   markets: MarketEvidenceFixture[];
+  media: MediaItemFixture[];
   specifications: SpecificationFixture[];
   previewMarketCode: string;
   onPreviewMarketChange: (code: string) => void;
@@ -92,6 +95,7 @@ export default function DraftStorefrontPreview({
   description,
   variants,
   markets,
+  media,
   specifications,
   previewMarketCode,
   onPreviewMarketChange,
@@ -105,6 +109,7 @@ export default function DraftStorefrontPreview({
   const market =
     markets.find((item) => item.code === previewMarketCode) ?? markets[0];
   const summary = description.split('\n')[0] ?? '';
+  const cover = media.find((item) => item.isCover) ?? media[0];
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3 @min-[48rem]:p-4">
@@ -181,12 +186,25 @@ export default function DraftStorefrontPreview({
             <span className="h-1 w-10 rounded-full bg-border" />
           </div>
         )}
-        <span
-          aria-hidden="true"
-          className="flex aspect-square items-center justify-center bg-muted font-mono text-xs text-muted-foreground"
-        >
-          product image
-        </span>
+        {cover?.sourceUrl === undefined || cover.sourceUrl === null ? (
+          <span
+            aria-hidden="true"
+            className="flex aspect-square items-center justify-center bg-muted font-mono text-xs text-muted-foreground"
+          >
+            product image
+          </span>
+        ) : (
+          <span className="block aspect-square bg-muted">
+            <Image
+              src={cover.sourceUrl}
+              alt={cover.altText}
+              width={384}
+              height={384}
+              sizes={device === 'phone' ? '220px' : '320px'}
+              className="size-full object-contain"
+            />
+          </span>
+        )}
 
         <div className="flex flex-col gap-2 p-3">
           <p className="text-sm leading-snug font-semibold">{productName}</p>

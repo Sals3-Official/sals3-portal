@@ -66,6 +66,7 @@ export default function BasicInformationSection({
   const rejectedMediaCount = fixture.media.filter(
     (item) => item.rightsCheck === 'REJECTED',
   ).length;
+  const categoryMissing = sals3CategoryL1.trim() === '';
 
   return (
     <div className="flex flex-col gap-5">
@@ -161,9 +162,19 @@ export default function BasicInformationSection({
           >
             <SelectTrigger
               id="editor-sals3-category"
-              className="w-full bg-card"
+              aria-invalid={categoryMissing ? true : undefined}
+              aria-describedby={
+                categoryMissing
+                  ? 'editor-sals3-category-error'
+                  : 'editor-sals3-category-help'
+              }
+              className={`w-full bg-card ${
+                categoryMissing
+                  ? 'border-red-500 text-red-700 focus-visible:ring-red-500'
+                  : ''
+              }`}
             >
-              <SelectValue placeholder="Choose a Sals3 category" />
+              <SelectValue placeholder="None — choose a Sals3 category" />
             </SelectTrigger>
             <SelectContent>
               {SALS3_CATEGORY_L1_OPTIONS.map((option) => (
@@ -173,10 +184,22 @@ export default function BasicInformationSection({
               ))}
             </SelectContent>
           </Select>
-          <p className="text-xs text-muted-foreground">
-            Draft L1 category shown in Sals3. Leaf category, pricing, and
-            publication mapping stay unchanged.
-          </p>
+          {categoryMissing ? (
+            <p
+              id="editor-sals3-category-error"
+              className="text-xs font-medium text-red-600"
+            >
+              Choose one Sals3 category from the list.
+            </p>
+          ) : (
+            <p
+              id="editor-sals3-category-help"
+              className="text-xs text-muted-foreground"
+            >
+              Draft L1 category shown in Sals3. Leaf category, pricing, and
+              publication mapping stay unchanged.
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col gap-1.5">

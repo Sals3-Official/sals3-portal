@@ -1,6 +1,7 @@
 'use client';
 
 import { ChevronDown, ChevronRight, Copy, Pencil } from 'lucide-react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import StatusPill, {
@@ -117,11 +118,19 @@ export default function CatalogueProductRow({
               <span className="size-4 shrink-0" aria-hidden="true" />
             )}
 
-            <span
-              aria-hidden="true"
-              className="flex size-12 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[10px] text-muted-foreground"
-            >
-              {product.hasImage ? null : 'No image'}
+            <span className="relative flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted text-[10px] text-muted-foreground">
+              {product.coverImageUrl ? (
+                <Image
+                  src={product.coverImageUrl}
+                  alt={product.name}
+                  width={48}
+                  height={48}
+                  sizes="48px"
+                  className="size-full object-contain"
+                />
+              ) : (
+                'No image'
+              )}
             </span>
 
             <div className="min-w-0 flex-1">

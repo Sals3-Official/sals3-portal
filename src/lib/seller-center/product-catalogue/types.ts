@@ -233,6 +233,8 @@ export type CatalogueProductFixture = {
    * read path. Absent on the illustrative fixtures, which carry no imagery.
    */
   coverImageUrl?: string | null;
+  /** All host-checked supplier image addresses recorded for this product. */
+  mediaImageUrls?: string[];
   status: ListingStatus;
   categoryPath: string;
   categoryCode?: string | null;

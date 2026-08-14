@@ -343,6 +343,13 @@ describe('saveProductDraftAction', () => {
       version: 1,
       blocks: [{ type: 'paragraph', text: 'Soft merino wool.' }],
     },
+    variantRetailPrices: [
+      {
+        variantId: '66666666-6666-4666-8666-666666666666',
+        amountMinor: 1999,
+        currency: 'USD',
+      },
+    ],
   };
 
   it('requires the edit permission', async () => {
@@ -375,6 +382,16 @@ describe('saveProductDraftAction', () => {
     expect(saveProductDraft).not.toHaveBeenCalled();
   });
 
+  it('rejects an empty Sals3 category selection', async () => {
+    await expect(
+      saveProductDraftAction({
+        ...VALID_SAVE,
+        sals3CategoryL1: null,
+      }),
+    ).resolves.toEqual({ ok: false, reason: 'invalid_input' });
+    expect(saveProductDraft).not.toHaveBeenCalled();
+  });
+
   it('rejects a description document containing markup', async () => {
     // The allow list runs at this boundary, so unsafe content is never stored
     // and never depends on a renderer escaping it later.
@@ -385,6 +402,22 @@ describe('saveProductDraftAction', () => {
           version: 1,
           blocks: [{ type: 'paragraph', text: '<script>alert(1)</script>' }],
         },
+      }),
+    ).resolves.toEqual({ ok: false, reason: 'invalid_input' });
+    expect(saveProductDraft).not.toHaveBeenCalled();
+  });
+
+  it('rejects a zero retail price', async () => {
+    await expect(
+      saveProductDraftAction({
+        ...VALID_SAVE,
+        variantRetailPrices: [
+          {
+            variantId: '66666666-6666-4666-8666-666666666666',
+            amountMinor: 0,
+            currency: 'USD',
+          },
+        ],
       }),
     ).resolves.toEqual({ ok: false, reason: 'invalid_input' });
     expect(saveProductDraft).not.toHaveBeenCalled();
