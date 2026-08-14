@@ -194,6 +194,18 @@ export type CatalogueVariantFixture = {
   id: string;
   /** e.g. "Color: Green, Size: Medium 31-35". */
   optionLabel: string;
+  /**
+   * `provider_variant_references.source_option_label` verbatim, or `null` when
+   * the supplier reported none.
+   *
+   * Deliberately separate from `optionLabel`, which falls back to a combination
+   * key and then to a `sals3Sku` hash so something is always displayable.
+   * `deriveOptionSplit` must see only the supplier's own string: a hash like
+   * `S3V-12D76F1B5376` contains the same `-` the supplier delimits on, so the
+   * fallback would tokenise into a proposal that `saveOptionMapping` — which
+   * reads this column directly — then refuses as SHAPE_MISMATCH.
+   */
+  supplierOptionLabel: string | null;
   /** Canonical Sals3 sellable identity - never a CJ id. */
   sals3VariantId: string;
   sellerSku: string;
@@ -308,6 +320,14 @@ export type CatalogueProductFixture = {
   currentRevisionId?: string | null;
   /** Optimistic-concurrency token for the current open draft revision. */
   currentRevisionVersion?: number | null;
+  /**
+   * Axis names a seller has already committed for this product, in their stored
+   * position order. Empty when nothing is mapped yet.
+   *
+   * Optional because illustrative fixtures have no `product_options` rows to
+   * read; absent and empty both mean "not mapped".
+   */
+  optionAxisNames?: string[];
   variants: CatalogueVariantFixture[];
 };
 

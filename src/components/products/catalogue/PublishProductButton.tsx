@@ -35,6 +35,8 @@ const FAILURE_MESSAGES: Record<PublishActionFailureReason, string> = {
     'No active variant yet. Fetch supplier evidence for this product first.',
   CATEGORY_UNMAPPED:
     'No CJ category is on record for this product, so it cannot be categorised or priced.',
+  OPTIONS_UNMAPPED:
+    'Name this product’s option groups in Variants & Pricing before publishing.',
   NO_APPROVED_MEDIA: 'No approved product image is on file yet.',
   PRICING_UNRESOLVED: 'A price could not be resolved.',
   RETAIL_BELOW_SUPPLIER_COST:

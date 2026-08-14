@@ -27,6 +27,12 @@ vi.mock('@/app/(portal)/listings/publish-actions', () => ({
   publishProductAction: vi.fn(),
 }));
 
+// Default export: the module reaches the server-only db client, which throws
+// under jsdom the moment `ProductEditor` imports it.
+vi.mock('@/app/(portal)/listings/option-mapping-actions', () => ({
+  default: vi.fn(),
+}));
+
 function fixture(key: string): ProductEditorFixture {
   const resolved = resolveProductEditorFixture(key);
 

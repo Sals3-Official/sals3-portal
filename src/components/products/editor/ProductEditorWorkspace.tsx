@@ -45,6 +45,7 @@ import ProductEditorHeader from './ProductEditorHeader';
 import ReviewPublishSection from './ReviewPublishSection';
 import SpecificationsSection from './SpecificationsSection';
 import SupplierSourceDrawer from './SupplierSourceDrawer';
+import VariantOptionMappingSection from './VariantOptionMappingSection';
 import VariantPricingTable from './VariantPricingTable';
 
 type ProductEditorWorkspaceProps = {
@@ -83,6 +84,16 @@ type ProductEditorWorkspaceProps = {
         availability: 'AVAILABLE' | 'UNAVAILABLE' | 'UNKNOWN';
       }
     | { ok: false; reason: string; detail?: string }
+  >;
+  /**
+   * Option-mapping write boundary. Omitted for fixture/design-preview mode, so
+   * the section pre-fills and explains itself there but offers no save.
+   */
+  optionMappingAction?: (
+    input: unknown,
+  ) => Promise<
+    | { ok: true; axisCount: number; mappedVariantCount: number }
+    | { ok: false; reason: string; message: string }
   >;
 };
 
@@ -172,6 +183,7 @@ export default function ProductEditorWorkspace({
   initialLifecycle,
   saveDraftAction,
   publishAction,
+  optionMappingAction,
 }: ProductEditorWorkspaceProps) {
   const router = useRouter();
 
@@ -510,6 +522,38 @@ export default function ProductEditorWorkspace({
     />
   );
 
+  /**
+   * Mapping needs the same compare-and-set token a publish does, and
+   * `publishTarget` is the only place a real `products.version` reaches this
+   * screen. Captured in a local so its non-null narrowing survives into the
+   * closure below.
+   *
+   * Absent action or absent target both mean "no save": in design-preview mode
+   * the section still pre-fills and explains itself, but offers nothing to press.
+   */
+  const optionMappingTarget = fixture.publishTarget;
+  const handleOptionMappingSave =
+    optionMappingAction === undefined || optionMappingTarget === null
+      ? undefined
+      : async (
+          axes: { name: string; values: { raw: string; label: string }[] }[],
+        ) => {
+          const result = await optionMappingAction({
+            productId: optionMappingTarget.productId,
+            expectedProductVersion: optionMappingTarget.expectedProductVersion,
+            axes,
+          });
+
+          // A committed mapping changes what the read-model returns, and the
+          // section switches to its report-only state from that data rather
+          // than from local state.
+          if (result.ok) router.refresh();
+
+          return result.ok
+            ? { ok: true }
+            : { ok: false, message: result.message };
+        };
+
   return (
     <div className="@container flex flex-col gap-4">
       <ProductEditorHeader
@@ -636,6 +680,20 @@ export default function ProductEditorWorkspace({
               }}
             />
           </EditorSectionCard>
+
+          {/*
+            Sits with Variants & Pricing because naming the axes is what makes
+            the variant rows below readable. It renders its own card rather than
+            nesting inside the one below: `EditorSectionCard` is a top-level
+            section shell, and a card inside a card would read as a subsection of
+            pricing, which this is not.
+          */}
+          <VariantOptionMappingSection
+            proposal={fixture.optionMapping.proposal}
+            mappedAxisNames={fixture.optionMapping.mappedAxisNames}
+            variantCount={fixture.optionMapping.variantCount}
+            onSave={handleOptionMappingSave}
+          />
 
           <EditorSectionCard
             id="variants"

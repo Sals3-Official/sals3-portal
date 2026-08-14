@@ -49,7 +49,7 @@ function attention(
 
 type VariantSeed = Omit<
   CatalogueVariantFixture,
-  'sellingPrice' | 'supplierCost'
+  'sellingPrice' | 'supplierCost' | 'supplierOptionLabel'
 > & {
   sellingPriceMinor: number;
   supplierCostMinor: number;
@@ -59,6 +59,10 @@ function variant(seed: VariantSeed): CatalogueVariantFixture {
   return {
     id: seed.id,
     optionLabel: seed.optionLabel,
+    // These design-preview products have no provider_variant_references row,
+    // so there is no supplier label to report. `optionLabel` above is a
+    // Sals3-authored display string, not something a supplier sent.
+    supplierOptionLabel: null,
     sals3VariantId: seed.sals3VariantId,
     sellerSku: seed.sellerSku,
     cjVariantId: seed.cjVariantId,
