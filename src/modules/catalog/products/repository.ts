@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 
 import {
   offerSupplierBindings,
@@ -601,6 +601,64 @@ export async function insertUnpublishedOffer(
     .returning();
 
   return row;
+}
+
+export async function updateSellerRetailPrices(
+  executor: Executor,
+  input: {
+    productId: string;
+    sellerAccountId: string;
+    prices: Array<{
+      variantId: string;
+      amountMinor: number;
+      currency: string;
+    }>;
+    actorId: string;
+  },
+): Promise<number> {
+  if (input.prices.length === 0) return 0;
+
+  const requestedVariantIds = input.prices.map((price) => price.variantId);
+  const variantRows = await executor
+    .select({ id: productVariants.id })
+    .from(productVariants)
+    .where(
+      and(
+        eq(productVariants.productId, input.productId),
+        inArray(productVariants.id, requestedVariantIds),
+      ),
+    );
+  const productVariantIds = new Set(variantRows.map((row) => row.id));
+  return input.prices
+    .filter((price) => productVariantIds.has(price.variantId))
+    .reduce<Promise<number>>(async (totalPromise, price) => {
+      const total = await totalPromise;
+      const rows = await executor
+        .update(productOffers)
+        .set({
+          priceAmountMinor: BigInt(price.amountMinor),
+          priceCurrency: price.currency,
+          pricingState: 'RESOLVED',
+          pricingUnavailableReason: null,
+          pricingResolverVersion: 'SELLER_RETAIL_PRICE_V1',
+          pricingDecision: {
+            source: 'SELLER_RETAIL_PRICE',
+            amountMinor: price.amountMinor,
+            currency: price.currency,
+          },
+          updatedAt: new Date(),
+          updatedBy: input.actorId,
+        })
+        .where(
+          and(
+            eq(productOffers.sellerAccountId, input.sellerAccountId),
+            eq(productOffers.variantId, price.variantId),
+          ),
+        )
+        .returning({ id: productOffers.id });
+
+      return total + rows.length;
+    }, Promise.resolve(0));
 }
 
 export async function findBinding(

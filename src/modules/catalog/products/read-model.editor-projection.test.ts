@@ -33,6 +33,10 @@ const CATALOGUE_PRODUCT: CatalogueProductFixture = {
   hasImage: true,
   coverImageUrl:
     'https://cf.cjdropshipping.com/quick/product/697a2372-330c-4a72-8837-6ca100d99fab.jpg',
+  mediaImageUrls: [
+    'https://cf.cjdropshipping.com/quick/product/697a2372-330c-4a72-8837-6ca100d99fab.jpg',
+    'https://cf.cjdropshipping.com/quick/product/a7657750-4318-47e8-875f-b6220ac35354.jpg',
+  ],
   status: 'DRAFT',
   categoryPath: 'Unmapped category',
   categoryCode: null,
@@ -71,10 +75,12 @@ describe('productToEditorFixture — supplier media', () => {
   it('carries the recorded image address and alternative text onto the tile', () => {
     const { fixture } = productToEditorFixture(CATALOGUE_PRODUCT);
 
-    expect(fixture.media).toHaveLength(1);
+    expect(fixture.media).toHaveLength(2);
     expect(fixture.media[0].sourceUrl).toBe(CATALOGUE_PRODUCT.coverImageUrl);
+    expect(fixture.media[1].sourceUrl).toContain('a7657750');
     expect(fixture.media[0].altText).toContain(CATALOGUE_PRODUCT.name);
     expect(fixture.media[0].isCover).toBe(true);
+    expect(fixture.media[1].isCover).toBe(false);
   });
 
   it('claims no Sals3-held copy of the file, and no dimensions it never measured', () => {
@@ -99,6 +105,7 @@ describe('productToEditorFixture — supplier media', () => {
       ...CATALOGUE_PRODUCT,
       hasImage: false,
       coverImageUrl: null,
+      mediaImageUrls: [],
     });
 
     expect(fixture.media).toEqual([]);
@@ -125,6 +132,20 @@ describe('productToEditorFixture — the CJ category is the category', () => {
     });
 
     expect(fixture.sals3CategoryL1).toBe("Men's Apparel & Tactical Wear");
+  });
+
+  it('does not default the seller draft L1 from the mapped or supplier category', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      categoryPath: 'Home, Furniture & Living > Storage',
+      supplierCategoryPath: 'Home, Furniture & Living > Storage',
+      sals3CategoryL1: null,
+    });
+
+    expect(fixture.sals3CategoryPath).toBe(
+      'Home, Furniture & Living > Storage',
+    );
+    expect(fixture.sals3CategoryL1).toBeNull();
   });
 
   it('exposes the open draft revision token for database saves', () => {

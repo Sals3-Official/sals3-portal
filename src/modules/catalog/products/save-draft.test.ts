@@ -12,6 +12,7 @@ vi.mock('@/modules/catalog/candidates/repository', () => ({
 vi.mock('./repository', () => ({
   findProductForSteward: vi.fn(),
   saveDraftRevisionContent: vi.fn(),
+  updateSellerRetailPrices: vi.fn(),
   updateProductEditorialForSteward: vi.fn(),
 }));
 
@@ -23,6 +24,7 @@ import type { SaveProductDraftInput } from './contracts';
 import {
   findProductForSteward,
   saveDraftRevisionContent,
+  updateSellerRetailPrices,
   updateProductEditorialForSteward,
 } from './repository';
 /* eslint-enable import/first */
@@ -45,6 +47,13 @@ const REQUEST = {
     version: 1 as const,
     blocks: [{ type: 'paragraph' as const, text: 'Soft merino wool.' }],
   },
+  variantRetailPrices: [
+    {
+      variantId: '33333333-3333-4333-8333-333333333333',
+      amountMinor: 1999,
+      currency: 'USD',
+    },
+  ],
 } satisfies SaveProductDraftInput;
 
 function run(sellerAccountId = 'seller-a') {
@@ -70,6 +79,7 @@ beforeEach(() => {
   asMock(updateProductEditorialForSteward).mockResolvedValue({
     id: REQUEST.productId,
   });
+  asMock(updateSellerRetailPrices).mockResolvedValue(1);
 });
 
 describe('saveProductDraft', () => {
@@ -100,6 +110,7 @@ describe('saveProductDraft', () => {
     });
     expect(saveDraftRevisionContent).not.toHaveBeenCalled();
     expect(updateProductEditorialForSteward).not.toHaveBeenCalled();
+    expect(updateSellerRetailPrices).not.toHaveBeenCalled();
     expect(appendAuditEvent).not.toHaveBeenCalled();
   });
 
@@ -113,6 +124,7 @@ describe('saveProductDraft', () => {
       reason: 'version_conflict',
     });
     expect(updateProductEditorialForSteward).not.toHaveBeenCalled();
+    expect(updateSellerRetailPrices).not.toHaveBeenCalled();
   });
 
   it('saves the draft L1 category without treating it as the leaf category id', async () => {
@@ -125,6 +137,17 @@ describe('saveProductDraft', () => {
         sals3CategoryL1: 'Sports, Fitness & Outdoor Gear',
       }),
     );
+  });
+
+  it('saves seller-entered retail prices on seller-scoped offers', async () => {
+    await run();
+
+    expect(updateSellerRetailPrices).toHaveBeenCalledWith(expect.anything(), {
+      productId: REQUEST.productId,
+      sellerAccountId: 'seller-a',
+      prices: REQUEST.variantRetailPrices,
+      actorId: 'actor-1',
+    });
   });
 
   it('audits a rejected stale write rather than discarding it silently', async () => {
@@ -149,7 +172,11 @@ describe('saveProductDraft', () => {
       expect.anything(),
       expect.objectContaining({
         action: 'catalog_product_revision.saved',
-        payload: expect.objectContaining({ previousVersion: 3, version: 4 }),
+        payload: expect.objectContaining({
+          previousVersion: 3,
+          version: 4,
+          pricedOfferCount: 1,
+        }),
       }),
     );
   });
@@ -160,6 +187,7 @@ describe('saveProductDraft', () => {
     const executors = [
       asMock(findProductForSteward).mock.calls[0][0],
       asMock(saveDraftRevisionContent).mock.calls[0][0],
+      asMock(updateSellerRetailPrices).mock.calls[0][0],
       asMock(appendAuditEvent).mock.calls[0][0],
     ];
 

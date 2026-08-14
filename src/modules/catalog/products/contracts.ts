@@ -64,8 +64,18 @@ export const saveProductDraftInputSchema = z.object({
   /** Optimistic concurrency: the revision version the editor actually rendered. */
   expectedRevisionVersion: z.number().int().positive(),
   title: z.string().trim().min(3).max(MAX_TITLE_LENGTH),
-  sals3CategoryL1: sals3CategoryL1Schema.nullable(),
+  sals3CategoryL1: sals3CategoryL1Schema,
   descriptionDocument: descriptionDocumentSchema,
+  variantRetailPrices: z.array(
+    z.object({
+      variantId: z.string().uuid(),
+      amountMinor: z.number().int().positive(),
+      currency: z
+        .string()
+        .trim()
+        .regex(/^[A-Z]{3}$/),
+    }),
+  ),
 });
 
 export type SaveProductDraftInput = z.infer<typeof saveProductDraftInputSchema>;

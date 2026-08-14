@@ -136,17 +136,56 @@ describe('Product Editor - required vs recommended attributes', () => {
 });
 
 describe('Product Editor - money that is not known', () => {
-  it('shows missing freight as a route check and missing margin as unavailable', () => {
+  it('keeps freight, landed, margin, warehouse, and listing state out of the pricing grid', () => {
     renderEditor('blocked');
 
-    expect(screen.getAllByText('Needs route check').length).toBe(6);
-    expect(screen.getAllByText('Not available').length).toBeGreaterThan(0);
+    const table = screen.getByRole('table');
+
+    expect(
+      within(table).queryByRole('columnheader', { name: 'Freight est.' }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(table).queryByRole('columnheader', { name: 'Landed est.' }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(table).queryByRole('columnheader', { name: 'Margin est.' }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(table).queryByRole('columnheader', { name: 'Warehouse' }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(table).queryByRole('columnheader', { name: 'Listing state' }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(table).getByRole('columnheader', { name: 'Retail price' }),
+    ).toBeInTheDocument();
   });
 
-  it('never renders an unknown amount as zero', () => {
-    const { container } = renderEditor('blocked');
+  it('uses retail price, not freight or margin evidence, as the price blocker', () => {
+    const resolved = fixture('pass');
 
-    expect(container.textContent).not.toContain('$0.00');
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          variants: resolved.variants.map((variant, index) =>
+            index === 0
+              ? {
+                  ...variant,
+                  retailPrice: { ...variant.retailPrice, amountMinor: 0 },
+                  attention: 'Retail price required',
+                }
+              : variant,
+          ),
+        }}
+        initialLifecycle="IDLE"
+        variantGuidance={[]}
+      />,
+    );
+
+    expect(
+      screen.getAllByText('Retail price is required').length,
+    ).toBeGreaterThan(0);
   });
 
   it('shows the supplier source currency in the source drawer', () => {
@@ -410,10 +449,9 @@ describe('Product Editor - the photo a real product actually has', () => {
       .getAllByRole('img')
       .filter((image) => image.getAttribute('src')?.includes('697a2372'));
 
-    // Three on purpose: the page header above Basic Information - the square
-    // that was a hard-coded "No image" for every product - plus the summary
-    // strip inside Basic Information and the full tile in the Media section.
-    expect(rendered).toHaveLength(3);
+    // Four on purpose: header, Basic Information strip, Media tile, and the
+    // Draft Storefront Preview cover.
+    expect(rendered).toHaveLength(4);
     rendered.forEach((image) => {
       expect(image).toHaveAccessibleName(/Supplier listing photo/);
     });
@@ -443,7 +481,7 @@ describe('Product Editor - the photo a real product actually has', () => {
       screen
         .getAllByRole('img')
         .filter((image) => image.getAttribute('src')?.includes('697a2372')),
-    ).toHaveLength(3);
+    ).toHaveLength(4);
     expect(screen.getByText('Image 3')).toBeInTheDocument();
   });
 
@@ -534,8 +572,53 @@ describe('Product Editor - the photo a real product actually has', () => {
       />,
     );
 
+    const category = screen.getByRole('combobox', { name: /Sals3 Category/i });
+
+    expect(category).toHaveTextContent('None — choose a Sals3 category');
+    expect(category).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Sals3 category is required')).toBeInTheDocument();
     expect(
-      screen.getByRole('combobox', { name: /Sals3 Category/i }),
+      screen.getByText('Choose one Sals3 category from the list.'),
     ).toBeInTheDocument();
+  });
+
+  it('clears the required Sals3 category error once an L1 is selected', async () => {
+    const resolved = withCoverAddress();
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          sals3CategoryPath: 'Unmapped category',
+          sals3CategoryCode: null,
+          sals3CategoryL1: null,
+          categoryMappingConfidence: 'UNMAPPED',
+        }}
+        initialLifecycle="IDLE"
+        variantGuidance={[]}
+        dataMode="database"
+      />,
+    );
+
+    const category = screen.getByRole('combobox', { name: /Sals3 Category/i });
+
+    fireEvent.click(category);
+
+    const option = screen
+      .getByText('Beauty & Personal Care')
+      .closest('[data-slot="select-item"]');
+
+    if (option === null) throw new Error('missing Beauty option');
+
+    fireEvent.pointerDown(option);
+    fireEvent.pointerUp(option);
+    fireEvent.click(option);
+
+    await waitFor(() =>
+      expect(category).not.toHaveAttribute('aria-invalid', 'true'),
+    );
+    expect(
+      screen.queryByText('Sals3 category is required'),
+    ).not.toBeInTheDocument();
   });
 });

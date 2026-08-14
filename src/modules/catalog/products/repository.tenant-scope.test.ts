@@ -3,13 +3,18 @@ import { and, eq, type SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 
 import { supplierCandidates } from '@/lib/db/schema/catalog';
-import { productRevisions, products } from '@/lib/db/schema/product-catalog';
+import {
+  productOffers,
+  productRevisions,
+  products,
+} from '@/lib/db/schema/product-catalog';
 import { supplierConnections } from '@/lib/db/schema/supplier-connections';
 
 import {
   findCandidateSourceForSeller,
   findProductForSteward,
   saveDraftRevisionContent,
+  updateSellerRetailPrices,
 } from './repository';
 
 /**
@@ -52,6 +57,22 @@ function updateExecutor(rows: unknown[]) {
     set: vi.fn().mockReturnThis(),
     where: vi.fn().mockReturnThis(),
     returning: vi.fn().mockResolvedValue(rows),
+  };
+
+  return builder;
+}
+
+function priceUpdateExecutor(variantRows: unknown[], offerRows: unknown[]) {
+  const builder = {
+    select: vi.fn().mockReturnThis(),
+    from: vi.fn().mockReturnThis(),
+    update: vi.fn().mockReturnThis(),
+    set: vi.fn().mockReturnThis(),
+    where: vi
+      .fn()
+      .mockReturnValueOnce(Promise.resolve(variantRows))
+      .mockReturnThis(),
+    returning: vi.fn().mockResolvedValue(offerRows),
   };
 
   return builder;
@@ -114,6 +135,39 @@ describe('findProductForSteward', () => {
 
       expect(actual.sql).toBe(expected.sql);
       expect(actual.params).toEqual(expected.params);
+    });
+  });
+});
+
+describe('updateSellerRetailPrices', () => {
+  it('scopes the price update to the seller account and variant in one statement', async () => {
+    const executor = priceUpdateExecutor(
+      [{ id: 'variant-a' }],
+      [{ id: 'offer-a' }],
+    );
+
+    await updateSellerRetailPrices(executor as never, {
+      productId: 'product-a',
+      sellerAccountId: 'seller-a',
+      prices: [{ variantId: 'variant-a', amountMinor: 1999, currency: 'USD' }],
+      actorId: 'actor-a',
+    });
+
+    const actual = renderSql(executor.where.mock.calls[1][0] as SQL);
+    const expected = renderSql(
+      and(
+        eq(productOffers.sellerAccountId, 'seller-a'),
+        eq(productOffers.variantId, 'variant-a'),
+      ),
+    );
+
+    expect(actual.sql).toBe(expected.sql);
+    expect(actual.params).toEqual(expected.params);
+    expect(executor.set.mock.calls[0][0]).toMatchObject({
+      priceAmountMinor: BigInt(1999),
+      priceCurrency: 'USD',
+      pricingState: 'RESOLVED',
+      pricingUnavailableReason: null,
     });
   });
 });

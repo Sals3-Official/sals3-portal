@@ -529,8 +529,10 @@ The fixture editor is still a **design preview backed by fictional fixtures**:
 it reads no database, calls no supplier API, and every change lives in the
 browser tab. A real catalogue product opens with `?productId=<uuid>` and reads
 the persisted draft; `Save Draft` stores the product name, structured
-description, and the Basic Information `Sals3 Category` L1 draft field through
-the protected draft-save Server Action. Seller SKU, brand, media, variants, and
+description, seller-entered retail prices, and the required Basic Information
+`Sals3 Category` L1 draft field through the protected draft-save Server Action.
+That field starts as `None` until the seller chooses one of the approved Sals3
+L1 categories; it never defaults itself from CJ's supplier category. Seller SKU, brand, media, variants, and
 publication controls remain local/editor-only until their dedicated persistence
 paths exist. The screen says which mode it loaded in the notice at the top.
 
@@ -1752,8 +1754,9 @@ value below is a stored row:
   decision 2026-08-13). It prefers the detail snapshot's full `imageUrls` set
   and falls back to the discovery snapshot's single `imageUrl`, so a candidate
   that only ever went through screening still gets the one honest photo the
-  database holds. The Product Editor renders it in Basic Information and in
-  Media; a tile with no address stays a labelled placeholder.
+  database holds. Product Catalogue rows, the Product Editor Basic Information
+  strip, Media, and the Draft Storefront Preview all render that same stored
+  supplier image; a tile with no address stays a labelled placeholder.
 - **The Sals3 category.** The draft flow asks the ADR-002 crosswalk
   (`resolveCategoryMapping` → `assignProductCategory`, inside the same
   transaction) instead of hard-coding `UNMAPPED`. It has no category parameter,
@@ -1819,11 +1822,13 @@ constraint makes "unresolved with no reason" impossible to store.
 
 ### Editing a draft
 
-`saveProductDraftAction` writes title and a structured description onto an open
-draft. The update names the revision id, the product id, `workflow_state =
-'DRAFT'`, and the expected version in one `WHERE` clause, so a stale editor, a
-replayed submit, and an attempt to rewrite an already-approved revision all
-match zero rows. A rejected stale write is audited rather than dropped.
+`saveProductDraftAction` writes title, Sals3 L1 category, structured
+description, and seller-entered retail prices onto an open draft. The revision
+update names the revision id, the product id, `workflow_state = 'DRAFT'`, and
+the expected version in one `WHERE` clause, so a stale editor, a replayed
+submit, and an attempt to rewrite an already-approved revision all match zero
+rows. Retail price updates are seller-scoped and product-variant-scoped before
+they touch offers. A rejected stale write is audited rather than dropped.
 
 The description is a structured allow-listed block format
 (`paragraph`, `heading`, `bulletList`, `keyValueList`) with no raw-HTML block
@@ -1834,15 +1839,12 @@ boundary instead of being stored and escaped later; `a < b` still passes.
 
 `/listings` reads real catalogue rows, and
 `/listings/new?productId=<uuid>` renders one of them in the Product Editor
-(`dataMode="database"`), so the photo, supplier facts, variants, offers, and
-readiness issues on that screen are database values rather than fixtures. Every
-other entry mode — no query, or `?fixture=<key>` — is still the fictional design
-preview, and says so in a banner.
-
-**Editor edits are still not saved.** `saveProductDraftAction` exists and is
-tested, but the editor's own controls are not pointed at it: wiring some fields
-and not others would make unsaved input look saved. The banner states this on
-every render.
+(`dataMode="database"`), so the photo gallery, supplier facts, variants, offers,
+and readiness issues on that screen are database values rather than fixtures.
+Saved CJ `productImageSet` addresses render in Media, and the selected cover
+renders in Draft Storefront Preview. Every other entry mode — no query, or
+`?fixture=<key>` — is still the fictional design preview, and says so in a
+banner.
 
 Also still absent, and not faked anywhere: approval, media storage, freight,
 checkout, and supplier synchronization. Publication now exists

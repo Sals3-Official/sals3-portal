@@ -6,6 +6,7 @@ import { checksumOfDescriptionDocument } from './description-document';
 import {
   findProductForSteward,
   saveDraftRevisionContent,
+  updateSellerRetailPrices,
   updateProductEditorialForSteward,
 } from './repository';
 
@@ -91,6 +92,12 @@ export default async function saveProductDraft(input: {
       sals3CategoryL1: request.sals3CategoryL1,
       actorId: input.actorId,
     });
+    const pricedOfferCount = await updateSellerRetailPrices(tx, {
+      productId: request.productId,
+      sellerAccountId: input.sellerAccountId,
+      prices: request.variantRetailPrices,
+      actorId: input.actorId,
+    });
 
     await appendAuditEvent(tx, {
       actorId: input.actorId,
@@ -104,6 +111,7 @@ export default async function saveProductDraft(input: {
         contentChecksum,
         blockCount: request.descriptionDocument.blocks.length,
         sals3CategoryL1: request.sals3CategoryL1,
+        pricedOfferCount,
       },
     });
 
