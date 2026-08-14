@@ -30,6 +30,8 @@ import {
   removeVariantOverride,
   reviseCategoryPolicy,
   reviseFundingBufferPolicy,
+  reviseProductOverride,
+  reviseVariantOverride,
   searchCategories,
 } from '@/modules/pricing/repository';
 import {
@@ -566,47 +568,61 @@ export async function saveProductOverrideAction(
   if (!auth.ok) return auth;
 
   try {
-    const owns = await candidateBelongsToSeller(
-      getDb(),
-      parsed.data.supplierCandidateId,
-      auth.sellerAccountId,
-    );
-    if (!owns) return { ok: false, reason: 'not_found' };
+    const outcome = await getDb().transaction(async (tx) => {
+      // Inside the transaction, so the ownership proof cannot go stale between
+      // the check and the write it authorizes.
+      const owns = await candidateBelongsToSeller(
+        tx,
+        parsed.data.supplierCandidateId,
+        auth.sellerAccountId,
+      );
+      if (!owns) return { owns: false as const };
 
-    await getDb().transaction(async (tx) => {
       const existing = await findActiveProductOverride(
         tx,
         parsed.data.supplierCandidateId,
       );
-      if (existing !== null) {
-        await removeProductOverride(
-          tx,
-          existing.id,
-          parsed.data.supplierCandidateId,
-        );
-      }
 
-      const row = await createProductOverride(tx, {
-        supplierCandidateId: parsed.data.supplierCandidateId,
-        targetMarginRate: parsed.data.targetMarginRate,
-        reason: parsed.data.reason,
-        actorId: auth.actorId,
-      });
+      // A new value for an existing override is a revision, not a delete plus
+      // an unrelated new record: the previous row becomes SUPERSEDED and the
+      // new one continues its version chain.
+      const row =
+        existing === null
+          ? await createProductOverride(tx, {
+              supplierCandidateId: parsed.data.supplierCandidateId,
+              targetMarginRate: parsed.data.targetMarginRate,
+              reason: parsed.data.reason,
+              actorId: auth.actorId,
+            })
+          : await reviseProductOverride(tx, existing, {
+              targetMarginRate: parsed.data.targetMarginRate,
+              reason: parsed.data.reason,
+              actorId: auth.actorId,
+            });
 
       await appendAuditEvent(tx, {
         actorId: auth.actorId,
-        action: 'product_pricing_override.created',
+        action:
+          existing === null
+            ? 'product_pricing_override.created'
+            : 'product_pricing_override.revised',
         entityType: 'PricingProductOverride',
         entityId: row.id,
         payload: {
           sellerAccountId: auth.sellerAccountId,
-          supplierCandidateId: parsed.data.supplierCandidateId,
+          supplierCandidateId: row.supplierCandidateId,
           targetMarginRate: parsed.data.targetMarginRate,
+          previousTargetMarginRate: existing?.targetMarginRate ?? null,
           reason: parsed.data.reason,
-          replacedOverrideId: existing?.id ?? null,
+          version: row.version,
+          supersedesId: row.supersedesId,
         },
       });
+
+      return { owns: true as const };
     });
+
+    if (!outcome.owns) return { ok: false, reason: 'not_found' };
 
     return { ok: true };
   } catch (error) {
@@ -707,52 +723,62 @@ export async function saveVariantOverrideAction(
   if (!auth.ok) return auth;
 
   try {
-    const owns = await candidateBelongsToSeller(
-      getDb(),
-      parsed.data.supplierCandidateId,
-      auth.sellerAccountId,
-    );
-    if (!owns) return { ok: false, reason: 'not_found' };
+    const outcome = await getDb().transaction(async (tx) => {
+      const owns = await candidateBelongsToSeller(
+        tx,
+        parsed.data.supplierCandidateId,
+        auth.sellerAccountId,
+      );
+      if (!owns) return { owns: false as const };
 
-    await getDb().transaction(async (tx) => {
       const existing = await findActiveVariantOverride(
         tx,
         parsed.data.supplierCandidateId,
         parsed.data.supplierVariantId,
       );
-      if (existing !== null) {
-        await removeVariantOverride(
-          tx,
-          existing.id,
-          parsed.data.supplierCandidateId,
-        );
-      }
 
-      const row = await createVariantOverride(tx, {
-        supplierCandidateId: parsed.data.supplierCandidateId,
-        supplierVariantId: parsed.data.supplierVariantId,
-        targetMarginRate: parsed.data.targetMarginRate,
-        reason: parsed.data.reason,
-        additionalJustification: parsed.data.additionalJustification,
-        actorId: auth.actorId,
-      });
+      const row =
+        existing === null
+          ? await createVariantOverride(tx, {
+              supplierCandidateId: parsed.data.supplierCandidateId,
+              supplierVariantId: parsed.data.supplierVariantId,
+              targetMarginRate: parsed.data.targetMarginRate,
+              reason: parsed.data.reason,
+              additionalJustification: parsed.data.additionalJustification,
+              actorId: auth.actorId,
+            })
+          : await reviseVariantOverride(tx, existing, {
+              targetMarginRate: parsed.data.targetMarginRate,
+              reason: parsed.data.reason,
+              additionalJustification: parsed.data.additionalJustification,
+              actorId: auth.actorId,
+            });
 
       await appendAuditEvent(tx, {
         actorId: auth.actorId,
-        action: 'variant_pricing_override.created',
+        action:
+          existing === null
+            ? 'variant_pricing_override.created'
+            : 'variant_pricing_override.revised',
         entityType: 'PricingVariantOverride',
         entityId: row.id,
         payload: {
           sellerAccountId: auth.sellerAccountId,
-          supplierCandidateId: parsed.data.supplierCandidateId,
-          supplierVariantId: parsed.data.supplierVariantId,
+          supplierCandidateId: row.supplierCandidateId,
+          supplierVariantId: row.supplierVariantId,
           targetMarginRate: parsed.data.targetMarginRate,
+          previousTargetMarginRate: existing?.targetMarginRate ?? null,
           reason: parsed.data.reason,
           additionalJustification: parsed.data.additionalJustification,
-          replacedOverrideId: existing?.id ?? null,
+          version: row.version,
+          supersedesId: row.supersedesId,
         },
       });
+
+      return { owns: true as const };
     });
+
+    if (!outcome.owns) return { ok: false, reason: 'not_found' };
 
     return { ok: true };
   } catch (error) {
