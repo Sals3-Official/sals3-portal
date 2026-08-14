@@ -47,7 +47,7 @@ export const bulkCreateProductDraftsInputSchema = z.object({
       }),
     )
     .min(1)
-    .max(50),
+    .max(5),
 });
 
 export type BulkCreateProductDraftsInput = z.infer<
@@ -197,6 +197,8 @@ export type ProductDraftFailureReason =
   | 'denied'
   | 'rate_limited'
   | 'not_found'
+  | 'connection_unhealthy'
+  | 'supplier_unavailable'
   | 'idempotency_conflict'
   | 'version_conflict'
   | 'not_configured'

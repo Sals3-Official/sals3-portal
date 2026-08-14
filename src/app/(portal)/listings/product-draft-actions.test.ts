@@ -21,6 +21,33 @@ vi.mock('@/modules/catalog/products/create-draft', () => ({
   default: vi.fn(),
 }));
 
+vi.mock('@/modules/catalog/candidates/capture-evidence', () => ({
+  default: vi.fn(),
+}));
+
+vi.mock('@/modules/suppliers/providers/cj/cj-adapter', () => ({
+  // eslint-disable-next-line prefer-arrow-callback -- dynamic import path calls this mock with `new`.
+  default: vi.fn().mockImplementation(function MockCjSupplierAdapter() {
+    return { marker: 'adapter' };
+  }),
+}));
+
+vi.mock('@/modules/suppliers/providers/cj/cj-auth', () => ({
+  // eslint-disable-next-line prefer-arrow-callback -- dynamic import path calls this mock with `new`.
+  default: vi.fn().mockImplementation(function MockCjTokenManager() {
+    return { marker: 'token-manager' };
+  }),
+}));
+
+vi.mock('@/lib/secrets/postgres-supplier-secret-store', () => ({
+  default: vi.fn().mockImplementation(
+    // eslint-disable-next-line prefer-arrow-callback -- dynamic import path calls this mock with `new`.
+    function MockPostgresSupplierSecretStore() {
+      return { marker: 'secret-store' };
+    },
+  ),
+}));
+
 vi.mock('@/modules/catalog/products/save-draft', () => ({
   default: vi.fn(),
 }));
@@ -30,6 +57,7 @@ import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
+import captureCandidateEvidence from '@/modules/catalog/candidates/capture-evidence';
 import createProductDraftFromCandidate from '@/modules/catalog/products/create-draft';
 import saveProductDraft from '@/modules/catalog/products/save-draft';
 import { revalidatePath } from 'next/cache';
@@ -77,6 +105,13 @@ beforeEach(() => {
       replayed: false,
     },
   });
+  asMock(captureCandidateEvidence).mockResolvedValue({
+    ok: true,
+    checksum: 'a'.repeat(64),
+    capturedAt: new Date('2026-08-14T00:00:00.000Z'),
+    variantCount: 1,
+    imageCount: 2,
+  });
   asMock(saveProductDraft).mockResolvedValue({
     ok: true,
     revisionVersion: 4,
@@ -99,6 +134,7 @@ describe('createProductDraftAction — authorization', () => {
       reason: 'denied',
     });
     expect(createProductDraftFromCandidate).not.toHaveBeenCalled();
+    expect(captureCandidateEvidence).not.toHaveBeenCalled();
   });
 
   it('denies a Retailer account even when it holds the permission', async () => {
@@ -114,6 +150,7 @@ describe('createProductDraftAction — authorization', () => {
       reason: 'denied',
     });
     expect(createProductDraftFromCandidate).not.toHaveBeenCalled();
+    expect(captureCandidateEvidence).not.toHaveBeenCalled();
   });
 
   it('rate-limits per seller account', async () => {
@@ -159,6 +196,14 @@ describe('createProductDraftAction — input handling', () => {
       actorId: 'actor-1',
       idempotencyKey: 'idem-key-0001',
     });
+    expect(captureCandidateEvidence).toHaveBeenCalledWith(
+      { adapter: expect.objectContaining({ marker: 'adapter' }) },
+      {
+        candidateId: CANDIDATE,
+        sellerAccountId: SELLER,
+        actorId: 'actor-1',
+      },
+    );
   });
 
   it('rejects a malformed candidate id and a malformed idempotency key', async () => {
@@ -169,6 +214,20 @@ describe('createProductDraftAction — input handling', () => {
     await expect(
       createProductDraftAction({ ...VALID_CREATE, idempotencyKey: 'a b/c' }),
     ).resolves.toEqual({ ok: false, reason: 'invalid_input' });
+
+    expect(createProductDraftFromCandidate).not.toHaveBeenCalled();
+  });
+
+  it('does not create a draft when CJ evidence capture fails', async () => {
+    asMock(captureCandidateEvidence).mockResolvedValue({
+      ok: false,
+      reason: 'supplier_unavailable',
+    });
+
+    await expect(createProductDraftAction(VALID_CREATE)).resolves.toEqual({
+      ok: false,
+      reason: 'supplier_unavailable',
+    });
 
     expect(createProductDraftFromCandidate).not.toHaveBeenCalled();
   });
@@ -247,6 +306,7 @@ describe('bulkCreateProductDraftsAction', () => {
       actorId: 'actor-1',
       idempotencyKey: 'idem-key-0002',
     });
+    expect(captureCandidateEvidence).toHaveBeenCalledTimes(2);
   });
 
   it('revalidates sourcing and catalogue pages after a successful batch', async () => {

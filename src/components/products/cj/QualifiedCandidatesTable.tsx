@@ -43,6 +43,14 @@ type QualifiedCandidatesTableProps = {
 };
 
 const SHARED_COLUMNS = ['Select', 'Product', 'CJ product ID', 'Supplier price'];
+const MAX_ADD_BATCH = 5;
+
+const ITEM_FAILURE_MESSAGES: Record<string, string> = {
+  not_found: 'Some selected products are no longer in your pipeline.',
+  connection_unhealthy: 'Your CJ connection needs attention first.',
+  supplier_unavailable: 'CJ did not answer. Remaining products were not saved.',
+  rate_limited: 'CJ is rate-limiting this account right now.',
+};
 
 function idempotencyKey(candidateId: string): string {
   const random =
@@ -154,6 +162,7 @@ function QualifiedCandidateRow({
       </TableCell>
       <TableCell>
         <CustomizeAndListButton
+          candidateId={candidate.candidateId}
           productName={name}
           disabled={alreadyInCatalogue}
         />
@@ -221,6 +230,15 @@ export default function QualifiedCandidatesTable({
   }, [allSelected, selectableIds]);
 
   const addSelectedToCatalogue = useCallback(() => {
+    if (selectedIds.size > MAX_ADD_BATCH) {
+      toast('Select 5 products or fewer.', {
+        description:
+          'Each product fetches CJ details, inventory, and reviews before saving.',
+      });
+
+      return;
+    }
+
     const requests = [...selectedIds].map((candidateId) => ({
       candidateId,
       idempotencyKey: idempotencyKey(candidateId),
@@ -244,7 +262,8 @@ export default function QualifiedCandidatesTable({
         description:
           result.failed.length === 0
             ? `${processed} selected product${processed === 1 ? '' : 's'} processed.`
-            : `${processed} processed, ${result.failed.length} failed.`,
+            : (ITEM_FAILURE_MESSAGES[result.failed[0]?.reason ?? ''] ??
+              `${processed} processed, ${result.failed.length} failed.`),
       });
       router.refresh();
     });
