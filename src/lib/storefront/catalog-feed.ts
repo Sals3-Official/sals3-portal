@@ -77,6 +77,16 @@ const DELIVERY_AT_CHECKOUT_LINE = 'Delivery quoted at checkout';
  */
 const UNCATEGORISED_CODE = 'uncategorised';
 
+/**
+ * Matches the consumer's `truncatedText(60)` on `variants[].label`.
+ *
+ * Truncating here rather than letting the consumer do it keeps one authority over
+ * what the wire carries — and the consumer truncates rather than rejects for the
+ * same reason `title` does: one overlong supplier string must not cost the whole
+ * product page.
+ */
+const MAX_VARIANT_LABEL_LENGTH = 60;
+
 export type StorefrontProduct = {
   id: string;
   slug: string;
@@ -139,6 +149,19 @@ export type StorefrontProductVariant = {
   availability: 'AVAILABLE' | 'UNKNOWN' | 'UNAVAILABLE';
   /** Omitted for a product with no option axes — one implicit variant. */
   options?: { name: string; value: string }[];
+  /**
+   * The supplier's own variant label, verbatim — e.g. `Black-1XL`.
+   *
+   * Omitted when the supplier reported none. **Never parsed into option axes**:
+   * choosing which token is a colour and which a size is a guess, and a wrong
+   * guess becomes a customer-facing product attribute.
+   *
+   * This is unreviewed supplier text on its way to a buyer, with no analogue of
+   * ADR-011's media review gates — expect `default`, CJK, and junk. Truncation
+   * happens here rather than in the consumer so this file stays the single
+   * authority on what the wire carries.
+   */
+  label?: string;
 };
 
 /**
@@ -245,6 +268,9 @@ function toStorefrontVariant(
     currency: variant.currency,
     availability: variant.availability,
     ...(variant.options.length === 0 ? {} : { options: variant.options }),
+    ...(variant.label === undefined
+      ? {}
+      : { label: variant.label.slice(0, MAX_VARIANT_LABEL_LENGTH) }),
   };
 }
 

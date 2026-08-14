@@ -9,6 +9,7 @@ import {
   products,
   productVariantOptionValues,
   productVariants,
+  providerVariantReferences,
   sals3Categories,
 } from '@/lib/db/schema';
 import {
@@ -92,6 +93,16 @@ export type StorefrontVariant = {
   availability: 'UNKNOWN' | 'AVAILABLE' | 'UNAVAILABLE';
   /** Empty for a product with no option axes — one implicit variant. */
   options: { name: string; value: string }[];
+  /**
+   * The supplier's own variant label, verbatim — e.g. `Black-1XL`.
+   *
+   * Absent when the supplier reported none, or when the variant has no provider
+   * reference row at all (a hand-created variant). **Never split into option
+   * axes**: deciding which token is a colour and which a size is a guess, and a
+   * wrong guess becomes a customer-facing product attribute
+   * (`create-draft.ts` records the same rule at the write side).
+   */
+  label?: string;
 };
 
 export type StorefrontDescription = {
@@ -429,9 +440,21 @@ async function loadPublishedVariants(
       optionName: productOptions.name,
       optionValue: productOptionValues.label,
       optionPosition: productOptions.position,
+      // Only the label. `provider_variant_references` also holds
+      // `external_variant_id`, `external_sku` and the observed supplier cost —
+      // none of which may reach a public feed, so none of which is selected.
+      supplierLabel: providerVariantReferences.sourceOptionLabel,
     })
     .from(productVariants)
     .innerJoin(productOffers, eq(productOffers.variantId, productVariants.id))
+    // Safe to join without changing the row count: `variant_id` carries the
+    // unique index `provider_variant_references_variant_key`, so this matches at
+    // most one row per variant. `left`, not `inner`, because a variant created by
+    // hand has no provider reference and must still be returned.
+    .leftJoin(
+      providerVariantReferences,
+      eq(providerVariantReferences.variantId, productVariants.id),
+    )
     .leftJoin(
       productVariantOptionValues,
       eq(productVariantOptionValues.variantId, productVariants.id),
@@ -465,6 +488,10 @@ async function loadPublishedVariants(
     if (!Number.isSafeInteger(priceMinor) || priceMinor <= 0) return;
     if (row.priceCurrency === null) return;
 
+    // A whitespace-only supplier label is the same as none: it would render an
+    // empty chip the buyer cannot identify, so it is dropped rather than passed
+    // on as a present-but-blank value.
+    const supplierLabel = row.supplierLabel?.trim();
     const existing = byVariant.get(row.id) ?? {
       id: row.id,
       sku: row.sku,
@@ -472,6 +499,9 @@ async function loadPublishedVariants(
       currency: row.priceCurrency,
       availability: row.availability,
       options: [],
+      ...(supplierLabel === undefined || supplierLabel === ''
+        ? {}
+        : { label: supplierLabel }),
     };
 
     if (row.optionName !== null && row.optionValue !== null) {

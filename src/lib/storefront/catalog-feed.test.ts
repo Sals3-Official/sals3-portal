@@ -192,6 +192,49 @@ describe('toStorefrontProductDetail', () => {
     expect('options' in serialised.variants[0]).toBe(false);
   });
 
+  function labelledVariant(label?: string) {
+    return {
+      id: 'variant-1',
+      sku: 'SALS3-1',
+      priceMinor: 4299,
+      currency: 'USD' as const,
+      availability: 'AVAILABLE' as const,
+      options: [],
+      ...(label === undefined ? {} : { label }),
+    };
+  }
+
+  it("carries the supplier's variant label verbatim", () => {
+    const product = toStorefrontProductDetail(
+      detail({ variants: [labelledVariant('Black-1XL')] }),
+    );
+
+    // Verbatim, and never split into axes: guessing which token is a colour and
+    // which a size turns a wrong guess into a customer-facing attribute.
+    expect(product?.variants?.[0]?.label).toBe('Black-1XL');
+  });
+
+  it('omits the label when the supplier reported none', () => {
+    const serialised = JSON.parse(
+      JSON.stringify(
+        toStorefrontProductDetail(detail({ variants: [labelledVariant()] })),
+      ),
+    );
+
+    expect('label' in serialised.variants[0]).toBe(false);
+  });
+
+  it('truncates an overlong label rather than failing the product', () => {
+    const product = toStorefrontProductDetail(
+      detail({ variants: [labelledVariant('L'.repeat(200))] }),
+    );
+
+    // Same lesson as `title`: one overlong supplier string must cost that string,
+    // not the whole product page. This file is the truncation authority, so the
+    // wire can never carry more than the consumer's `truncatedText(60)` accepts.
+    expect(product?.variants?.[0]?.label).toHaveLength(60);
+  });
+
   it('reports variant options in the order the read model returned them', () => {
     const product = toStorefrontProductDetail(
       detail({

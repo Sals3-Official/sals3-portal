@@ -73,6 +73,7 @@ const ROW: StorefrontDetailRow = {
         { name: 'Colour', value: 'Black' },
         { name: 'Size', value: 'XL' },
       ],
+      label: 'Black-XL',
     },
     {
       id: '1a2b3c4d-5e6f-7089-9807-f6e5d4c3b2a1',
@@ -84,6 +85,7 @@ const ROW: StorefrontDetailRow = {
         { name: 'Colour', value: 'Navy' },
         { name: 'Size', value: 'XL' },
       ],
+      label: 'Navy-XL',
     },
   ],
   specs: {
