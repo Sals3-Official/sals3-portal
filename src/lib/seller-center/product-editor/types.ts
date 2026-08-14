@@ -101,18 +101,12 @@ export type ReadinessIssue = {
 export type VariantListingState =
   'WILL_LIST' | 'NOT_LISTED' | 'BLOCKED' | 'PAUSED';
 
-/**
- * One supplier variant. Landed cost and margin are deliberately *absent* -
- * they are derived in `derive.ts` so a missing freight estimate propagates
- * to "Not available" everywhere instead of being stored as a zero.
- */
+/** One supplier variant. Editor stores product cost, retail price, stock, and seller listing state. */
 export type VariantFixture = {
   id: string;
   optionLabel: string;
   sellerSku: string;
   supplierCost: MoneyValue;
-  /** `null` renders as "Needs route check" - no route evidence, not free freight. */
-  freightEstimate: MoneyValue | null;
   retailPrice: MoneyValue;
   supplierStock: number;
   warehouseLabel: string;
@@ -129,14 +123,7 @@ export type VariantFixture = {
 export type MarketEligibility =
   'ELIGIBLE' | 'ELIGIBLE_STALE_EVIDENCE' | 'NO_ROUTE' | 'BLOCKED';
 
-/**
- * Shipping evidence for one destination market the seller actually has
- * enabled. Markets the seller has *not* enabled are never modelled here -
- * they would render as an evidence card for a market that is not part of
- * this listing's configuration. They are carried as a plain count on
- * `ProductEditorFixture.marketsNotEnabledCount` and stated in one neutral
- * sentence instead.
- */
+/** Eligibility evidence for one destination market the seller actually has enabled. */
 export type MarketEvidenceFixture = {
   code: string;
   name: string;
@@ -144,13 +131,7 @@ export type MarketEvidenceFixture = {
   isSampleMarket: boolean;
   eligibility: MarketEligibility;
   affectedVariantsLabel: string;
-  sourceWarehouse: string;
   packageWeightLabel: string;
-  packageDimensionsLabel: string | null;
-  routeEvidence: string;
-  /** `null` when no route evidence exists - never a zero freight. */
-  freightEstimate: { min: MoneyValue; max: MoneyValue } | null;
-  deliveryRangeLabel: string | null;
   evidenceCapturedAt: string;
   note: string | null;
 };
@@ -289,6 +270,10 @@ export type ProductEditorFixture = {
     revisionId: string;
     expectedRevisionVersion: number;
   } | null;
+  publishTarget: {
+    productId: string;
+    expectedProductVersion: number;
+  } | null;
   /** Opaque internal identifiers only. Never a key, token, or secret. */
   advancedIdentifiers: Record<string, string>;
 };
@@ -329,7 +314,7 @@ export const EDITOR_SECTIONS: ReadonlyArray<{
   { id: 'specs', label: 'Category & Specifications' },
   { id: 'description', label: 'Description' },
   { id: 'variants', label: 'Variants & Pricing' },
-  { id: 'markets', label: 'Markets & Shipping' },
+  { id: 'markets', label: 'Markets' },
   { id: 'media', label: 'Media' },
   { id: 'review', label: 'Review & Publish' },
 ];

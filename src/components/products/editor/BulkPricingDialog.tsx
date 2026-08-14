@@ -14,7 +14,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
-export type BulkPricingMode = 'SET_PRICE' | 'APPLY_MARKUP';
+export type BulkPricingMode = 'SET_PRICE';
 
 type BulkPricingDialogProps = {
   mode: BulkPricingMode | null;
@@ -35,14 +35,7 @@ const COPY: Record<
     description:
       'Sets the same retail price on every variant that will be listed.',
     label: 'Retail price',
-    hint: 'Applied as-is. Margin is recalculated from each variant’s own supplier cost and freight estimate.',
-  },
-  APPLY_MARKUP: {
-    title: 'Apply markup',
-    description:
-      'Sets each retail price to its own landed cost plus this markup.',
-    label: 'Markup percentage',
-    hint: 'A variant with no route evidence has no landed cost, so it is skipped rather than priced from a guess.',
+    hint: 'Retail price is the only seller-entered price field on this screen.',
   },
 };
 
@@ -73,7 +66,7 @@ function BulkPricingForm({
   skippedCount,
   onApply,
 }: BulkPricingFormProps) {
-  const [value, setValue] = useState(mode === 'APPLY_MARKUP' ? '40' : '');
+  const [value, setValue] = useState('');
 
   const copy = COPY[mode];
   const parsed = Number.parseFloat(value);
@@ -88,14 +81,13 @@ function BulkPricingForm({
 
       <div className="flex flex-col gap-1.5 px-4">
         <Label htmlFor="bulk-pricing-value">
-          {copy.label}
-          {mode === 'SET_PRICE' ? ` (${currency})` : ' (%)'}
+          {copy.label} ({currency})
         </Label>
         <Input
           id="bulk-pricing-value"
           type="number"
           min="0"
-          step={mode === 'SET_PRICE' ? '0.01' : '1'}
+          step="0.01"
           inputMode="decimal"
           value={value}
           aria-describedby="bulk-pricing-hint"
@@ -109,7 +101,7 @@ function BulkPricingForm({
           .
           {skippedCount === 0
             ? ''
-            : ` Skips ${skippedCount} that cannot be priced - blocked, paused, or without route evidence.`}
+            : ` Skips ${skippedCount} that cannot be priced - blocked or paused.`}
         </p>
       </div>
 

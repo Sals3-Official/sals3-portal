@@ -43,8 +43,9 @@ type EditorActionBarProps = {
   isDirty: boolean;
   warnings: ReadinessIssue[];
   onSaveDraft: () => void;
-  onPublish: () => void;
+  onPublish: () => void | Promise<void>;
   onExit: () => void;
+  canRequestPublication: boolean;
 };
 
 type SaveState = {
@@ -128,9 +129,8 @@ function SaveIcon({ tone }: { tone: StatusPillTone }) {
  * - The publish button is never quietly greyed out. When it is disabled,
  *   `decision.blockedReason` is printed next to it and repeated in the
  *   button's own `title`.
- * - Nothing here confirms publication. This prototype has no server
- *   action and no endpoint, so the confirmation dialog moves the screen
- *   into "Checking…" and stops - it never claims a listing went live.
+ * - Fixture mode never claims publication. Database mode sends the real
+ *   Server Action and lets that response name success or refusal.
  * - Pause and delist sit behind an overflow with a divider above them, so
  *   a destructive action is never adjacent to Publish, and each confirms.
  *
@@ -145,6 +145,7 @@ export default function EditorActionBar({
   onSaveDraft,
   onPublish,
   onExit,
+  canRequestPublication,
 }: EditorActionBarProps) {
   const [publishOpen, setPublishOpen] = useState(false);
   const [destructiveAction, setDestructiveAction] = useState<string | null>(
@@ -239,8 +240,8 @@ export default function EditorActionBar({
             </AlertDialogTitle>
             <AlertDialogDescription>
               {hasWarnings
-                ? `The server revalidates before anything goes live. ${decision.warningCount} warning${decision.warningCount === 1 ? '' : 's'} will stay visible on the listing until resolved. You are not asked to approve each one individually.`
-                : 'The server revalidates stock, cost, route evidence and policy before this listing goes live.'}
+                ? `The server validates before anything goes live. ${decision.warningCount} warning${decision.warningCount === 1 ? '' : 's'} will stay visible on the listing until resolved. You are not asked to approve each one individually.`
+                : 'The server validates stock, cost and policy before this listing goes live.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
@@ -252,17 +253,24 @@ export default function EditorActionBar({
             </ul>
           ) : null}
 
-          <p className="px-4 text-xs text-muted-foreground">
-            Design preview: this confirms nothing and publishes nothing. No
-            listing is created and no request is sent.
-          </p>
+          {canRequestPublication ? (
+            <p className="px-4 text-xs text-muted-foreground">
+              This sends a real publish request. If accepted, the product
+              becomes visible through the storefront catalogue API.
+            </p>
+          ) : (
+            <p className="px-4 text-xs text-muted-foreground">
+              Design preview: this confirms nothing and publishes nothing. No
+              listing is created and no request is sent.
+            </p>
+          )}
 
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 setPublishOpen(false);
-                onPublish();
+                Promise.resolve(onPublish()).catch(() => undefined);
               }}
             >
               {decision.label}

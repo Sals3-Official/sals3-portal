@@ -6,6 +6,7 @@ import {
   within,
 } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { publishProductAction } from '@/app/(portal)/listings/publish-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
 import { SALS3_CATEGORY_L1_OPTIONS } from '@/lib/seller-center/product-editor/sals3-category-l1';
 import type {
@@ -20,6 +21,10 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('@/app/(portal)/listings/product-draft-actions', () => ({
   saveProductDraftAction: vi.fn(),
+}));
+
+vi.mock('@/app/(portal)/listings/publish-actions', () => ({
+  publishProductAction: vi.fn(),
 }));
 
 function fixture(key: string): ProductEditorFixture {
@@ -55,6 +60,46 @@ function publishButton(): HTMLButtonElement {
 }
 
 describe('Product Editor - publication outcomes', () => {
+  it('sends a real publish action for a database-backed publish-with-attention product', async () => {
+    const resolved = fixture('attention');
+    vi.mocked(publishProductAction).mockResolvedValue({
+      ok: true,
+      slug: 'aurelis-daypack',
+      offerCount: 2,
+      availability: 'AVAILABLE',
+    });
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          publishTarget: {
+            productId: '11111111-1111-4111-8111-111111111111',
+            expectedProductVersion: 7,
+          },
+        }}
+        initialLifecycle="IDLE"
+        variantGuidance={[]}
+        dataMode="database"
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Publish with Attention' }),
+    );
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Publish with Attention' }),
+    );
+
+    await waitFor(() =>
+      expect(publishProductAction).toHaveBeenCalledWith({
+        productId: '11111111-1111-4111-8111-111111111111',
+        expectedProductVersion: 7,
+      }),
+    );
+  });
+
   it('offers Publish Product on a clean pass', () => {
     renderEditor('pass');
 
@@ -161,7 +206,7 @@ describe('Product Editor - money that is not known', () => {
     ).toBeInTheDocument();
   });
 
-  it('uses retail price, not freight or margin evidence, as the price blocker', () => {
+  it('uses retail price as the price blocker', () => {
     const resolved = fixture('pass');
 
     render(
@@ -227,11 +272,11 @@ describe('Product Editor - markets', () => {
     expect(screen.queryByText(/Not enabled for this seller/)).toBeNull();
   });
 
-  it('carries the checkout revalidation copy verbatim', () => {
+  it('carries the server-side publication check copy', () => {
     renderEditor('pass');
 
     expect(
-      screen.getByText(/revalidated at checkout using the customer's actual/i),
+      screen.getByText(/Publication and checkout run server-side checks/i),
     ).toBeInTheDocument();
   });
 });
@@ -354,12 +399,10 @@ describe('Product Editor - structure', () => {
     expect(screen.getByRole('button', { name: /^Publish/ })).toBeDisabled();
   });
 
-  it('names how many variants a bulk markup will skip before it runs', () => {
-    // Every variant in `blocked` has lost its freight evidence, so none of
-    // them has a landed cost to mark up.
+  it('names how many variants a bulk retail-price action will skip before it runs', () => {
     renderEditor('blocked');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Apply markup…' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Set retail price…' }));
 
     expect(screen.getByText(/Changes 0 variants/)).toBeInTheDocument();
     expect(screen.getByText(/Skips 6/)).toBeInTheDocument();

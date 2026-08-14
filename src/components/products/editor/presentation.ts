@@ -175,13 +175,9 @@ export const LISTING_STATE_PRESENTATION: Record<
   },
 };
 
-/**
- * Verbatim from the design handoff. Required copy on Markets & Shipping -
- * it is the sentence that keeps every estimate on this screen from reading
- * as a guarantee.
- */
+/** Required copy on Markets: storefront availability is confirmed server-side. */
 export const CHECKOUT_REVALIDATION_COPY =
-  "Shipping estimates are based on the latest available supplier evidence. Final availability and freight are revalidated at checkout using the customer's actual address, selected variant, and quantity.";
+  'Publication and checkout run fresh server-side checks using the current product, selected variant, and quantity.';
 
 /**
  * The accepted-order distinction, in the same words wherever it appears.

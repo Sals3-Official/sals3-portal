@@ -8,11 +8,9 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import {
-  NOT_AVAILABLE_LABEL,
   formatCount,
   formatDateTime,
   formatMoney,
-  formatMoneyRange,
 } from '@/lib/seller-center/product-editor/format';
 import type { ProductEditorFixture } from '@/lib/seller-center/product-editor/types';
 import EditorSheet from './EditorSheet';
@@ -160,23 +158,6 @@ export default function SupplierSourceDrawer({
                   {formatCount(variant.supplierStock)} units ·{' '}
                   {variant.warehouseLabel}
                 </span>
-              </li>
-            ))}
-          </ul>
-        </DrawerSection>
-
-        <DrawerSection title="Shipping evidence">
-          <ul className="m-0 list-disc pl-4 text-xs leading-relaxed text-ink-muted">
-            {fixture.markets.map((market) => (
-              <li key={market.code}>
-                {market.name} — {market.routeEvidence} (
-                {market.freightEstimate === null
-                  ? NOT_AVAILABLE_LABEL
-                  : formatMoneyRange(
-                      market.freightEstimate.min,
-                      market.freightEstimate.max,
-                    )}
-                , captured {formatDateTime(market.evidenceCapturedAt)})
               </li>
             ))}
           </ul>

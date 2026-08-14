@@ -31,7 +31,6 @@ function usd(amountMinor: number): MoneyValue {
   return { amountMinor, currency: CURRENCY };
 }
 
-const WAREHOUSE = 'CN Warehouse';
 const FRESH_CAPTURE = '2026-08-08T06:05:00.000Z';
 const STALE_CAPTURE = '2026-08-03T02:11:00.000Z';
 
@@ -53,7 +52,6 @@ type VariantSeed = {
   id: string;
   optionLabel: string;
   costMinor: number;
-  freightMinor: number;
   retailMinor: number;
   stock: number;
   hasImage?: boolean;
@@ -64,7 +62,6 @@ const VARIANT_SEEDS: VariantSeed[] = [
     id: 'slt20',
     optionLabel: 'Slate / 20L',
     costMinor: 842,
-    freightMinor: 310,
     retailMinor: 2490,
     stock: 412,
   },
@@ -72,7 +69,6 @@ const VARIANT_SEEDS: VariantSeed[] = [
     id: 'slt28',
     optionLabel: 'Slate / 28L',
     costMinor: 965,
-    freightMinor: 340,
     retailMinor: 2790,
     stock: 260,
   },
@@ -80,7 +76,6 @@ const VARIANT_SEEDS: VariantSeed[] = [
     id: 'clay20',
     optionLabel: 'Clay / 20L',
     costMinor: 842,
-    freightMinor: 310,
     retailMinor: 2490,
     stock: 188,
   },
@@ -88,7 +83,6 @@ const VARIANT_SEEDS: VariantSeed[] = [
     id: 'clay28',
     optionLabel: 'Clay / 28L',
     costMinor: 965,
-    freightMinor: 340,
     retailMinor: 2790,
     stock: 96,
   },
@@ -96,7 +90,6 @@ const VARIANT_SEEDS: VariantSeed[] = [
     id: 'moss20',
     optionLabel: 'Moss / 20L',
     costMinor: 842,
-    freightMinor: 310,
     retailMinor: 2490,
     stock: 328,
     hasImage: false,
@@ -105,7 +98,6 @@ const VARIANT_SEEDS: VariantSeed[] = [
     id: 'moss28',
     optionLabel: 'Moss / 28L',
     costMinor: 965,
-    freightMinor: 340,
     retailMinor: 2790,
     stock: 0,
   },
@@ -119,10 +111,9 @@ function buildVariant(seed: VariantSeed): VariantFixture {
     optionLabel: seed.optionLabel,
     sellerSku: `AUR-DP-${seed.id.toUpperCase()}`,
     supplierCost: usd(seed.costMinor),
-    freightEstimate: usd(seed.freightMinor),
     retailPrice: usd(seed.retailMinor),
     supplierStock: seed.stock,
-    warehouseLabel: WAREHOUSE,
+    warehouseLabel: 'Not shown',
     hasImage: seed.hasImage ?? true,
     enabled: inStock,
     listingState: inStock ? 'WILL_LIST' : 'NOT_LISTED',
@@ -142,12 +133,7 @@ const BASE_MARKETS: MarketEvidenceFixture[] = [
     isSampleMarket: true,
     eligibility: 'ELIGIBLE',
     affectedVariantsLabel: '6 of 6 variants',
-    sourceWarehouse: WAREHOUSE,
     packageWeightLabel: '410 g – 520 g',
-    packageDimensionsLabel: '32 × 24 × 12 cm',
-    routeEvidence: 'Supplier route available (evidence on file)',
-    freightEstimate: { min: usd(310), max: usd(340) },
-    deliveryRangeLabel: '9 – 14 days',
     evidenceCapturedAt: FRESH_CAPTURE,
     note: null,
   },
@@ -157,12 +143,7 @@ const BASE_MARKETS: MarketEvidenceFixture[] = [
     isSampleMarket: true,
     eligibility: 'ELIGIBLE',
     affectedVariantsLabel: '6 of 6 variants',
-    sourceWarehouse: WAREHOUSE,
     packageWeightLabel: '410 g – 520 g',
-    packageDimensionsLabel: '32 × 24 × 12 cm',
-    routeEvidence: 'Supplier route available (evidence on file)',
-    freightEstimate: { min: usd(420), max: usd(460) },
-    deliveryRangeLabel: '11 – 18 days',
     evidenceCapturedAt: FRESH_CAPTURE,
     note: null,
   },
@@ -375,6 +356,7 @@ const BASE: ProductEditorFixture = {
   media: BASE_MEDIA,
   policyVersion: '2026.08.01',
   draftSaveTarget: null,
+  publishTarget: null,
   advancedIdentifiers: {
     draft_id: '8f2c1a7e-6f0b-4a1d-9d3e-77e2c0b41a55',
     supplier_connection_id: '3c9d2f14-2a71-4b09-bb52-1e8a4d770a12',
@@ -392,11 +374,6 @@ function withOverrides(
 
 /* ---------------------------------------------------------------- PASS_WITH_ATTENTION */
 
-/**
- * The 28L variants are re-priced so their margin genuinely falls under
- * `MARGIN_FLOOR_PERCENT`. The readiness warning is not decoration - the
- * table's own numbers produce it, and a test holds the two together.
- */
 const ATTENTION_VARIANTS: VariantFixture[] = BASE_VARIANTS.map((variant) =>
   variant.optionLabel.endsWith('28L')
     ? { ...variant, retailPrice: usd(1990) }
@@ -440,18 +417,6 @@ const ATTENTION = withOverrides({
       section: 'media',
       reasonCode: null,
       resolution: 'Replace or remove the image.',
-    },
-    {
-      id: 'warning-margin-floor',
-      severity: 'WARNING',
-      title: 'Estimated margin is below the configured floor on 2 variants',
-      explanation:
-        'Slate / 28L and Clay / 28L fall under the placeholder margin floor once the current freight estimate is included.',
-      affectedScope: 'Variants & Pricing · 2 variants',
-      source: 'AUTOMATED_VALIDATION',
-      section: 'variants',
-      reasonCode: null,
-      resolution: 'Raise the retail price, or list those variants anyway.',
     },
     {
       id: 'warning-recommended-specification',
@@ -498,18 +463,14 @@ const BLOCKED = withOverrides({
   },
   variants: BASE_VARIANTS.map((variant) => ({
     ...variant,
-    freightEstimate: null,
     enabled: false,
     listingState: 'BLOCKED',
-    attention: 'No route',
+    attention: 'Blocked',
   })),
   markets: BASE_MARKETS.map((market) => ({
     ...market,
     eligibility: 'BLOCKED',
-    freightEstimate: null,
-    deliveryRangeLabel: null,
-    routeEvidence: 'No shipping route available from any stocked warehouse',
-    note: 'The supplier reports no warehouse with stock that can ship to this market. Nothing on this screen can resolve it.',
+    note: 'This market is blocked by supplier or policy evidence. Nothing on this screen can resolve it.',
   })),
   issues: [
     {
@@ -527,10 +488,10 @@ const BLOCKED = withOverrides({
     {
       id: 'blocker-no-route',
       severity: 'BLOCKER',
-      title: 'No valid shipping route for any enabled market',
+      title: 'No eligible enabled market',
       explanation:
-        'Every enabled market has lost its route evidence, so no variant can be fulfilled.',
-      affectedScope: 'Markets & Shipping · Sample market A, Sample market B',
+        'Every enabled market is blocked, so no variant can be offered.',
+      affectedScope: 'Markets · Sample market A, Sample market B',
       source: 'AUTOMATED_VALIDATION',
       section: 'markets',
       reasonCode: 'NO_SHIPPING_ROUTE',
@@ -547,18 +508,6 @@ const BLOCKED = withOverrides({
       section: 'specs',
       reasonCode: 'INSUFFICIENT_PRODUCT_DATA',
       resolution: 'Enter a value to clear this blocker.',
-    },
-    {
-      id: 'warning-margin-not-calculable',
-      severity: 'WARNING',
-      title: 'Estimated margin cannot be calculated',
-      explanation:
-        'Freight has no route evidence, so landed cost and margin are shown as "Not available" rather than zero.',
-      affectedScope: 'Variants & Pricing · all variants',
-      source: 'AUTOMATED_VALIDATION',
-      section: 'variants',
-      reasonCode: null,
-      resolution: 'Resolves on its own once route evidence returns.',
     },
   ],
 });
@@ -598,11 +547,11 @@ const MIXED_STOCK = withOverrides({
   ],
 });
 
-/* ---------------------------------------------------------------- market without a route */
+/* ---------------------------------------------------------------- market attention */
 
 const MARKET_ROUTE = withOverrides({
   fixtureKey: 'market-route',
-  scenarioLabel: 'Market without a route - still publishes elsewhere',
+  scenarioLabel: 'Market attention - still publishes elsewhere',
   evaluationStatus: 'PASS_WITH_ATTENTION',
   completionPercent: 84,
   markets: BASE_MARKETS.map((market) =>
@@ -611,10 +560,7 @@ const MARKET_ROUTE = withOverrides({
           ...market,
           eligibility: 'NO_ROUTE',
           affectedVariantsLabel: '0 of 6 variants',
-          freightEstimate: null,
-          deliveryRangeLabel: null,
-          routeEvidence: `No supplier route from ${WAREHOUSE} to this market`,
-          note: 'The listing can still publish to Sample market A. Sample market B is withheld until route evidence returns.',
+          note: 'The listing can still publish to Sample market A. Sample market B is withheld until its evidence is eligible again.',
         }
       : market,
   ),
@@ -622,10 +568,10 @@ const MARKET_ROUTE = withOverrides({
     {
       id: 'warning-market-b-no-route',
       severity: 'WARNING',
-      title: 'No shipping route for Sample market B',
+      title: 'Sample market B is not eligible',
       explanation:
-        'The product stays publishable to Sample market A. Sample market B will not be offered while no route evidence exists.',
-      affectedScope: 'Markets & Shipping · Sample market B',
+        'The product stays publishable to Sample market A. Sample market B will not be offered while eligibility evidence is unresolved.',
+      affectedScope: 'Markets · Sample market B',
       source: 'AUTOMATED_VALIDATION',
       section: 'markets',
       reasonCode: 'NO_SHIPPING_ROUTE',
@@ -702,7 +648,7 @@ const DELISTED = withOverrides({
       severity: 'BLOCKER',
       title: 'Supplier delisted the source product',
       explanation:
-        'The supplier no longer lists this product, so no stock or route evidence can be refreshed.',
+        'The supplier no longer lists this product, so stock and eligibility evidence cannot be refreshed.',
       affectedScope: 'Whole listing',
       source: 'SUPPLIER_CHANGE',
       section: 'markets',
@@ -725,11 +671,11 @@ const DELISTED = withOverrides({
   ],
 });
 
-/* ---------------------------------------------------------------- stale shipping evidence */
+/* ---------------------------------------------------------------- stale market evidence */
 
 const STALE_EVIDENCE = withOverrides({
   fixtureKey: 'stale-evidence',
-  scenarioLabel: 'Stale shipping evidence - degraded connection',
+  scenarioLabel: 'Stale market evidence - degraded connection',
   evaluationStatus: 'PASS_WITH_ATTENTION',
   completionPercent: 86,
   lastValidatedAt: STALE_CAPTURE,
@@ -742,7 +688,7 @@ const STALE_EVIDENCE = withOverrides({
   banner: {
     tone: 'warning',
     title: 'Supplier evidence is 5 days old',
-    body: 'The last three refresh attempts failed. Freight, stock and route figures below are shown with their capture time rather than hidden.',
+    body: 'The last three refresh attempts failed. Stock and market eligibility below are shown with their capture time rather than hidden.',
   },
   variants: BASE_VARIANTS.map((variant) => ({
     ...variant,
@@ -752,16 +698,16 @@ const STALE_EVIDENCE = withOverrides({
     ...market,
     eligibility: 'ELIGIBLE_STALE_EVIDENCE',
     evidenceCapturedAt: STALE_CAPTURE,
-    note: 'Freight and route evidence are 5 days old. They are shown as-is rather than hidden, and are revalidated at checkout regardless.',
+    note: 'Market evidence is 5 days old. It is shown as-is rather than hidden, and checked again before publication.',
   })),
   issues: [
     {
       id: 'warning-stale-evidence',
       severity: 'WARNING',
-      title: 'Shipping evidence is 5 days old',
+      title: 'Market evidence is 5 days old',
       explanation:
-        'The last three refresh attempts could not reach the supplier. Estimates on this screen may not reflect current freight.',
-      affectedScope: 'Markets & Shipping · all markets',
+        'The last three refresh attempts could not reach the supplier. Evidence on this screen may be stale.',
+      affectedScope: 'Markets · all markets',
       source: 'AUTOMATED_VALIDATION',
       section: 'markets',
       reasonCode: null,

@@ -852,7 +852,6 @@ function editorVariants(product: CatalogueProductFixture): VariantFixture[] {
         optionLabel: 'Default',
         sellerSku: product.sals3ProductId,
         supplierCost: ZERO_USD,
-        freightEstimate: null,
         retailPrice: product.sellingPrice ?? ZERO_USD,
         supplierStock: product.supplierObservedQuantity ?? 0,
         warehouseLabel: 'Not recorded',
@@ -873,7 +872,6 @@ function editorVariants(product: CatalogueProductFixture): VariantFixture[] {
     optionLabel: variant.optionLabel,
     sellerSku: variant.sellerSku,
     supplierCost: variant.supplierCost,
-    freightEstimate: null,
     retailPrice: variant.sellingPrice ?? ZERO_USD,
     supplierStock: variant.supplierObservedQuantity ?? 0,
     warehouseLabel: 'Not recorded',
@@ -900,20 +898,7 @@ function editorMarkets(
           ? 'ELIGIBLE_STALE_EVIDENCE'
           : 'NO_ROUTE',
       affectedVariantsLabel: `${Math.max(product.variants.length, 1)} variant${product.variants.length === 1 ? '' : 's'}`,
-      sourceWarehouse:
-        product.supplierShipsFrom === undefined ||
-        product.supplierShipsFrom.length === 0
-          ? 'Not recorded'
-          : product.supplierShipsFrom.join(', '),
-      // The supplier's own packed-weight string, verbatim (it is a range, e.g.
-      // "1180.00-1300.00 g"). Not parsed into a number: a freight calculation
-      // must not silently pick one end of a range.
       packageWeightLabel: product.supplierWeightLabel ?? 'Not recorded',
-      packageDimensionsLabel: null,
-      routeEvidence:
-        'No freight route evidence is stored on this catalogue row.',
-      freightEstimate: null,
-      deliveryRangeLabel: null,
       evidenceCapturedAt: product.lastCheckedAt,
       note: 'Catalogue read uses persisted Sals3 data only; it does not call the supplier.',
     },
@@ -1125,6 +1110,13 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
             productId: product.id,
             revisionId: product.currentRevisionId,
             expectedRevisionVersion: product.currentRevisionVersion,
+          },
+    publishTarget:
+      product.productVersion === undefined
+        ? null
+        : {
+            productId: product.id,
+            expectedProductVersion: product.productVersion,
           },
     advancedIdentifiers: {
       product_id: product.id,

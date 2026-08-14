@@ -58,6 +58,10 @@ vi.mock('@/app/(portal)/listings/product-draft-actions', () => ({
   saveProductDraftAction: vi.fn(),
 }));
 
+vi.mock('@/app/(portal)/listings/publish-actions', () => ({
+  publishProductAction: vi.fn(),
+}));
+
 // eslint-disable-next-line import/first
 import AddProductPage, { generateMetadata } from './page';
 

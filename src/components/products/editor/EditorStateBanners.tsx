@@ -76,7 +76,7 @@ function lifecycleBanner(lifecycle: EditorLifecycle): BannerModel | null {
       tone: 'danger',
       icon: PlugZap,
       title: 'Supplier connection unavailable',
-      body: 'The supplier connection could not be reached, so stock, cost and freight evidence cannot be refreshed. The values below are the last successfully captured evidence.',
+      body: 'The supplier connection could not be reached, so stock, cost and market evidence cannot be refreshed. The values below are the last successfully captured evidence.',
       retryLabel: 'Retry connection',
     };
   }

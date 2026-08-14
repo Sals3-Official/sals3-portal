@@ -28,7 +28,7 @@ const NAV_LABELS: Record<EditorSectionId, string> = {
   specs: 'Specifications',
   description: 'Description',
   variants: 'Variants & Pricing',
-  markets: 'Markets & Shipping',
+  markets: 'Markets',
   media: 'Media',
   review: 'Review & Publish',
 };

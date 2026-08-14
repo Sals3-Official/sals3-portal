@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, ImageOff, Percent, Tag } from 'lucide-react';
+import { ChevronDown, ChevronUp, ImageOff, Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -30,7 +30,6 @@ type VariantPricingTableProps = {
   onBulkEnableInStock: () => void;
   onBulkDisableUnavailable: () => void;
   onBulkSetPrice: () => void;
-  onBulkApplyMarkup: () => void;
   evidenceCapturedAt: string;
 };
 
@@ -50,11 +49,6 @@ type VariantEvidenceRowProps = {
 };
 
 function VariantEvidenceRow({ variant }: VariantEvidenceRowProps) {
-  const freight =
-    variant.freightEstimate === null
-      ? 'No usable route evidence'
-      : `${formatMoney(variant.freightEstimate)} (estimate)`;
-
   const rows: Array<[string, string]> = [
     ['Supplier variant ID', variant.supplierVariantId],
     [
@@ -66,7 +60,6 @@ function VariantEvidenceRow({ variant }: VariantEvidenceRowProps) {
       `${formatCount(variant.supplierStock)} units · ${variant.warehouseLabel}`,
     ],
     ['Evidence captured', formatDateTime(variant.evidenceCapturedAt)],
-    ['Freight evidence', freight],
     ['Packed weight', `${formatCount(variant.packedWeightGrams)} g`],
   ];
 
@@ -96,11 +89,6 @@ function VariantEvidenceRow({ variant }: VariantEvidenceRowProps) {
 /**
  * Variant grid, bulk actions, and per-variant supplier evidence.
  *
- * Landed cost and margin are derived, never stored, so a variant with no
- * route evidence reads "Needs route check" / "Not available" instead of
- * `$0.00` - a zero here would make an unshippable variant look like the
- * most profitable one on the page.
- *
  * The table keeps its own horizontal scroll container. That is deliberate
  * rather than a fallback: the supplier evidence columns cannot fit a phone, and the
  * alternative - scrolling the whole page sideways - breaks every other
@@ -116,7 +104,6 @@ export default function VariantPricingTable({
   onBulkEnableInStock,
   onBulkDisableUnavailable,
   onBulkSetPrice,
-  onBulkApplyMarkup,
   evidenceCapturedAt,
 }: VariantPricingTableProps) {
   return (
@@ -133,15 +120,6 @@ export default function VariantPricingTable({
         >
           <Tag aria-hidden="true" />
           Set retail price…
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onBulkApplyMarkup}
-        >
-          <Percent aria-hidden="true" />
-          Apply markup…
         </Button>
         <Button
           type="button"
