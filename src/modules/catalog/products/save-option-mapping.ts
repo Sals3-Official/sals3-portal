@@ -224,11 +224,11 @@ export default async function saveOptionMapping(input: {
           .returning({ id: productOptionValues.id });
 
         if (stored !== undefined) {
-          valueIdByPositionAndRaw.set(`${index} ${value.raw}`, stored.id);
+          valueIdByPositionAndRaw.set(`${index}\u0000${value.raw}`, stored.id);
         }
       }
 
-      valueIdByPositionAndRaw.set(`option ${index}`, option.id);
+      valueIdByPositionAndRaw.set(`option\u0000${index}`, option.id);
     }
 
     let mappedVariantCount = 0;
@@ -240,8 +240,8 @@ export default async function saveOptionMapping(input: {
 
       // eslint-disable-next-line no-restricted-syntax
       for (const [index, token] of tokens.entries()) {
-        const optionId = valueIdByPositionAndRaw.get(`option ${index}`);
-        const valueId = valueIdByPositionAndRaw.get(`${index} ${token}`);
+        const optionId = valueIdByPositionAndRaw.get(`option\u0000${index}`);
+        const valueId = valueIdByPositionAndRaw.get(`${index}\u0000${token}`);
 
         if (optionId !== undefined && valueId !== undefined) {
           // eslint-disable-next-line no-await-in-loop
