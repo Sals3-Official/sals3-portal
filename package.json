@@ -26,6 +26,7 @@
     "seed:taxonomy": "tsx scripts/guard-remote-db.mts seed:taxonomy && tsx scripts/seed-sals3-taxonomy.mts",
     "seed:taxonomy-presets": "tsx scripts/guard-remote-db.mts seed:taxonomy-presets && tsx scripts/seed-sals3-taxonomy-presets.mts",
     "backup:local": "tsx scripts/backup-local-db.mts",
+    "backfill:option-labels": "tsx scripts/backfill-supplier-option-labels.mts",
     "verify": "npm run lint && npm run format:check && npm run typecheck:clean && npm run build && npm run test:run && npm run test:e2e"
   },
   "dependencies": {
