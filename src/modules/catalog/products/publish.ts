@@ -71,6 +71,7 @@ export type PublishRefusal =
   | 'CATEGORY_UNMAPPED'
   | 'NO_APPROVED_MEDIA'
   | 'PRICING_UNRESOLVED'
+  | 'RETAIL_BELOW_SUPPLIER_COST'
   | 'NO_ACTIVE_MARKET_PROFILE'
   | 'CURRENCY_NOT_AUTHORIZED'
   | 'NO_SUPPLIER_COST'
@@ -112,6 +113,16 @@ const AUDIT_ACTIONS = {
   offerPublished: 'catalog_product_offer.published',
   productUnpublished: 'catalog_product.unpublished',
 } as const;
+
+/**
+ * Minor units as a plain decimal for a refusal message a seller has to act on.
+ * No locale and no symbol: this string goes into an error detail, not a price
+ * label, and `formatMoney`'s display rules (dropping `.00`) would make a
+ * below-cost comparison harder to read, not easier.
+ */
+function formatMinor(amountMinor: number, currency: string): string {
+  return `${currency} ${(amountMinor / 100).toFixed(2)}`;
+}
 
 type PublishableVariant = {
   variantId: string;
@@ -482,6 +493,46 @@ export default async function publishProduct(input: {
           settlementCurrency: SETTLEMENT_CURRENCY,
         });
       } else {
+        /**
+         * A seller-entered price skips `resolveProductPricing` entirely, so this
+         * is the only place a floor can be enforced on it.
+         *
+         * Before this guard existed the sole validation was `amountMinor > 0`
+         * (here and in `publish-actions.ts`), which let a below-cost price
+         * publish and be stamped `pricingState: 'RESOLVED'`. That is not
+         * hypothetical: on 2026-08-14 the live corduroy jacket carried a
+         * `US$4.51` offer against a `US$5.80` supplier cost — a loss of
+         * `US$1.29` per unit before freight, and it was the floor price the
+         * storefront advertised.
+         *
+         * The comparison is against the supplier cost only. Cost-plus-margin
+         * would be the stronger rule, but it needs a category policy, and a
+         * product reaching this branch usually has none — that is why the
+         * resolver was skipped. So this refuses the provable loss and leaves the
+         * margin question to the resolver.
+         */
+        const costMinor = variant.costMinor as number;
+        const costCurrency = variant.costCurrency ?? SETTLEMENT_CURRENCY;
+
+        if (manualRetailPrice.currency !== costCurrency) {
+          // No approved conversion exists on this path, so "is it above cost"
+          // cannot be answered. Refusing is the honest outcome; converting at an
+          // invented rate is the flat-markup failure ADR-003 prohibits.
+          return {
+            ok: false,
+            reason: 'RETAIL_BELOW_SUPPLIER_COST',
+            detail: `Retail price is in ${manualRetailPrice.currency} but supplier cost is in ${costCurrency}, and no approved conversion exists — the price cannot be proved to be above cost.`,
+          };
+        }
+
+        if (manualRetailPrice.amountMinor < costMinor) {
+          return {
+            ok: false,
+            reason: 'RETAIL_BELOW_SUPPLIER_COST',
+            detail: `Retail price ${formatMinor(manualRetailPrice.amountMinor, costCurrency)} is below the supplier cost ${formatMinor(costMinor, costCurrency)} for ${variant.sku}.`,
+          };
+        }
+
         decision = {
           outcome: 'SELLER_RETAIL_PRICE',
           resolvedLayer: 'SELLER_RETAIL_PRICE',

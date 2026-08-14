@@ -2,6 +2,7 @@ import { ChevronDown, ChevronUp, ImageOff, Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import RetailPriceInput from '@/components/products/editor/RetailPriceInput';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
 import {
   Table,
@@ -12,11 +13,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import {
-  decimalStringToMinor,
   formatCount,
   formatDateTime,
   formatMoney,
-  minorToDecimalString,
 } from '@/lib/seller-center/product-editor/format';
 import type { VariantFixture } from '@/lib/seller-center/product-editor/types';
 
@@ -214,25 +213,12 @@ export default function VariantPricingTable({
                     {formatMoney(variant.supplierCost)}
                   </TableCell>
                   <TableCell>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      inputMode="decimal"
-                      aria-label={`Retail price for ${variant.optionLabel}`}
-                      className="h-8 w-24 tabular-nums"
-                      value={minorToDecimalString(
-                        variant.retailPrice.amountMinor,
-                        variant.retailPrice.currency,
-                      )}
-                      onChange={(event) =>
-                        onRetailChange(
-                          variant.id,
-                          decimalStringToMinor(
-                            event.target.value,
-                            variant.retailPrice.currency,
-                          ),
-                        )
+                    <RetailPriceInput
+                      label={`Retail price for ${variant.optionLabel}`}
+                      value={variant.retailPrice}
+                      supplierCost={variant.supplierCost}
+                      onChange={(amountMinor) =>
+                        onRetailChange(variant.id, amountMinor)
                       }
                     />
                   </TableCell>

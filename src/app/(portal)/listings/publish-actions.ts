@@ -17,10 +17,19 @@ import publishProduct, {
  *
  * Same discipline as `product-draft-actions.ts`: Zod-validate, authorize,
  * rate-limit, then hand a server-resolved tenant and actor to the domain
- * module. The input carries no `sellerAccountId`, `actorId`, `price`,
- * `currency`, `marketCode`, or `slug` — a crafted payload has nothing to
- * escalate with, and every one of those values is derived server-side from the
- * session, the policy modules, and the pricing resolver.
+ * module. The input carries no `sellerAccountId`, `actorId`, `marketCode`, or
+ * `slug` — a crafted payload has nothing to escalate with, and each of those is
+ * derived server-side from the session and the policy modules.
+ *
+ * **`variantRetailPrices` is the exception, and it is deliberate.** This comment
+ * previously claimed the input carried no `price` or `currency` and that every
+ * such value came from the pricing resolver. That stopped being true when seller
+ * retail prices were accepted, and the claim was load-bearing: it read as "a
+ * client cannot influence price", which it no longer did. A seller-supplied price
+ * bypasses `resolveProductPricing` altogether. It is bounded by three things
+ * instead — `positive()` here, the seller's own `product:publish` permission on
+ * their own tenant, and the supplier-cost floor enforced in `publish.ts`, which
+ * refuses `RETAIL_BELOW_SUPPLIER_COST` rather than publishing a loss.
  *
  * Publishing is tenant-owned authority (`product:publish` already exists in
  * `PORTAL_PERMISSIONS`), which is why this is a Server Action and not a script.

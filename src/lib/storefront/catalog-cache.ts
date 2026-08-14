@@ -78,7 +78,12 @@ const readFeedAcrossRequests = unstable_cache(
 const readProductAcrossRequests = unstable_cache(
   async (slug: string): Promise<StorefrontDetailRow | null> =>
     findPublishedProductBySlug(slug),
-  ['storefront-catalog-product', 'v1'],
+  // Bumped to 'v2' on 2026-08-15: `StorefrontVariant` gained `label`. Without the
+  // bump, entries cached under 'v1' keep serving label-less variants for up to
+  // REVALIDATE_SECONDS after deploy, which reads as "the feature did not ship".
+  // Only this key moves — the feed and categories row shapes are unchanged, and
+  // busting them would discard warm entries for nothing.
+  ['storefront-catalog-product', 'v2'],
   { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
 );
 

@@ -466,6 +466,71 @@ describe('publishProduct', () => {
     expect(mocks.resolveProductPricing).not.toHaveBeenCalled();
   });
 
+  /**
+   * The seller-price path skips the resolver, so it is the only place a floor can
+   * be enforced. Before these tests it had none, and the live corduroy jacket
+   * carried a US$4.51 offer against a US$5.80 supplier cost.
+   */
+  describe('the supplier-cost floor on a seller-entered price', () => {
+    function publishAt(db: unknown, amountMinor: number, currency = 'USD') {
+      return publishProduct({
+        productId: PRODUCT_ID,
+        sellerAccountId: SELLER_ID,
+        actorId: 'actor-1',
+        expectedProductVersion: 1,
+        variantRetailPrices: [
+          { variantId: 'variant-1', amountMinor, currency },
+        ],
+        db: db as never,
+      });
+    }
+
+    it('refuses a price below the supplier cost, naming both figures', async () => {
+      const { db, writes } = transactionalDb();
+
+      const result = await publishAt(db, 500); // USD 5.00 against a cost of 7.96
+
+      expect(result).toMatchObject({
+        ok: false,
+        reason: 'RETAIL_BELOW_SUPPLIER_COST',
+      });
+      expect((result as { detail?: string }).detail).toMatch(
+        /USD 5\.00.*USD 7\.96/,
+      );
+      // Refused before anything was written: a partial publish is the one state
+      // nothing else in the system can interpret.
+      expect(writes).toHaveLength(0);
+    });
+
+    it('allows a price exactly at the supplier cost', async () => {
+      const { db } = transactionalDb();
+
+      // Zero margin is a seller's decision to make. Below cost is a loss the
+      // platform refuses to record as resolved.
+      expect(await publishAt(db, 796)).toMatchObject({ ok: true });
+    });
+
+    it('allows a price above the supplier cost', async () => {
+      const { db } = transactionalDb();
+
+      expect(await publishAt(db, 797)).toMatchObject({ ok: true });
+    });
+
+    it('refuses when the price cannot be compared to the cost at all', async () => {
+      const { db } = transactionalDb();
+
+      // No approved conversion exists on this path, so "is it above cost" has no
+      // answer. Converting at an invented rate is the flat markup ADR-003 bans.
+      const result = await publishAt(db, 99999, 'AUD');
+
+      expect(result).toMatchObject({
+        ok: false,
+        reason: 'RETAIL_BELOW_SUPPLIER_COST',
+      });
+      expect((result as { detail?: string }).detail).toMatch(/AUD.*USD/);
+    });
+  });
+
   it('refuses when no supplier cost has been observed', async () => {
     const { db } = transactionalDb({
       variants: [variantRow({ costMinor: null })],
