@@ -1,0 +1,325 @@
+'use client';
+
+import { useState } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import EditorSectionCard from '@/components/products/editor/EditorSectionCard';
+
+/**
+ * Naming the option groups a supplier encoded in one string.
+ *
+ * CJ sends `Black-1XL` and nothing else — no structured attributes anywhere in
+ * its payload. `deriveOptionSplit` proves how many positions there are and which
+ * values sit at each, but it cannot know that position 0 is a *Colour*: on a
+ * phone the same two slots could be plug type and storage. So the split is
+ * pre-filled and a person supplies the two things only a person can — the axis
+ * names, and the order values should appear in.
+ *
+ * ## Two fields per value, and why the left one is locked
+ *
+ * The supplier token is the join key. Sals3's field-ownership rule is that
+ * supplier content is never overwritten, so the raw token stays read-only and the
+ * seller edits a display label beside it. That is also what makes re-sync safe: a
+ * CJ label change is matched on the token, and renaming the display label can
+ * never silently repoint a variant at another variant's price.
+ *
+ * ## Order is a human decision too
+ *
+ * `S, M, L, XL, XXL` is not alphabetical — alphabetically it is `L, M, S, XL,
+ * XXL`. No algorithm recovers the intended order, which is why the rows move by
+ * hand. Up/down buttons rather than drag: drag alone is unreachable by keyboard,
+ * and this needs no new dependency.
+ */
+
+export type OptionMappingProposalAxis = {
+  index: number;
+  /** Supplier tokens at this position, in first-seen order. */
+  values: string[];
+};
+
+export type VariantOptionMappingSectionProps = {
+  proposal: OptionMappingProposalAxis[];
+  /** Present once mapped — the section then reports rather than edits. */
+  mappedAxisNames?: string[];
+  variantCount: number;
+  onSave?: (
+    axes: {
+      name: string;
+      values: { raw: string; label: string }[];
+    }[],
+  ) => Promise<{ ok: boolean; message?: string }>;
+};
+
+type ValueDraft = { raw: string; label: string };
+type AxisDraft = { name: string; values: ValueDraft[] };
+
+function initialDrafts(proposal: OptionMappingProposalAxis[]): AxisDraft[] {
+  return proposal.map((axis) => ({
+    name: '',
+    // Display label defaults to the supplier's own token: the honest starting
+    // point, and often already correct.
+    values: axis.values.map((raw) => ({ raw, label: raw })),
+  }));
+}
+
+function move<T>(items: T[], from: number, to: number): T[] {
+  if (to < 0 || to >= items.length) return items;
+
+  const next = [...items];
+  const [lifted] = next.splice(from, 1);
+
+  if (lifted !== undefined) next.splice(to, 0, lifted);
+
+  return next;
+}
+
+export default function VariantOptionMappingSection({
+  proposal,
+  mappedAxisNames,
+  variantCount,
+  onSave,
+}: VariantOptionMappingSectionProps) {
+  const [axes, setAxes] = useState<AxisDraft[]>(() => initialDrafts(proposal));
+  const [touched, setTouched] = useState<Record<number, boolean>>({});
+  const [state, setState] = useState<'IDLE' | 'SAVING' | 'SAVED' | 'FAILED'>(
+    'IDLE',
+  );
+  const [message, setMessage] = useState<string | null>(null);
+
+  if (mappedAxisNames !== undefined && mappedAxisNames.length > 0) {
+    return (
+      <EditorSectionCard
+        id="options"
+        title="Option groups"
+        severity={null}
+        meta={`${mappedAxisNames.length} groups`}
+      >
+        <p className="text-sm text-muted-foreground">
+          Mapped as {mappedAxisNames.join(' × ')}. Supplier labels stay as
+          received; the display names above are Sals3&rsquo;s.
+        </p>
+      </EditorSectionCard>
+    );
+  }
+
+  if (proposal.length === 0) {
+    return (
+      <EditorSectionCard
+        id="options"
+        title="Option groups"
+        severity={null}
+        meta="Not detected"
+      >
+        <p className="text-sm text-muted-foreground">
+          The supplier labels on this product do not form a complete grid, so no
+          split could be proposed. Nothing is guessed here — mapping stays empty
+          and the storefront shows each supplier label whole.
+        </p>
+      </EditorSectionCard>
+    );
+  }
+
+  const named = axes.every((axis) => axis.name.trim().length > 0);
+
+  async function save() {
+    if (!named || onSave === undefined) return;
+
+    setState('SAVING');
+    setMessage(null);
+
+    const result = await onSave(
+      axes.map((axis) => ({
+        name: axis.name.trim(),
+        values: axis.values.map((value) => ({
+          raw: value.raw,
+          label: value.label.trim() === '' ? value.raw : value.label.trim(),
+        })),
+      })),
+    );
+
+    setState(result.ok ? 'SAVED' : 'FAILED');
+    setMessage(result.message ?? null);
+  }
+
+  return (
+    <EditorSectionCard
+      id="options"
+      title="Option groups"
+      // Unmapped blocks publication by owner decision, so the badge says so
+      // rather than reading as an optional nicety.
+      severity={named ? null : 'BLOCKER'}
+      meta={`${proposal.length} detected`}
+    >
+      <p className="mb-4 text-sm text-muted-foreground">
+        Detected {proposal.length} groups across {variantCount} variants from
+        the supplier&rsquo;s own labels. Name each group and put its values in
+        the order a buyer should see them. The supplier column is read-only.
+      </p>
+
+      <div className="flex flex-col gap-6">
+        {axes.map((axis, axisIndex) => {
+          const nameId = `option-group-${axisIndex}`;
+          const missingName =
+            touched[axisIndex] === true && axis.name.trim() === '';
+
+          return (
+            <div key={proposal[axisIndex]?.values.join('|') ?? axisIndex}>
+              <Label htmlFor={nameId}>Group {axisIndex + 1} name</Label>
+              <Input
+                id={nameId}
+                value={axis.name}
+                placeholder="e.g. Colour"
+                aria-invalid={missingName}
+                aria-describedby={missingName ? `${nameId}-error` : undefined}
+                className="mt-1 h-9 max-w-xs"
+                onBlur={() =>
+                  setTouched((current) => ({ ...current, [axisIndex]: true }))
+                }
+                onChange={(event) =>
+                  setAxes((current) =>
+                    current.map((item, index) =>
+                      index === axisIndex
+                        ? { ...item, name: event.target.value }
+                        : item,
+                    ),
+                  )
+                }
+              />
+              {missingName ? (
+                <p
+                  id={`${nameId}-error`}
+                  className="mt-1 text-xs text-destructive"
+                >
+                  Give this group a name before saving.
+                </p>
+              ) : null}
+
+              <div className="mt-3 flex flex-col gap-2">
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 text-xs text-muted-foreground">
+                  <span>Supplier value</span>
+                  <span>Shown to buyers</span>
+                  <span className="sr-only">Reorder</span>
+                </div>
+                {axis.values.map((value, valueIndex) => (
+                  <div
+                    key={value.raw}
+                    className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2"
+                  >
+                    <Input
+                      readOnly
+                      value={value.raw}
+                      aria-label={`Supplier value ${value.raw}`}
+                      className="h-9 bg-muted text-muted-foreground"
+                    />
+                    <Input
+                      value={value.label}
+                      aria-label={`Label shown to buyers for ${value.raw}`}
+                      className="h-9"
+                      onChange={(event) =>
+                        setAxes((current) =>
+                          current.map((item, index) =>
+                            index === axisIndex
+                              ? {
+                                  ...item,
+                                  values: item.values.map((existing, i) =>
+                                    i === valueIndex
+                                      ? {
+                                          ...existing,
+                                          label: event.target.value,
+                                        }
+                                      : existing,
+                                  ),
+                                }
+                              : item,
+                          ),
+                        )
+                      }
+                    />
+                    <span className="flex gap-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        aria-label={`Move ${value.raw} up`}
+                        disabled={valueIndex === 0}
+                        onClick={() =>
+                          setAxes((current) =>
+                            current.map((item, index) =>
+                              index === axisIndex
+                                ? {
+                                    ...item,
+                                    values: move(
+                                      item.values,
+                                      valueIndex,
+                                      valueIndex - 1,
+                                    ),
+                                  }
+                                : item,
+                            ),
+                          )
+                        }
+                      >
+                        <ChevronUp aria-hidden="true" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        aria-label={`Move ${value.raw} down`}
+                        disabled={valueIndex === axis.values.length - 1}
+                        onClick={() =>
+                          setAxes((current) =>
+                            current.map((item, index) =>
+                              index === axisIndex
+                                ? {
+                                    ...item,
+                                    values: move(
+                                      item.values,
+                                      valueIndex,
+                                      valueIndex + 1,
+                                    ),
+                                  }
+                                : item,
+                            ),
+                          )
+                        }
+                      >
+                        <ChevronDown aria-hidden="true" />
+                      </Button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-6 flex items-center gap-3">
+        <Button
+          type="button"
+          disabled={!named || state === 'SAVING'}
+          onClick={() => save()}
+        >
+          {state === 'SAVING' ? 'Saving…' : 'Save option groups'}
+        </Button>
+        {/*
+          Always mounted so the outcome is announced when it appears, rather than
+          the live region itself being inserted at the same moment.
+        */}
+        <p aria-live="polite" className="text-sm">
+          {state === 'SAVED' ? (
+            <span className="text-muted-foreground">Option groups saved.</span>
+          ) : null}
+          {state === 'FAILED' ? (
+            <span className="text-destructive">
+              {message ?? 'Could not save. Nothing was changed.'}
+            </span>
+          ) : null}
+        </p>
+      </div>
+    </EditorSectionCard>
+  );
+}
