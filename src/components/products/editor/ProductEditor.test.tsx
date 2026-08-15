@@ -609,7 +609,7 @@ describe('Product Editor - the photo a real product actually has', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('blocks publication when no seller has ever declared a real Sals3 category', () => {
+  it('warns, but never blocks publication, when no seller has ever declared a real Sals3 category', () => {
     const resolved = withCoverAddress();
 
     render(
@@ -619,7 +619,7 @@ describe('Product Editor - the photo a real product actually has', () => {
           // The auto-mirrored/no-category case: `categoryMappingConfidence`
           // is deliberately left at whatever `withCoverAddress()` already
           // carries (typically 'EXACT', matching how the CJ auto-mirror
-          // resolves confidence too) — this blocker must not be fooled by
+          // resolves confidence too) — this warning must not be fooled by
           // that. `sals3CategoryDeclaredBySeller: false` is the actual
           // "nobody has decided this yet" signal.
           sals3CategoryDeclaredBySeller: false,
@@ -631,12 +631,17 @@ describe('Product Editor - the photo a real product actually has', () => {
     );
 
     expect(
-      screen.getAllByText('Sals3 category is required').length,
+      screen.getAllByText('No Sals3 category has been decided yet').length,
     ).toBeGreaterThan(0);
-    expect(publishButton()).toBeDisabled();
+    // A warning, not a blocker (owner decision 2026-08-15): a missing
+    // category is a seller's own business risk, not a technical gate — and a
+    // blocker here would have retroactively stopped every already-live
+    // product from republishing, since none of them have gone through this
+    // picker.
+    expect(publishButton()).toBeEnabled();
   });
 
-  it('never blocks once a seller has declared a real Sals3 category, however confidence alone reads', () => {
+  it('clears the reminder once a seller has declared a real Sals3 category, however confidence alone reads', () => {
     const resolved = withCoverAddress();
 
     render(
@@ -654,11 +659,11 @@ describe('Product Editor - the photo a real product actually has', () => {
     );
 
     expect(
-      screen.queryByText('Sals3 category is required'),
+      screen.queryByText('No Sals3 category has been decided yet'),
     ).not.toBeInTheDocument();
   });
 
-  it('stays blocked even with EXACT confidence and a category path, when the auto-mirror produced them rather than a seller decision', () => {
+  it('keeps the reminder even with EXACT confidence and a category path, when the auto-mirror produced them rather than a seller decision', () => {
     const resolved = withCoverAddress();
 
     render(
@@ -677,7 +682,8 @@ describe('Product Editor - the photo a real product actually has', () => {
     );
 
     expect(
-      screen.getAllByText('Sals3 category is required').length,
+      screen.getAllByText('No Sals3 category has been decided yet').length,
     ).toBeGreaterThan(0);
+    expect(publishButton()).toBeEnabled();
   });
 });

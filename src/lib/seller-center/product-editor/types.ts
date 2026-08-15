@@ -246,8 +246,12 @@ export type ProductEditorFixture = {
    * above cannot answer this: the pre-existing CJ auto-mirror
    * (`cj-mirror.ts`) already resolves `EXACT`/`ACCEPTABLE` confidence for
    * almost every CJ-sourced product with no seller ever having decided
-   * anything, so gating the "Sals3 category is required" publish blocker on
-   * confidence alone made the blocker a no-op for real products.
+   * anything, so gating the "no category decided yet" reminder on
+   * confidence alone made it a no-op for real products. The reminder is a
+   * `WARNING`, not a `BLOCKER` (owner decision 2026-08-15) — never disables
+   * publishing, since a missing decision is the seller's own business risk,
+   * not a technical gate, and every already-live product predates this
+   * picker.
    */
   sals3CategoryDeclaredBySeller: boolean;
   /**

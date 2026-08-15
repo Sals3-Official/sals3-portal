@@ -168,12 +168,22 @@ function retailPriceIssue(fixture: ProductEditorFixture): ReadinessIssue {
   };
 }
 
+/**
+ * A warning, not a blocker (owner decision 2026-08-15): a missing or wrong
+ * Sals3 category is each seller's own business risk — a mistagged product
+ * simply sells worse — not something a technical gate should decide for
+ * them. A blocker here would also retroactively stop every already-live
+ * product from republishing the moment this shipped, since none of them
+ * have ever gone through this picker; a warning still surfaces the reminder
+ * without that disruption.
+ */
 function sals3CategoryIssue(fixture: ProductEditorFixture): ReadinessIssue {
   return {
     id: `${fixture.fixtureKey}-sals3-category`,
-    severity: 'BLOCKER',
-    title: 'Sals3 category is required',
-    explanation: 'Decide a Sals3 category from the Basic Information section.',
+    severity: 'WARNING',
+    title: 'No Sals3 category has been decided yet',
+    explanation:
+      'Choosing a real Sals3 category from Basic Information helps buyers find and trust this listing. Publishing without one is allowed.',
     affectedScope: 'Basic Information',
     source: 'AUTOMATED_VALIDATION',
     section: 'basic',
@@ -347,7 +357,7 @@ export default function ProductEditorWorkspace({
       (issue) =>
         issue.title !== 'Selling price is not resolved' &&
         issue.title !== 'Retail price is required' &&
-        issue.title !== 'Sals3 category is required',
+        issue.title !== 'No Sals3 category has been decided yet',
     );
     const localIssues = [
       ...(hasMissingRetailPrice ? [retailPriceIssue(fixture)] : []),
