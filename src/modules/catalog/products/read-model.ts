@@ -980,31 +980,46 @@ function editorMarkets(
 function editorSpecifications(
   product: CatalogueProductFixture,
 ): SpecificationFixture[] {
-  const categoryPath = effectiveCategoryPath(product);
-  const unmapped = categoryPath === 'Unmapped category';
+  // CJ's own catalogue category, verbatim, never the resolved/curated one:
+  // order fulfillment relies on this field staying exactly what the supplier
+  // sent. `effectiveCategoryPath` follows `products.categoryId`, which a
+  // curated Sals3 mapping (2026-08-15 reversal of the 2026-08-14 mirror
+  // decision) now updates independently — reading it here would let a
+  // curated category silently replace what this field promises to show.
+  const { supplierCategoryPath } = product;
+  const unmapped =
+    supplierCategoryPath === null || supplierCategoryPath === undefined;
   const specifications: SpecificationFixture[] = [
     {
       key: 'category',
       label: 'CJ Category',
-      value: categoryPath,
+      value: supplierCategoryPath ?? 'Unmapped category',
       requirement: 'REQUIRED',
       // Never `SELLER`: the category is the supplier's own catalogue
-      // category (owner decision 2026-08-14), not a seller entry.
+      // category, not a seller entry.
       source: unmapped ? 'NOT_PROVIDED' : 'SUPPLIER',
       unresolved: unmapped,
     },
   ];
 
+  // The resolved/curated Sals3 category — from a reviewed mapping or, absent
+  // one, the CJ auto-mirror. Shown only when it diverges from CJ Category
+  // above, so a seller can see the two are decided separately without the
+  // common case (mirror, not yet curated) repeating the same text twice.
+  const curatedCategoryPath = effectiveCategoryPath(product);
+
+  if (curatedCategoryPath !== (supplierCategoryPath ?? 'Unmapped category')) {
+    specifications.push({
+      key: 'sals3_category',
+      label: 'Sals3 Category (curated)',
+      value: curatedCategoryPath,
+      requirement: 'OPTIONAL',
+      source: 'INFERRED',
+      unresolved: false,
+    });
+  }
+
   const supplierFields: [string, string, string | null | undefined][] = [
-    [
-      'supplier_category',
-      'Supplier category',
-      // Omitted when it would repeat the CJ Category field above verbatim —
-      // shown only when a reviewed mapping made the two diverge.
-      product.supplierCategoryPath === categoryPath
-        ? null
-        : product.supplierCategoryPath,
-    ],
     ['supplier_sku', 'Supplier SKU', product.supplierSku],
     ['packed_weight', 'Packed weight (supplier)', product.supplierWeightLabel],
     [

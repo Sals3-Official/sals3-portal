@@ -227,9 +227,10 @@ describe('productToEditorFixture — the CJ category is the category', () => {
       ]),
     );
 
-    // `supplier_category` is deliberately absent: it would repeat the CJ
-    // Category field verbatim now that the CJ category is the category.
-    expect(byKey.has('supplier_category')).toBe(false);
+    // `sals3_category` is deliberately absent: with no reviewed mapping yet,
+    // the curated category is the auto-mirror's copy of the supplier's own
+    // text, which would just repeat the CJ Category field verbatim.
+    expect(byKey.has('sals3_category')).toBe(false);
     expect(byKey.get('supplier_sku')?.value).toBe('CJPK2718027');
     expect(byKey.get('packed_weight')?.value).toBe('1180.00-1300.00 g');
     expect(byKey.get('ships_from')?.value).toBe('CN, CN_US');
@@ -244,11 +245,22 @@ describe('productToEditorFixture — the CJ category is the category', () => {
     });
   });
 
-  it('still shows the supplier category separately when a mapped category diverges', () => {
+  /**
+   * The regression this session's constant-position-adjacent investigation
+   * found: `effectiveCategoryPath` follows `products.categoryId`, which a
+   * reviewed Sals3 v1 mapping (2026-08-15 reversal of the 2026-08-14 mirror
+   * decision) now updates independently of CJ's own category. Before this
+   * fix, "CJ Category" silently switched to showing the curated path the
+   * moment a mapping diverged — exactly the field CJ order fulfillment
+   * relies on staying untouched. It must keep showing raw supplier evidence
+   * regardless of any mapping decision, and the curated category gets its
+   * own separate, honestly-labelled entry instead.
+   */
+  it('keeps CJ Category as the supplier text even when a curated mapping diverges, and surfaces the curated category separately', () => {
     const { fixture } = productToEditorFixture({
       ...CATALOGUE_PRODUCT,
       categoryPath: 'Apparel & Accessories > Jackets',
-      categoryCode: 'CAT-MEN-100230',
+      categoryCode: 'CAT-GGL-100230',
     });
     const byKey = new Map(
       fixture.specifications.map((specification) => [
@@ -257,10 +269,21 @@ describe('productToEditorFixture — the CJ category is the category', () => {
       ]),
     );
 
-    expect(byKey.get('category')?.value).toBe(
-      'Apparel & Accessories > Jackets',
-    );
-    expect(byKey.get('supplier_category')?.value).toBe("Men's Jackets");
+    // The hard constraint: CJ Category never moves off the supplier's text.
+    expect(byKey.get('category')).toMatchObject({
+      label: 'CJ Category',
+      value: "Men's Jackets",
+      source: 'SUPPLIER',
+    });
+    // The curated category is visible too, honestly labelled as Sals3's own
+    // decision rather than folded into the supplier's field.
+    expect(byKey.get('sals3_category')).toMatchObject({
+      label: 'Sals3 Category (curated)',
+      value: 'Apparel & Accessories > Jackets',
+      source: 'INFERRED',
+      requirement: 'OPTIONAL',
+      unresolved: false,
+    });
   });
 
   it('omits a supplier attribute the row does not carry, rather than printing a blank', () => {
