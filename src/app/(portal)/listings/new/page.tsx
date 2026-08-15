@@ -125,7 +125,12 @@ export default async function AddProductPage({ searchParams }: PageProps) {
         fixture={fixture}
         initialLifecycle={lifecycleFromParam(query.state)}
         variantGuidance={variantGuidance}
-        sals3CategoryOptions={await listSals3CategoryV1Options(getDb())}
+        // No database read here on purpose: a fixture has no real
+        // productId, `decideCategoryAction` stays undefined for it either
+        // way (see `ProductEditor.tsx`), so the picker never renders and
+        // this option list would go unused. This mode must keep working
+        // with no `DATABASE_URL` at all - a CI run, a fresh clone, a
+        // preview deploy without database access.
       />
     );
   }

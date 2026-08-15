@@ -143,7 +143,17 @@ export default function Sals3CategoryPicker({
               value={reason}
               onChange={(event) => setReason(event.target.value)}
               placeholder="Why this category (at least 8 characters)"
+              aria-describedby="editor-sals3-category-reason-help"
             />
+            {reason.trim().length >= 8 ? null : (
+              <p
+                id="editor-sals3-category-reason-help"
+                className="text-xs text-muted-foreground"
+              >
+                {8 - reason.trim().length} more character
+                {8 - reason.trim().length === 1 ? '' : 's'} needed.
+              </p>
+            )}
           </div>
           {status.state === 'error' ? (
             <p role="alert" className="text-xs font-medium text-red-600">
