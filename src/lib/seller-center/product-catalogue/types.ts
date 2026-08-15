@@ -328,6 +328,27 @@ export type CatalogueProductFixture = {
    * read; absent and empty both mean "not mapped".
    */
   optionAxisNames?: string[];
+  /**
+   * The most recent supplier evidence Sals3 captured — the other half of the
+   * source-change diff.
+   *
+   * `provider_variant_references` is frozen at draft time; this is current, so
+   * the difference between them is what changed since the seller drafted the
+   * product. Reading it costs nothing: the snapshot is already loaded here.
+   *
+   * `capturedAt` travels with it because an empty diff is not proof the supplier
+   * has not changed. Evidence is only refreshed when a person asks for it, so the
+   * panel has to be able to say how old the comparison is.
+   */
+  supplierEvidence?: {
+    capturedAt: string | null;
+    variants: {
+      vid: string;
+      optionLabel: string | null;
+      priceUsd: number | null;
+      totalInventory: number | null;
+    }[];
+  };
   variants: CatalogueVariantFixture[];
 };
 
