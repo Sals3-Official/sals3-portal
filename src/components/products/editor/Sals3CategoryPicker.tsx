@@ -29,10 +29,10 @@ const MAX_RESULTS = 20;
  * depth).
  *
  * A picked category is not saved until "Save category" is pressed with a
- * reason — matching the platform-wide weight of the decision
- * (`decideCategoryMappingAction`'s own doc comment): one save here
- * reclassifies every product any seller sources under this product's CJ
- * category, not just this one.
+ * reason — the reason is the seller's own record of why, not a governance
+ * review artifact: this changes only the one product open in this editor
+ * (owner decision 2026-08-15 — see `decideProductSals3Category`'s doc
+ * comment), never another product or another seller's catalogue.
  */
 export default function Sals3CategoryPicker({
   options,
@@ -163,8 +163,8 @@ export default function Sals3CategoryPicker({
       )}
 
       <p className="text-xs text-muted-foreground">
-        Applies platform-wide: every product any seller sources under this
-        product&apos;s CJ category will resolve to this Sals3 category too.
+        Applies to this product only. Choose carefully — the wrong category can
+        hurt how buyers find and trust this listing.
       </p>
     </div>
   );

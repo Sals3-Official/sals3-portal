@@ -4,60 +4,37 @@ import { decideProductSals3Category } from './decide-category';
 
 const mocks = vi.hoisted(() => ({
   findProductForSteward: vi.fn(),
-  findProviderProductReferenceForProduct: vi.fn(),
-  findCandidateSourceForSeller: vi.fn(),
-  proposeCategoryMapping: vi.fn(),
-  reviewCategoryMappingDecision: vi.fn(),
-  applyResolvedCategoryToProduct: vi.fn(),
-  findHighestMappingVersion: vi.fn(),
+  findCategoryByCode: vi.fn(),
+  assignProductCategory: vi.fn(),
+  appendAuditEvent: vi.fn(),
 }));
 
 vi.mock('./repository', () => ({
   findProductForSteward: mocks.findProductForSteward,
-  findProviderProductReferenceForProduct:
-    mocks.findProviderProductReferenceForProduct,
-  findCandidateSourceForSeller: mocks.findCandidateSourceForSeller,
-}));
-vi.mock('@/modules/catalog/taxonomy/governance', () => ({
-  proposeCategoryMapping: mocks.proposeCategoryMapping,
-  reviewCategoryMappingDecision: mocks.reviewCategoryMappingDecision,
-}));
-vi.mock('@/modules/catalog/taxonomy/product-category', () => ({
-  applyResolvedCategoryToProduct: mocks.applyResolvedCategoryToProduct,
 }));
 vi.mock('@/modules/catalog/taxonomy/repository', () => ({
-  findHighestMappingVersion: mocks.findHighestMappingVersion,
+  findCategoryByCode: mocks.findCategoryByCode,
+  assignProductCategory: mocks.assignProductCategory,
+}));
+vi.mock('@/modules/catalog/candidates/repository', () => ({
+  appendAuditEvent: mocks.appendAuditEvent,
 }));
 
-const DB = {} as never;
+const TX = {} as never;
+
+const DB = { transaction: (fn: (tx: unknown) => unknown) => fn(TX) } as never;
 
 const PRODUCT = {
   id: 'product-1',
   stewardSellerAccountId: 'seller-1',
   version: 4,
+  categoryId: 'category-old',
 };
 
-const REFERENCE = { sourceCandidateId: 'candidate-1' };
-const SOURCE = { providerCategoryId: 'cj-cat-1042' };
-
-const MAPPING_PROPOSED = {
-  id: 'mapping-9',
-  status: 'PROPOSED',
-  mappingVersion: 5,
-};
-
-const MAPPING_ACTIVATED = {
-  ...MAPPING_PROPOSED,
-  status: 'ACTIVE',
-};
-
-const MAPPED_DECISION = {
-  outcome: 'MAPPED_EXACT',
-  needsReview: false,
-  sals3CategoryCode: 'CAT-GGL-100230',
-  sals3CategoryPath: 'Apparel & Accessories > Clothing > Outerwear > Jackets',
-  mappingId: 'mapping-9',
-  mappingVersion: 5,
+const CATEGORY = {
+  id: 'category-new',
+  code: 'CAT-GGL-100230',
+  path: 'Apparel & Accessories > Clothing > Outerwear > Jackets',
 };
 
 const INPUT = {
@@ -65,7 +42,7 @@ const INPUT = {
   sellerAccountId: 'seller-1',
   expectedProductVersion: 4,
   sals3CategoryCode: 'CAT-GGL-100230',
-  reason: 'This is a real jacket category, not a mirrored passthrough.',
+  reason: 'This is a real jacket, not a generic accessory.',
   actorId: 'actor-1',
   db: DB,
 };
@@ -74,9 +51,8 @@ describe('decideProductSals3Category', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findProductForSteward.mockResolvedValue(PRODUCT);
-    mocks.findProviderProductReferenceForProduct.mockResolvedValue(REFERENCE);
-    mocks.findCandidateSourceForSeller.mockResolvedValue(SOURCE);
-    mocks.findHighestMappingVersion.mockResolvedValue(4);
+    mocks.findCategoryByCode.mockResolvedValue(CATEGORY);
+    mocks.assignProductCategory.mockResolvedValue({ ...PRODUCT, version: 5 });
   });
 
   it("refuses a product that does not exist, is not this seller's, or has moved version", async () => {
@@ -86,61 +62,25 @@ describe('decideProductSals3Category', () => {
       ok: false,
       reason: 'NOT_FOUND',
     });
-    expect(mocks.proposeCategoryMapping).not.toHaveBeenCalled();
+    expect(mocks.findCategoryByCode).not.toHaveBeenCalled();
+    expect(mocks.assignProductCategory).not.toHaveBeenCalled();
   });
 
-  it('refuses a product with no CJ supplier category on record', async () => {
-    mocks.findProviderProductReferenceForProduct.mockResolvedValue(null);
+  it('refuses a stale product version without looking up the category', async () => {
+    mocks.findProductForSteward.mockResolvedValue({
+      ...PRODUCT,
+      version: 9,
+    });
 
     expect(await decideProductSals3Category(INPUT)).toEqual({
       ok: false,
-      reason: 'NO_SUPPLIER_CATEGORY',
+      reason: 'NOT_FOUND',
     });
-    expect(mocks.proposeCategoryMapping).not.toHaveBeenCalled();
+    expect(mocks.findCategoryByCode).not.toHaveBeenCalled();
   });
 
-  /**
-   * The security-relevant case: the externalCategoryId is never accepted
-   * from the caller. It must come from this product's own provider
-   * reference, so a crafted payload cannot redirect a different CJ
-   * category's mapping while appearing to edit this product.
-   */
-  it("derives externalCategoryId from the product's own provider reference, never from the caller", async () => {
-    mocks.proposeCategoryMapping.mockResolvedValue({
-      outcome: 'PROPOSED',
-      mapping: MAPPING_PROPOSED,
-    });
-    mocks.reviewCategoryMappingDecision.mockResolvedValue({
-      outcome: 'ACTIVATED',
-      mapping: MAPPING_ACTIVATED,
-    });
-    mocks.applyResolvedCategoryToProduct.mockResolvedValue({
-      outcome: 'CATEGORY_ASSIGNED',
-      product: { ...PRODUCT, version: 5 },
-      decision: MAPPED_DECISION,
-    });
-
-    await decideProductSals3Category(INPUT);
-
-    expect(mocks.proposeCategoryMapping).toHaveBeenCalledWith(
-      DB,
-      expect.objectContaining({ externalCategoryId: 'cj-cat-1042' }),
-    );
-    expect(mocks.applyResolvedCategoryToProduct).toHaveBeenCalledWith(
-      DB,
-      expect.objectContaining({
-        providerCategory: expect.objectContaining({
-          externalCategoryId: 'cj-cat-1042',
-        }),
-      }),
-    );
-  });
-
-  it('refuses an unresolvable Sals3 category code before proposing anything real', async () => {
-    mocks.proposeCategoryMapping.mockResolvedValue({
-      outcome: 'INVALID',
-      reason: 'SALS3_CATEGORY_NOT_FOUND',
-    });
+  it('refuses an unrecognised Sals3 category code instead of inventing one', async () => {
+    mocks.findCategoryByCode.mockResolvedValue(null);
 
     const result = await decideProductSals3Category(INPUT);
 
@@ -148,25 +88,28 @@ describe('decideProductSals3Category', () => {
       ok: false,
       reason: 'UNKNOWN_SALS3_CATEGORY',
     });
-    expect(mocks.reviewCategoryMappingDecision).not.toHaveBeenCalled();
-    expect(mocks.applyResolvedCategoryToProduct).not.toHaveBeenCalled();
+    expect(mocks.assignProductCategory).not.toHaveBeenCalled();
+    expect(mocks.appendAuditEvent).not.toHaveBeenCalled();
   });
 
-  it('proposes, activates, and applies the decision to the product in one pass', async () => {
-    mocks.proposeCategoryMapping.mockResolvedValue({
-      outcome: 'PROPOSED',
-      mapping: MAPPING_PROPOSED,
-    });
-    mocks.reviewCategoryMappingDecision.mockResolvedValue({
-      outcome: 'ACTIVATED',
-      mapping: MAPPING_ACTIVATED,
-    });
-    mocks.applyResolvedCategoryToProduct.mockResolvedValue({
-      outcome: 'CATEGORY_ASSIGNED',
-      product: { ...PRODUCT, version: 5 },
-      decision: MAPPED_DECISION,
-    });
+  it('resolves the code against the real Sals3 Taxonomy v1 table, never trusting a caller-supplied path', async () => {
+    await decideProductSals3Category(INPUT);
 
+    expect(mocks.findCategoryByCode).toHaveBeenCalledWith(TX, 'CAT-GGL-100230');
+    expect(mocks.assignProductCategory).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({
+        categoryId: 'category-new',
+        categoryMappingConfidence: 'EXACT',
+        // No provider_category_mappings row backs a directly-declared
+        // category — this is the whole point of the per-seller model.
+        categoryMappingId: null,
+        categoryMappingVersion: null,
+      }),
+    );
+  });
+
+  it('declares the decision to a single product, not a shared CJ-category mapping', async () => {
     const result = await decideProductSals3Category(INPUT);
 
     expect(result).toEqual({
@@ -175,69 +118,39 @@ describe('decideProductSals3Category', () => {
       categoryPath: 'Apparel & Accessories > Clothing > Outerwear > Jackets',
       productVersion: 5,
     });
-    expect(mocks.reviewCategoryMappingDecision).toHaveBeenCalledWith(
-      DB,
+    expect(mocks.appendAuditEvent).toHaveBeenCalledWith(
+      TX,
       expect.objectContaining({
-        mappingId: 'mapping-9',
-        decision: 'APPROVE_AND_ACTIVATE',
+        actorId: 'actor-1',
+        action: 'product.category_declared',
+        entityType: 'product',
+        entityId: 'product-1',
+        payload: expect.objectContaining({
+          sellerAccountId: 'seller-1',
+          categoryCode: 'CAT-GGL-100230',
+          previousCategoryId: 'category-old',
+        }),
       }),
     );
   });
 
-  /**
-   * A replayed request whose mapping is already ACTIVE (e.g. a retried
-   * double-submit) must not attempt to review an already-reviewed mapping —
-   * it applies the already-active decision directly.
-   */
-  it('skips the review step for an already-active replayed proposal', async () => {
-    mocks.proposeCategoryMapping.mockResolvedValue({
-      outcome: 'ALREADY_PROPOSED',
-      mapping: MAPPING_ACTIVATED,
-    });
-    mocks.applyResolvedCategoryToProduct.mockResolvedValue({
-      outcome: 'CATEGORY_ASSIGNED',
-      product: { ...PRODUCT, version: 5 },
-      decision: MAPPED_DECISION,
-    });
-
-    const result = await decideProductSals3Category(INPUT);
-
-    expect(result).toMatchObject({ ok: true });
-    expect(mocks.reviewCategoryMappingDecision).not.toHaveBeenCalled();
-  });
-
-  it('reports a stale write when the review step loses a race', async () => {
-    mocks.proposeCategoryMapping.mockResolvedValue({
-      outcome: 'PROPOSED',
-      mapping: MAPPING_PROPOSED,
-    });
-    mocks.reviewCategoryMappingDecision.mockResolvedValue({
-      outcome: 'STALE_WRITE_REJECTED',
-    });
+  it('reports a stale write when the compare-and-set loses a race', async () => {
+    mocks.assignProductCategory.mockResolvedValue(null);
 
     expect(await decideProductSals3Category(INPUT)).toEqual({
       ok: false,
       reason: 'STALE_WRITE',
     });
-    expect(mocks.applyResolvedCategoryToProduct).not.toHaveBeenCalled();
+    expect(mocks.appendAuditEvent).not.toHaveBeenCalled();
   });
 
-  it('reports a stale write when applying to the product loses a version race', async () => {
-    mocks.proposeCategoryMapping.mockResolvedValue({
-      outcome: 'PROPOSED',
-      mapping: MAPPING_PROPOSED,
-    });
-    mocks.reviewCategoryMappingDecision.mockResolvedValue({
-      outcome: 'ACTIVATED',
-      mapping: MAPPING_ACTIVATED,
-    });
-    mocks.applyResolvedCategoryToProduct.mockResolvedValue({
-      outcome: 'NOT_FOUND',
-    });
+  it("scopes the product lookup to the caller's own seller account", async () => {
+    await decideProductSals3Category({ ...INPUT, sellerAccountId: 'seller-2' });
 
-    expect(await decideProductSals3Category(INPUT)).toEqual({
-      ok: false,
-      reason: 'STALE_WRITE',
-    });
+    expect(mocks.findProductForSteward).toHaveBeenCalledWith(
+      TX,
+      'product-1',
+      'seller-2',
+    );
   });
 });

@@ -78,7 +78,7 @@ describe('decideCategoryMappingAction', () => {
     authorized();
   });
 
-  it('never lets the client supply an externalCategoryId or the tenant/actor — only what a person decided', async () => {
+  it('never lets the client supply the tenant or actor — only what a person decided', async () => {
     vi.mocked(decideProductSals3Category).mockResolvedValue({
       ok: true,
       categoryCode: 'CAT-GGL-100230',
@@ -89,7 +89,6 @@ describe('decideCategoryMappingAction', () => {
     await decideCategoryMappingAction({
       ...VALID_INPUT,
       // Anything beyond the schema's fields is simply not read.
-      externalCategoryId: 'attacker-supplied-category',
       sellerAccountId: 'attacker-seller',
       actorId: 'attacker-user',
     });
@@ -102,8 +101,6 @@ describe('decideCategoryMappingAction', () => {
         sals3CategoryCode: 'CAT-GGL-100230',
       }),
     );
-    const call = vi.mocked(decideProductSals3Category).mock.calls[0]?.[0];
-    expect(call).not.toHaveProperty('externalCategoryId');
   });
 
   it('expires the storefront cache on success, not only the listings path', async () => {
@@ -128,14 +125,14 @@ describe('decideCategoryMappingAction', () => {
   it('does not touch either cache when the domain module refuses', async () => {
     vi.mocked(decideProductSals3Category).mockResolvedValue({
       ok: false,
-      reason: 'NO_SUPPLIER_CATEGORY',
+      reason: 'STALE_WRITE',
     });
 
     const result = await decideCategoryMappingAction(VALID_INPUT);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected a refusal');
-    expect(result.reason).toBe('NO_SUPPLIER_CATEGORY');
+    expect(result.reason).toBe('STALE_WRITE');
     expect(revalidatePath).not.toHaveBeenCalled();
     expect(updateTag).not.toHaveBeenCalled();
   });
@@ -143,7 +140,6 @@ describe('decideCategoryMappingAction', () => {
   it('gives every domain refusal a message, never an empty string', async () => {
     const reasons = [
       'NOT_FOUND',
-      'NO_SUPPLIER_CATEGORY',
       'UNKNOWN_SALS3_CATEGORY',
       'STALE_WRITE',
     ] as const;

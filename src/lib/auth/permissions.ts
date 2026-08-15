@@ -64,14 +64,15 @@ export const PORTAL_PERMISSIONS = [
   // `inventory:adjust` because it changes no Sals3 inventory - it records
   // what a human saw on the supplier's own website, and nothing else.
   'catalog.candidate.stock_attest',
-  // Deciding which real Sals3 Taxonomy v1 category a CJ supplier category
-  // means (owner decision 2026-08-15, reversing ADR-014's original
-  // Admin-Portal-only assignment for this specific capability - see
-  // `taxonomy/authorization.ts`). Owner decision 2026-08-15: open to every
-  // role that can already touch product data (everything but `viewer`,
-  // which holds no write permission anywhere in this table) - deliberately
-  // not narrowed further for now. Role/access refinement is a deferred,
-  // separate piece of work, not a blocker for this capability existing.
+  // Declaring a seller's own product's Sals3 category (owner decision
+  // 2026-08-15, reversing ADR-014's original Admin-Portal-only assignment -
+  // see `taxonomy/authorization.ts`). Granted to every role that already
+  // holds `product:edit` - the same precondition every other product-mutation
+  // action in this table requires, since a role without it is not scoped to
+  // one seller's own product the way this write is. Deliberately not
+  // narrowed further within that set for now. Role/access refinement is a
+  // deferred, separate piece of work, not a blocker for this capability
+  // existing.
   'catalog.category_mapping.manage',
 ] as const;
 
@@ -86,7 +87,6 @@ const ROLE_PERMISSIONS: Record<PortalRole, readonly PortalPermission[]> = {
     'product:export',
     'review:moderate',
     'catalog.candidate.read',
-    'catalog.category_mapping.manage',
   ],
   // Seller Center "Owner" — full access, including payout destination,
   // financial settings, and market rules (mirrors the mockup's Owner role).

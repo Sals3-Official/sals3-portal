@@ -128,13 +128,20 @@ describe('governance has exactly one authorized seller-facing surface', () => {
     expect(content).toMatch(/authorizeCategoryGovernance/);
   });
 
-  it('grants every role that can already touch product data, denies only viewer', () => {
+  it('grants every role that already holds product:edit, denies the rest', () => {
     PORTAL_ROLES.forEach((role) => {
       const expected = can(role, 'catalog.category_mapping.manage');
 
       expect(authorizeCategoryGovernance(role).allowed).toBe(expected);
     });
     expect(authorizeCategoryGovernance('viewer').allowed).toBe(false);
+    // Denied for the same reason as `viewer`, not an oversight: this role's
+    // session is never scoped to one seller's own product the way this
+    // write requires, so `product:edit` was never granted to it either.
+    expect(authorizeCategoryGovernance('catalogue_reviewer').allowed).toBe(
+      false,
+    );
+    expect(authorizeCategoryGovernance('seller_manager').allowed).toBe(true);
     expect(authorizeCategoryGovernance('seller_staff').allowed).toBe(true);
   });
 

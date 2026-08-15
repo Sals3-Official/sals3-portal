@@ -391,6 +391,13 @@ export async function listOpenRemapReviewFindings(
  * than overwriting an assignment it never saw. `null` is one answer for "not
  * yours, not there, or moved on" — a caller cannot probe for another tenant's
  * product.
+ *
+ * `categoryMappingId`/`categoryMappingVersion` are nullable on purpose: a
+ * category a seller declared directly for their own product (see
+ * `products/decide-category.ts`) has no `provider_category_mappings` row
+ * behind it, unlike one resolved through the CJ-category crosswalk
+ * (`applyResolvedCategoryToProduct`). The schema's own check constraint
+ * already permits `categoryId` set with both null.
  */
 export async function assignProductCategory(
   executor: Executor,
@@ -400,8 +407,8 @@ export async function assignProductCategory(
     expectedVersion: number;
     categoryId: string;
     categoryMappingConfidence: CategoryMappingConfidence;
-    categoryMappingId: string;
-    categoryMappingVersion: number;
+    categoryMappingId: string | null;
+    categoryMappingVersion: number | null;
     actorId: string;
   },
 ): Promise<ProductRow | null> {

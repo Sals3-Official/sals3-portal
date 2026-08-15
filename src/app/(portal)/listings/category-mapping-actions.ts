@@ -11,9 +11,10 @@ import { authorizeCategoryGovernance } from '@/modules/catalog/taxonomy/authoriz
 import { decideProductSals3Category } from '@/modules/catalog/products/decide-category';
 
 /**
- * The one authorized entry point for a category-mapping decision — every
- * other route, page, or action must reach `taxonomy/governance.ts` only
- * through this file (`boundaries.test.ts` proves it).
+ * The one authorized entry point for a seller declaring their own product's
+ * Sals3 category — every other route, page, or action must reach
+ * `taxonomy/repository.ts`'s category-write functions only through this file
+ * (`boundaries.test.ts` proves it, transitively through `decide-category.ts`).
  *
  * Same discipline as `option-mapping-actions.ts`: Zod-validate, authorize,
  * rate-limit, then hand a server-resolved tenant and actor to the domain
@@ -22,12 +23,14 @@ import { decideProductSals3Category } from '@/modules/catalog/products/decide-ca
  * ordinary `product:edit` gate that proves this session may touch product
  * data at all.
  *
- * The client sends only `productId`, `expectedProductVersion`, the picked
- * `sals3CategoryCode`, and a `reason` — never `externalCategoryId`.
- * `decideProductSals3Category` derives which CJ category this product is
- * actually under from the product's own provider references, so a crafted
- * payload cannot redirect a *different* supplier category's mapping while
- * appearing to edit this one.
+ * Owner decision 2026-08-15 (revised same day): this is per-seller,
+ * per-product — a seller's pick only ever changes the one product they had
+ * open, never another seller's catalogue. `decide-category.ts` resolves
+ * `sals3CategoryCode` against the real Sals3 Taxonomy v1 table and writes
+ * directly to that one product; there is no shared CJ-category mapping this
+ * action reads or writes, so no `externalCategoryId` is derived or accepted.
+ * `sellerAccountId`/`actorId` still come only from the server-resolved
+ * session, never the request.
  *
  * Next.js verifies the request origin for Server Actions, which is the CSRF
  * control for these cookie-backed mutations.
@@ -54,8 +57,6 @@ const REFUSAL_MESSAGES: Record<string, string> = {
   rate_limited: 'Too many attempts. Wait a moment and try again.',
   not_configured: 'The catalogue database is not available right now.',
   NOT_FOUND: 'This product no longer exists, or it is not yours.',
-  NO_SUPPLIER_CATEGORY:
-    'This product has no CJ supplier category on record, so there is nothing to map.',
   UNKNOWN_SALS3_CATEGORY:
     'That is not a Sals3 Taxonomy v1 category. Search again and pick one from the list.',
   STALE_WRITE:
@@ -99,9 +100,8 @@ async function authorize(): Promise<Authorized | AuthorizationFailure> {
     return { ok: false, reason: 'denied' };
   }
 
-  // ADR-006: a supplier-backed catalogue record — which is what has a CJ
-  // category to map in the first place — is a Dropshipper capability, same
-  // as `option-mapping-actions.ts`.
+  // ADR-006: this screen is the Dropshipper product editor, same scope as
+  // `option-mapping-actions.ts`.
   if (session.sellerBusinessModel !== 'DROPSHIPPER') {
     return { ok: false, reason: 'denied' };
   }
