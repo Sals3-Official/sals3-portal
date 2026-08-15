@@ -48,8 +48,8 @@ export const taxonomyStatusEnum = pgEnum('taxonomy_status', [
  * Sals3 Taxonomy v0 (ADR-002), seeded verbatim from
  * `docs/Raw/universal_category_variation_taxonomy.xlsx`'s
  * `Universal_Category_Taxonomy` sheet in the sibling `sals3-ecommerce`
- * vault — see `src/lib/db/seed-data/sals3-taxonomy-v0.json` and
- * `scripts/seed-sals3-taxonomy.mts`. `code` is the stable
+ * vault — see `src/lib/db/seed-data/sals3-taxonomy-v1.json` and
+ * `scripts/seed-sals3-taxonomy-v1.mts`. `code` is the stable
  * "Universal Category Code" column; it is the ONLY column a commercial
  * policy may reference (never a display label, never a CJ category
  * string, never mutable path text). Global reference data, not

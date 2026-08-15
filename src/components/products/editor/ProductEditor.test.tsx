@@ -563,7 +563,7 @@ describe('Product Editor - the photo a real product actually has', () => {
     });
 
     const beautyOption = screen
-      .getByText('Beauty & Personal Care')
+      .getByText('Health & Beauty')
       .closest('[data-slot="select-item"]');
 
     if (beautyOption === null) throw new Error('missing Beauty option');
@@ -658,7 +658,7 @@ describe('Product Editor - the photo a real product actually has', () => {
     fireEvent.click(category);
 
     const option = screen
-      .getByText('Beauty & Personal Care')
+      .getByText('Health & Beauty')
       .closest('[data-slot="select-item"]');
 
     if (option === null) throw new Error('missing Beauty option');

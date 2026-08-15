@@ -42,7 +42,7 @@ const REQUEST = {
   revisionId: '22222222-2222-4222-8222-222222222222',
   expectedRevisionVersion: 3,
   title: 'Merino crew neck',
-  sals3CategoryL1: 'Sports, Fitness & Outdoor Gear',
+  sals3CategoryL1: 'Sporting Goods',
   descriptionDocument: {
     version: 1 as const,
     blocks: [{ type: 'paragraph' as const, text: 'Soft merino wool.' }],
@@ -134,7 +134,7 @@ describe('saveProductDraft', () => {
       expect.anything(),
       expect.objectContaining({
         title: REQUEST.title,
-        sals3CategoryL1: 'Sports, Fitness & Outdoor Gear',
+        sals3CategoryL1: 'Sporting Goods',
       }),
     );
   });

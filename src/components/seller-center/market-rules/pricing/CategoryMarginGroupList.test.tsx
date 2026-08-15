@@ -41,13 +41,13 @@ const GROUPS: CategoryMarginGroupViewModel[] = [
   group(),
   group({
     groupKey: 'Beauty::Hair Care',
-    l1: 'Beauty & Personal Care',
+    l1: 'Health & Beauty',
     l2: 'Hair Care',
     leaves: [
       {
         categoryId: 'category-2',
         code: 'CAT-BEA-100869',
-        path: 'Beauty & Personal Care > Hair Care > Shampoo',
+        path: 'Health & Beauty > Hair Care > Shampoo',
         policy: null,
       },
     ],

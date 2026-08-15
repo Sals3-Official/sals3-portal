@@ -276,7 +276,7 @@ describe('deactivateCategoryPolicyAction', () => {
 
 describe('saveCategoryGroupMarginAction', () => {
   const VALID_INPUT = {
-    l1: 'Beauty & Personal Care',
+    l1: 'Health & Beauty',
     l2: 'Hair Care',
     targetMarginRate: '0.30',
     roundingRule: 'NONE',
@@ -886,7 +886,7 @@ describe('policy history read actions', () => {
     listAuditHistoryForSellerEntityMock.mockResolvedValue(HISTORY);
 
     const result = await getCategoryGroupHistoryAction(
-      'Beauty & Personal Care',
+      'Health & Beauty',
       'Hair Care',
     );
 
@@ -897,7 +897,7 @@ describe('policy history read actions', () => {
         entityType: 'PricingCategoryPolicy',
         sellerAccountId: SELLER_A_ID,
         payloadEquals: {
-          bulkL1: 'Beauty & Personal Care',
+          bulkL1: 'Health & Beauty',
           bulkL2: 'Hair Care',
         },
       },

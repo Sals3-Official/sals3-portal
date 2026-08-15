@@ -16,13 +16,13 @@ import { supplierCandidates, supplierEnum } from './catalog';
 import { sals3Categories } from './pricing-policy';
 
 /**
- * CJ-to-Sals3 category mapping pilot (ADR-002 §3) plus the Sals3 Taxonomy v0
+ * CJ-to-Sals3 category mapping pilot (ADR-002 §3) plus the Sals3 Taxonomy v1
  * form presets the mapping unlocks (ADR-002 §4).
  *
  * Three deliberate boundaries:
  *
  * 1. **No second taxonomy.** `sals3_categories` (declared in
- *    `pricing-policy.ts`, seeded by `scripts/seed-sals3-taxonomy.mts`) is
+ *    `pricing-policy.ts`, seeded by `scripts/seed-sals3-taxonomy-v1.mts`) is
  *    already the one Sals3-side category identity, and its `code` column is
  *    already the only thing a commercial policy may reference. Nothing here
  *    re-declares a category; `sals3_category_presets` hangs the workbook's
@@ -49,15 +49,15 @@ import { sals3Categories } from './pricing-policy';
  * `production_ready`) on `sals3_categories.taxonomy_status`, and this column
  * answers the separate question "which extraction of the workbook is this".
  */
-export const ACTIVE_TAXONOMY_VERSION = 'sals3-taxonomy-v0';
+export const ACTIVE_TAXONOMY_VERSION = 'sals3-taxonomy-v1';
 
 /**
- * Sals3 Taxonomy v0 form presets, seeded verbatim from the
+ * Sals3 Taxonomy v1 form presets, seeded verbatim from the
  * `Universal_Category_Taxonomy` sheet's `Variation Architecture`,
  * `Tier 1/2 Attribute`, `SKU Format Standard`, `Required Item Attributes`,
  * `Store Catalogue Status`, and `Product Examples & Guidelines` columns —
- * see `src/lib/db/seed-data/sals3-taxonomy-presets-v0.json` and
- * `scripts/seed-sals3-taxonomy-presets.mts`.
+ * see `src/lib/db/seed-data/sals3-taxonomy-presets-v1.json` and
+ * `scripts/seed-sals3-taxonomy-v1.mts`.
  *
  * Separate from `sals3_categories` on purpose. The category *code* is a
  * stable identity that policy and history reference forever; these presets
@@ -94,7 +94,7 @@ export const sals3CategoryPresets = pgTable(
 
     /** Workbook `Store Catalogue Status` — provenance about the source sheet, NOT a Sals3 listing state. */
     storeCatalogueStatus: text('store_catalogue_status'),
-    /** Blank in 1,338 of 1,345 records; ADR-002 forbids using it as a primary classifier input. */
+    /** Blank in all but a handful of records; ADR-002 forbids using it as a primary classifier input. */
     productExamples: text('product_examples'),
 
     sourceWorkbook: text('source_workbook').notNull(),

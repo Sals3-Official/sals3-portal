@@ -118,7 +118,7 @@ describe('readVariationTiers', () => {
     const raw = readFileSync(
       join(
         __dirname,
-        '../../../lib/db/seed-data/sals3-taxonomy-presets-v0.json',
+        '../../../lib/db/seed-data/sals3-taxonomy-presets-v1.json',
       ),
       'utf-8',
     );
@@ -131,7 +131,7 @@ describe('readVariationTiers', () => {
       .filter((value): value is string => value !== null);
   })();
 
-  it('reads a tier count for every architecture in the frozen Taxonomy v0 extract', () => {
+  it('reads a tier count for every architecture in the frozen Taxonomy v1 extract', () => {
     expect(architectures.length).toBeGreaterThan(0);
 
     const unreadable = architectures.filter(

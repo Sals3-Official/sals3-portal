@@ -20,7 +20,7 @@
  * ## What it does, in order
  *
  * 1. Resolves the Sals3 category by its taxonomy code (must already be seeded
- *    by `npm run seed:taxonomy`).
+ *    by `npm run seed:taxonomy-v1`).
  * 2. Proposes a mapping for the CJ category id, then reviews it to `ACTIVE`
  *    with the confidence given on the command line.
  * 3. For every product whose provider reference came from that CJ category,
@@ -150,7 +150,7 @@ async function approveMapping(
 
   if (category === null) {
     throw new Error(
-      `No sals3_categories row with code ${args.sals3Code}. Run \`npm run seed:taxonomy\` first.`,
+      `No sals3_categories row with code ${args.sals3Code}. Run \`npm run seed:taxonomy-v1\` first.`,
     );
   }
 

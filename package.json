@@ -23,11 +23,10 @@
     "bootstrap:cj": "tsx scripts/guard-remote-db.mts bootstrap:cj && tsx scripts/bootstrap-sals3-official-cj.mts",
     "approve:portal-user": "tsx scripts/guard-remote-db.mts approve:portal-user && tsx scripts/approve-portal-user.mts",
     "create:portal-user": "tsx scripts/guard-remote-db.mts create:portal-user && tsx scripts/create-portal-user.mts",
-    "seed:taxonomy": "tsx scripts/guard-remote-db.mts seed:taxonomy && tsx scripts/seed-sals3-taxonomy.mts",
-    "seed:taxonomy-presets": "tsx scripts/guard-remote-db.mts seed:taxonomy-presets && tsx scripts/seed-sals3-taxonomy-presets.mts",
     "backup:local": "tsx scripts/backup-local-db.mts",
     "backfill:option-labels": "tsx scripts/backfill-supplier-option-labels.mts",
-    "verify": "npm run lint && npm run format:check && npm run typecheck:clean && npm run build && npm run test:run && npm run test:e2e"
+    "verify": "npm run lint && npm run format:check && npm run typecheck:clean && npm run build && npm run test:run && npm run test:e2e",
+    "seed:taxonomy-v1": "tsx scripts/guard-remote-db.mts seed:taxonomy-v1 && tsx scripts/seed-sals3-taxonomy-v1.mts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
