@@ -349,6 +349,10 @@ const BASE: ProductEditorFixture = {
   banner: null,
   issues: [SUGGESTION_OPTIONAL_ATTRIBUTES, SUGGESTION_SUPPLIER_COPY],
   sourceChanges: [],
+  // These fixtures have no supplier snapshot behind them, so there is nothing
+  // to compare against — a different state from "nothing changed", and the
+  // panel says which one it is.
+  sourceChangesCapturedAt: null,
   // These design-preview variants carry Sals3-authored labels rather than a
   // supplier's concatenated string, so there is nothing to derive a split from.
   // An empty proposal is the honest state: the section says so rather than

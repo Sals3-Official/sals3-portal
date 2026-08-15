@@ -5,6 +5,11 @@ import type { SourceChangeFixture } from '@/lib/seller-center/product-editor/typ
 
 type SourceChangesPanelProps = {
   changes: SourceChangeFixture[];
+  /**
+   * When the supplier evidence this comparison reads was captured. `null` when
+   * none is stored, which is a different state from "nothing changed".
+   */
+  evidenceCapturedAt?: string | null;
 };
 
 /**
@@ -21,6 +26,7 @@ type SourceChangesPanelProps = {
  */
 export default function SourceChangesPanel({
   changes,
+  evidenceCapturedAt = null,
 }: SourceChangesPanelProps) {
   return (
     <div className="flex flex-col gap-3">
@@ -31,8 +37,21 @@ export default function SourceChangesPanel({
       </p>
 
       {changes.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-border-strong p-4 text-center text-xs text-muted-foreground">
-          No supplier changes recorded for this product.
+        /*
+          "No changes" and "nothing changed" are not the same claim, and the
+          older copy made the second one.
+
+          This compares the record frozen when the product was drafted against
+          the last supplier evidence Sals3 captured — and evidence is only
+          refreshed when a person asks for it. Nothing refreshes it on a
+          schedule, so a supplier can change something Sals3 has not looked at
+          since. Saying which date the comparison rests on is the difference
+          between a fact and a false reassurance.
+        */
+        <p className="rounded-lg border border-dashed border-border-strong p-4 text-center text-xs leading-relaxed text-muted-foreground">
+          {evidenceCapturedAt === null
+            ? 'No supplier evidence is stored for this product, so there is nothing to compare against. This is not the same as the supplier having made no changes.'
+            : `Nothing differs from the supplier evidence captured ${formatDateTime(evidenceCapturedAt)}. Evidence is only refreshed when someone requests it, so this is not proof the supplier has not changed since.`}
         </p>
       ) : (
         <ul className="flex list-none flex-col gap-2.5 p-0">

@@ -257,6 +257,16 @@ export type ProductEditorFixture = {
   banner: EditorBanner | null;
   issues: ReadinessIssue[];
   sourceChanges: SourceChangeFixture[];
+  /**
+   * When the supplier evidence `sourceChanges` was computed against was captured.
+   * `null` when none is stored.
+   *
+   * Carried separately because it is what an *empty* list needs. No differences
+   * is a statement about one snapshot on one date, and nothing refreshes that
+   * snapshot on a schedule — so the panel must be able to say which date, rather
+   * than implying the supplier has stood still.
+   */
+  sourceChangesCapturedAt: string | null;
   specifications: SpecificationFixture[];
   /**
    * What the supplier's concatenated variant labels encode, and whether a seller

@@ -52,6 +52,7 @@ import type {
 import { feedSnapshotSchema } from '@/modules/catalog/candidates/rules/contracts';
 import { descriptionDocumentSchema } from './description-document';
 import { deriveOptionSplit } from './option-split';
+import { deriveSourceChanges } from './source-changes';
 
 type Executor = Database;
 
@@ -198,6 +199,26 @@ function groupBy<T, K extends string>(
   });
 
   return grouped;
+}
+
+/**
+ * A timestamp only if it is one a formatter can survive.
+ *
+ * `evidence.capturedAt` is `z.string().nullish()` — any string satisfies it,
+ * because the schema mirrors what the capture path writes rather than policing
+ * it. Downstream, `formatDateTime` calls `Intl.DateTimeFormat().format(new
+ * Date(value))`, and `Intl` **throws a RangeError on an invalid date** rather
+ * than printing something odd. One malformed snapshot would take the whole
+ * Changes tab down with it.
+ *
+ * Returning `null` for anything unparseable turns that crash into the panel's
+ * existing "no evidence stored" wording, which is the honest reading: a
+ * timestamp nobody can interpret is not a date this can claim to compare against.
+ */
+function displayableTimestamp(value: string | null): string | null {
+  if (value === null || value.trim() === '') return null;
+
+  return Number.isNaN(new Date(value).getTime()) ? null : value;
 }
 
 function iso(value: Date | string | null | undefined): string {
@@ -686,6 +707,17 @@ function buildCatalogueProducts(
         supplierProviderName:
           source?.provider.displayName ?? 'Unknown supplier',
         sourceCandidateId: reference?.sourceCandidateId ?? null,
+        // Parsed above for the product facts already, so carrying it costs
+        // nothing and the change diff needs no query of its own.
+        supplierEvidence: {
+          capturedAt: displayableTimestamp(evidenceCapturedAt),
+          variants: (productEvidence.data?.variants ?? []).map((variant) => ({
+            vid: variant.vid,
+            optionLabel: variant.optionLabel ?? null,
+            priceUsd: variant.priceUsd ?? null,
+            totalInventory: variant.totalInventory ?? null,
+          })),
+        },
         supplierConnectionHealth: connectionHealth(source?.connection.status),
         cjProductId: reference?.externalProductId ?? 'Not recorded',
         sellingPrice: money(
@@ -1129,7 +1161,29 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
           }
         : null,
     issues,
-    sourceChanges: [],
+    /**
+     * The diff, at last. Both halves are already in memory here — the frozen
+     * draft-time record on each variant, and the current snapshot carried on the
+     * product — so this reaches no database and no supplier.
+     *
+     * `variants` rather than `editorVariants(product)`: the latter synthesises a
+     * "Default" row for a product with none, and comparing an invented variant
+     * against supplier evidence would report a change nobody made.
+     */
+    sourceChanges: deriveSourceChanges({
+      frozen: product.variants.map((variant) => ({
+        variantId: variant.id,
+        externalVariantId: variant.cjVariantId,
+        supplierOptionLabel: variant.supplierOptionLabel,
+        displayLabel: variant.optionLabel,
+        supplierCost: variant.supplierCost,
+        supplierObservedQuantity: variant.supplierObservedQuantity,
+        retailPrice: variant.sellingPrice,
+      })),
+      current: product.supplierEvidence?.variants ?? [],
+      capturedAt: product.supplierEvidence?.capturedAt ?? null,
+    }),
+    sourceChangesCapturedAt: product.supplierEvidence?.capturedAt ?? null,
     optionMapping: {
       // `byCombination` is deliberately not carried: it is a Map, and the client
       // has no use for it. The server re-derives the whole split from the same

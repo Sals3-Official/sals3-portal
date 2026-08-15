@@ -131,7 +131,10 @@ export default function ListingReadinessPanel({
         </TabsContent>
 
         <TabsContent value="changes" className="pt-1">
-          <SourceChangesPanel changes={fixture.sourceChanges} />
+          <SourceChangesPanel
+            changes={fixture.sourceChanges}
+            evidenceCapturedAt={fixture.sourceChangesCapturedAt}
+          />
         </TabsContent>
       </Tabs>
     </div>
