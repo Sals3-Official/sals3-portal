@@ -52,15 +52,7 @@ function renderEditor(key: string, lifecycle: EditorLifecycle = 'IDLE') {
   const resolved = fixture(key);
 
   return render(
-    <ProductEditor
-      fixture={resolved}
-      initialLifecycle={lifecycle}
-      variantGuidance={resolved.variants.map((variant) => ({
-        variantId: variant.id,
-        optionLabel: variant.optionLabel,
-        decision: null,
-      }))}
-    />,
+    <ProductEditor fixture={resolved} initialLifecycle={lifecycle} />,
   );
 }
 
@@ -92,7 +84,6 @@ describe('Product Editor - publication outcomes', () => {
           },
         }}
         initialLifecycle="IDLE"
-        variantGuidance={[]}
         dataMode="database"
       />,
     );
@@ -238,7 +229,6 @@ describe('Product Editor - money that is not known', () => {
           ),
         }}
         initialLifecycle="IDLE"
-        variantGuidance={[]}
       />,
     );
 
@@ -493,7 +483,6 @@ describe('Product Editor - the photo a real product actually has', () => {
       <ProductEditor
         fixture={resolved}
         initialLifecycle="IDLE"
-        variantGuidance={[]}
         dataMode="database"
       />,
     );
@@ -518,13 +507,7 @@ describe('Product Editor - the photo a real product actually has', () => {
   it('keeps the header placeholder when no address is recorded', () => {
     const resolved = fixture('pass');
 
-    render(
-      <ProductEditor
-        fixture={resolved}
-        initialLifecycle="IDLE"
-        variantGuidance={[]}
-      />,
-    );
+    render(<ProductEditor fixture={resolved} initialLifecycle="IDLE" />);
 
     expect(screen.getByText('No image')).toBeInTheDocument();
   });
@@ -555,7 +538,6 @@ describe('Product Editor - the photo a real product actually has', () => {
           },
         }}
         initialLifecycle="IDLE"
-        variantGuidance={[]}
         dataMode="database"
       />,
     );
@@ -591,7 +573,6 @@ describe('Product Editor - the photo a real product actually has', () => {
           ],
         }}
         initialLifecycle="IDLE"
-        variantGuidance={[]}
       />,
     );
 
@@ -623,7 +604,6 @@ describe('Product Editor - the photo a real product actually has', () => {
           sals3CategoryDeclaredBySeller: false,
         }}
         initialLifecycle="IDLE"
-        variantGuidance={[]}
         dataMode="database"
       />,
     );
@@ -651,7 +631,6 @@ describe('Product Editor - the photo a real product actually has', () => {
           sals3CategoryDeclaredBySeller: true,
         }}
         initialLifecycle="IDLE"
-        variantGuidance={[]}
         dataMode="database"
       />,
     );
@@ -674,7 +653,6 @@ describe('Product Editor - the photo a real product actually has', () => {
           sals3CategoryDeclaredBySeller: false,
         }}
         initialLifecycle="IDLE"
-        variantGuidance={[]}
         dataMode="database"
       />,
     );

@@ -288,6 +288,15 @@ export type CatalogueProductFixture = {
   supplierSku?: string | null;
   supplierWeightLabel?: string | null;
   /**
+   * One "L × W × H cm" reading per distinct box size CJ's detail-evidence
+   * capture actually recorded across variants — only ever available once
+   * `capture-evidence.ts` has run for this product (see its own doc comment:
+   * a human-triggered draft-creation step, not guaranteed for every row).
+   * `null` when no detail evidence was ever captured, or none of it had a
+   * complete length/width/height.
+   */
+  supplierPackedDimensionsLabel?: string | null;
+  /**
    * The feed's lowest variant price — a "from" reference, verified 2026-08-13.
    * Never a selling price and never an input to one.
    */

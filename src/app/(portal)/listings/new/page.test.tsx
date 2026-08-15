@@ -45,15 +45,6 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }));
 
-// Real pricing guidance needs a live Postgres connection
-// (`src/lib/db/client.ts` refuses to even import under jsdom's `window`) -
-// mocked at this boundary the same way the DB-touching modules in
-// `actions.connect.test.ts` are, rather than reaching for a real database
-// in a component test.
-vi.mock('@/lib/seller-center/product-editor/pricing-guidance', () => ({
-  default: vi.fn(async () => []),
-}));
-
 vi.mock('@/app/(portal)/listings/product-draft-actions', () => ({
   saveProductDraftAction: vi.fn(),
 }));
@@ -77,8 +68,8 @@ vi.mock('@/app/(portal)/listings/category-mapping-actions', () => ({
 }));
 
 // The page reads `getDb()` directly for the category picker's reference
-// data — mocked at the same boundary as the pricing-guidance module above,
-// rather than reaching for a real database in a component test.
+// data — mocked at this boundary rather than reaching for a real database
+// in a component test.
 vi.mock('@/lib/db/client', () => ({ default: vi.fn(() => ({})) }));
 
 vi.mock('@/modules/catalog/taxonomy/v1-reference', () => ({

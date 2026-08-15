@@ -46,6 +46,11 @@ export type VariantEvidence = {
   optionLabel: string;
   priceUsd: number | null;
   weightGrams: number | null;
+  /** Packed box dimensions, in millimetres as CJ reports them. */
+  lengthMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
+  volumeMm3: number | null;
   /** Raw per-country observations, attached by `vid` — never by array index. */
   stockByOrigin: StockByOrigin[];
   /** Summed across origins for this variant. Null when CJ reported none. */
@@ -81,6 +86,17 @@ export type CandidateEvidence = {
   entryCode: string;
   supplierPriceUsd: number | null;
   packedWeight: string;
+  /**
+   * One "L × W × H cm" reading per distinct box size CJ actually reported
+   * across this product's variants, deduplicated — `null` when no variant
+   * has a complete length/width/height. CJ has no single product-level
+   * dimension field the way it does for weight (`productWeight` is already
+   * CJ's own range string); only per-variant millimetre fields exist, so
+   * showing every distinct size on record is the honest read when variants
+   * differ, rather than picking one variant's box and presenting it as the
+   * product's.
+   */
+  packedDimensionsLabel: string | null;
   /** CJ's undocumented status value, carried through unjudged. */
   sourceStatusRaw: string;
   isTestProduct: boolean;
@@ -190,6 +206,33 @@ function sumVariantStock(stocks: StockByOrigin[]): number | null {
     : values.reduce((total, value) => total + value, 0);
 }
 
+/** Millimetres to a centimetre string, trimming a bare ".0". */
+function formatCm(mm: number): string {
+  const cm = mm / 10;
+  return cm.toFixed(1).replace(/\.0$/, '');
+}
+
+/** See `CandidateEvidence.packedDimensionsLabel`'s doc comment. */
+function formatPackedDimensions(variants: VariantEvidence[]): string | null {
+  const distinct = new Set<string>();
+
+  variants.forEach((variant) => {
+    if (
+      variant.lengthMm === null ||
+      variant.widthMm === null ||
+      variant.heightMm === null
+    ) {
+      return;
+    }
+
+    distinct.add(
+      `${formatCm(variant.lengthMm)}×${formatCm(variant.widthMm)}×${formatCm(variant.heightMm)} cm`,
+    );
+  });
+
+  return distinct.size === 0 ? null : [...distinct].join(', ');
+}
+
 export function summariseReviews(
   total: number | null,
   comments: CjComment[],
@@ -228,6 +271,26 @@ export default function toCandidateEvidence(input: {
     input.variantInventories.map((entry) => [entry.vid, entry.inventory]),
   );
   const imageUrls = collectUsableImages(input.detail);
+  const variants = input.detail.variants.map((variant) => {
+    const stockByOrigin = toStockByOrigin(
+      inventoryByVid.get(variant.vid) ?? [],
+    );
+
+    return {
+      vid: variant.vid,
+      sku: variant.variantSku,
+      optionLabel: variant.variantKey,
+      priceUsd: variant.variantSellPrice,
+      weightGrams: variant.variantWeight,
+      lengthMm: variant.variantLength,
+      widthMm: variant.variantWidth,
+      heightMm: variant.variantHeight,
+      volumeMm3: variant.variantVolume,
+      stockByOrigin,
+      totalInventory: sumVariantStock(stockByOrigin),
+      stockEvidence: deriveStockEvidence(stockByOrigin),
+    };
+  });
 
   return {
     externalProductId: input.detail.pid,
@@ -240,27 +303,13 @@ export default function toCandidateEvidence(input: {
     entryCode: input.detail.entryCode,
     supplierPriceUsd: parseUsd(input.detail.sellPrice),
     packedWeight: input.detail.productWeight,
+    packedDimensionsLabel: formatPackedDimensions(variants),
     sourceStatusRaw: input.detail.status,
     isTestProduct: input.detail.isTestProduct,
     listedCount: input.detail.listedNum,
     usableImageCount: imageUrls.length,
     imageUrls,
-    variants: input.detail.variants.map((variant) => {
-      const stockByOrigin = toStockByOrigin(
-        inventoryByVid.get(variant.vid) ?? [],
-      );
-
-      return {
-        vid: variant.vid,
-        sku: variant.variantSku,
-        optionLabel: variant.variantKey,
-        priceUsd: variant.variantSellPrice,
-        weightGrams: variant.variantWeight,
-        stockByOrigin,
-        totalInventory: sumVariantStock(stockByOrigin),
-        stockEvidence: deriveStockEvidence(stockByOrigin),
-      };
-    }),
+    variants,
     warehouses: input.warehouseInventories.map((warehouse) => ({
       countryCode: warehouse.countryCode,
       name:

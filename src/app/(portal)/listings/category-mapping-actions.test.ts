@@ -51,7 +51,6 @@ const VALID_INPUT = {
   productId: PRODUCT_ID,
   expectedProductVersion: 1,
   sals3CategoryCode: 'CAT-GGL-100230',
-  reason: 'This is a real jacket category, not a mirrored passthrough.',
 };
 
 function authorized() {
@@ -166,22 +165,11 @@ describe('decideCategoryMappingAction', () => {
       productId: 'not-a-uuid',
       expectedProductVersion: 1,
       sals3CategoryCode: 'CAT-GGL-100230',
-      reason: 'short',
     });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected a refusal');
     expect(result.reason).toBe('invalid_input');
-    expect(decideProductSals3Category).not.toHaveBeenCalled();
-  });
-
-  it('refuses a reason under 8 characters', async () => {
-    const result = await decideCategoryMappingAction({
-      ...VALID_INPUT,
-      reason: 'short',
-    });
-
-    expect(result.ok).toBe(false);
     expect(decideProductSals3Category).not.toHaveBeenCalled();
   });
 

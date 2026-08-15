@@ -1,4 +1,4 @@
-import { Lock, OctagonAlert, TriangleAlert } from 'lucide-react';
+import { OctagonAlert, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -191,29 +191,17 @@ export default function SpecificationsSection({
             }
           />
         </div>
-
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="self-start"
-          onClick={onOpenSourceDrawer}
-        >
-          View Supplier Source Details
-        </Button>
       </div>
 
-      <p className="flex items-start gap-2 rounded-lg border border-border bg-muted px-3 py-2.5 text-xs text-ink-muted">
-        <Lock
-          aria-hidden="true"
-          className="mt-0.5 size-3.5 shrink-0 text-primary"
-        />
-        Everything above is supplier-controlled evidence, selectable and
-        copyable but not the seller&apos;s to edit. Below, a field with a
-        supplier value or a curated category is shown read-only the same way,
-        kept exactly as received — a genuinely missing attribute may still be
-        entered.
-      </p>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="self-start"
+        onClick={onOpenSourceDrawer}
+      >
+        View Supplier Source Details
+      </Button>
 
       {GROUP_ORDER.map((requirement) => {
         const group = specifications.filter(
@@ -239,11 +227,6 @@ export default function SpecificationsSection({
           </div>
         );
       })}
-
-      <p className="text-xs text-muted-foreground">
-        Attributes the supplier did not send are shown empty. Nothing here is
-        filled in on the supplier&apos;s behalf.
-      </p>
     </div>
   );
 }

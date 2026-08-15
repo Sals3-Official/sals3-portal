@@ -43,7 +43,6 @@ const decideCategoryInputSchema = z.object({
   /** The version the seller's screen read. Compare-and-set, not a hint. */
   expectedProductVersion: z.number().int().positive(),
   sals3CategoryCode: z.string().trim().min(1).max(64),
-  reason: z.string().trim().min(8).max(500),
 });
 
 export type DecideCategoryActionResult =
@@ -51,8 +50,7 @@ export type DecideCategoryActionResult =
   | { ok: false; reason: string; message: string };
 
 const REFUSAL_MESSAGES: Record<string, string> = {
-  invalid_input:
-    'That could not be read. Pick a category and give at least a short reason.',
+  invalid_input: 'That could not be read. Pick a category and try again.',
   denied: 'Your account cannot decide a category mapping.',
   rate_limited: 'Too many attempts. Wait a moment and try again.',
   not_configured: 'The catalogue database is not available right now.',
@@ -136,7 +134,6 @@ export async function decideCategoryMappingAction(
     sellerAccountId: authorization.sellerAccountId,
     expectedProductVersion: parsed.data.expectedProductVersion,
     sals3CategoryCode: parsed.data.sals3CategoryCode,
-    reason: parsed.data.reason,
     actorId: authorization.actorId,
   });
 

@@ -41,6 +41,7 @@ const DETAIL: CjProductDetail = {
       variantLength: 300,
       variantWidth: 200,
       variantHeight: 30,
+      variantVolume: 1_800_000,
       variantSellPrice: 6.25,
       inventoryNum: null,
     },
@@ -55,6 +56,7 @@ const DETAIL: CjProductDetail = {
       variantLength: 300,
       variantWidth: 200,
       variantHeight: 30,
+      variantVolume: 1_800_000,
       variantSellPrice: 6.5,
       inventoryNum: null,
     },
@@ -304,6 +306,87 @@ describe('toCandidateEvidence', () => {
 
     expect(evidence.name).toBe('Womens Floral Print Elastic-Waist Dress');
     expect(evidence.supplierPriceUsd).toBe(6.25);
+  });
+
+  it("threads each variant's own length/width/height/volume through unchanged", () => {
+    const evidence = toCandidateEvidence({
+      detail: DETAIL,
+      warehouseInventories: [],
+      variantInventories: [],
+      reviewTotal: 0,
+      comments: [],
+      capturedAt: CAPTURED_AT,
+    });
+
+    expect(evidence.variants[0]).toMatchObject({
+      lengthMm: 300,
+      widthMm: 200,
+      heightMm: 30,
+      volumeMm3: 1_800_000,
+    });
+  });
+
+  it('reports one packed-dimensions reading when every variant shares the same box size', () => {
+    // Both DETAIL variants are 300x200x30mm — CJ has no single product-level
+    // dimension field the way it does for weight, so this is derived from
+    // the variants, deduplicated to one reading when they agree.
+    const evidence = toCandidateEvidence({
+      detail: DETAIL,
+      warehouseInventories: [],
+      variantInventories: [],
+      reviewTotal: 0,
+      comments: [],
+      capturedAt: CAPTURED_AT,
+    });
+
+    expect(evidence.packedDimensionsLabel).toBe('30×20×3 cm');
+  });
+
+  it('reports every distinct box size CJ actually recorded, never one picked as representative', () => {
+    const detail: CjProductDetail = {
+      ...DETAIL,
+      variants: [
+        DETAIL.variants[0],
+        {
+          ...DETAIL.variants[1],
+          variantLength: 400,
+          variantWidth: 250,
+          variantHeight: 50,
+        },
+      ],
+    };
+
+    const evidence = toCandidateEvidence({
+      detail,
+      warehouseInventories: [],
+      variantInventories: [],
+      reviewTotal: 0,
+      comments: [],
+      capturedAt: CAPTURED_AT,
+    });
+
+    expect(evidence.packedDimensionsLabel).toBe('30×20×3 cm, 40×25×5 cm');
+  });
+
+  it('reports no packed dimensions when no variant has a complete length/width/height, rather than guessing', () => {
+    const detail: CjProductDetail = {
+      ...DETAIL,
+      variants: DETAIL.variants.map((variant) => ({
+        ...variant,
+        variantLength: null,
+      })),
+    };
+
+    const evidence = toCandidateEvidence({
+      detail,
+      warehouseInventories: [],
+      variantInventories: [],
+      reviewTotal: 0,
+      comments: [],
+      capturedAt: CAPTURED_AT,
+    });
+
+    expect(evidence.packedDimensionsLabel).toBeNull();
   });
 
   it('carries CJ status through without judging whether it means on-sale', () => {
