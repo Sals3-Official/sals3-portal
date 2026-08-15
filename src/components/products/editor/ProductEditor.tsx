@@ -9,18 +9,14 @@ import { sectionSeverity } from '@/lib/seller-center/product-editor/derive';
 import type {
   EditorLifecycle,
   ProductEditorFixture,
-  VariantPricingGuidance,
 } from '@/lib/seller-center/product-editor/types';
 import EditorSectionCard from './EditorSectionCard';
 import MarketShippingEvidence from './MarketShippingEvidence';
-import PricingBasisPanel from './PricingBasisPanel';
 import ProductEditorWorkspace from './ProductEditorWorkspace';
 
 type ProductEditorProps = {
   fixture: ProductEditorFixture;
   initialLifecycle: EditorLifecycle;
-  /** Server-resolved price guidance, one entry per variant — see `page.tsx`. */
-  variantGuidance: VariantPricingGuidance[];
   dataMode?: 'fixture' | 'database';
   /** The full Sals3 Taxonomy v1 tree, for the category picker's search. */
   sals3CategoryOptions?: { code: string; path: string }[];
@@ -42,7 +38,6 @@ type ProductEditorProps = {
 export default function ProductEditor({
   fixture,
   initialLifecycle,
-  variantGuidance,
   dataMode = 'fixture',
   sals3CategoryOptions = [],
 }: ProductEditorProps) {
@@ -71,15 +66,6 @@ export default function ProductEditor({
       <ProductEditorWorkspace
         fixture={fixture}
         initialLifecycle={initialLifecycle}
-        pricingBasisSection={
-          <PricingBasisPanel
-            categoryPath={fixture.sals3CategoryPath}
-            categoryCode={fixture.sals3CategoryCode}
-            categoryMappingConfidence={fixture.categoryMappingConfidence}
-            variantGuidance={variantGuidance}
-            overridesAvailable={fixture.realSupplierCandidateId !== null}
-          />
-        }
         marketsSection={
           <EditorSectionCard
             id="markets"

@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronRight, Pencil } from 'lucide-react';
+import { ChevronRight, Pencil, TriangleAlert } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
@@ -11,6 +11,11 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 export type Sals3CategoryOption = { code: string; path: string };
 
@@ -18,9 +23,16 @@ type Sals3CategoryPickerProps = {
   options: Sals3CategoryOption[];
   /** The currently resolved category, if any — from the read-model, never invented client-side. */
   currentPath: string | null;
+  /**
+   * Whether a seller has ever explicitly confirmed this category, as
+   * opposed to it merely being the auto-mirrored CJ category the read-model
+   * resolves by default. Drives the red/caution guardrail on the compact
+   * value — a category can be non-null and still never have been looked at
+   * by a person.
+   */
+  declaredBySeller: boolean;
   onSave: (
     code: string,
-    reason: string,
   ) => Promise<
     { ok: true; categoryPath: string } | { ok: false; message: string }
   >;
@@ -76,11 +88,9 @@ function nodeAt(root: TreeNode, stack: string[]): TreeNode {
  * who already knows the name, filtering the whole tree by substring on
  * `path` at any depth.
  *
- * A picked category is not saved until "Save category" is pressed with a
- * reason — the reason is the seller's own record of why, not a governance
- * review artifact: this changes only the one product open in this editor
- * (owner decision 2026-08-15 — see `decideProductSals3Category`'s doc
- * comment), never another product or another seller's catalogue.
+ * A picked category is not saved until "Save category" is pressed — this
+ * changes only the one product open in this editor, never another product
+ * or another seller's catalogue.
  *
  * Once a category is already resolved, this renders a compact, read-only
  * looking value next to a single icon button — an editable-looking input
@@ -91,6 +101,7 @@ function nodeAt(root: TreeNode, stack: string[]): TreeNode {
 export default function Sals3CategoryPicker({
   options,
   currentPath,
+  declaredBySeller,
   onSave,
 }: Sals3CategoryPickerProps) {
   const tree = useMemo(() => buildTree(options), [options]);
@@ -99,21 +110,27 @@ export default function Sals3CategoryPicker({
   const [stack, setStack] = useState<string[]>([]);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<Sals3CategoryOption | null>(null);
-  const [reason, setReason] = useState('');
   const [status, setStatus] = useState<
     | { state: 'idle' }
     | { state: 'saving' }
     | { state: 'error'; message: string }
   >({ state: 'idle' });
   const [savedPath, setSavedPath] = useState<string | null>(null);
+  /**
+   * Same reasoning as the option-mapping summary card: `declaredBySeller`
+   * only flips once `router.refresh()` round-trips and the read-model
+   * re-derives it, so without this the red/caution guardrail would stay on
+   * screen right after a successful save until that refresh lands.
+   */
+  const [justDeclared, setJustDeclared] = useState(false);
 
   const effectivePath = savedPath ?? currentPath;
+  const effectiveDeclaredBySeller = justDeclared || declaredBySeller;
 
   const resetDialogState = useCallback(() => {
     setStack([]);
     setQuery('');
     setSelected(null);
-    setReason('');
     setStatus({ state: 'idle' });
   }, []);
 
@@ -149,33 +166,56 @@ export default function Sals3CategoryPicker({
     [currentNode],
   );
 
-  const canSave = selected !== null && reason.trim().length >= 8;
+  const canSave = selected !== null;
 
   const handleSave = useCallback(async () => {
     if (selected === null) return;
 
     setStatus({ state: 'saving' });
 
-    const result = await onSave(selected.code, reason.trim());
+    const result = await onSave(selected.code);
 
     if (result.ok) {
       setSavedPath(result.categoryPath);
+      setJustDeclared(true);
       setOpen(false);
       resetDialogState();
     } else {
       setStatus({ state: 'error', message: result.message });
     }
-  }, [onSave, reason, resetDialogState, selected]);
+  }, [onSave, resetDialogState, selected]);
 
   return (
     <div className="flex flex-col gap-1.5">
       <Label htmlFor="editor-sals3-category-v1">Category</Label>
 
       <div className="flex items-center justify-between gap-2 rounded-lg border border-input bg-muted/40 px-2.5 py-1.5 text-sm">
-        <span className="truncate">
-          {effectivePath ?? (
-            <span className="text-muted-foreground">Not set</span>
-          )}
+        <span
+          className={`flex min-w-0 items-center gap-1.5 truncate ${
+            effectivePath !== null && !effectiveDeclaredBySeller
+              ? 'font-medium text-red-600'
+              : ''
+          }`}
+        >
+          <span className="truncate">
+            {effectivePath ?? (
+              <span className="text-muted-foreground">Not set</span>
+            )}
+          </span>
+          {effectivePath !== null && !effectiveDeclaredBySeller ? (
+            <Tooltip>
+              <TooltipTrigger
+                aria-label="Not yet confirmed as Sals3 taxonomy"
+                className="shrink-0 text-red-600"
+              >
+                <TriangleAlert aria-hidden="true" className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipContent>
+                Still defaulted from CJ&rsquo;s own category — nobody has
+                confirmed this as a Sals3 Taxonomy v1 category yet.
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
         </span>
         <button
           id="editor-sals3-category-v1"
@@ -207,25 +247,6 @@ export default function Sals3CategoryPicker({
                 >
                   Change
                 </button>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="editor-sals3-category-reason">Reason</Label>
-                <Input
-                  id="editor-sals3-category-reason"
-                  value={reason}
-                  onChange={(event) => setReason(event.target.value)}
-                  placeholder="Why this category (at least 8 characters)"
-                  aria-describedby="editor-sals3-category-reason-help"
-                />
-                {reason.trim().length >= 8 ? null : (
-                  <p
-                    id="editor-sals3-category-reason-help"
-                    className="text-xs text-muted-foreground"
-                  >
-                    {8 - reason.trim().length} more character
-                    {8 - reason.trim().length === 1 ? '' : 's'} needed.
-                  </p>
-                )}
               </div>
               {status.state === 'error' ? (
                 <p role="alert" className="text-xs font-medium text-red-600">

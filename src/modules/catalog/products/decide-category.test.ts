@@ -42,7 +42,6 @@ const INPUT = {
   sellerAccountId: 'seller-1',
   expectedProductVersion: 4,
   sals3CategoryCode: 'CAT-GGL-100230',
-  reason: 'This is a real jacket, not a generic accessory.',
   actorId: 'actor-1',
   db: DB,
 };

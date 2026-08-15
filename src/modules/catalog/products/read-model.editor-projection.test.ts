@@ -45,6 +45,7 @@ const CATALOGUE_PRODUCT: CatalogueProductFixture = {
   supplierCategoryId: '2409230540351618000',
   supplierSku: 'CJPK2718027',
   supplierWeightLabel: '1180.00-1300.00 g',
+  supplierPackedDimensionsLabel: '30×20×3 cm',
   supplierFromPrice: { amountMinor: 1526, currency: 'USD' },
   supplierShipsFrom: ['CN', 'CN_US'],
   supplierListedCount: 17,
@@ -400,10 +401,16 @@ describe('productToEditorFixture — the CJ category is the category', () => {
     expect(byKey.has('sals3_category')).toBe(false);
     expect(byKey.get('supplier_sku')?.value).toBe('CJPK2718027');
     expect(byKey.get('packed_weight')?.value).toBe('1180.00-1300.00 g');
+    expect(byKey.get('packed_dimensions')?.value).toBe('30×20×3 cm');
     expect(byKey.get('ships_from')?.value).toBe('CN, CN_US');
     // Supplier evidence, so no unresolved-required blocker is invented from a
     // field the seller has no way to fill in.
-    ['supplier_sku', 'packed_weight', 'ships_from'].forEach((key) => {
+    [
+      'supplier_sku',
+      'packed_weight',
+      'packed_dimensions',
+      'ships_from',
+    ].forEach((key) => {
       expect(byKey.get(key)).toMatchObject({
         source: 'SUPPLIER',
         requirement: 'OPTIONAL',
@@ -458,6 +465,7 @@ describe('productToEditorFixture — the CJ category is the category', () => {
       ...CATALOGUE_PRODUCT,
       supplierSku: null,
       supplierWeightLabel: null,
+      supplierPackedDimensionsLabel: null,
       supplierShipsFrom: [],
     });
     const keys = fixture.specifications.map(

@@ -14,9 +14,9 @@ const OPTIONS = [
 function renderPicker(
   overrides: Partial<{
     currentPath: string | null;
+    declaredBySeller: boolean;
     onSave: (
       code: string,
-      reason: string,
     ) => Promise<
       { ok: true; categoryPath: string } | { ok: false; message: string }
     >;
@@ -30,6 +30,7 @@ function renderPicker(
     <Sals3CategoryPicker
       options={OPTIONS}
       currentPath={overrides.currentPath ?? null}
+      declaredBySeller={overrides.declaredBySeller ?? true}
       onSave={onSave}
     />,
   );
@@ -45,10 +46,6 @@ function searchInput(): HTMLInputElement {
   return screen.getByPlaceholderText(
     /Search the Sals3 v1 taxonomy/i,
   ) as HTMLInputElement;
-}
-
-function reasonInput(): HTMLInputElement {
-  return screen.getByLabelText('Reason') as HTMLInputElement;
 }
 
 function saveButton(): HTMLButtonElement {
@@ -118,13 +115,13 @@ describe('Sals3CategoryPicker', () => {
     expect(screen.getByText('Luggage & Bags')).toBeInTheDocument();
   });
 
-  it('selects a leaf reached purely by browsing, with no query ever typed', () => {
+  it('selects a leaf reached purely by browsing, with no query ever typed, straight to a savable confirm step', () => {
     renderPicker();
 
     pickBackpacksByBrowsing();
 
     expect(screen.getByText('Luggage & Bags > Backpacks')).toBeInTheDocument();
-    expect(reasonInput()).toBeInTheDocument();
+    expect(saveButton()).toBeEnabled();
   });
 
   it('still filters by substring across the whole tree when a query is typed, as a shortcut', () => {
@@ -153,12 +150,12 @@ describe('Sals3CategoryPicker', () => {
     ).toBeInTheDocument();
   });
 
-  it('moves to the reason step once a category is picked, and back to browsing on Change', () => {
+  it('moves to a confirm step once a category is picked, enabled with no reason required, and back to browsing on Change', () => {
     renderPicker();
 
     pickJacketsBySearch();
 
-    expect(reasonInput()).toBeInTheDocument();
+    expect(saveButton()).toBeEnabled();
     expect(() => searchInput()).toThrow();
 
     fireEvent.click(screen.getByRole('button', { name: 'Change' }));
@@ -166,33 +163,7 @@ describe('Sals3CategoryPicker', () => {
     expect(searchInput()).toBeInTheDocument();
   });
 
-  it('keeps Save disabled until a reason of at least 8 characters is entered, and says how many more are needed', () => {
-    renderPicker();
-
-    pickJacketsBySearch();
-
-    expect(saveButton()).toBeDisabled();
-    expect(screen.getByText('8 more characters needed.')).toBeInTheDocument();
-
-    fireEvent.change(reasonInput(), { target: { value: 'short' } });
-    expect(saveButton()).toBeDisabled();
-    expect(screen.getByText('3 more characters needed.')).toBeInTheDocument();
-
-    fireEvent.change(reasonInput(), { target: { value: 'seven ch' } });
-    expect(saveButton()).toBeEnabled();
-    expect(screen.queryByText(/more characters? needed/)).toBeNull();
-  });
-
-  it('trims the reason before deciding it clears the minimum length', () => {
-    renderPicker();
-
-    pickJacketsBySearch();
-    fireEvent.change(reasonInput(), { target: { value: '   short   ' } });
-
-    expect(saveButton()).toBeDisabled();
-  });
-
-  it('saves with the picked code and trimmed reason, then closes the dialog and shows the new current path', async () => {
+  it('saves with just the picked code, then closes the dialog and shows the new current path', async () => {
     const onSave = vi.fn(async () => ({
       ok: true as const,
       categoryPath: 'Apparel & Accessories > Clothing > Outerwear > Jackets',
@@ -201,17 +172,9 @@ describe('Sals3CategoryPicker', () => {
     renderPicker({ onSave });
 
     pickJacketsBySearch();
-    fireEvent.change(reasonInput(), {
-      target: { value: '  A real jacket, not an accessory.  ' },
-    });
     fireEvent.click(saveButton());
 
-    await waitFor(() =>
-      expect(onSave).toHaveBeenCalledWith(
-        'CAT-GGL-100230',
-        'A real jacket, not an accessory.',
-      ),
-    );
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith('CAT-GGL-100230'));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(
@@ -233,9 +196,6 @@ describe('Sals3CategoryPicker', () => {
     renderPicker({ onSave });
 
     pickJacketsBySearch();
-    fireEvent.change(reasonInput(), {
-      target: { value: 'A real jacket, not an accessory.' },
-    });
     fireEvent.click(saveButton());
 
     await waitFor(() =>
@@ -268,9 +228,6 @@ describe('Sals3CategoryPicker', () => {
     renderPicker({ onSave });
 
     pickJacketsBySearch();
-    fireEvent.change(reasonInput(), {
-      target: { value: 'A real jacket, not an accessory.' },
-    });
     fireEvent.click(saveButton());
 
     expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
@@ -280,5 +237,66 @@ describe('Sals3CategoryPicker', () => {
     await waitFor(() =>
       expect(screen.queryByText('Saving…')).not.toBeInTheDocument(),
     );
+  });
+
+  describe('CJ-default guardrail', () => {
+    it('flags the value red with a caution tooltip when it is still the CJ default, never confirmed by a seller', () => {
+      renderPicker({
+        currentPath: 'Luggage & Bags > Backpacks',
+        declaredBySeller: false,
+      });
+
+      expect(
+        screen.getByLabelText('Not yet confirmed as Sals3 taxonomy'),
+      ).toBeInTheDocument();
+    });
+
+    it('shows no guardrail once a seller has confirmed the category', () => {
+      renderPicker({
+        currentPath: 'Luggage & Bags > Backpacks',
+        declaredBySeller: true,
+      });
+
+      expect(
+        screen.queryByLabelText('Not yet confirmed as Sals3 taxonomy'),
+      ).toBeNull();
+    });
+
+    it('shows no guardrail when nothing is set at all — "Not set" already says enough', () => {
+      renderPicker({ currentPath: null, declaredBySeller: false });
+
+      expect(
+        screen.queryByLabelText('Not yet confirmed as Sals3 taxonomy'),
+      ).toBeNull();
+    });
+
+    it('clears the guardrail immediately after a successful save, without waiting on a parent refresh', async () => {
+      const onSave = vi.fn(async () => ({
+        ok: true as const,
+        categoryPath: 'Apparel & Accessories > Clothing > Outerwear > Jackets',
+      }));
+
+      renderPicker({
+        currentPath: 'Luggage & Bags > Backpacks',
+        declaredBySeller: false,
+        onSave,
+      });
+
+      expect(
+        screen.getByLabelText('Not yet confirmed as Sals3 taxonomy'),
+      ).toBeInTheDocument();
+
+      pickJacketsBySearch();
+      fireEvent.click(saveButton());
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+      // `declaredBySeller` prop passed to this render is still `false` — the
+      // guardrail clearing here is the component's own optimistic state,
+      // not a prop change.
+      expect(
+        screen.queryByLabelText('Not yet confirmed as Sals3 taxonomy'),
+      ).toBeNull();
+    });
   });
 });

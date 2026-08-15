@@ -39,6 +39,7 @@ export const cjVariantSchema = z.object({
   variantLength: looseNumber,
   variantWidth: looseNumber,
   variantHeight: looseNumber,
+  variantVolume: looseNumber,
   variantSellPrice: looseNumber,
   /** Observed as null on the detail response; inventory comes from its own call. */
   inventoryNum: looseNumber,

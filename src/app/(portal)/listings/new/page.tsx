@@ -11,7 +11,6 @@ import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { requirePermission } from '@/lib/auth/session';
 import getDb from '@/lib/db/client';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
-import resolveFixtureVariantGuidance from '@/lib/seller-center/product-editor/pricing-guidance';
 import {
   editorLifecycleParamSchema,
   lifecycleFromParam,
@@ -84,7 +83,7 @@ export async function generateMetadata({
 export default async function AddProductPage({ searchParams }: PageProps) {
   // Authorization runs on the server before anything is read or rendered.
   // Hiding a nav link is never the check - see `src/lib/auth/permissions.ts`.
-  const session = await requirePermission('product:create');
+  await requirePermission('product:create');
 
   const query = querySchema.parse(await searchParams);
 
@@ -115,16 +114,10 @@ export default async function AddProductPage({ searchParams }: PageProps) {
     // silent fallback to a default fictional product.
     if (fixture === null) notFound();
 
-    const variantGuidance = await resolveFixtureVariantGuidance(
-      fixture,
-      session.sellerId,
-    );
-
     return (
       <ProductEditor
         fixture={fixture}
         initialLifecycle={lifecycleFromParam(query.state)}
-        variantGuidance={variantGuidance}
         // No database read here on purpose: a fixture has no real
         // productId, `decideCategoryAction` stays undefined for it either
         // way (see `ProductEditor.tsx`), so the picker never renders and
@@ -148,17 +141,6 @@ export default async function AddProductPage({ searchParams }: PageProps) {
       <ProductEditor
         fixture={record.fixture}
         initialLifecycle={lifecycleFromParam(query.state)}
-        // The same real resolver the fixture branch uses, against this
-        // product's own category and observed supplier costs. The read model
-        // deliberately returns `decision: null` instead of naming a reason it
-        // did not compute - it does not call the resolver, and a mapped
-        // category resolved here can produce a different, correct answer
-        // (typically "no category policy") than "category mapping requires
-        // review".
-        variantGuidance={await resolveFixtureVariantGuidance(
-          record.fixture,
-          sellerAccount.id,
-        )}
         dataMode="database"
         sals3CategoryOptions={await listSals3CategoryV1Options(getDb())}
       />

@@ -76,6 +76,8 @@ const evidenceSchema = z.object({
   name: z.string().nullish(),
   categoryName: z.string().nullish(),
   capturedAt: z.string().nullish(),
+  /** See `CandidateEvidence.packedDimensionsLabel`'s doc comment (`lib/cj/evidence.ts`). */
+  packedDimensionsLabel: z.string().nullish(),
   variants: z.array(evidenceVariantSchema).default([]),
 });
 
@@ -98,6 +100,8 @@ type SupplierFacts = {
   categoryId: string | null;
   sku: string | null;
   weightLabel: string | null;
+  /** Only ever available from the richer detail-evidence snapshot — the cheap feed has no equivalent. */
+  packedDimensionsLabel: string | null;
   fromPrice: MoneyValue | null;
   shipsFrom: string[];
   listedCount: number | null;
@@ -109,6 +113,7 @@ const NO_SUPPLIER_FACTS: SupplierFacts = {
   categoryId: null,
   sku: null,
   weightLabel: null,
+  packedDimensionsLabel: null,
   fromPrice: null,
   shipsFrom: [],
   listedCount: null,
@@ -153,6 +158,7 @@ function supplierFacts(
     categoryId: feed.data.categoryId ?? null,
     sku: feed.data.sku ?? null,
     weightLabel: feed.data.weight ?? null,
+    packedDimensionsLabel: evidence?.packedDimensionsLabel ?? null,
     fromPrice: cents === null ? null : { amountMinor: cents, currency: USD },
     shipsFrom: feed.data.shipsFrom,
     listedCount: feed.data.listedCount,
@@ -858,6 +864,7 @@ function buildCatalogueProducts(
         supplierCategoryId: supplier.categoryId,
         supplierSku: supplier.sku,
         supplierWeightLabel: supplier.weightLabel,
+        supplierPackedDimensionsLabel: supplier.packedDimensionsLabel,
         supplierFromPrice: supplier.fromPrice,
         supplierShipsFrom: supplier.shipsFrom,
         supplierListedCount: supplier.listedCount,
@@ -1210,6 +1217,11 @@ function editorSpecifications(
   const supplierFields: [string, string, string | null | undefined][] = [
     ['supplier_sku', 'Supplier SKU', product.supplierSku],
     ['packed_weight', 'Packed weight (supplier)', product.supplierWeightLabel],
+    [
+      'packed_dimensions',
+      'Package dimensions (supplier)',
+      product.supplierPackedDimensionsLabel,
+    ],
     [
       'ships_from',
       'Ships from (supplier)',

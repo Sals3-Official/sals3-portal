@@ -32,7 +32,6 @@ type BasicInformationSectionProps = {
   sals3CategoryOptions?: Sals3CategoryOption[];
   onDecideSals3Category?: (
     code: string,
-    reason: string,
   ) => Promise<
     { ok: true; categoryPath: string } | { ok: false; message: string }
   >;
@@ -155,6 +154,7 @@ export default function BasicInformationSection({
           <Sals3CategoryPicker
             options={sals3CategoryOptions}
             currentPath={fixture.sals3CategoryPath}
+            declaredBySeller={fixture.sals3CategoryDeclaredBySeller}
             onSave={onDecideSals3Category}
           />
         )}

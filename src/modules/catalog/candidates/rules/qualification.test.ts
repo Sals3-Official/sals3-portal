@@ -20,6 +20,10 @@ function variant(overrides: Partial<VariantEvidence>): VariantEvidence {
     optionLabel: 'Black',
     priceUsd: 5,
     weightGrams: 100,
+    lengthMm: null,
+    widthMm: null,
+    heightMm: null,
+    volumeMm3: null,
     stockByOrigin:
       totalInventory === null
         ? []
@@ -50,6 +54,7 @@ function evidence(overrides: Partial<CandidateEvidence>): CandidateEvidence {
     entryCode: '3926909090',
     supplierPriceUsd: 5,
     packedWeight: '100',
+    packedDimensionsLabel: null,
     sourceStatusRaw: '3',
     isTestProduct: false,
     listedCount: 10,
@@ -224,6 +229,10 @@ describe('runQualification', () => {
             optionLabel: 'Black',
             priceUsd: 5,
             weightGrams: 100,
+            lengthMm: null,
+            widthMm: null,
+            heightMm: null,
+            volumeMm3: null,
             stockByOrigin: [
               {
                 countryCode: 'CN',

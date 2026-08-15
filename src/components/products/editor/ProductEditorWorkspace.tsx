@@ -56,8 +56,6 @@ type ProductEditorWorkspaceProps = {
    * client bundle while the interactive shell still positions it.
    */
   marketsSection: React.ReactNode;
-  /** Server-resolved pricing guidance, same reasoning as `marketsSection`. */
-  pricingBasisSection: React.ReactNode;
   /** Entry state from `?state=`. Development only - see `query.ts`. */
   initialLifecycle: EditorLifecycle;
   /** Database draft save boundary. Omitted for fixture/design-preview mode. */
@@ -212,7 +210,6 @@ function sals3CategoryIssue(fixture: ProductEditorFixture): ReadinessIssue {
 export default function ProductEditorWorkspace({
   fixture,
   marketsSection,
-  pricingBasisSection,
   initialLifecycle,
   saveDraftAction,
   publishAction,
@@ -642,12 +639,11 @@ export default function ProductEditorWorkspace({
   const handleDecideCategory =
     decideCategoryAction === undefined || optionMappingTarget === null
       ? undefined
-      : async (sals3CategoryCode: string, reason: string) => {
+      : async (sals3CategoryCode: string) => {
           const result = await decideCategoryAction({
             productId: optionMappingTarget.productId,
             expectedProductVersion: optionMappingTarget.expectedProductVersion,
             sals3CategoryCode,
-            reason,
           });
 
           // The resolved category, pricing, and publish gates all re-derive
@@ -820,7 +816,6 @@ export default function ProductEditorWorkspace({
               </span>
             }
           >
-            {pricingBasisSection}
             <VariantPricingTable
               variants={variants}
               expandedVariantId={expandedVariantId}

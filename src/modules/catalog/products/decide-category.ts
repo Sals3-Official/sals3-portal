@@ -51,7 +51,6 @@ export async function decideProductSals3Category(input: {
   sellerAccountId: string;
   expectedProductVersion: number;
   sals3CategoryCode: string;
-  reason: string;
   actorId: string;
   db?: Database;
 }): Promise<DecideProductCategoryResult> {
@@ -105,7 +104,6 @@ export async function decideProductSals3Category(input: {
         sellerAccountId: input.sellerAccountId,
         categoryCode: category.code,
         categoryPath: category.path,
-        reason: input.reason,
         previousCategoryId: product.categoryId,
       },
     });
