@@ -8,7 +8,6 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 import { publishProductAction } from '@/app/(portal)/listings/publish-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
-import { SALS3_CATEGORY_L1_OPTIONS } from '@/lib/seller-center/product-editor/sals3-category-l1';
 import type {
   EditorLifecycle,
   ProductEditorFixture,
@@ -543,43 +542,35 @@ describe('Product Editor - the photo a real product actually has', () => {
     expect(screen.getByText('Image 3')).toBeInTheDocument();
   });
 
-  it('shows the Basic Information category as a Sals3 Category dropdown', () => {
-    renderWithCover();
+  it('shows the Basic Information category as the real Sals3 taxonomy picker, not a decorative dropdown', () => {
+    const resolved = withCoverAddress();
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          publishTarget: {
+            productId: '11111111-1111-4111-8111-111111111111',
+            expectedProductVersion: 7,
+          },
+        }}
+        initialLifecycle="IDLE"
+        variantGuidance={[]}
+        dataMode="database"
+      />,
+    );
 
     const basic = within(document.getElementById('sec-basic') as HTMLElement);
 
     expect(
-      basic.getByRole('combobox', { name: /Sals3 Category/i }),
+      basic.getByLabelText(/Sals3 category \(leaf, affects pricing/i),
     ).toBeInTheDocument();
+    expect(
+      basic.queryByRole('combobox', { name: /Sals3 Category/i }),
+    ).not.toBeInTheDocument();
     expect(
       basic.queryByRole('combobox', { name: /CJ Category/i }),
     ).not.toBeInTheDocument();
-  });
-
-  it('offers all Sals3 taxonomy L1 categories and marks the draft dirty on change', async () => {
-    renderWithCover();
-
-    const category = screen.getByRole('combobox', { name: /Sals3 Category/i });
-
-    fireEvent.click(category);
-
-    SALS3_CATEGORY_L1_OPTIONS.forEach((option) => {
-      expect(screen.getAllByText(option).length).toBeGreaterThan(0);
-    });
-
-    const beautyOption = screen
-      .getByText('Health & Beauty')
-      .closest('[data-slot="select-item"]');
-
-    if (beautyOption === null) throw new Error('missing Beauty option');
-
-    fireEvent.pointerDown(beautyOption);
-    fireEvent.pointerUp(beautyOption);
-    fireEvent.click(beautyOption);
-
-    await waitFor(() =>
-      expect(screen.getAllByText('Unsaved changes').length).toBeGreaterThan(0),
-    );
   });
 
   it('keeps the supplier CJ Category in Category & Specifications', () => {
@@ -618,7 +609,7 @@ describe('Product Editor - the photo a real product actually has', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('keeps an unmapped Basic Information category as a Sals3 dropdown', () => {
+  it('blocks publication when no real Sals3 category has been decided yet', () => {
     const resolved = withCoverAddress();
 
     render(
@@ -627,7 +618,6 @@ describe('Product Editor - the photo a real product actually has', () => {
           ...resolved,
           sals3CategoryPath: 'Unmapped category',
           sals3CategoryCode: null,
-          sals3CategoryL1: null,
           categoryMappingConfidence: 'UNMAPPED',
         }}
         initialLifecycle="IDLE"
@@ -636,27 +626,23 @@ describe('Product Editor - the photo a real product actually has', () => {
       />,
     );
 
-    const category = screen.getByRole('combobox', { name: /Sals3 Category/i });
-
-    expect(category).toHaveTextContent('None — choose a Sals3 category');
-    expect(category).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByText('Sals3 category is required')).toBeInTheDocument();
     expect(
-      screen.getByText('Choose one Sals3 category from the list.'),
-    ).toBeInTheDocument();
+      screen.getAllByText('Sals3 category is required').length,
+    ).toBeGreaterThan(0);
+    expect(publishButton()).toBeDisabled();
   });
 
-  it('clears the required Sals3 category error once an L1 is selected', async () => {
+  it('never blocks on a real curated Sals3 category, however the retired draft L1 field looks', () => {
     const resolved = withCoverAddress();
 
     render(
       <ProductEditor
         fixture={{
           ...resolved,
-          sals3CategoryPath: 'Unmapped category',
-          sals3CategoryCode: null,
+          sals3CategoryPath: 'Health & Beauty > Personal Care',
+          sals3CategoryCode: 'CAT-GGL-200',
           sals3CategoryL1: null,
-          categoryMappingConfidence: 'UNMAPPED',
+          categoryMappingConfidence: 'EXACT',
         }}
         initialLifecycle="IDLE"
         variantGuidance={[]}
@@ -664,23 +650,6 @@ describe('Product Editor - the photo a real product actually has', () => {
       />,
     );
 
-    const category = screen.getByRole('combobox', { name: /Sals3 Category/i });
-
-    fireEvent.click(category);
-
-    const option = screen
-      .getByText('Health & Beauty')
-      .closest('[data-slot="select-item"]');
-
-    if (option === null) throw new Error('missing Beauty option');
-
-    fireEvent.pointerDown(option);
-    fireEvent.pointerUp(option);
-    fireEvent.click(option);
-
-    await waitFor(() =>
-      expect(category).not.toHaveAttribute('aria-invalid', 'true'),
-    );
     expect(
       screen.queryByText('Sals3 category is required'),
     ).not.toBeInTheDocument();

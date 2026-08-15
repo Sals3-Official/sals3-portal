@@ -170,15 +170,15 @@ function retailPriceIssue(fixture: ProductEditorFixture): ReadinessIssue {
 
 function sals3CategoryIssue(fixture: ProductEditorFixture): ReadinessIssue {
   return {
-    id: `${fixture.fixtureKey}-sals3-category-l1`,
+    id: `${fixture.fixtureKey}-sals3-category`,
     severity: 'BLOCKER',
     title: 'Sals3 category is required',
-    explanation: 'Choose one Sals3 category from the Basic Information list.',
+    explanation: 'Decide a Sals3 category from the Basic Information section.',
     affectedScope: 'Basic Information',
     source: 'AUTOMATED_VALIDATION',
     section: 'basic',
     reasonCode: null,
-    resolution: 'Select a Sals3 category.',
+    resolution: 'Decide a Sals3 category.',
   };
 }
 
@@ -214,9 +214,6 @@ export default function ProductEditorWorkspace({
   const router = useRouter();
 
   const [productName, setProductName] = useState(fixture.productName);
-  const [sals3CategoryL1, setSals3CategoryL1] = useState(
-    fixture.sals3CategoryL1 ?? '',
-  );
   const [sellerSku, setSellerSku] = useState(fixture.sellerSku);
   const [brandDeclaration, setBrandDeclaration] = useState(
     fixture.brandDeclaration,
@@ -339,7 +336,12 @@ export default function ProductEditorWorkspace({
     const hasMissingRetailPrice = variants.some(
       (variant) => variant.retailPrice.amountMinor <= 0,
     );
-    const hasMissingSals3Category = sals3CategoryL1.trim() === '';
+    // Keyed off the real curated decision (`decideCategoryMappingAction`),
+    // never the retired draft L1 dropdown — that field tracked no actual
+    // category decision and could leave this blocker wrong in both
+    // directions (see the review that caught this before the PR).
+    const hasMissingSals3Category =
+      fixture.categoryMappingConfidence === 'UNMAPPED';
     const withoutLocalIssues = fixture.issues.filter(
       (issue) =>
         issue.title !== 'Selling price is not resolved' &&
@@ -352,7 +354,7 @@ export default function ProductEditorWorkspace({
     ];
 
     return [...withoutLocalIssues, ...localIssues];
-  }, [fixture, sals3CategoryL1, variants]);
+  }, [fixture, variants]);
 
   const currentFixture = useMemo(
     () => ({
@@ -422,7 +424,11 @@ export default function ProductEditorWorkspace({
         revisionId: fixture.draftSaveTarget.revisionId,
         expectedRevisionVersion: draftRevisionVersion,
         title: productName,
-        sals3CategoryL1: sals3CategoryL1 === '' ? null : sals3CategoryL1,
+        // The draft L1 dropdown that used to set this was removed from the
+        // screen (superseded by the real curated category decision) — this
+        // is now a read-only pass-through of whatever value was already
+        // stored, never a value this screen can change.
+        sals3CategoryL1: fixture.sals3CategoryL1,
         descriptionDocument: descriptionDocumentFromText(description),
         variantRetailPrices: variants
           .filter((variant) => UUID_PATTERN.test(variant.id))
@@ -697,11 +703,6 @@ export default function ProductEditorWorkspace({
               productName={productName}
               onProductNameChange={(value) => {
                 setProductName(value);
-                touch();
-              }}
-              sals3CategoryL1={sals3CategoryL1}
-              onSals3CategoryL1Change={(value) => {
-                setSals3CategoryL1(value);
                 touch();
               }}
               sellerSku={sellerSku}
