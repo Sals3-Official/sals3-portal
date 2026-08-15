@@ -160,6 +160,14 @@ export default function BasicInformationSection({
           </p>
         </div>
 
+        {onDecideSals3Category === undefined ? null : (
+          <Sals3CategoryPicker
+            options={sals3CategoryOptions}
+            currentPath={fixture.sals3CategoryPath}
+            onSave={onDecideSals3Category}
+          />
+        )}
+
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="editor-seller-sku">Seller SKU (optional)</Label>
           <Input
@@ -217,14 +225,6 @@ export default function BasicInformationSection({
           )}
         </div>
       </div>
-
-      {onDecideSals3Category === undefined ? null : (
-        <Sals3CategoryPicker
-          options={sals3CategoryOptions}
-          currentPath={fixture.sals3CategoryPath}
-          onSave={onDecideSals3Category}
-        />
-      )}
 
       {/* Compact by design: this is a source summary, not the evidence
           itself. Supplier status, source currency and the original

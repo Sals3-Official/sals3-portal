@@ -1,5 +1,6 @@
 'use client';
 
+import { Pencil } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,6 +34,12 @@ const MAX_RESULTS = 20;
  * review artifact: this changes only the one product open in this editor
  * (owner decision 2026-08-15 — see `decideProductSals3Category`'s doc
  * comment), never another product or another seller's catalogue.
+ *
+ * Once a category is already resolved, this renders a compact, read-only
+ * looking value (Shopee Seller Center's "Category" field is the reference)
+ * instead of an open search box — an editable-looking input sitting next to
+ * an already-decided value read as "this still needs picking" even though
+ * nothing was wrong. The search UI only reappears once "Change" is clicked.
  */
 export default function Sals3CategoryPicker({
   options,
@@ -48,6 +55,9 @@ export default function Sals3CategoryPicker({
     | { state: 'error'; message: string }
   >({ state: 'idle' });
   const [savedPath, setSavedPath] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+
+  const effectivePath = savedPath ?? currentPath;
 
   const matches = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -74,10 +84,25 @@ export default function Sals3CategoryPicker({
       setSelected(null);
       setReason('');
       setQuery('');
+      setIsEditing(false);
     } else {
       setStatus({ state: 'error', message: result.message });
     }
   }, [onSave, reason, selected]);
+
+  const handleCancelEdit = useCallback(() => {
+    setIsEditing(false);
+    setSelected(null);
+    setQuery('');
+    setStatus({ state: 'idle' });
+  }, []);
+
+  let mode: 'compact' | 'search' | 'confirm' = 'search';
+  if (selected !== null) {
+    mode = 'confirm';
+  } else if (!isEditing && effectivePath !== null) {
+    mode = 'compact';
+  }
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3">
@@ -86,12 +111,30 @@ export default function Sals3CategoryPicker({
           Sals3 category (leaf, affects pricing and storefront)
         </Label>
       </div>
-      <p className="text-xs text-muted-foreground">
-        Current: {savedPath ?? currentPath ?? 'Not yet decided'}
-      </p>
 
-      {selected === null ? (
+      {mode === 'compact' && (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-input bg-muted/40 px-2.5 py-1.5 text-sm">
+          <span className="truncate">{effectivePath}</span>
+          <button
+            id="editor-sals3-category-v1"
+            type="button"
+            aria-label="Change category"
+            className="flex shrink-0 items-center gap-1 text-xs font-medium text-primary underline-offset-4 hover:underline"
+            onClick={() => setIsEditing(true)}
+          >
+            <Pencil aria-hidden="true" className="size-3.5" />
+            Change
+          </button>
+        </div>
+      )}
+
+      {mode === 'search' && (
         <>
+          {effectivePath === null ? null : (
+            <p className="text-xs text-muted-foreground">
+              Current: {effectivePath}
+            </p>
+          )}
           <Input
             id="editor-sals3-category-v1"
             type="search"
@@ -123,8 +166,19 @@ export default function Sals3CategoryPicker({
               )}
             </ul>
           )}
+          {effectivePath === null ? null : (
+            <button
+              type="button"
+              className="self-start text-xs font-medium text-muted-foreground underline-offset-4 hover:underline"
+              onClick={handleCancelEdit}
+            >
+              Cancel
+            </button>
+          )}
         </>
-      ) : (
+      )}
+
+      {mode === 'confirm' && selected !== null && (
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-2 rounded-lg border border-input px-2.5 py-1.5 text-sm">
             <span>{selected.path}</span>
