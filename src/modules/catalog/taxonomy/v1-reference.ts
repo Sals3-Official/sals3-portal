@@ -1,4 +1,4 @@
-import { asc, like } from 'drizzle-orm';
+import { asc, like, not, sql } from 'drizzle-orm';
 import { sals3Categories } from '@/lib/db/schema';
 import type { Executor } from '@/modules/catalog/candidates/repository';
 
@@ -40,8 +40,6 @@ const TAXONOMY_V1_CODE_PREFIX = 'CAT-GGL-';
  * do, and only the two smallest columns are read — a few hundred KB once per
  * editor page load, not once per keystroke.
  */
-// matches this module's sibling `taxonomy/repository.ts` convention.
-// eslint-disable-next-line import/prefer-default-export -- named on purpose
 export async function listSals3CategoryV1Options(
   executor: Executor,
 ): Promise<{ code: string; path: string }[]> {
@@ -50,4 +48,63 @@ export async function listSals3CategoryV1Options(
     .from(sals3Categories)
     .where(like(sals3Categories.code, `${TAXONOMY_V1_CODE_PREFIX}%`))
     .orderBy(asc(sals3Categories.path));
+}
+
+export type Sals3CategoriesStatus = {
+  total: number;
+  /** `code LIKE 'CAT-GGL-%'` - the real, frozen v1 extraction. */
+  v1Count: number;
+  /** `code LIKE 'CJ-%'` - `cj-mirror.ts`'s auto-created rows. */
+  mirrorCount: number;
+  /**
+   * Neither prefix - most plausibly leftover Taxonomy v0 rows
+   * (`CAT-DIG-...`) that a v0-to-v1 migration never ran against this
+   * database. A non-zero count here is itself the finding: it means
+   * `listSals3CategoryV1Options` was never actually empty by accident, or
+   * that a real migration step is still owed to this environment.
+   */
+  otherCount: number;
+  /** Up to 10 codes from `otherCount`, to name what's actually there. */
+  otherSampleCodes: string[];
+};
+
+/**
+ * A read-only census of `sals3_categories`, for diagnosing environments
+ * this session has no direct database access to (see
+ * `/api/internal/catalog/taxonomy/status`). Answers "is the v1 extraction
+ * actually seeded here" without guessing from picker behaviour alone - an
+ * empty search result and a genuinely empty table look identical from the
+ * picker, but a table full of stale v0 rows looks the same too.
+ */
+export async function getSals3CategoriesStatus(
+  executor: Executor,
+): Promise<Sals3CategoriesStatus> {
+  const v1Pattern = `${TAXONOMY_V1_CODE_PREFIX}%`;
+  const mirrorPattern = 'CJ-%';
+
+  const [counts] = await executor
+    .select({
+      total: sql<number>`count(*)`,
+      v1Count: sql<number>`count(*) filter (where ${sals3Categories.code} like ${v1Pattern})`,
+      mirrorCount: sql<number>`count(*) filter (where ${sals3Categories.code} like ${mirrorPattern})`,
+    })
+    .from(sals3Categories);
+
+  const others = await executor
+    .select({ code: sals3Categories.code })
+    .from(sals3Categories)
+    .where(not(like(sals3Categories.code, v1Pattern)))
+    .limit(10);
+  const otherRows = others.filter((row) => !row.code.startsWith('CJ-'));
+
+  return {
+    total: Number(counts?.total ?? 0),
+    v1Count: Number(counts?.v1Count ?? 0),
+    mirrorCount: Number(counts?.mirrorCount ?? 0),
+    otherCount:
+      Number(counts?.total ?? 0) -
+      Number(counts?.v1Count ?? 0) -
+      Number(counts?.mirrorCount ?? 0),
+    otherSampleCodes: otherRows.map((row) => row.code),
+  };
 }
