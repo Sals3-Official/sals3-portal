@@ -169,6 +169,28 @@ export async function findProductById(
   return rows[0] ?? null;
 }
 
+/**
+ * The one canonical provider reference for this Sals3 product (ADR-006:
+ * unique on `(product_id, supplier_provider_id)`), so a caller can find which
+ * CJ product — and which CJ category — this product was actually drafted
+ * from, without trusting anything a request claims about it. Used to derive
+ * the true `externalCategoryId` server-side for a category-mapping decision,
+ * the same reasoning `findCandidateSourceForSeller` already applies to a
+ * candidate.
+ */
+export async function findProviderProductReferenceForProduct(
+  executor: Executor,
+  productId: string,
+): Promise<ProviderProductReferenceRow | null> {
+  const rows = await executor
+    .select()
+    .from(providerProductReferences)
+    .where(eq(providerProductReferences.productId, productId))
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
 /** Editorial read. Returns `null` for a product this account does not steward. */
 export async function findProductForSteward(
   executor: Executor,

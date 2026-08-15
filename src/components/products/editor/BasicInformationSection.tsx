@@ -13,6 +13,9 @@ import {
 import { formatDateTime } from '@/lib/seller-center/product-editor/format';
 import { SALS3_CATEGORY_L1_OPTIONS } from '@/lib/seller-center/product-editor/sals3-category-l1';
 import type { ProductEditorFixture } from '@/lib/seller-center/product-editor/types';
+import Sals3CategoryPicker, {
+  type Sals3CategoryOption,
+} from './Sals3CategoryPicker';
 import SupplierEvidenceBlock, {
   SupplierEvidenceField,
 } from './SupplierEvidenceBlock';
@@ -36,6 +39,13 @@ type BasicInformationSectionProps = {
   brandDeclaration: string;
   onBrandDeclarationChange: (value: string) => void;
   onOpenSourceDrawer: () => void;
+  sals3CategoryOptions?: Sals3CategoryOption[];
+  onDecideSals3Category?: (
+    code: string,
+    reason: string,
+  ) => Promise<
+    { ok: true; categoryPath: string } | { ok: false; message: string }
+  >;
 };
 
 /**
@@ -58,6 +68,8 @@ export default function BasicInformationSection({
   brandDeclaration,
   onBrandDeclarationChange,
   onOpenSourceDrawer,
+  sals3CategoryOptions = [],
+  onDecideSals3Category,
 }: BasicInformationSectionProps) {
   const brandBlocker = fixture.issues.find(
     (issue) => issue.reasonCode === 'COUNTERFEIT_HIGH_CONFIDENCE',
@@ -259,6 +271,14 @@ export default function BasicInformationSection({
           )}
         </div>
       </div>
+
+      {onDecideSals3Category === undefined ? null : (
+        <Sals3CategoryPicker
+          options={sals3CategoryOptions}
+          currentPath={fixture.sals3CategoryPath}
+          onSave={onDecideSals3Category}
+        />
+      )}
 
       {/* Compact by design: this is a source summary, not the evidence
           itself. Supplier status, source currency and the original

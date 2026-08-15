@@ -36,6 +36,11 @@ vi.mock('@/app/(portal)/listings/option-mapping-actions', () => ({
   recoverSupplierLabelsAction: vi.fn(),
 }));
 
+// Same reasoning: `decide-category.ts` reaches the server-only db client too.
+vi.mock('@/app/(portal)/listings/category-mapping-actions', () => ({
+  decideCategoryMappingAction: vi.fn(),
+}));
+
 function fixture(key: string): ProductEditorFixture {
   const resolved = resolveProductEditorFixture(key);
 
@@ -603,8 +608,14 @@ describe('Product Editor - the photo a real product actually has', () => {
 
     const specs = within(document.getElementById('sec-specs') as HTMLElement);
 
-    expect(specs.getByLabelText(/CJ Category/i)).toBeInTheDocument();
-    expect(specs.getByDisplayValue("Men's Jackets")).toBeInTheDocument();
+    // A read-only surface, not a form control: CJ order fulfillment relies on
+    // this field staying exactly what the supplier sent, so it is shown, not
+    // edited, here (see SpecificationsSection.tsx).
+    expect(specs.getByText(/CJ Category/i)).toBeInTheDocument();
+    expect(specs.getByText("Men's Jackets")).toBeInTheDocument();
+    expect(
+      specs.queryByRole('textbox', { name: /CJ Category/i }),
+    ).not.toBeInTheDocument();
   });
 
   it('keeps an unmapped Basic Information category as a Sals3 dropdown', () => {

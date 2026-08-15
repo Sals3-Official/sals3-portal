@@ -105,6 +105,19 @@ type ProductEditorWorkspaceProps = {
     | { ok: true; recoveredCount: number; alreadyLabelledCount: number }
     | { ok: false; reason: string; message: string }
   >;
+  /** The full Sals3 Taxonomy v1 tree, for the category picker's search. */
+  sals3CategoryOptions?: { code: string; path: string }[];
+  /**
+   * Category-mapping decision boundary. Omitted for fixture/design-preview
+   * mode, so the picker still lets someone search the tree but offers no
+   * save (owner decision 2026-08-15 — see `taxonomy/authorization.ts`).
+   */
+  decideCategoryAction?: (
+    input: unknown,
+  ) => Promise<
+    | { ok: true; categoryCode: string; categoryPath: string }
+    | { ok: false; reason: string; message: string }
+  >;
 };
 
 const EXIT_HREF = '/products/pipeline?tab=ready';
@@ -195,6 +208,8 @@ export default function ProductEditorWorkspace({
   publishAction,
   optionMappingAction,
   recoverLabelsAction,
+  sals3CategoryOptions = [],
+  decideCategoryAction,
 }: ProductEditorWorkspaceProps) {
   const router = useRouter();
 
@@ -603,6 +618,30 @@ export default function ProductEditorWorkspace({
           };
         };
 
+  /**
+   * Same compare-and-set token as option mapping — a category decision is
+   * also a real, versioned write, not local draft state.
+   */
+  const handleDecideCategory =
+    decideCategoryAction === undefined || optionMappingTarget === null
+      ? undefined
+      : async (sals3CategoryCode: string, reason: string) => {
+          const result = await decideCategoryAction({
+            productId: optionMappingTarget.productId,
+            expectedProductVersion: optionMappingTarget.expectedProductVersion,
+            sals3CategoryCode,
+            reason,
+          });
+
+          // The resolved category, pricing, and publish gates all re-derive
+          // from the read-model, not from local state.
+          if (result.ok) router.refresh();
+
+          return result.ok
+            ? { ok: true as const, categoryPath: result.categoryPath }
+            : { ok: false as const, message: result.message };
+        };
+
   return (
     <div className="@container flex flex-col gap-4">
       <ProductEditorHeader
@@ -676,6 +715,8 @@ export default function ProductEditorWorkspace({
                 touch();
               }}
               onOpenSourceDrawer={() => setSourceDrawerOpen(true)}
+              sals3CategoryOptions={sals3CategoryOptions}
+              onDecideSals3Category={handleDecideCategory}
             />
           </EditorSectionCard>
 
@@ -693,6 +734,11 @@ export default function ProductEditorWorkspace({
             <SpecificationsSection
               specifications={specifications}
               onSpecificationChange={(key, value) => {
+                // Never called for a locked field — `SpecificationField`
+                // only wires `onChange` to a genuinely seller-fillable one
+                // (SpecificationsSection.tsx). `source: 'SELLER'` records
+                // that this specific value came from the seller, not from
+                // re-deriving it as `SUPPLIER` on every keystroke.
                 setSpecifications((current) =>
                   current.map((spec) =>
                     spec.key === key

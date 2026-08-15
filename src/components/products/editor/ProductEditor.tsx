@@ -1,4 +1,5 @@
 import { FlaskConical } from 'lucide-react';
+import { decideCategoryMappingAction } from '@/app/(portal)/listings/category-mapping-actions';
 import saveOptionMappingAction, {
   recoverSupplierLabelsAction,
 } from '@/app/(portal)/listings/option-mapping-actions';
@@ -21,6 +22,8 @@ type ProductEditorProps = {
   /** Server-resolved price guidance, one entry per variant — see `page.tsx`. */
   variantGuidance: VariantPricingGuidance[];
   dataMode?: 'fixture' | 'database';
+  /** The full Sals3 Taxonomy v1 tree, for the category picker's search. */
+  sals3CategoryOptions?: { code: string; path: string }[];
 };
 
 /**
@@ -41,6 +44,7 @@ export default function ProductEditor({
   initialLifecycle,
   variantGuidance,
   dataMode = 'fixture',
+  sals3CategoryOptions = [],
 }: ProductEditorProps) {
   const isDatabaseBacked = dataMode === 'database';
 
@@ -95,6 +99,10 @@ export default function ProductEditor({
         }
         recoverLabelsAction={
           isDatabaseBacked ? recoverSupplierLabelsAction : undefined
+        }
+        sals3CategoryOptions={sals3CategoryOptions}
+        decideCategoryAction={
+          isDatabaseBacked ? decideCategoryMappingAction : undefined
         }
       />
     </div>

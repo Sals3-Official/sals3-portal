@@ -9,6 +9,7 @@ import AddProductModeChooser from '@/components/seller-center/listings/AddProduc
 import BlankListingWorkspace from '@/components/seller-center/listings/BlankListingWorkspace';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { requirePermission } from '@/lib/auth/session';
+import getDb from '@/lib/db/client';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
 import resolveFixtureVariantGuidance from '@/lib/seller-center/product-editor/pricing-guidance';
 import {
@@ -16,6 +17,7 @@ import {
   lifecycleFromParam,
 } from '@/lib/seller-center/product-editor/query';
 import { findProductEditorFixtureForSeller } from '@/modules/catalog/products/read-model';
+import { listSals3CategoryV1Options } from '@/modules/catalog/taxonomy/v1-reference';
 
 /**
  * Add Product. One route, two entry modes:
@@ -123,6 +125,7 @@ export default async function AddProductPage({ searchParams }: PageProps) {
         fixture={fixture}
         initialLifecycle={lifecycleFromParam(query.state)}
         variantGuidance={variantGuidance}
+        sals3CategoryOptions={await listSals3CategoryV1Options(getDb())}
       />
     );
   }
@@ -152,6 +155,7 @@ export default async function AddProductPage({ searchParams }: PageProps) {
           sellerAccount.id,
         )}
         dataMode="database"
+        sals3CategoryOptions={await listSals3CategoryV1Options(getDb())}
       />
     );
   }

@@ -1,4 +1,4 @@
-import { Info, OctagonAlert, TriangleAlert } from 'lucide-react';
+import { Lock, OctagonAlert, TriangleAlert } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { severityForUnresolvedSpecification } from '@/lib/seller-center/product-editor/derive';
@@ -12,6 +12,17 @@ type SpecificationsSectionProps = {
   specifications: SpecificationFixture[];
   onSpecificationChange: (key: string, value: string) => void;
 };
+
+/**
+ * `editorSpecifications()` never produces this key with anything but
+ * `SUPPLIER`/`NOT_PROVIDED`/`INFERRED` sources - it is never the seller's to
+ * invent (the code comment there says so: "Never SELLER"). So unlike an
+ * ordinary missing spec (e.g. a genuinely absent "Country of origin", which a
+ * seller may legitimately supply), a *missing* CJ Category stays locked too -
+ * there is no value a seller could type here that would be anything but a
+ * guess at what the supplier meant.
+ */
+const NEVER_SELLER_EDITABLE_KEYS = new Set(['category']);
 
 const GROUP_TITLES: Record<SpecificationRequirement, string> = {
   REQUIRED: 'Required specifications',
@@ -47,6 +58,21 @@ type SpecificationFieldProps = {
   onChange: (key: string, value: string) => void;
 };
 
+/**
+ * Read-only surface for a real supplier fact or curated decision, matching
+ * `SupplierEvidenceField`'s reasoning exactly — but only when there is
+ * something to protect. A field with an actual `SUPPLIER`/`INFERRED` value
+ * used to render as an editable `<Input>` regardless of source: a seller
+ * could select-all and delete "CJ Category" text and see it change on
+ * screen, even though nothing was ever wired to save it. That is worse than
+ * a no-op — it looks like an edit that silently didn't take, on a field CJ
+ * order fulfillment depends on staying exactly what the supplier sent.
+ *
+ * A genuinely *missing* spec the seller may legitimately supply (e.g.
+ * "Country of origin" with no supplier value) stays a real, editable input -
+ * `NEVER_SELLER_EDITABLE_KEYS` is the one exception, since a missing CJ
+ * Category is still never the seller's to invent.
+ */
 function SpecificationField({
   specification,
   onChange,
@@ -58,24 +84,49 @@ function SpecificationField({
   );
   const showsMessage = specification.unresolved && severity !== 'SUGGESTION';
   const isBlocker = severity === 'BLOCKER';
+  const isLocked =
+    specification.source === 'SUPPLIER' ||
+    specification.source === 'INFERRED' ||
+    NEVER_SELLER_EDITABLE_KEYS.has(specification.key);
 
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2">
-        <Label htmlFor={fieldId}>
-          {specification.label}
-          {specification.requirement === 'REQUIRED' ? ' *' : ''}
-        </Label>
+        {isLocked ? (
+          <span
+            id={fieldId}
+            className="text-sm leading-none font-medium text-ink-muted"
+          >
+            {specification.label}
+            {specification.requirement === 'REQUIRED' ? ' *' : ''}
+          </span>
+        ) : (
+          <Label htmlFor={fieldId}>
+            {specification.label}
+            {specification.requirement === 'REQUIRED' ? ' *' : ''}
+          </Label>
+        )}
         <FieldSourceBadge source={specification.source} />
       </div>
-      <Input
-        id={fieldId}
-        value={specification.value}
-        placeholder={specification.unresolved ? 'No supplier value' : undefined}
-        aria-invalid={showsMessage ? true : undefined}
-        aria-describedby={showsMessage ? errorId : undefined}
-        onChange={(event) => onChange(specification.key, event.target.value)}
-      />
+      {isLocked ? (
+        <p
+          aria-labelledby={fieldId}
+          aria-invalid={showsMessage ? true : undefined}
+          aria-describedby={showsMessage ? errorId : undefined}
+          className="min-h-9 rounded-lg border border-dashed border-border-strong bg-background px-2.5 py-2 text-sm break-words text-ink-muted"
+        >
+          {specification.unresolved ? 'No supplier value' : specification.value}
+        </p>
+      ) : (
+        <Input
+          id={fieldId}
+          value={specification.value}
+          placeholder="No supplier value"
+          aria-invalid={showsMessage ? true : undefined}
+          aria-describedby={showsMessage ? errorId : undefined}
+          onChange={(event) => onChange(specification.key, event.target.value)}
+        />
+      )}
       {showsMessage ? (
         <p
           id={errorId}
@@ -107,12 +158,13 @@ export default function SpecificationsSection({
   return (
     <div className="flex flex-col gap-4">
       <p className="flex items-start gap-2 rounded-lg border border-border bg-muted px-3 py-2.5 text-xs text-ink-muted">
-        <Info
+        <Lock
           aria-hidden="true"
           className="mt-0.5 size-3.5 shrink-0 text-primary"
         />
-        Changing the CJ Category may change which specifications are required.
-        Values already entered are kept where the attribute still applies.
+        A field with a supplier value or a curated category is shown read-only,
+        kept exactly as received. A genuinely missing attribute may still be
+        entered below it.
       </p>
 
       {GROUP_ORDER.map((requirement) => {
