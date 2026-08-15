@@ -29,7 +29,6 @@ type VariantPricingTableProps = {
   onBulkEnableInStock: () => void;
   onBulkDisableUnavailable: () => void;
   onBulkSetPrice: () => void;
-  evidenceCapturedAt: string;
 };
 
 const COLUMNS = [
@@ -103,7 +102,6 @@ export default function VariantPricingTable({
   onBulkEnableInStock,
   onBulkDisableUnavailable,
   onBulkSetPrice,
-  evidenceCapturedAt,
 }: VariantPricingTableProps) {
   return (
     <div className="flex flex-col gap-3">
@@ -209,8 +207,13 @@ export default function VariantPricingTable({
                       }
                     />
                   </TableCell>
-                  <TableCell className="tabular-nums">
-                    {formatMoney(variant.supplierCost)}
+                  <TableCell>
+                    <div className="flex flex-col gap-0.5 tabular-nums">
+                      <span>{formatMoney(variant.supplierCost)}</span>
+                      <span className="text-xs text-muted-foreground">
+                        Observed {formatDateTime(variant.evidenceCapturedAt)}
+                      </span>
+                    </div>
                   </TableCell>
                   <TableCell>
                     <RetailPriceInput
@@ -222,12 +225,17 @@ export default function VariantPricingTable({
                       }
                     />
                   </TableCell>
-                  <TableCell className="tabular-nums">
-                    {variant.supplierStock === 0 ? (
-                      <span className="font-medium text-amber-600">0</span>
-                    ) : (
-                      formatCount(variant.supplierStock)
-                    )}
+                  <TableCell>
+                    <div className="flex flex-col gap-0.5 tabular-nums">
+                      {variant.supplierStock === 0 ? (
+                        <span className="font-medium text-amber-600">0</span>
+                      ) : (
+                        <span>{formatCount(variant.supplierStock)}</span>
+                      )}
+                      <span className="text-xs text-muted-foreground">
+                        Observed {formatDateTime(variant.evidenceCapturedAt)}
+                      </span>
+                    </div>
                   </TableCell>
                   <TableCell>
                     {variant.attention === null ? (
@@ -267,10 +275,10 @@ export default function VariantPricingTable({
 
       <div className="flex flex-col gap-2 text-xs text-muted-foreground">
         <p>
-          Supplier cost and stock captured {formatDateTime(evidenceCapturedAt)}.
-          Retail prices are shown in the currency they are set in. The portal
-          does not convert supplier prices — no approved exchange-rate source
-          exists for this screen.
+          Supplier cost and stock use stored supplier evidence only. Retail
+          prices are shown in the currency they are set in. The portal does not
+          convert supplier prices — no approved exchange-rate source exists for
+          this screen.
         </p>
       </div>
     </div>

@@ -156,6 +156,47 @@ describe('VariantOptionMappingSection', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
+  it('pre-fills group names from aligned taxonomy preset suggestions', async () => {
+    const onSave = vi.fn(async () => ({ ok: true }));
+
+    render(
+      <VariantOptionMappingSection
+        proposal={PROPOSAL}
+        suggestedAxisNames={['Color / Camo Pattern', 'Garment Size (S/M/L/XL)']}
+        variantCount={6}
+        onSave={onSave}
+      />,
+    );
+
+    expect(screen.getByLabelText('Group 1 name')).toHaveValue(
+      'Color / Camo Pattern',
+    );
+    expect(screen.getByLabelText('Group 2 name')).toHaveValue(
+      'Garment Size (S/M/L/XL)',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save option groups' }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave).toHaveBeenCalledWith([
+      expect.objectContaining({ name: 'Color / Camo Pattern' }),
+      expect.objectContaining({ name: 'Garment Size (S/M/L/XL)' }),
+    ]);
+  });
+
+  it('ignores preset suggestions that do not align with the proposed groups', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={PROPOSAL}
+        suggestedAxisNames={['Color only']}
+        variantCount={6}
+      />,
+    );
+
+    expect(screen.getByLabelText('Group 1 name')).toHaveValue('');
+    expect(screen.getByLabelText('Group 2 name')).toHaveValue('');
+  });
+
   it('sends the names and labels a person supplied, and never a position', async () => {
     const onSave = vi.fn(async () => ({ ok: true }));
 

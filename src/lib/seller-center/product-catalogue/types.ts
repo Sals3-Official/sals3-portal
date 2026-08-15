@@ -190,6 +190,13 @@ export type AttentionReasonFixture = {
   checkoutAllowed: boolean;
 };
 
+export type VariantOptionSelectionFixture = {
+  optionName: string;
+  optionValue: string;
+  optionPosition: number;
+  valuePosition: number;
+};
+
 export type CatalogueVariantFixture = {
   id: string;
   /** e.g. "Color: Green, Size: Medium 31-35". */
@@ -206,6 +213,11 @@ export type CatalogueVariantFixture = {
    * reads this column directly — then refuses as SHAPE_MISMATCH.
    */
   supplierOptionLabel: string | null;
+  /**
+   * Persisted option values for this variant, when the seller has mapped the
+   * supplier label into Sals3-owned axes. Positions are the display order.
+   */
+  mappedOptions?: VariantOptionSelectionFixture[];
   /** Canonical Sals3 sellable identity - never a CJ id. */
   sals3VariantId: string;
   sellerSku: string;
@@ -336,6 +348,11 @@ export type CatalogueProductFixture = {
    * read; absent and empty both mean "not mapped".
    */
   optionAxisNames?: string[];
+  /**
+   * Taxonomy v1 preset axis labels by supplier-label position. Used only to
+   * pre-fill option mapping; saved option rows remain the source of truth.
+   */
+  categoryPresetVariationAttributes?: [string | null, string | null];
   /**
    * The most recent supplier evidence Sals3 captured — the other half of the
    * source-change diff.

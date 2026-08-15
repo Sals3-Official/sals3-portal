@@ -71,6 +71,35 @@ const CATALOGUE_PRODUCT: CatalogueProductFixture = {
   variants: [],
 };
 
+function catalogueVariant(
+  overrides: Partial<CatalogueProductFixture['variants'][number]> & {
+    id: string;
+    optionLabel: string;
+    supplierOptionLabel: string | null;
+  },
+): CatalogueProductFixture['variants'][number] {
+  const { id, optionLabel, supplierOptionLabel, ...rest } = overrides;
+
+  return {
+    id,
+    optionLabel,
+    supplierOptionLabel,
+    sals3VariantId: id,
+    sellerSku: `SKU-${id}`,
+    cjVariantId: `CJ-${id}`,
+    hasImage: true,
+    sellingPrice: { amountMinor: 2500, currency: 'USD' },
+    supplierCost: { amountMinor: 1000, currency: 'USD' },
+    availability: 'AVAILABLE',
+    stockEvidence: 'UNKNOWN_STOCK',
+    supplierObservedQuantity: 10,
+    lastCheckedAt: '2026-08-13T12:41:39.393Z',
+    evidenceFreshness: 'FRESH',
+    manuallyPaused: false,
+    ...rest,
+  };
+}
+
 describe('productToEditorFixture — supplier media', () => {
   it('carries the recorded image address and alternative text onto the tile', () => {
     const { fixture } = productToEditorFixture(CATALOGUE_PRODUCT);
@@ -109,6 +138,144 @@ describe('productToEditorFixture — supplier media', () => {
     });
 
     expect(fixture.media).toEqual([]);
+  });
+});
+
+describe('productToEditorFixture — option mapping projection', () => {
+  it('sorts editor variants by saved option value positions, not stale SKU order', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      variants: [
+        catalogueVariant({
+          id: 'green-m',
+          optionLabel: 'Colour: Green, Size: M',
+          supplierOptionLabel: 'Green-M',
+          mappedOptions: [
+            {
+              optionName: 'Colour',
+              optionValue: 'Green',
+              optionPosition: 0,
+              valuePosition: 1,
+            },
+            {
+              optionName: 'Size',
+              optionValue: 'M',
+              optionPosition: 1,
+              valuePosition: 1,
+            },
+          ],
+        }),
+        catalogueVariant({
+          id: 'black-s',
+          optionLabel: 'Colour: Black, Size: S',
+          supplierOptionLabel: 'Black-S',
+          mappedOptions: [
+            {
+              optionName: 'Colour',
+              optionValue: 'Black',
+              optionPosition: 0,
+              valuePosition: 0,
+            },
+            {
+              optionName: 'Size',
+              optionValue: 'S',
+              optionPosition: 1,
+              valuePosition: 0,
+            },
+          ],
+        }),
+        catalogueVariant({
+          id: 'black-m',
+          optionLabel: 'Colour: Black, Size: M',
+          supplierOptionLabel: 'Black-M',
+          mappedOptions: [
+            {
+              optionName: 'Colour',
+              optionValue: 'Black',
+              optionPosition: 0,
+              valuePosition: 0,
+            },
+            {
+              optionName: 'Size',
+              optionValue: 'M',
+              optionPosition: 1,
+              valuePosition: 1,
+            },
+          ],
+        }),
+      ],
+    });
+
+    expect(fixture.variants.map((variant) => variant.id)).toEqual([
+      'black-s',
+      'black-m',
+      'green-m',
+    ]);
+  });
+
+  it('pre-fills option group names from the Taxonomy v1 preset by supplier-label position', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      categoryPresetVariationAttributes: [
+        'Color / Camo Pattern',
+        'Garment Size (S/M/L/XL)',
+      ],
+      variants: [
+        catalogueVariant({
+          id: 'black-s',
+          optionLabel: 'Black-S',
+          supplierOptionLabel: 'Black-S',
+        }),
+        catalogueVariant({
+          id: 'black-m',
+          optionLabel: 'Black-M',
+          supplierOptionLabel: 'Black-M',
+        }),
+        catalogueVariant({
+          id: 'green-s',
+          optionLabel: 'Army Green-S',
+          supplierOptionLabel: 'Army Green-S',
+        }),
+        catalogueVariant({
+          id: 'green-m',
+          optionLabel: 'Army Green-M',
+          supplierOptionLabel: 'Army Green-M',
+        }),
+      ],
+    });
+
+    expect(fixture.optionMapping.proposal).toEqual([
+      { index: 0, values: ['Black', 'Army Green'] },
+      { index: 1, values: ['S', 'M'] },
+    ]);
+    expect(fixture.optionMapping.suggestedAxisNames).toEqual([
+      'Color / Camo Pattern',
+      'Garment Size (S/M/L/XL)',
+    ]);
+  });
+
+  it('uses the matching preset tier when a constant supplier-label position was dropped', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      categoryPresetVariationAttributes: ['Color', 'Size'],
+      variants: [
+        catalogueVariant({
+          id: 'khaki-s',
+          optionLabel: 'Khaki-S',
+          supplierOptionLabel: 'Khaki-S',
+        }),
+        catalogueVariant({
+          id: 'khaki-m',
+          optionLabel: 'Khaki-M',
+          supplierOptionLabel: 'Khaki-M',
+        }),
+      ],
+    });
+
+    expect(fixture.optionMapping.proposal).toEqual([
+      { index: 1, values: ['S', 'M'] },
+    ]);
+    expect(fixture.optionMapping.suggestedAxisNames).toEqual(['Size']);
   });
 });
 

@@ -64,6 +64,20 @@ const SESSION = { sellerId: SELLER_A_ID, userId: 'user-1' };
 
 const VALID_REASON = 'Opening this destination for the bounded pilot.';
 
+function wrappedUniqueViolation(constraintName: string): Error {
+  const driverError = Object.assign(
+    new Error('duplicate key value violates unique constraint'),
+    {
+      code: '23505',
+      constraint_name: constraintName,
+    },
+  );
+
+  return Object.assign(new Error('Failed query: insert into profiles'), {
+    cause: driverError,
+  });
+}
+
 /**
  * Reproduces what the scoped compare-and-set `UPDATE` does — match on owner,
  * status, and version, or change nothing. A mock that ignored those
@@ -208,9 +222,7 @@ describe('beginMarketProfileSetupAction — authorization and allow list', () =>
 
   it('reports a duplicate setup as a conflict rather than a crash', async () => {
     repositoryMocks.createDraftProfile.mockRejectedValue(
-      new Error(
-        'duplicate key value violates unique constraint "seller_market_profiles_live_key"',
-      ),
+      wrappedUniqueViolation('seller_market_profiles_live_key'),
     );
 
     const result = await beginMarketProfileSetupAction({

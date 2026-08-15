@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import getDb from '@/lib/db/client';
+import uniqueViolationConstraint from '@/lib/db/constraint-errors';
 import { requirePermission } from '@/lib/auth/session';
 import { PermissionError } from '@/lib/auth/permissions';
 import { checkRateLimit } from '@/lib/rate-limit';
@@ -34,6 +35,7 @@ import type { SellerMarketProfileStatus } from '@/lib/db/schema';
 
 const RATE_LIMIT = { capacity: 20, refillIntervalMs: 60_000 };
 const MIN_REASON_LENGTH = 10;
+const LIVE_PROFILE_CONSTRAINT = 'seller_market_profiles_live_key';
 
 const reasonSchema = z
   .string()
@@ -156,7 +158,7 @@ export async function beginMarketProfileSetupAction(
 
     // The partial unique index is the arbiter of "already being set up",
     // rather than a prior SELECT two concurrent submits would both pass.
-    if (message.includes('seller_market_profiles_live_key')) {
+    if (uniqueViolationConstraint(error) === LIVE_PROFILE_CONSTRAINT) {
       return { ok: false, reason: 'conflict' };
     }
 

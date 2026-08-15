@@ -6,16 +6,20 @@ import { z } from 'zod';
 import getDb, { type Database } from '@/lib/db/client';
 import { cjImageUrl } from '@/lib/cj/primitives';
 import {
+  ACTIVE_TAXONOMY_VERSION,
   candidateEvaluations,
   offerSupplierBindings,
   productMediaSources,
   productOffers,
+  productOptionValues,
   productOptions,
   productRevisions,
+  productVariantOptionValues,
   productVariants,
   products,
   providerProductReferences,
   providerVariantReferences,
+  sals3CategoryPresets,
   sals3Categories,
   supplierCandidates,
   supplierConnections,
@@ -374,6 +378,72 @@ function descriptionText(revision: ProductRevisionRow | undefined): string {
     .join('\n\n');
 }
 
+function variantOrderKey(variant: CatalogueVariantFixture): string {
+  if (variant.mappedOptions !== undefined && variant.mappedOptions.length > 0) {
+    return [...variant.mappedOptions]
+      .sort((left, right) => left.optionPosition - right.optionPosition)
+      .map(
+        (option) =>
+          `${option.optionPosition.toString().padStart(4, '0')}:${option.valuePosition.toString().padStart(4, '0')}:${option.optionValue}`,
+      )
+      .join('|');
+  }
+
+  return `zzzz:${variant.optionLabel}`;
+}
+
+function compareCatalogueVariants(
+  left: CatalogueVariantFixture,
+  right: CatalogueVariantFixture,
+): number {
+  const byOptions = variantOrderKey(left).localeCompare(variantOrderKey(right));
+
+  if (byOptions !== 0) return byOptions;
+
+  return left.sellerSku.localeCompare(right.sellerSku);
+}
+
+function mappedOptionLabel(
+  mappedOptions: NonNullable<CatalogueVariantFixture['mappedOptions']>,
+  fallback: string,
+): string {
+  if (mappedOptions.length === 0) return fallback;
+
+  return [...mappedOptions]
+    .sort((left, right) => left.optionPosition - right.optionPosition)
+    .map((option) => `${option.optionName}: ${option.optionValue}`)
+    .join(', ');
+}
+
+function presetVariationAttributes(
+  preset:
+    | {
+        tier1Attribute: string | null;
+        tier2Attribute: string | null;
+      }
+    | undefined,
+): CatalogueProductFixture['categoryPresetVariationAttributes'] {
+  if (preset === undefined) return undefined;
+
+  return [preset.tier1Attribute, preset.tier2Attribute];
+}
+
+function suggestedOptionAxisNames(
+  proposal: { index: number }[],
+  presetAttributes:
+    CatalogueProductFixture['categoryPresetVariationAttributes'] | undefined,
+): string[] {
+  if (presetAttributes === undefined || proposal.length === 0) return [];
+
+  const names = proposal.map((axis) => presetAttributes[axis.index]?.trim());
+
+  return names.every(
+    (name): name is string => name !== undefined && name !== '',
+  )
+    ? names
+    : [];
+}
+
 async function listCoreRows(executor: Executor, sellerAccountId: string) {
   const offerProductRows = await executor
     .select({ productId: products.id })
@@ -412,6 +482,8 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
       variantRows: [],
       referenceRows: [],
       optionRows: [],
+      presetRows: [],
+      variantOptionRows: [],
       providerVariantRows: [],
       offerRows: [],
       bindingRows: [],
@@ -421,43 +493,72 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
     };
   }
 
-  const [variantRows, referenceRows, revisionRows, mediaRows, optionRows] =
-    await Promise.all([
-      executor
-        .select()
-        .from(productVariants)
-        .where(inArray(productVariants.productId, ids))
-        .orderBy(asc(productVariants.sals3Sku)),
-      executor
-        .select()
-        .from(providerProductReferences)
-        .where(inArray(providerProductReferences.productId, ids)),
-      executor
-        .select()
-        .from(productRevisions)
-        .where(inArray(productRevisions.productId, ids)),
-      executor
-        .select()
-        .from(productMediaSources)
-        .where(inArray(productMediaSources.productId, ids))
-        .orderBy(
-          asc(productMediaSources.productId),
-          asc(productMediaSources.createdAt),
-        ),
-      // Whether a seller has already named this product's option axes. Ordered
-      // by the stored position, which is the order they chose, not
-      // `normalized_name` — `Colour × Size` must not resurface as `Size ×
-      // Colour`.
-      executor
-        .select({
-          productId: productOptions.productId,
-          position: productOptions.position,
-          name: productOptions.name,
-        })
-        .from(productOptions)
-        .where(inArray(productOptions.productId, ids))
-        .orderBy(asc(productOptions.productId), asc(productOptions.position)),
-    ]);
+  const categoryIds = [
+    ...new Set(
+      productRows
+        .map((row) => row.product.categoryId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+
+  const [
+    variantRows,
+    referenceRows,
+    revisionRows,
+    mediaRows,
+    optionRows,
+    presetRows,
+  ] = await Promise.all([
+    executor
+      .select()
+      .from(productVariants)
+      .where(inArray(productVariants.productId, ids))
+      .orderBy(asc(productVariants.sals3Sku)),
+    executor
+      .select()
+      .from(providerProductReferences)
+      .where(inArray(providerProductReferences.productId, ids)),
+    executor
+      .select()
+      .from(productRevisions)
+      .where(inArray(productRevisions.productId, ids)),
+    executor
+      .select()
+      .from(productMediaSources)
+      .where(inArray(productMediaSources.productId, ids))
+      .orderBy(
+        asc(productMediaSources.productId),
+        asc(productMediaSources.createdAt),
+      ),
+    // Whether a seller has already named this product's option axes. Ordered
+    // by the stored position, which is the order they chose, not
+    // `normalized_name` — `Colour × Size` must not resurface as `Size ×
+    // Colour`.
+    executor
+      .select({
+        productId: productOptions.productId,
+        position: productOptions.position,
+        name: productOptions.name,
+      })
+      .from(productOptions)
+      .where(inArray(productOptions.productId, ids))
+      .orderBy(asc(productOptions.productId), asc(productOptions.position)),
+    categoryIds.length === 0
+      ? Promise.resolve([])
+      : executor
+          .select({
+            categoryId: sals3CategoryPresets.categoryId,
+            tier1Attribute: sals3CategoryPresets.tier1Attribute,
+            tier2Attribute: sals3CategoryPresets.tier2Attribute,
+          })
+          .from(sals3CategoryPresets)
+          .where(
+            and(
+              inArray(sals3CategoryPresets.categoryId, categoryIds),
+              eq(sals3CategoryPresets.taxonomyVersion, ACTIVE_TAXONOMY_VERSION),
+            ),
+          ),
+  ]);
 
   const variantIds = variantRows.map((row) => row.id);
   const referenceIds = referenceRows.map((row) => row.id);
@@ -465,63 +566,95 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
     .map((row) => row.sourceCandidateId)
     .filter((id): id is string => id !== null);
 
-  const [providerVariantRows, offerRows, sourceRows] = await Promise.all([
-    referenceIds.length === 0
-      ? Promise.resolve([])
-      : executor
-          .select()
-          .from(providerVariantReferences)
-          .where(
-            inArray(
-              providerVariantReferences.providerProductReferenceId,
-              referenceIds,
+  const [providerVariantRows, offerRows, sourceRows, variantOptionRows] =
+    await Promise.all([
+      referenceIds.length === 0
+        ? Promise.resolve([])
+        : executor
+            .select()
+            .from(providerVariantReferences)
+            .where(
+              inArray(
+                providerVariantReferences.providerProductReferenceId,
+                referenceIds,
+              ),
             ),
-          ),
-    variantIds.length === 0
-      ? Promise.resolve([])
-      : executor
-          .select()
-          .from(productOffers)
-          .where(
-            and(
-              eq(productOffers.sellerAccountId, sellerAccountId),
-              inArray(productOffers.variantId, variantIds),
+      variantIds.length === 0
+        ? Promise.resolve([])
+        : executor
+            .select()
+            .from(productOffers)
+            .where(
+              and(
+                eq(productOffers.sellerAccountId, sellerAccountId),
+                inArray(productOffers.variantId, variantIds),
+              ),
             ),
-          ),
-    sourceCandidateIds.length === 0
-      ? Promise.resolve([])
-      : executor
-          .select({
-            candidate: supplierCandidates,
-            evaluation: candidateEvaluations,
-            snapshot: supplierSnapshots,
-            connection: supplierConnections,
-            provider: supplierProviders,
-          })
-          .from(supplierCandidates)
-          .innerJoin(
-            supplierConnections,
-            eq(supplierConnections.id, supplierCandidates.supplierConnectionId),
-          )
-          .innerJoin(
-            supplierProviders,
-            eq(supplierProviders.id, supplierConnections.providerId),
-          )
-          .leftJoin(
-            candidateEvaluations,
-            eq(candidateEvaluations.candidateId, supplierCandidates.id),
-          )
-          .leftJoin(
-            supplierSnapshots,
-            eq(supplierSnapshots.candidateId, supplierCandidates.id),
-          )
-          .where(
-            and(
-              eq(supplierConnections.sellerAccountId, sellerAccountId),
-              inArray(supplierCandidates.id, sourceCandidateIds),
+      sourceCandidateIds.length === 0
+        ? Promise.resolve([])
+        : executor
+            .select({
+              candidate: supplierCandidates,
+              evaluation: candidateEvaluations,
+              snapshot: supplierSnapshots,
+              connection: supplierConnections,
+              provider: supplierProviders,
+            })
+            .from(supplierCandidates)
+            .innerJoin(
+              supplierConnections,
+              eq(
+                supplierConnections.id,
+                supplierCandidates.supplierConnectionId,
+              ),
+            )
+            .innerJoin(
+              supplierProviders,
+              eq(supplierProviders.id, supplierConnections.providerId),
+            )
+            .leftJoin(
+              candidateEvaluations,
+              eq(candidateEvaluations.candidateId, supplierCandidates.id),
+            )
+            .leftJoin(
+              supplierSnapshots,
+              eq(supplierSnapshots.candidateId, supplierCandidates.id),
+            )
+            .where(
+              and(
+                eq(supplierConnections.sellerAccountId, sellerAccountId),
+                inArray(supplierCandidates.id, sourceCandidateIds),
+              ),
             ),
-          ),
-  ]);
+      variantIds.length === 0
+        ? Promise.resolve([])
+        : executor
+            .select({
+              variantId: productVariantOptionValues.variantId,
+              optionName: productOptions.name,
+              optionPosition: productOptions.position,
+              optionValue: productOptionValues.label,
+              valuePosition: productOptionValues.position,
+            })
+            .from(productVariantOptionValues)
+            .innerJoin(
+              productOptions,
+              eq(productOptions.id, productVariantOptionValues.optionId),
+            )
+            .innerJoin(
+              productOptionValues,
+              eq(
+                productOptionValues.id,
+                productVariantOptionValues.optionValueId,
+              ),
+            )
+            .where(inArray(productVariantOptionValues.variantId, variantIds))
+            .orderBy(
+              asc(productVariantOptionValues.variantId),
+              asc(productOptions.position),
+              asc(productOptionValues.position),
+            ),
+    ]);
 
   const offerIds = offerRows.map((row) => row.id);
   const bindingRows =
@@ -537,6 +670,8 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
     variantRows,
     referenceRows,
     optionRows,
+    presetRows,
+    variantOptionRows,
     providerVariantRows,
     offerRows,
     bindingRows,
@@ -579,6 +714,13 @@ function buildCatalogueProducts(
   const mediaByProduct = groupBy(rows.mediaRows, (media) => media.productId);
   const sourceByCandidate = new Map(
     rows.sourceRows.map((row) => [row.candidate.id, row]),
+  );
+  const optionValuesByVariant = groupBy(
+    rows.variantOptionRows,
+    (option) => option.variantId,
+  );
+  const presetByCategory = new Map(
+    rows.presetRows.map((preset) => [preset.categoryId, preset]),
   );
 
   return rows.productRows.map(
@@ -633,24 +775,40 @@ function buildCatalogueProducts(
           ? [supplier.imageUrl]
           : imageUrls;
 
-      const catalogueVariants: CatalogueVariantFixture[] = variants.map(
-        (variant) => {
+      const catalogueVariants: CatalogueVariantFixture[] = variants
+        .map((variant) => {
           const providerVariant = providerVariantByVariant.get(variant.id);
           const offer = offersByVariant.get(variant.id)?.[0];
           const observedQuantity =
             providerVariant?.lastObservedInventory ?? null;
           const observedAt = providerVariant?.lastObservedAt ?? null;
           const bindingState = bindingsByOffer.get(offer?.id ?? '')?.[0]?.state;
+          const fallbackOptionLabel =
+            providerVariant?.sourceOptionLabel ??
+            variant.optionCombinationKey ??
+            variant.sals3Sku;
+          const mappedOptions = [
+            ...(optionValuesByVariant.get(variant.id) ?? []),
+          ]
+            .sort(
+              (left, right) =>
+                left.optionPosition - right.optionPosition ||
+                left.valuePosition - right.valuePosition,
+            )
+            .map((option) => ({
+              optionName: option.optionName,
+              optionValue: option.optionValue,
+              optionPosition: option.optionPosition,
+              valuePosition: option.valuePosition,
+            }));
 
           return {
             id: variant.id,
-            optionLabel:
-              providerVariant?.sourceOptionLabel ??
-              variant.optionCombinationKey ??
-              variant.sals3Sku,
+            optionLabel: mappedOptionLabel(mappedOptions, fallbackOptionLabel),
             // No fallback: the option split is derived from this, and a
             // stand-in would be split into axes the supplier never sent.
             supplierOptionLabel: providerVariant?.sourceOptionLabel ?? null,
+            mappedOptions,
             sals3VariantId: variant.id,
             sellerSku: variant.sals3Sku,
             cjVariantId: providerVariant?.externalVariantId ?? 'Not recorded',
@@ -674,8 +832,8 @@ function buildCatalogueProducts(
               bindingState ===
                 ('SUSPENDED' satisfies OfferSupplierBindingState),
           };
-        },
-      );
+        })
+        .sort(compareCatalogueVariants);
 
       return {
         id: product.id,
@@ -756,6 +914,11 @@ function buildCatalogueProducts(
         currentRevisionVersion: revision?.version ?? null,
         optionAxisNames: (optionsByProduct.get(product.id) ?? []).map(
           (option) => option.name,
+        ),
+        categoryPresetVariationAttributes: presetVariationAttributes(
+          product.categoryId === null
+            ? undefined
+            : presetByCategory.get(product.categoryId),
         ),
         variants: catalogueVariants,
       };
@@ -948,22 +1111,25 @@ function editorVariants(product: CatalogueProductFixture): VariantFixture[] {
     ];
   }
 
-  return product.variants.map((variant) => ({
-    id: variant.id,
-    optionLabel: variant.optionLabel,
-    sellerSku: variant.sellerSku,
-    supplierCost: variant.supplierCost,
-    retailPrice: variant.sellingPrice ?? ZERO_USD,
-    supplierStock: variant.supplierObservedQuantity ?? 0,
-    warehouseLabel: 'Not recorded',
-    hasImage: variant.hasImage,
-    enabled: product.status === 'LIVE' && variant.availability === 'AVAILABLE',
-    listingState: editorVariantListingState(product, variant),
-    attention: variant.sellingPrice === null ? 'Retail price required' : null,
-    supplierVariantId: variant.cjVariantId,
-    packedWeightGrams: 0,
-    evidenceCapturedAt: variant.lastCheckedAt,
-  }));
+  return [...product.variants]
+    .sort(compareCatalogueVariants)
+    .map((variant) => ({
+      id: variant.id,
+      optionLabel: variant.optionLabel,
+      sellerSku: variant.sellerSku,
+      supplierCost: variant.supplierCost,
+      retailPrice: variant.sellingPrice ?? ZERO_USD,
+      supplierStock: variant.supplierObservedQuantity ?? 0,
+      warehouseLabel: 'Not recorded',
+      hasImage: variant.hasImage,
+      enabled:
+        product.status === 'LIVE' && variant.availability === 'AVAILABLE',
+      listingState: editorVariantListingState(product, variant),
+      attention: variant.sellingPrice === null ? 'Retail price required' : null,
+      supplierVariantId: variant.cjVariantId,
+      packedWeightGrams: 0,
+      evidenceCapturedAt: variant.lastCheckedAt,
+    }));
 }
 
 function editorMarkets(
@@ -1144,6 +1310,10 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
       label: variant.supplierOptionLabel,
     })),
   );
+  const suggestedAxisNames = suggestedOptionAxisNames(
+    optionSplit?.positions ?? [],
+    product.categoryPresetVariationAttributes,
+  );
   const fixture: ProductEditorFixture = {
     fixtureKey: product.id,
     scenarioLabel: `Database product - ${product.status}`,
@@ -1228,6 +1398,7 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
       // column before writing, so the browser never supplies structure.
       proposal: optionSplit?.positions ?? [],
       mappedAxisNames: product.optionAxisNames ?? [],
+      suggestedAxisNames,
       variantCount: product.variants.length,
       // Free: the raw column is already on every variant here, so telling a
       // missing label apart from a present one that simply does not form a grid

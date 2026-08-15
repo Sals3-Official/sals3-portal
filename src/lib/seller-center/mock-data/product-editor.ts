@@ -368,6 +368,7 @@ const BASE: ProductEditorFixture = {
   optionMapping: {
     proposal: [],
     mappedAxisNames: [],
+    suggestedAxisNames: [],
     variantCount: BASE_VARIANTS.length,
     // Zero, not the variant count: these fixtures have no supplier evidence
     // behind them, so nothing could be recovered and the section must not offer

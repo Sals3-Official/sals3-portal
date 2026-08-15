@@ -43,6 +43,8 @@ export type VariantOptionMappingSectionProps = {
   proposal: OptionMappingProposalAxis[];
   /** Present once mapped — the section then reports rather than edits. */
   mappedAxisNames?: string[];
+  /** Taxonomy preset names aligned to `proposal`; editable, never authoritative. */
+  suggestedAxisNames?: string[];
   variantCount: number;
   onSave?: (
     axes: {
@@ -63,9 +65,15 @@ export type VariantOptionMappingSectionProps = {
 type ValueDraft = { raw: string; label: string };
 type AxisDraft = { name: string; values: ValueDraft[] };
 
-function initialDrafts(proposal: OptionMappingProposalAxis[]): AxisDraft[] {
-  return proposal.map((axis) => ({
-    name: '',
+function initialDrafts(
+  proposal: OptionMappingProposalAxis[],
+  suggestedAxisNames: string[],
+): AxisDraft[] {
+  const usableNames =
+    suggestedAxisNames.length === proposal.length ? suggestedAxisNames : [];
+
+  return proposal.map((axis, axisIndex) => ({
+    name: usableNames[axisIndex] ?? '',
     // Display label defaults to the supplier's own token: the honest starting
     // point, and often already correct.
     values: axis.values.map((raw) => ({ raw, label: raw })),
@@ -113,12 +121,15 @@ function move<T>(items: T[], from: number, to: number): T[] {
 export default function VariantOptionMappingSection({
   proposal,
   mappedAxisNames,
+  suggestedAxisNames = [],
   variantCount,
   onSave,
   unlabelledVariantCount = 0,
   onRecoverLabels,
 }: VariantOptionMappingSectionProps) {
-  const [axes, setAxes] = useState<AxisDraft[]>(() => initialDrafts(proposal));
+  const [axes, setAxes] = useState<AxisDraft[]>(() =>
+    initialDrafts(proposal, suggestedAxisNames),
+  );
   const [touched, setTouched] = useState<Record<number, boolean>>({});
   const [state, setState] = useState<'IDLE' | 'SAVING' | 'SAVED' | 'FAILED'>(
     'IDLE',
