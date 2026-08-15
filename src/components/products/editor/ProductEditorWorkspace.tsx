@@ -726,7 +726,6 @@ export default function ProductEditorWorkspace({
                 setBrandDeclaration(value);
                 touch();
               }}
-              onOpenSourceDrawer={() => setSourceDrawerOpen(true)}
               sals3CategoryOptions={sals3CategoryOptions}
               onDecideSals3Category={handleDecideCategory}
             />
@@ -734,7 +733,7 @@ export default function ProductEditorWorkspace({
 
           <EditorSectionCard
             id="specs"
-            title="Category & Specifications"
+            title="Supplier Details"
             severity={sectionSeverity(currentIssues, 'specs')}
             meta={
               <span className="text-xs text-muted-foreground">
@@ -744,6 +743,9 @@ export default function ProductEditorWorkspace({
             }
           >
             <SpecificationsSection
+              source={fixture.source}
+              supplierCategoryPath={fixture.supplierCategoryPath}
+              onOpenSourceDrawer={() => setSourceDrawerOpen(true)}
               specifications={specifications}
               onSpecificationChange={(key, value) => {
                 // Never called for a locked field — `SpecificationField`

@@ -197,6 +197,43 @@ describe('VariantOptionMappingSection', () => {
     expect(screen.getByLabelText('Group 2 name')).toHaveValue('');
   });
 
+  /**
+   * The `mappedAxisNames` prop only moves once `router.refresh()`
+   * round-trips through the server and the read-model re-derives it from
+   * the DB — this simulates the window between "save resolved" and that
+   * refresh landing, where the prop passed in has not changed at all.
+   * Without an optimistic local update, the summary card would not appear
+   * until a page the seller cannot see refreshes underneath them.
+   */
+  it('shows the mapped summary immediately after a successful save, before the parent has re-rendered with new props', async () => {
+    const onSave = vi.fn(async () => ({ ok: true }));
+
+    render(
+      <VariantOptionMappingSection
+        proposal={PROPOSAL}
+        variantCount={6}
+        onSave={onSave}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Group 1 name'), {
+      target: { value: 'Colour' },
+    });
+    fireEvent.change(screen.getByLabelText('Group 2 name'), {
+      target: { value: 'Size' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save option groups' }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+
+    expect(
+      await screen.findByText(/Mapped as Colour × Size/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Save option groups' }),
+    ).not.toBeInTheDocument();
+  });
+
   it('sends the names and labels a person supplied, and never a position', async () => {
     const onSave = vi.fn(async () => ({ ok: true }));
 

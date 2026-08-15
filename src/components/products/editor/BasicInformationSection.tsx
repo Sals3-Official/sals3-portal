@@ -1,6 +1,5 @@
 import Image from 'next/image';
 import { OctagonAlert } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -10,15 +9,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { formatDateTime } from '@/lib/seller-center/product-editor/format';
 import type { ProductEditorFixture } from '@/lib/seller-center/product-editor/types';
 import Sals3CategoryPicker, {
   type Sals3CategoryOption,
 } from './Sals3CategoryPicker';
-import SupplierEvidenceBlock, {
-  SupplierEvidenceField,
-} from './SupplierEvidenceBlock';
-import SupplierSourceBadge from './SupplierSourceBadge';
 
 const PRODUCT_NAME_MAX = 120;
 
@@ -35,7 +29,6 @@ type BasicInformationSectionProps = {
   onSellerSkuChange: (value: string) => void;
   brandDeclaration: string;
   onBrandDeclarationChange: (value: string) => void;
-  onOpenSourceDrawer: () => void;
   sals3CategoryOptions?: Sals3CategoryOption[];
   onDecideSals3Category?: (
     code: string,
@@ -46,13 +39,12 @@ type BasicInformationSectionProps = {
 };
 
 /**
- * The prefilled listing essentials, plus the supplier evidence they were
- * derived from.
- *
- * The split is the point of the whole screen: everything above the grey
- * block is the seller's to change and everything inside it is the
- * supplier's, shown as-is. "Product Name" is the seller-facing term
- * throughout - the internal field name is never surfaced.
+ * The prefilled listing essentials the seller can actually change here:
+ * name, category, seller SKU, and brand declaration. The supplier evidence
+ * they were derived from lives in the "Supplier Details" section below
+ * instead, alongside the rest of the read-only supplier facts. "Product
+ * Name" is the seller-facing term throughout - the internal field name is
+ * never surfaced.
  */
 export default function BasicInformationSection({
   fixture,
@@ -62,7 +54,6 @@ export default function BasicInformationSection({
   onSellerSkuChange,
   brandDeclaration,
   onBrandDeclarationChange,
-  onOpenSourceDrawer,
   sals3CategoryOptions = [],
   onDecideSals3Category,
 }: BasicInformationSectionProps) {
@@ -225,47 +216,6 @@ export default function BasicInformationSection({
           )}
         </div>
       </div>
-
-      {/* Compact by design: this is a source summary, not the evidence
-          itself. Supplier status, source currency and the original
-          supplier product name still exist - they are one click away in
-          the drawer - rather than competing here with the fields the
-          seller actually edits above. */}
-      <SupplierEvidenceBlock>
-        <div className="flex flex-col gap-3">
-          <SupplierSourceBadge source={fixture.source} />
-
-          <div className="grid grid-cols-1 gap-3 @lg:grid-cols-3">
-            <SupplierEvidenceField
-              label="Supplier product ID"
-              value={fixture.source.externalProductId}
-              mono
-            />
-            <SupplierEvidenceField
-              label="Original category"
-              value={fixture.supplierCategoryPath}
-            />
-            <SupplierEvidenceField
-              label="Last updated"
-              value={
-                fixture.source.lastSuccessfulSyncAt === null
-                  ? 'Never synced successfully'
-                  : formatDateTime(fixture.source.lastSuccessfulSyncAt)
-              }
-            />
-          </div>
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="self-start"
-            onClick={onOpenSourceDrawer}
-          >
-            View Supplier Source Details
-          </Button>
-        </div>
-      </SupplierEvidenceBlock>
     </div>
   );
 }

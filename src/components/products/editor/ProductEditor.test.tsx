@@ -562,9 +562,7 @@ describe('Product Editor - the photo a real product actually has', () => {
 
     const basic = within(document.getElementById('sec-basic') as HTMLElement);
 
-    expect(
-      basic.getByLabelText(/Sals3 category \(leaf, affects pricing/i),
-    ).toBeInTheDocument();
+    expect(basic.getByLabelText(/^Category$/i)).toBeInTheDocument();
     expect(
       basic.queryByRole('combobox', { name: /Sals3 Category/i }),
     ).not.toBeInTheDocument();
@@ -573,7 +571,7 @@ describe('Product Editor - the photo a real product actually has', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('keeps the supplier CJ Category in Category & Specifications', () => {
+  it('keeps the supplier CJ Category in Supplier Details', () => {
     const resolved = withCoverAddress();
 
     render(
