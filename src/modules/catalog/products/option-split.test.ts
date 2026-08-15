@@ -85,10 +85,56 @@ describe('deriveOptionSplit', () => {
     ).toBe(undefined);
   });
 
-  it('refuses a position that never varies', () => {
-    // "Black" is a constant inside the label, not an axis.
+  /**
+   * The Winter Khaki Jacket, live on 2026-08-15: one colour, five sizes. Two
+   * live products (this shape) and two more (six colours, one size) were
+   * refused entirely under the old rule, which treated a constant position as
+   * disqualifying the whole label rather than as one axis to drop.
+   */
+  it('drops a position that never varies and derives the one that does', () => {
+    const split = deriveOptionSplit([
+      variant('a', 'Khaki-M'),
+      variant('b', 'Khaki-S'),
+      variant('c', 'Khaki-L'),
+    ]);
+
+    expect(split).not.toBe(undefined);
+    // Only the varying position is offered - "Khaki" is never proposed as a
+    // one-choice axis, and `index` is the position in the supplier's own
+    // label (1), not the position in the returned array (0).
+    expect(split?.positions).toEqual([{ index: 1, values: ['M', 'S', 'L'] }]);
+    // The combination key still carries the constant token: it is derived
+    // from the full label, and the constant's presence in every key does not
+    // stop the key from being unique per variant.
+    expect(split?.byCombination.get('Khaki-M')).toBe('a');
+  });
+
+  /**
+   * The Landlord Hat, live on 2026-08-15: six colours, one size - the
+   * constant position first in the label rather than last, and the surviving
+   * axis's `index` is 0.
+   */
+  it('drops a leading constant position and keeps the trailing index honest', () => {
+    const split = deriveOptionSplit([
+      variant('a', 'Red-M'),
+      variant('b', 'Black-M'),
+      variant('c', 'Grey-M'),
+    ]);
+
+    expect(split?.positions).toEqual([
+      { index: 0, values: ['Red', 'Black', 'Grey'] },
+    ]);
+  });
+
+  /**
+   * Structurally impossible to reach a proposal with zero varying positions:
+   * with two or more variants and every bucket forced to size one, the
+   * cross-product check (`expected === variants.length`) already refuses
+   * before the drop step runs. Asserted directly rather than trusted.
+   */
+  it('cannot derive a proposal where every position is constant', () => {
     expect(
-      deriveOptionSplit([variant('a', 'Black-S'), variant('b', 'Black-M')]),
+      deriveOptionSplit([variant('a', 'Black-S'), variant('b', 'Black-S')]),
     ).toBe(undefined);
   });
 

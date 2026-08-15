@@ -396,6 +396,37 @@ describe('publishProduct', () => {
     expect(mocks.resolveProductPricing).not.toHaveBeenCalled();
   });
 
+  /**
+   * The real Winter Khaki Jacket's shape: one colour, three sizes (trimmed
+   * from five). `deriveOptionSplit` drops the constant `Khaki` position and
+   * offers `Size` alone - this is the exact live-product case the
+   * constant-position fix exists for, so the gate above it must reach it too.
+   */
+  function oneConstantPositionVariants() {
+    return ['Khaki-M', 'Khaki-S', 'Khaki-L'].map((label, index) =>
+      variantRow({ variantId: `variant-${index + 1}`, label }),
+    );
+  }
+
+  it('refuses to publish a grid with a dropped constant position that is unnamed', async () => {
+    const { db } = transactionalDb({ variants: oneConstantPositionVariants() });
+
+    expect(await publish(db)).toEqual({
+      ok: false,
+      reason: 'OPTIONS_UNMAPPED',
+    });
+    expect(mocks.resolveProductPricing).not.toHaveBeenCalled();
+  });
+
+  it('publishes a grid with a dropped constant position once its surviving axis is named', async () => {
+    const { db } = transactionalDb({
+      variants: oneConstantPositionVariants(),
+      options: [{ id: 'option-1' }],
+    });
+
+    expect(await publish(db)).toMatchObject({ ok: true });
+  });
+
   it('publishes a derivable grid once its option groups are named', async () => {
     const { db } = transactionalDb({
       variants: griddedVariants(),

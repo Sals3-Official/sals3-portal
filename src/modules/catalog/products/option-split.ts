@@ -29,8 +29,22 @@
  * Splitting is only safe when the result is provably complete. Ten variants
  * yielding token sets of 2 and 5 means 2 × 5 = 10 — every combination present
  * exactly once, nothing left to infer. Anything less (ragged token counts, a
- * missing combination, a duplicate, a single token, a position that never varies)
- * means the label is not a clean encoding, and the seller must map it by hand.
+ * missing combination, a duplicate, or a single token) means the label is not
+ * a clean encoding, and the seller must map it by hand.
+ *
+ * ## A position that never varies is dropped, not disqualifying
+ *
+ * A supplier currently stocking one colour of a garment that comes in five
+ * sizes still encodes two positions — `Khaki-M`, `Khaki-L` — one of which is
+ * constant *today*. Refusing the whole product over that constant position
+ * was the original design and is wrong: it throws away a real, exact `Size`
+ * axis because `Colour` happens to have one value right now. The position is
+ * dropped from what is offered as an axis — nothing invents a one-choice
+ * "Colour" dropdown, which was always the actual concern — and the remaining
+ * positions are proposed as before. A product where *every* position is
+ * constant cannot reach this branch at all: the exactness check below already
+ * requires the cross-product of bucket sizes to equal the variant count, and
+ * with two or more variants that is impossible if every bucket has size one.
  *
  * Costs nothing at the supplier: the labels are already stored. No CJ call.
  */
@@ -114,10 +128,6 @@ export function deriveOptionSplit(
     });
   });
 
-  // A position with one value is a constant sitting inside the label, not an
-  // axis — offering it as a choice would invent a decision the buyer never has.
-  if (values.some((bucket) => bucket.length < 2)) return undefined;
-
   const expected = values.reduce((total, bucket) => total * bucket.length, 1);
 
   if (expected !== variants.length) return undefined;
@@ -136,8 +146,14 @@ export function deriveOptionSplit(
   // a buyer could pick a combination and be given the other variant's price.
   if (byCombination.size !== variants.length) return undefined;
 
-  return {
-    positions: values.map((bucket, index) => ({ index, values: bucket })),
-    byCombination,
-  };
+  // A position with one value is a constant sitting inside the label, not an
+  // axis — offering it as a choice would invent a decision the buyer never
+  // has. Dropped here rather than earlier, because the exactness check above
+  // must still see every position's contribution to the cross-product; a
+  // constant bucket contributes a harmless factor of 1 to that arithmetic.
+  const positions = values
+    .map((bucket, index) => ({ index, values: bucket }))
+    .filter((position) => position.values.length >= 2);
+
+  return { positions, byCombination };
 }
