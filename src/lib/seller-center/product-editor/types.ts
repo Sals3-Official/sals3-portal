@@ -372,7 +372,7 @@ export const EDITOR_SECTIONS: ReadonlyArray<{
   label: string;
 }> = [
   { id: 'basic', label: 'Basic Information' },
-  { id: 'specs', label: 'Category & Specifications' },
+  { id: 'specs', label: 'Supplier Details' },
   { id: 'description', label: 'Description' },
   { id: 'variants', label: 'Variants & Pricing' },
   { id: 'markets', label: 'Markets' },

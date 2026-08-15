@@ -37,6 +37,10 @@ function renderPicker(
   return { onSave };
 }
 
+function openPicker(): void {
+  fireEvent.click(screen.getByRole('button', { name: /category/i }));
+}
+
 function searchInput(): HTMLInputElement {
   return screen.getByPlaceholderText(
     /Search the Sals3 v1 taxonomy/i,
@@ -53,11 +57,15 @@ function saveButton(): HTMLButtonElement {
   }) as HTMLButtonElement;
 }
 
-function changeButton(): HTMLButtonElement {
-  return screen.getByRole('button', { name: /Change/ }) as HTMLButtonElement;
+/** Drills Luggage & Bags > Backpacks, a two-level path ending in a leaf. */
+function pickBackpacksByBrowsing(): void {
+  openPicker();
+  fireEvent.click(screen.getByText('Luggage & Bags'));
+  fireEvent.click(screen.getByText('Backpacks'));
 }
 
-function pickJackets(): void {
+function pickJacketsBySearch(): void {
+  openPicker();
   fireEvent.change(searchInput(), { target: { value: 'jackets' } });
   fireEvent.click(
     screen.getByText('Apparel & Accessories > Clothing > Outerwear > Jackets'),
@@ -65,50 +73,64 @@ function pickJackets(): void {
 }
 
 describe('Sals3CategoryPicker', () => {
-  it('shows the search box directly when nothing has ever been resolved for this product', () => {
+  it('shows a placeholder and a "Choose category" button when nothing has ever been resolved', () => {
     renderPicker({ currentPath: null });
 
-    expect(searchInput()).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Change/ })).toBeNull();
-  });
-
-  it('shows a compact, non-editable-looking value (not an open search box) when a category is already resolved', () => {
-    renderPicker({ currentPath: 'Luggage & Bags > Backpacks' });
-
-    expect(screen.getByText('Luggage & Bags > Backpacks')).toBeInTheDocument();
-    expect(changeButton()).toBeInTheDocument();
+    expect(screen.getByText('Not set')).toBeInTheDocument();
     expect(
-      screen.queryByPlaceholderText(/Search the Sals3 v1 taxonomy/i),
-    ).toBeNull();
-  });
-
-  it('opens the search box only after Change is clicked, and Cancel returns to the compact view', () => {
-    renderPicker({ currentPath: 'Luggage & Bags > Backpacks' });
-
-    fireEvent.click(changeButton());
-
-    expect(searchInput()).toBeInTheDocument();
-    expect(
-      screen.getByText('Current: Luggage & Bags > Backpacks'),
+      screen.getByRole('button', { name: 'Choose category' }),
     ).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  it('shows a compact, non-editable-looking value with a "Change category" button when a category is already resolved', () => {
+    renderPicker({ currentPath: 'Luggage & Bags > Backpacks' });
 
-    expect(
-      screen.queryByPlaceholderText(/Search the Sals3 v1 taxonomy/i),
-    ).toBeNull();
     expect(screen.getByText('Luggage & Bags > Backpacks')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Change category' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('shows no matches until a query is typed', () => {
-    renderPicker();
+  it('opens straight into a browsable department list — no typing required', () => {
+    renderPicker({ currentPath: 'Luggage & Bags > Backpacks' });
 
-    expect(screen.queryByRole('button', { name: /Jackets/ })).toBeNull();
+    openPicker();
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('Apparel & Accessories')).toBeInTheDocument();
+    expect(screen.getByText('Luggage & Bags')).toBeInTheDocument();
+    expect(screen.getByText('Health & Beauty')).toBeInTheDocument();
   });
 
-  it('filters the tree by substring match, case-insensitively, across depth', () => {
+  it('drills down department by department to a leaf, and back up via the breadcrumb', () => {
     renderPicker();
 
+    openPicker();
+    fireEvent.click(screen.getByText('Apparel & Accessories'));
+
+    expect(screen.getByText('Clothing')).toBeInTheDocument();
+    expect(screen.queryByText('Luggage & Bags')).toBeNull();
+
+    fireEvent.click(screen.getByText('All departments'));
+
+    expect(screen.getByText('Luggage & Bags')).toBeInTheDocument();
+  });
+
+  it('selects a leaf reached purely by browsing, with no query ever typed', () => {
+    renderPicker();
+
+    pickBackpacksByBrowsing();
+
+    expect(screen.getByText('Luggage & Bags > Backpacks')).toBeInTheDocument();
+    expect(reasonInput()).toBeInTheDocument();
+  });
+
+  it('still filters by substring across the whole tree when a query is typed, as a shortcut', () => {
+    renderPicker();
+
+    openPicker();
     fireEvent.change(searchInput(), { target: { value: 'jackets' } });
 
     expect(
@@ -123,6 +145,7 @@ describe('Sals3CategoryPicker', () => {
   it('says plainly when a search matches nothing, instead of an empty list', () => {
     renderPicker();
 
+    openPicker();
     fireEvent.change(searchInput(), { target: { value: 'nonexistent' } });
 
     expect(
@@ -130,13 +153,13 @@ describe('Sals3CategoryPicker', () => {
     ).toBeInTheDocument();
   });
 
-  it('moves to the reason step once a category is picked, and back to search on Change', () => {
+  it('moves to the reason step once a category is picked, and back to browsing on Change', () => {
     renderPicker();
 
-    pickJackets();
+    pickJacketsBySearch();
 
     expect(reasonInput()).toBeInTheDocument();
-    expect(searchInput).toThrow();
+    expect(() => searchInput()).toThrow();
 
     fireEvent.click(screen.getByRole('button', { name: 'Change' }));
 
@@ -146,7 +169,7 @@ describe('Sals3CategoryPicker', () => {
   it('keeps Save disabled until a reason of at least 8 characters is entered, and says how many more are needed', () => {
     renderPicker();
 
-    pickJackets();
+    pickJacketsBySearch();
 
     expect(saveButton()).toBeDisabled();
     expect(screen.getByText('8 more characters needed.')).toBeInTheDocument();
@@ -163,13 +186,13 @@ describe('Sals3CategoryPicker', () => {
   it('trims the reason before deciding it clears the minimum length', () => {
     renderPicker();
 
-    pickJackets();
+    pickJacketsBySearch();
     fireEvent.change(reasonInput(), { target: { value: '   short   ' } });
 
     expect(saveButton()).toBeDisabled();
   });
 
-  it('saves with the picked code and trimmed reason, then shows the compact view with the new current path', async () => {
+  it('saves with the picked code and trimmed reason, then closes the dialog and shows the new current path', async () => {
     const onSave = vi.fn(async () => ({
       ok: true as const,
       categoryPath: 'Apparel & Accessories > Clothing > Outerwear > Jackets',
@@ -177,7 +200,7 @@ describe('Sals3CategoryPicker', () => {
 
     renderPicker({ onSave });
 
-    pickJackets();
+    pickJacketsBySearch();
     fireEvent.change(reasonInput(), {
       target: { value: '  A real jacket, not an accessory.  ' },
     });
@@ -190,17 +213,15 @@ describe('Sals3CategoryPicker', () => {
       ),
     );
 
-    await waitFor(() =>
-      expect(
-        screen.getByText(
-          'Apparel & Accessories > Clothing > Outerwear > Jackets',
-        ),
-      ).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(
-      screen.queryByPlaceholderText(/Search the Sals3 v1 taxonomy/i),
-    ).toBeNull();
-    expect(changeButton()).toBeInTheDocument();
+      screen.getByText(
+        'Apparel & Accessories > Clothing > Outerwear > Jackets',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Change category' }),
+    ).toBeInTheDocument();
   });
 
   it('shows the server refusal message and keeps the picked category on failure', async () => {
@@ -211,7 +232,7 @@ describe('Sals3CategoryPicker', () => {
 
     renderPicker({ onSave });
 
-    pickJackets();
+    pickJacketsBySearch();
     fireEvent.change(reasonInput(), {
       target: { value: 'A real jacket, not an accessory.' },
     });
@@ -222,7 +243,9 @@ describe('Sals3CategoryPicker', () => {
         'This CJ category was just remapped. Wait a moment.',
       ),
     );
-    // The pick survives the failure — nothing forces the seller to search again.
+    // The pick and the open dialog survive the failure — nothing forces the
+    // seller to start over.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(
       screen.getByText(
         'Apparel & Accessories > Clothing > Outerwear > Jackets',
@@ -244,7 +267,7 @@ describe('Sals3CategoryPicker', () => {
 
     renderPicker({ onSave });
 
-    pickJackets();
+    pickJacketsBySearch();
     fireEvent.change(reasonInput(), {
       target: { value: 'A real jacket, not an accessory.' },
     });

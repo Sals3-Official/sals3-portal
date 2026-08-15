@@ -135,6 +135,18 @@ export default function VariantOptionMappingSection({
     'IDLE',
   );
   const [message, setMessage] = useState<string | null>(null);
+  /**
+   * A committed mapping changes what the read-model returns, and this
+   * section is meant to switch to its report-only state from that data —
+   * but that data only arrives once `router.refresh()` round-trips through
+   * the server. Between "save succeeded" and "refresh landed," `mappedAxisNames`
+   * hasn't moved yet, so without this the editing form stays on screen —
+   * which reads as the summary card never showing up. This mirrors what was
+   * just submitted the instant the save resolves; the eventual `fixture`
+   * refresh still lands and either confirms it or (on a concurrent edit
+   * elsewhere) replaces it with the server's own answer.
+   */
+  const [savedAxisNames, setSavedAxisNames] = useState<string[] | null>(null);
   const [recoverState, setRecoverState] = useState<
     'IDLE' | 'RECOVERING' | 'DONE'
   >('IDLE');
@@ -152,17 +164,22 @@ export default function VariantOptionMappingSection({
     setRecoverMessage(result.message);
   }
 
-  if (mappedAxisNames !== undefined && mappedAxisNames.length > 0) {
+  const effectiveMappedAxisNames = savedAxisNames ?? mappedAxisNames;
+
+  if (
+    effectiveMappedAxisNames !== undefined &&
+    effectiveMappedAxisNames.length > 0
+  ) {
     return (
       <EditorSectionCard
         id="options"
         title="Option groups"
         severity={null}
-        meta={`${mappedAxisNames.length} groups`}
+        meta={`${effectiveMappedAxisNames.length} groups`}
       >
         <p className="text-sm text-muted-foreground">
-          Mapped as {mappedAxisNames.join(' × ')}. Supplier labels stay as
-          received; the display names above are Sals3&rsquo;s.
+          Mapped as {effectiveMappedAxisNames.join(' × ')}. Supplier labels stay
+          as received; the display names above are Sals3&rsquo;s.
         </p>
       </EditorSectionCard>
     );
@@ -238,16 +255,19 @@ export default function VariantOptionMappingSection({
     setState('SAVING');
     setMessage(null);
 
-    const result = await onSave(
-      axes.map((axis) => ({
-        name: axis.name.trim(),
-        values: axis.values.map((value) => ({
-          raw: value.raw,
-          label: value.label.trim() === '' ? value.raw : value.label.trim(),
-        })),
+    const submittedAxes = axes.map((axis) => ({
+      name: axis.name.trim(),
+      values: axis.values.map((value) => ({
+        raw: value.raw,
+        label: value.label.trim() === '' ? value.raw : value.label.trim(),
       })),
-    );
+    }));
 
+    const result = await onSave(submittedAxes);
+
+    if (result.ok) {
+      setSavedAxisNames(submittedAxes.map((axis) => axis.name));
+    }
     setState(result.ok ? 'SAVED' : 'FAILED');
     setMessage(result.message ?? null);
   }
