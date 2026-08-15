@@ -50,6 +50,14 @@ export type VariantOptionMappingSectionProps = {
       values: { raw: string; label: string }[];
     }[],
   ) => Promise<{ ok: boolean; message?: string }>;
+  /**
+   * Variants whose supplier label was never recorded at draft time. A single one
+   * empties `proposal`, so this is what tells a product that *can* be repaired
+   * apart from one whose labels genuinely do not form a grid.
+   */
+  unlabelledVariantCount?: number;
+  /** Offered only where those labels can actually be recovered. */
+  onRecoverLabels?: () => Promise<{ ok: boolean; message: string }>;
 };
 
 type ValueDraft = { raw: string; label: string };
@@ -107,6 +115,8 @@ export default function VariantOptionMappingSection({
   mappedAxisNames,
   variantCount,
   onSave,
+  unlabelledVariantCount = 0,
+  onRecoverLabels,
 }: VariantOptionMappingSectionProps) {
   const [axes, setAxes] = useState<AxisDraft[]>(() => initialDrafts(proposal));
   const [touched, setTouched] = useState<Record<number, boolean>>({});
@@ -114,6 +124,22 @@ export default function VariantOptionMappingSection({
     'IDLE',
   );
   const [message, setMessage] = useState<string | null>(null);
+  const [recoverState, setRecoverState] = useState<
+    'IDLE' | 'RECOVERING' | 'DONE'
+  >('IDLE');
+  const [recoverMessage, setRecoverMessage] = useState<string | null>(null);
+
+  async function recover() {
+    if (onRecoverLabels === undefined) return;
+
+    setRecoverState('RECOVERING');
+    setRecoverMessage(null);
+
+    const result = await onRecoverLabels();
+
+    setRecoverState('DONE');
+    setRecoverMessage(result.message);
+  }
 
   if (mappedAxisNames !== undefined && mappedAxisNames.length > 0) {
     return (
@@ -132,18 +158,63 @@ export default function VariantOptionMappingSection({
   }
 
   if (proposal.length === 0) {
+    /**
+     * Two states look identical from here and only one can be repaired.
+     *
+     * A product whose supplier labels genuinely do not form a grid has nothing to
+     * fix. A product drafted before `create-draft.ts` recorded
+     * `source_option_label` has labels sitting unread in stored evidence, and a
+     * single missing one is enough to empty the proposal. Saying "no split could
+     * be proposed" to the second is true but useless, so it is only said to the
+     * first.
+     */
+    const recoverable = unlabelledVariantCount > 0;
+
     return (
       <EditorSectionCard
         id="options"
         title="Option groups"
         severity={null}
-        meta="Not detected"
+        meta={recoverable ? 'Labels missing' : 'Not detected'}
       >
-        <p className="text-sm text-muted-foreground">
-          The supplier labels on this product do not form a complete grid, so no
-          split could be proposed. Nothing is guessed here — mapping stays empty
-          and the storefront shows each supplier label whole.
-        </p>
+        {recoverable ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              {unlabelledVariantCount} of {variantCount} variants have no
+              supplier label recorded, which is why no option groups can be
+              proposed. This product was drafted before Sals3 started storing
+              those labels; they are still in the supplier evidence already held
+              for it and can be recovered without contacting the supplier.
+            </p>
+            <div className="mt-4 flex items-center gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={
+                  onRecoverLabels === undefined || recoverState === 'RECOVERING'
+                }
+                onClick={() => recover()}
+              >
+                {recoverState === 'RECOVERING'
+                  ? 'Recovering…'
+                  : 'Recover supplier labels'}
+              </Button>
+              {/*
+                Always mounted so the outcome is announced when it appears,
+                rather than the live region arriving with the text inside it.
+              */}
+              <p aria-live="polite" className="text-sm text-muted-foreground">
+                {recoverMessage}
+              </p>
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            The supplier labels on this product do not form a complete grid, so
+            no split could be proposed. Nothing is guessed here — mapping stays
+            empty and the storefront shows each supplier label whole.
+          </p>
+        )}
       </EditorSectionCard>
     );
   }

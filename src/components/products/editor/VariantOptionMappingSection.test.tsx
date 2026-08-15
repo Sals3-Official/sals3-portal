@@ -46,6 +46,98 @@ describe('VariantOptionMappingSection', () => {
     render(<VariantOptionMappingSection proposal={[]} variantCount={1} />);
 
     expect(screen.getByText(/do not form a complete grid/)).toBeInTheDocument();
+    // No recovery is offered for a product whose labels are present and simply
+    // do not form a grid — there is nothing to recover.
+    expect(
+      screen.queryByRole('button', { name: 'Recover supplier labels' }),
+    ).not.toBeInTheDocument();
+  });
+
+  /**
+   * The two empty-proposal states are different problems wearing the same face.
+   * Labels present but non-grid cannot be repaired; labels never recorded can.
+   */
+  it('offers recovery instead when the labels were never recorded', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[]}
+        variantCount={10}
+        unlabelledVariantCount={10}
+        onRecoverLabels={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/10 of 10 variants/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/without contacting the supplier/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/do not form a complete grid/)).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Recover supplier labels' }),
+    ).toBeEnabled();
+  });
+
+  it('reports what recovery actually did, in the seller’s terms', async () => {
+    const onRecoverLabels = vi.fn(async () => ({
+      ok: true,
+      message: 'Recovered 10 supplier labels. Option groups can now be named.',
+    }));
+
+    render(
+      <VariantOptionMappingSection
+        proposal={[]}
+        variantCount={10}
+        unlabelledVariantCount={10}
+        onRecoverLabels={onRecoverLabels}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Recover supplier labels' }),
+    );
+
+    await waitFor(() => expect(onRecoverLabels).toHaveBeenCalledTimes(1));
+    expect(
+      await screen.findByText(/Recovered 10 supplier labels/),
+    ).toBeVisible();
+  });
+
+  it('shows a refusal from recovery without claiming anything changed', async () => {
+    const onRecoverLabels = vi.fn(async () => ({
+      ok: false,
+      message: 'The stored supplier evidence carries no variant labels.',
+    }));
+
+    render(
+      <VariantOptionMappingSection
+        proposal={[]}
+        variantCount={4}
+        unlabelledVariantCount={4}
+        onRecoverLabels={onRecoverLabels}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Recover supplier labels' }),
+    );
+
+    expect(
+      await screen.findByText(/carries no variant labels/),
+    ).toBeInTheDocument();
+  });
+
+  it('offers no button in design-preview mode, where there is no evidence to read', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[]}
+        variantCount={10}
+        unlabelledVariantCount={10}
+      />,
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Recover supplier labels' }),
+    ).toBeDisabled();
   });
 
   it('refuses to save until every group has a name', () => {

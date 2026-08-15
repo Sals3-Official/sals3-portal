@@ -277,6 +277,16 @@ export type ProductEditorFixture = {
     proposal: { index: number; values: string[] }[];
     mappedAxisNames: string[];
     variantCount: number;
+    /**
+     * Variants whose supplier label was never recorded.
+     *
+     * A single one of these empties `proposal`, because `deriveOptionSplit`
+     * refuses when any variant lacks a label. So this is what separates "the
+     * supplier's labels genuinely do not form a grid" from "the labels were never
+     * written down" — two states that look identical in the editor, and only the
+     * second of which can be repaired.
+     */
+    unlabelledVariantCount: number;
   };
   variants: VariantFixture[];
   markets: MarketEvidenceFixture[];

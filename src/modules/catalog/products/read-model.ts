@@ -1137,6 +1137,12 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
       proposal: optionSplit?.positions ?? [],
       mappedAxisNames: product.optionAxisNames ?? [],
       variantCount: product.variants.length,
+      // Free: the raw column is already on every variant here, so telling a
+      // missing label apart from a present one that simply does not form a grid
+      // costs no second query.
+      unlabelledVariantCount: product.variants.filter(
+        (variant) => variant.supplierOptionLabel === null,
+      ).length,
     },
     specifications: editorSpecifications(product),
     variants,

@@ -31,6 +31,9 @@ vi.mock('@/app/(portal)/listings/publish-actions', () => ({
 // under jsdom the moment `ProductEditor` imports it.
 vi.mock('@/app/(portal)/listings/option-mapping-actions', () => ({
   default: vi.fn(),
+  // Named alongside the default: `ProductEditor` passes both down, and a missing
+  // one arrives as `undefined` and fails the render rather than the assertion.
+  recoverSupplierLabelsAction: vi.fn(),
 }));
 
 function fixture(key: string): ProductEditorFixture {
