@@ -53,19 +53,51 @@ function saveButton(): HTMLButtonElement {
   }) as HTMLButtonElement;
 }
 
+function changeButton(): HTMLButtonElement {
+  return screen.getByRole('button', { name: /Change/ }) as HTMLButtonElement;
+}
+
+function pickJackets(): void {
+  fireEvent.change(searchInput(), { target: { value: 'jackets' } });
+  fireEvent.click(
+    screen.getByText('Apparel & Accessories > Clothing > Outerwear > Jackets'),
+  );
+}
+
 describe('Sals3CategoryPicker', () => {
-  it('shows "Not yet decided" when nothing has ever been resolved for this product', () => {
+  it('shows the search box directly when nothing has ever been resolved for this product', () => {
     renderPicker({ currentPath: null });
 
-    expect(screen.getByText(/Current: Not yet decided/)).toBeInTheDocument();
+    expect(searchInput()).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Change/ })).toBeNull();
   });
 
-  it('shows the currently resolved category when one exists', () => {
+  it('shows a compact, non-editable-looking value (not an open search box) when a category is already resolved', () => {
     renderPicker({ currentPath: 'Luggage & Bags > Backpacks' });
 
+    expect(screen.getByText('Luggage & Bags > Backpacks')).toBeInTheDocument();
+    expect(changeButton()).toBeInTheDocument();
     expect(
-      screen.getByText(/Current: Luggage & Bags > Backpacks/),
+      screen.queryByPlaceholderText(/Search the Sals3 v1 taxonomy/i),
+    ).toBeNull();
+  });
+
+  it('opens the search box only after Change is clicked, and Cancel returns to the compact view', () => {
+    renderPicker({ currentPath: 'Luggage & Bags > Backpacks' });
+
+    fireEvent.click(changeButton());
+
+    expect(searchInput()).toBeInTheDocument();
+    expect(
+      screen.getByText('Current: Luggage & Bags > Backpacks'),
     ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(
+      screen.queryByPlaceholderText(/Search the Sals3 v1 taxonomy/i),
+    ).toBeNull();
+    expect(screen.getByText('Luggage & Bags > Backpacks')).toBeInTheDocument();
   });
 
   it('shows no matches until a query is typed', () => {
@@ -98,15 +130,10 @@ describe('Sals3CategoryPicker', () => {
     ).toBeInTheDocument();
   });
 
-  it('moves to the reason step once a category is picked, and back on Change', () => {
+  it('moves to the reason step once a category is picked, and back to search on Change', () => {
     renderPicker();
 
-    fireEvent.change(searchInput(), { target: { value: 'jackets' } });
-    fireEvent.click(
-      screen.getByText(
-        'Apparel & Accessories > Clothing > Outerwear > Jackets',
-      ),
-    );
+    pickJackets();
 
     expect(reasonInput()).toBeInTheDocument();
     expect(searchInput).toThrow();
@@ -119,12 +146,7 @@ describe('Sals3CategoryPicker', () => {
   it('keeps Save disabled until a reason of at least 8 characters is entered, and says how many more are needed', () => {
     renderPicker();
 
-    fireEvent.change(searchInput(), { target: { value: 'jackets' } });
-    fireEvent.click(
-      screen.getByText(
-        'Apparel & Accessories > Clothing > Outerwear > Jackets',
-      ),
-    );
+    pickJackets();
 
     expect(saveButton()).toBeDisabled();
     expect(screen.getByText('8 more characters needed.')).toBeInTheDocument();
@@ -141,18 +163,13 @@ describe('Sals3CategoryPicker', () => {
   it('trims the reason before deciding it clears the minimum length', () => {
     renderPicker();
 
-    fireEvent.change(searchInput(), { target: { value: 'jackets' } });
-    fireEvent.click(
-      screen.getByText(
-        'Apparel & Accessories > Clothing > Outerwear > Jackets',
-      ),
-    );
+    pickJackets();
     fireEvent.change(reasonInput(), { target: { value: '   short   ' } });
 
     expect(saveButton()).toBeDisabled();
   });
 
-  it('saves with the picked code and trimmed reason, then resets to search with the new current path', async () => {
+  it('saves with the picked code and trimmed reason, then shows the compact view with the new current path', async () => {
     const onSave = vi.fn(async () => ({
       ok: true as const,
       categoryPath: 'Apparel & Accessories > Clothing > Outerwear > Jackets',
@@ -160,12 +177,7 @@ describe('Sals3CategoryPicker', () => {
 
     renderPicker({ onSave });
 
-    fireEvent.change(searchInput(), { target: { value: 'jackets' } });
-    fireEvent.click(
-      screen.getByText(
-        'Apparel & Accessories > Clothing > Outerwear > Jackets',
-      ),
-    );
+    pickJackets();
     fireEvent.change(reasonInput(), {
       target: { value: '  A real jacket, not an accessory.  ' },
     });
@@ -181,11 +193,14 @@ describe('Sals3CategoryPicker', () => {
     await waitFor(() =>
       expect(
         screen.getByText(
-          /Current: Apparel & Accessories > Clothing > Outerwear > Jackets/,
+          'Apparel & Accessories > Clothing > Outerwear > Jackets',
         ),
       ).toBeInTheDocument(),
     );
-    expect(searchInput()).toHaveValue('');
+    expect(
+      screen.queryByPlaceholderText(/Search the Sals3 v1 taxonomy/i),
+    ).toBeNull();
+    expect(changeButton()).toBeInTheDocument();
   });
 
   it('shows the server refusal message and keeps the picked category on failure', async () => {
@@ -196,12 +211,7 @@ describe('Sals3CategoryPicker', () => {
 
     renderPicker({ onSave });
 
-    fireEvent.change(searchInput(), { target: { value: 'jackets' } });
-    fireEvent.click(
-      screen.getByText(
-        'Apparel & Accessories > Clothing > Outerwear > Jackets',
-      ),
-    );
+    pickJackets();
     fireEvent.change(reasonInput(), {
       target: { value: 'A real jacket, not an accessory.' },
     });
@@ -234,12 +244,7 @@ describe('Sals3CategoryPicker', () => {
 
     renderPicker({ onSave });
 
-    fireEvent.change(searchInput(), { target: { value: 'jackets' } });
-    fireEvent.click(
-      screen.getByText(
-        'Apparel & Accessories > Clothing > Outerwear > Jackets',
-      ),
-    );
+    pickJackets();
     fireEvent.change(reasonInput(), {
       target: { value: 'A real jacket, not an accessory.' },
     });
