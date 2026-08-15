@@ -327,15 +327,19 @@ const BASE: ProductEditorFixture = {
   supplierProductName:
     'Aurelis Outdoor 20L 28L Foldable Lightweight Travel Daypack Backpack for Hiking Camping',
   supplierCategoryPath: 'Luggage & Bags > Backpacks > Casual Daypacks',
-  sals3CategoryPath: 'Bags & Travel / Backpacks / Daypacks',
-  // Sals3 Taxonomy v0 (ADR-002) has no unisex/outdoor backpack branch today
-  // - only gendered "Bags" departments carry one. `CAT-MEN-100564` is the
-  // closest real code, kept `ACCEPTABLE` rather than `EXACT` because a
-  // unisex daypack does not really belong under "Men's Bags". This is a
-  // genuine taxonomy gap, not smoothed over for the preview.
-  sals3CategoryCode: 'CAT-MEN-100564',
-  sals3CategoryL1: "Men's Bags & Tactical Backpacks",
-  categoryMappingConfidence: 'ACCEPTABLE',
+  sals3CategoryPath: 'Luggage & Bags > Backpacks',
+  // The gap this fixture used to document is closed. Taxonomy v0 had no
+  // unisex/outdoor backpack branch — only gendered "Bags" departments carried
+  // one — so it sat at `CAT-MEN-100564` with `ACCEPTABLE` confidence because a
+  // unisex daypack does not belong under "Men's Bags". Taxonomy v1 has
+  // `Luggage & Bags > Backpacks`, ungendered, so the match is now exact.
+  //
+  // `sals3CategoryL1` is typed `string | null`, so the retired v0 department
+  // stayed here through the swap: it type-checked, passed 1,574 tests, and was
+  // only visible on opening the picker in a browser.
+  sals3CategoryCode: 'CAT-GGL-100',
+  sals3CategoryL1: 'Luggage & Bags',
+  categoryMappingConfidence: 'EXACT',
   realSupplierCandidateId: null,
   sellerSku: 'S3-AUR-DP',
   brandDeclaration: 'No brand / generic',

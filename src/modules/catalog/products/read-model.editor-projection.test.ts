@@ -128,23 +128,21 @@ describe('productToEditorFixture — the CJ category is the category', () => {
   it('uses the saved Sals3 L1 draft category when one exists', () => {
     const { fixture } = productToEditorFixture({
       ...CATALOGUE_PRODUCT,
-      sals3CategoryL1: "Men's Apparel & Tactical Wear",
+      sals3CategoryL1: 'Apparel & Accessories',
     });
 
-    expect(fixture.sals3CategoryL1).toBe("Men's Apparel & Tactical Wear");
+    expect(fixture.sals3CategoryL1).toBe('Apparel & Accessories');
   });
 
   it('does not default the seller draft L1 from the mapped or supplier category', () => {
     const { fixture } = productToEditorFixture({
       ...CATALOGUE_PRODUCT,
-      categoryPath: 'Home, Furniture & Living > Storage',
-      supplierCategoryPath: 'Home, Furniture & Living > Storage',
+      categoryPath: 'Home & Garden > Storage',
+      supplierCategoryPath: 'Home & Garden > Storage',
       sals3CategoryL1: null,
     });
 
-    expect(fixture.sals3CategoryPath).toBe(
-      'Home, Furniture & Living > Storage',
-    );
+    expect(fixture.sals3CategoryPath).toBe('Home & Garden > Storage');
     expect(fixture.sals3CategoryL1).toBeNull();
   });
 
@@ -249,7 +247,7 @@ describe('productToEditorFixture — the CJ category is the category', () => {
   it('still shows the supplier category separately when a mapped category diverges', () => {
     const { fixture } = productToEditorFixture({
       ...CATALOGUE_PRODUCT,
-      categoryPath: "Men's Apparel & Tactical Wear > Jackets",
+      categoryPath: 'Apparel & Accessories > Jackets',
       categoryCode: 'CAT-MEN-100230',
     });
     const byKey = new Map(
@@ -260,7 +258,7 @@ describe('productToEditorFixture — the CJ category is the category', () => {
     );
 
     expect(byKey.get('category')?.value).toBe(
-      "Men's Apparel & Tactical Wear > Jackets",
+      'Apparel & Accessories > Jackets',
     );
     expect(byKey.get('supplier_category')?.value).toBe("Men's Jackets");
   });

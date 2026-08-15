@@ -151,7 +151,7 @@ const MAPPED_DECISION = {
   outcome: 'MAPPED_ACCEPTABLE' as const,
   needsReview: false,
   sals3CategoryCode: 'CAT-MEN-100230',
-  sals3CategoryPath: "Men's Apparel & Tactical Wear > Jackets > -",
+  sals3CategoryPath: 'Apparel & Accessories > Jackets > -',
   taxonomyVersion: 'sals3-taxonomy-v0',
   mappingId: 'mapping-1',
   mappingVersion: 1,

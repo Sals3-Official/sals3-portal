@@ -7,7 +7,7 @@
  * `drizzle.config.ts` does the same. So the moment a production connection
  * string is pasted into `.env.local` to run one read-only query, *every* script
  * silently repoints at production: `db:migrate` alters the live schema,
- * `seed:taxonomy` inserts 1,345 rows, `bootstrap:cj` creates a supplier
+ * `seed:taxonomy-v1` replaces 5,595 rows, `bootstrap:cj` creates a supplier
  * connection and spends a CJ call, and `create:portal-user` provisions a real
  * account. None of them ask, and `db:migrate` succeeds quietly when there is
  * nothing new to apply — so the mistake can go unnoticed until it doesn't.

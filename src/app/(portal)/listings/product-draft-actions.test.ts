@@ -338,7 +338,7 @@ describe('saveProductDraftAction', () => {
     revisionId: '55555555-5555-4555-8555-555555555555',
     expectedRevisionVersion: 3,
     title: 'Merino crew neck',
-    sals3CategoryL1: 'Beauty & Personal Care',
+    sals3CategoryL1: 'Health & Beauty',
     descriptionDocument: {
       version: 1,
       blocks: [{ type: 'paragraph', text: 'Soft merino wool.' }],
@@ -364,7 +364,7 @@ describe('saveProductDraftAction', () => {
     expect(saveProductDraft).toHaveBeenCalledWith(
       expect.objectContaining({
         request: expect.objectContaining({
-          sals3CategoryL1: 'Beauty & Personal Care',
+          sals3CategoryL1: 'Health & Beauty',
         }),
         sellerAccountId: SELLER,
         actorId: 'actor-1',
