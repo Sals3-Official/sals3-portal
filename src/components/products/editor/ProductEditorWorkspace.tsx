@@ -798,6 +798,7 @@ export default function ProductEditorWorkspace({
           <VariantOptionMappingSection
             proposal={fixture.optionMapping.proposal}
             mappedAxisNames={fixture.optionMapping.mappedAxisNames}
+            suggestedAxisNames={fixture.optionMapping.suggestedAxisNames}
             variantCount={fixture.optionMapping.variantCount}
             unlabelledVariantCount={
               fixture.optionMapping.unlabelledVariantCount
@@ -821,7 +822,6 @@ export default function ProductEditorWorkspace({
             <VariantPricingTable
               variants={variants}
               expandedVariantId={expandedVariantId}
-              evidenceCapturedAt={fixture.lastValidatedAt}
               onToggleExpanded={(variantId) =>
                 setExpandedVariantId((current) =>
                   current === variantId ? null : variantId,

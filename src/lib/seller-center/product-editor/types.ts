@@ -302,6 +302,11 @@ export type ProductEditorFixture = {
   optionMapping: {
     proposal: { index: number; values: string[] }[];
     mappedAxisNames: string[];
+    /**
+     * Taxonomy preset labels aligned to `proposal`. They pre-fill the editable
+     * group names only; the seller still owns the saved mapping.
+     */
+    suggestedAxisNames: string[];
     variantCount: number;
     /**
      * Variants whose supplier label was never recorded.
