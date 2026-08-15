@@ -183,12 +183,36 @@ export default async function saveOptionMapping(input: {
     }
 
     // ---- writes ----------------------------------------------------------
+    // Keyed by the token's position in the SUPPLIER'S label
+    // (`split.positions[i].index`), never by the axis's position in
+    // `input.axes`. The two agree only when nothing was dropped. Once
+    // `deriveOptionSplit` drops a constant position, the seller's one
+    // submitted axis can sit at label position 1 (a `Colour` at position 0
+    // was never offered because it never varied) - array position 0 and
+    // label position 0 are then different things, and the variant-linking
+    // loop below walks label positions. Keying this map on array position
+    // silently mapped every variant to zero pairs the first time this ran
+    // against a product with a dropped axis: both lookups missed, nothing
+    // threw, and the mapping "succeeded" with every variant left unmapped.
     const valueIdByPositionAndRaw = new Map<string, string>();
 
     // Ordered, not parallel: `product_options_product_position_key` is unique on
     // (product, position), so the rows must land one at a time in a known order.
     // eslint-disable-next-line no-restricted-syntax
-    for (const [index, axis] of input.axes.entries()) {
+    for (const [arrayIndex, axis] of input.axes.entries()) {
+      // Same length and same order as `input.axes` - checked above - so
+      // this is never `undefined` in practice. Guarded anyway because a
+      // `Map` keyed on the wrong position from an unchecked assumption is
+      // exactly the bug this rewrite removes.
+      const position = split.positions[arrayIndex];
+
+      if (position === undefined) {
+        throw new Error(
+          `No derived position at array index ${arrayIndex} for a shape already validated against it.`,
+        );
+      }
+
+      const labelIndex = position.index;
       // eslint-disable-next-line no-await-in-loop
       const [option] = await tx
         .insert(productOptions)
@@ -196,7 +220,10 @@ export default async function saveOptionMapping(input: {
           productId: input.productId,
           name: axis.name.trim(),
           normalizedName: normalizeOptionToken(axis.name),
-          position: index,
+          // The seller's own display order, not the supplier's label
+          // position - a dropped constant position must not leave a gap
+          // in this sequence.
+          position: arrayIndex,
         })
         .returning({ id: productOptions.id });
 
@@ -224,11 +251,14 @@ export default async function saveOptionMapping(input: {
           .returning({ id: productOptionValues.id });
 
         if (stored !== undefined) {
-          valueIdByPositionAndRaw.set(`${index}\u0000${value.raw}`, stored.id);
+          valueIdByPositionAndRaw.set(
+            `${labelIndex}\u0000${value.raw}`,
+            stored.id,
+          );
         }
       }
 
-      valueIdByPositionAndRaw.set(`option\u0000${index}`, option.id);
+      valueIdByPositionAndRaw.set(`option\u0000${labelIndex}`, option.id);
     }
 
     let mappedVariantCount = 0;
@@ -238,6 +268,10 @@ export default async function saveOptionMapping(input: {
       const tokens = splitLabelTokens(variant.label ?? '');
       const pairs: { optionId: string; normalizedValue: string }[] = [];
 
+      // `index` here is the supplier's own label position, matching the
+      // keys above. A dropped constant position has no entry in the map
+      // at all, so both lookups miss and it is silently excluded from
+      // `pairs` - which is correct: there is no axis to link it to.
       // eslint-disable-next-line no-restricted-syntax
       for (const [index, token] of tokens.entries()) {
         const optionId = valueIdByPositionAndRaw.get(`option\u0000${index}`);
