@@ -1,0 +1,43 @@
+# Read-only diagnostic — no schedule, manual trigger only.
+#
+# Reports a census of sals3_categories (real v1 rows vs. cj-mirror rows vs.
+# anything else) without needing direct database access. Same break-glass
+# pattern as evaluate-tick.yml: a manual workflow_dispatch calling an
+# authenticated internal route with the shared CRON_SECRET.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin, e.g.
+#                                https://sals3-portal.example.com
+
+name: Taxonomy Status (read-only)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the taxonomy status endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          status=$(curl -sS -o /tmp/status-response.json -w '%{http_code}' \
+            -X GET "$PORTAL_BASE_URL/api/internal/catalog/taxonomy/status" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/status-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "taxonomy status check returned HTTP $status" >&2
+            exit 1
+          fi
