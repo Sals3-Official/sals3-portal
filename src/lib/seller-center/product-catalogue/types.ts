@@ -250,6 +250,14 @@ export type CatalogueProductFixture = {
   status: ListingStatus;
   categoryPath: string;
   categoryCode?: string | null;
+  /**
+   * Which `provider_category_mappings` row (if any) produced `categoryCode`.
+   * `null` with `categoryCode` set means a seller declared this product's
+   * category directly (`decideProductSals3Category`) — no crosswalk rule
+   * backs it. Non-null means the CJ auto-mirror or a reviewed crosswalk
+   * decision produced it, not this product's own seller.
+   */
+  categoryMappingId?: string | null;
   /** Seller-facing draft L1 selection. Display only until a real leaf picker exists. */
   sals3CategoryL1?: string | null;
   /**

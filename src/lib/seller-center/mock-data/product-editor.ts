@@ -340,6 +340,10 @@ const BASE: ProductEditorFixture = {
   sals3CategoryCode: 'CAT-GGL-100',
   sals3CategoryL1: 'Luggage & Bags',
   categoryMappingConfidence: 'EXACT',
+  // A design-preview fixture, not a database row - there is no auto-mirror
+  // vs. seller-declared distinction to fake here, so this is simply "a real
+  // category is already on record" to match the scenario's PASS/ready state.
+  sals3CategoryDeclaredBySeller: true,
   realSupplierCandidateId: null,
   sellerSku: 'S3-AUR-DP',
   brandDeclaration: 'No brand / generic',

@@ -45,10 +45,10 @@ import {
  * `providerCategory` must come from persisted supplier facts. It is typed,
  * not free-form, and it can only ever *select* among approved mappings — no
  * value a caller passes can invent a Sals3 category, because the resolver has
- * no branch that produces one without an active approved rule. There is no
- * Server Action, route handler, or UI calling this today; see
- * `authorization.ts` for the governance boundary and `boundaries.test.ts` for
- * the test that enforces it.
+ * no branch that produces one without an active approved rule. Called from
+ * `category-mapping-actions.ts` after a decision is activated, to apply it to
+ * the product that was open when someone decided it; see `authorization.ts`
+ * for the governance boundary that gates the caller.
  */
 
 export type ApplyProductCategoryResult =

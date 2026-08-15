@@ -239,6 +239,22 @@ export type ProductEditorFixture = {
   sals3CategoryCode: string | null;
   categoryMappingConfidence: CategoryMappingConfidence;
   /**
+   * True only when this exact product's own category came from a seller
+   * explicitly deciding it via the category picker (`decideProductSals3Category`
+   * writes a category with no `categoryMappingId` behind it — see
+   * `read-model.ts`'s `sellerDeclaredSals3Category`). `categoryMappingConfidence`
+   * above cannot answer this: the pre-existing CJ auto-mirror
+   * (`cj-mirror.ts`) already resolves `EXACT`/`ACCEPTABLE` confidence for
+   * almost every CJ-sourced product with no seller ever having decided
+   * anything, so gating the "no category decided yet" reminder on
+   * confidence alone made it a no-op for real products. The reminder is a
+   * `WARNING`, not a `BLOCKER` (owner decision 2026-08-15) — never disables
+   * publishing, since a missing decision is the seller's own business risk,
+   * not a technical gate, and every already-live product predates this
+   * picker.
+   */
+  sals3CategoryDeclaredBySeller: boolean;
+  /**
    * The real, persisted `supplier_candidates.id` this draft would be keyed
    * to for a product/variant pricing override. `null` for every fixture in
    * this design preview — nothing here corresponds to a real candidate, so

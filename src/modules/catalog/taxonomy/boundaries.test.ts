@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { PORTAL_ROLES } from '@/lib/auth/permissions';
+import { can, PORTAL_ROLES } from '@/lib/auth/permissions';
 
 import { authorizeCategoryGovernance } from './authorization';
 
@@ -94,12 +94,23 @@ describe('no market, price or margin literal enters a taxonomy answer', () => {
   });
 });
 
-describe('governance has no seller-facing surface', () => {
-  it('is imported by nothing under src/app — no route, page or Server Action', () => {
-    // `product-category` is included: it writes a real product row, so a
-    // route reaching it would be a category mutation with no governance
-    // authority behind it.
+describe('governance has exactly one authorized seller-facing surface', () => {
+  /**
+   * Owner decision 2026-08-15 reversed the original "no surface at all"
+   * boundary — category-mapping decisions are now made directly in this
+   * application's product editor. What still must never happen is a SECOND,
+   * unauthorized entry point: every import of `governance`/`repository`/
+   * `product-category` under `src/app` must live inside the one action file
+   * that calls `authorizeCategoryGovernance()` first.
+   */
+  const AUTHORIZED_ACTION_FILE = join(
+    APP_ROOT,
+    '(portal)/listings/category-mapping-actions.ts',
+  );
+
+  it('is imported only by the one authorized category-mapping action', () => {
     const offenders = collectSourceFiles(APP_ROOT, false)
+      .filter((file) => file !== AUTHORIZED_ACTION_FILE)
       .map((file) => ({ file, content: readFileSync(file, 'utf8') }))
       .filter(({ content }) =>
         /modules\/catalog\/taxonomy\/(governance|repository|product-category)/.test(
@@ -111,24 +122,35 @@ describe('governance has no seller-facing surface', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('denies category governance to every portal role, including admin', () => {
-    PORTAL_ROLES.forEach((role) => {
-      expect(authorizeCategoryGovernance(role)).toEqual({
-        allowed: false,
-        reason: 'CATEGORY_GOVERNANCE_AUTHORITY_UNAVAILABLE',
-        message: expect.any(String),
-      });
-    });
+  it('the one authorized action actually checks authorization before calling governance', () => {
+    const content = readFileSync(AUTHORIZED_ACTION_FILE, 'utf8');
+
+    expect(content).toMatch(/authorizeCategoryGovernance/);
   });
 
-  it('returns one byte-identical denial, naming no role, mapping or row', () => {
-    const denials = PORTAL_ROLES.map((role) =>
-      JSON.stringify(authorizeCategoryGovernance(role)),
-    );
-
-    expect(new Set(denials).size).toBe(1);
+  it('grants every role that already holds product:edit, denies the rest', () => {
     PORTAL_ROLES.forEach((role) => {
-      expect(denials[0]).not.toContain(role);
+      const expected = can(role, 'catalog.category_mapping.manage');
+
+      expect(authorizeCategoryGovernance(role).allowed).toBe(expected);
+    });
+    expect(authorizeCategoryGovernance('viewer').allowed).toBe(false);
+    // Denied for the same reason as `viewer`, not an oversight: this role's
+    // session is never scoped to one seller's own product the way this
+    // write requires, so `product:edit` was never granted to it either.
+    expect(authorizeCategoryGovernance('catalogue_reviewer').allowed).toBe(
+      false,
+    );
+    expect(authorizeCategoryGovernance('seller_manager').allowed).toBe(true);
+    expect(authorizeCategoryGovernance('seller_staff').allowed).toBe(true);
+  });
+
+  it('names no row or mapping in a denial, even though it now names nothing else either', () => {
+    const denial = authorizeCategoryGovernance('viewer');
+
+    expect(denial).toMatchObject({
+      allowed: false,
+      reason: 'CATEGORY_GOVERNANCE_AUTHORITY_UNAVAILABLE',
     });
   });
 });

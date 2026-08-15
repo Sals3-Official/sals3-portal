@@ -8,7 +8,6 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 import { publishProductAction } from '@/app/(portal)/listings/publish-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
-import { SALS3_CATEGORY_L1_OPTIONS } from '@/lib/seller-center/product-editor/sals3-category-l1';
 import type {
   EditorLifecycle,
   ProductEditorFixture,
@@ -34,6 +33,11 @@ vi.mock('@/app/(portal)/listings/option-mapping-actions', () => ({
   // Named alongside the default: `ProductEditor` passes both down, and a missing
   // one arrives as `undefined` and fails the render rather than the assertion.
   recoverSupplierLabelsAction: vi.fn(),
+}));
+
+// Same reasoning: `decide-category.ts` reaches the server-only db client too.
+vi.mock('@/app/(portal)/listings/category-mapping-actions', () => ({
+  decideCategoryMappingAction: vi.fn(),
 }));
 
 function fixture(key: string): ProductEditorFixture {
@@ -538,43 +542,35 @@ describe('Product Editor - the photo a real product actually has', () => {
     expect(screen.getByText('Image 3')).toBeInTheDocument();
   });
 
-  it('shows the Basic Information category as a Sals3 Category dropdown', () => {
-    renderWithCover();
+  it('shows the Basic Information category as the real Sals3 taxonomy picker, not a decorative dropdown', () => {
+    const resolved = withCoverAddress();
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          publishTarget: {
+            productId: '11111111-1111-4111-8111-111111111111',
+            expectedProductVersion: 7,
+          },
+        }}
+        initialLifecycle="IDLE"
+        variantGuidance={[]}
+        dataMode="database"
+      />,
+    );
 
     const basic = within(document.getElementById('sec-basic') as HTMLElement);
 
     expect(
-      basic.getByRole('combobox', { name: /Sals3 Category/i }),
+      basic.getByLabelText(/Sals3 category \(leaf, affects pricing/i),
     ).toBeInTheDocument();
+    expect(
+      basic.queryByRole('combobox', { name: /Sals3 Category/i }),
+    ).not.toBeInTheDocument();
     expect(
       basic.queryByRole('combobox', { name: /CJ Category/i }),
     ).not.toBeInTheDocument();
-  });
-
-  it('offers all Sals3 taxonomy L1 categories and marks the draft dirty on change', async () => {
-    renderWithCover();
-
-    const category = screen.getByRole('combobox', { name: /Sals3 Category/i });
-
-    fireEvent.click(category);
-
-    SALS3_CATEGORY_L1_OPTIONS.forEach((option) => {
-      expect(screen.getAllByText(option).length).toBeGreaterThan(0);
-    });
-
-    const beautyOption = screen
-      .getByText('Health & Beauty')
-      .closest('[data-slot="select-item"]');
-
-    if (beautyOption === null) throw new Error('missing Beauty option');
-
-    fireEvent.pointerDown(beautyOption);
-    fireEvent.pointerUp(beautyOption);
-    fireEvent.click(beautyOption);
-
-    await waitFor(() =>
-      expect(screen.getAllByText('Unsaved changes').length).toBeGreaterThan(0),
-    );
   });
 
   it('keeps the supplier CJ Category in Category & Specifications', () => {
@@ -603,75 +599,91 @@ describe('Product Editor - the photo a real product actually has', () => {
 
     const specs = within(document.getElementById('sec-specs') as HTMLElement);
 
-    expect(specs.getByLabelText(/CJ Category/i)).toBeInTheDocument();
-    expect(specs.getByDisplayValue("Men's Jackets")).toBeInTheDocument();
-  });
-
-  it('keeps an unmapped Basic Information category as a Sals3 dropdown', () => {
-    const resolved = withCoverAddress();
-
-    render(
-      <ProductEditor
-        fixture={{
-          ...resolved,
-          sals3CategoryPath: 'Unmapped category',
-          sals3CategoryCode: null,
-          sals3CategoryL1: null,
-          categoryMappingConfidence: 'UNMAPPED',
-        }}
-        initialLifecycle="IDLE"
-        variantGuidance={[]}
-        dataMode="database"
-      />,
-    );
-
-    const category = screen.getByRole('combobox', { name: /Sals3 Category/i });
-
-    expect(category).toHaveTextContent('None — choose a Sals3 category');
-    expect(category).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByText('Sals3 category is required')).toBeInTheDocument();
+    // A read-only surface, not a form control: CJ order fulfillment relies on
+    // this field staying exactly what the supplier sent, so it is shown, not
+    // edited, here (see SpecificationsSection.tsx).
+    expect(specs.getByText(/CJ Category/i)).toBeInTheDocument();
+    expect(specs.getByText("Men's Jackets")).toBeInTheDocument();
     expect(
-      screen.getByText('Choose one Sals3 category from the list.'),
-    ).toBeInTheDocument();
-  });
-
-  it('clears the required Sals3 category error once an L1 is selected', async () => {
-    const resolved = withCoverAddress();
-
-    render(
-      <ProductEditor
-        fixture={{
-          ...resolved,
-          sals3CategoryPath: 'Unmapped category',
-          sals3CategoryCode: null,
-          sals3CategoryL1: null,
-          categoryMappingConfidence: 'UNMAPPED',
-        }}
-        initialLifecycle="IDLE"
-        variantGuidance={[]}
-        dataMode="database"
-      />,
-    );
-
-    const category = screen.getByRole('combobox', { name: /Sals3 Category/i });
-
-    fireEvent.click(category);
-
-    const option = screen
-      .getByText('Health & Beauty')
-      .closest('[data-slot="select-item"]');
-
-    if (option === null) throw new Error('missing Beauty option');
-
-    fireEvent.pointerDown(option);
-    fireEvent.pointerUp(option);
-    fireEvent.click(option);
-
-    await waitFor(() =>
-      expect(category).not.toHaveAttribute('aria-invalid', 'true'),
-    );
-    expect(
-      screen.queryByText('Sals3 category is required'),
+      specs.queryByRole('textbox', { name: /CJ Category/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it('warns, but never blocks publication, when no seller has ever declared a real Sals3 category', () => {
+    const resolved = withCoverAddress();
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          // The auto-mirrored/no-category case: `categoryMappingConfidence`
+          // is deliberately left at whatever `withCoverAddress()` already
+          // carries (typically 'EXACT', matching how the CJ auto-mirror
+          // resolves confidence too) — this warning must not be fooled by
+          // that. `sals3CategoryDeclaredBySeller: false` is the actual
+          // "nobody has decided this yet" signal.
+          sals3CategoryDeclaredBySeller: false,
+        }}
+        initialLifecycle="IDLE"
+        variantGuidance={[]}
+        dataMode="database"
+      />,
+    );
+
+    expect(
+      screen.getAllByText('No Sals3 category has been decided yet').length,
+    ).toBeGreaterThan(0);
+    // A warning, not a blocker (owner decision 2026-08-15): a missing
+    // category is a seller's own business risk, not a technical gate — and a
+    // blocker here would have retroactively stopped every already-live
+    // product from republishing, since none of them have gone through this
+    // picker.
+    expect(publishButton()).toBeEnabled();
+  });
+
+  it('clears the reminder once a seller has declared a real Sals3 category, however confidence alone reads', () => {
+    const resolved = withCoverAddress();
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          sals3CategoryPath: 'Health & Beauty > Personal Care',
+          sals3CategoryCode: 'CAT-GGL-200',
+          sals3CategoryDeclaredBySeller: true,
+        }}
+        initialLifecycle="IDLE"
+        variantGuidance={[]}
+        dataMode="database"
+      />,
+    );
+
+    expect(
+      screen.queryByText('No Sals3 category has been decided yet'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps the reminder even with EXACT confidence and a category path, when the auto-mirror produced them rather than a seller decision', () => {
+    const resolved = withCoverAddress();
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          sals3CategoryPath: "CJ's own mirrored category name",
+          sals3CategoryCode: 'CJ-1042',
+          categoryMappingConfidence: 'EXACT',
+          sals3CategoryDeclaredBySeller: false,
+        }}
+        initialLifecycle="IDLE"
+        variantGuidance={[]}
+        dataMode="database"
+      />,
+    );
+
+    expect(
+      screen.getAllByText('No Sals3 category has been decided yet').length,
+    ).toBeGreaterThan(0);
+    expect(publishButton()).toBeEnabled();
   });
 });

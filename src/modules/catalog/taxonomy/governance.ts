@@ -23,14 +23,11 @@ import {
 /**
  * Server-only application operations for category-mapping governance.
  *
- * **No surface calls these today, by design.** ADR-014 puts platform category
- * governance in the Admin Portal and this repository has no permission that
- * safely expresses it (see `authorization.ts`), so exposing a Server Action
- * here would mean widening a seller's tenant boundary to make a screen work.
- * These functions exist, are transactional, are audited, and are tested; the
- * missing authorization boundary is reported rather than papered over.
- * `no-seller-facing-surface.test.ts` fails if anything under `src/app/`
- * imports this module.
+ * Called from `src/app/(portal)/listings/category-mapping-actions.ts` (owner
+ * decision 2026-08-15, reversing this module's original Admin-Portal-only
+ * assignment — see `authorization.ts`). Every caller must pass
+ * `authorizeCategoryGovernance()` first; `boundaries.test.ts` proves the
+ * import is scoped to that one authorized action and nowhere else.
  *
  * Each operation opens its own transaction so authorization state, the write,
  * the remap findings, and the audit rows commit or roll back together. Every

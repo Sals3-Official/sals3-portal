@@ -71,6 +71,20 @@ vi.mock('@/app/(portal)/listings/option-mapping-actions', () => ({
   recoverSupplierLabelsAction: vi.fn(),
 }));
 
+// Same reasoning: `decide-category.ts` reaches the server-only db client too.
+vi.mock('@/app/(portal)/listings/category-mapping-actions', () => ({
+  decideCategoryMappingAction: vi.fn(),
+}));
+
+// The page reads `getDb()` directly for the category picker's reference
+// data — mocked at the same boundary as the pricing-guidance module above,
+// rather than reaching for a real database in a component test.
+vi.mock('@/lib/db/client', () => ({ default: vi.fn(() => ({})) }));
+
+vi.mock('@/modules/catalog/taxonomy/v1-reference', () => ({
+  listSals3CategoryV1Options: vi.fn(async () => []),
+}));
+
 // eslint-disable-next-line import/first
 import AddProductPage, { generateMetadata } from './page';
 

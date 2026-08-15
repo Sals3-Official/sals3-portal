@@ -64,6 +64,16 @@ export const PORTAL_PERMISSIONS = [
   // `inventory:adjust` because it changes no Sals3 inventory - it records
   // what a human saw on the supplier's own website, and nothing else.
   'catalog.candidate.stock_attest',
+  // Declaring a seller's own product's Sals3 category (owner decision
+  // 2026-08-15, reversing ADR-014's original Admin-Portal-only assignment -
+  // see `taxonomy/authorization.ts`). Granted to every role that already
+  // holds `product:edit` - the same precondition every other product-mutation
+  // action in this table requires, since a role without it is not scoped to
+  // one seller's own product the way this write is. Deliberately not
+  // narrowed further within that set for now. Role/access refinement is a
+  // deferred, separate piece of work, not a blocker for this capability
+  // existing.
+  'catalog.category_mapping.manage',
 ] as const;
 
 export type PortalPermission = (typeof PORTAL_PERMISSIONS)[number];
@@ -106,6 +116,7 @@ const ROLE_PERMISSIONS: Record<PortalRole, readonly PortalPermission[]> = {
     'catalog.candidate.read',
     'catalog.candidate.shortlist',
     'catalog.candidate.stock_attest',
+    'catalog.category_mapping.manage',
   ],
   // Seller Center "Staff" — lists, packs, prints, edits stock, replies to
   // buyers. No finance or payout visibility (mirrors the mockup's Staff role:
@@ -126,6 +137,7 @@ const ROLE_PERMISSIONS: Record<PortalRole, readonly PortalPermission[]> = {
     'catalog.candidate.shortlist',
     // Staff already do the hands-on supplier work this records.
     'catalog.candidate.stock_attest',
+    'catalog.category_mapping.manage',
   ],
   // Read-only extension of this role's existing "look, don't touch"
   // posture. No financial or payout visibility.

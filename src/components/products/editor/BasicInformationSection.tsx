@@ -11,8 +11,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { formatDateTime } from '@/lib/seller-center/product-editor/format';
-import { SALS3_CATEGORY_L1_OPTIONS } from '@/lib/seller-center/product-editor/sals3-category-l1';
 import type { ProductEditorFixture } from '@/lib/seller-center/product-editor/types';
+import Sals3CategoryPicker, {
+  type Sals3CategoryOption,
+} from './Sals3CategoryPicker';
 import SupplierEvidenceBlock, {
   SupplierEvidenceField,
 } from './SupplierEvidenceBlock';
@@ -29,13 +31,18 @@ type BasicInformationSectionProps = {
   fixture: ProductEditorFixture;
   productName: string;
   onProductNameChange: (value: string) => void;
-  sals3CategoryL1: string;
-  onSals3CategoryL1Change: (value: string) => void;
   sellerSku: string;
   onSellerSkuChange: (value: string) => void;
   brandDeclaration: string;
   onBrandDeclarationChange: (value: string) => void;
   onOpenSourceDrawer: () => void;
+  sals3CategoryOptions?: Sals3CategoryOption[];
+  onDecideSals3Category?: (
+    code: string,
+    reason: string,
+  ) => Promise<
+    { ok: true; categoryPath: string } | { ok: false; message: string }
+  >;
 };
 
 /**
@@ -51,13 +58,13 @@ export default function BasicInformationSection({
   fixture,
   productName,
   onProductNameChange,
-  sals3CategoryL1,
-  onSals3CategoryL1Change,
   sellerSku,
   onSellerSkuChange,
   brandDeclaration,
   onBrandDeclarationChange,
   onOpenSourceDrawer,
+  sals3CategoryOptions = [],
+  onDecideSals3Category,
 }: BasicInformationSectionProps) {
   const brandBlocker = fixture.issues.find(
     (issue) => issue.reasonCode === 'COUNTERFEIT_HIGH_CONFIDENCE',
@@ -66,7 +73,6 @@ export default function BasicInformationSection({
   const rejectedMediaCount = fixture.media.filter(
     (item) => item.rightsCheck === 'REJECTED',
   ).length;
-  const categoryMissing = sals3CategoryL1.trim() === '';
 
   return (
     <div className="flex flex-col gap-5">
@@ -155,54 +161,6 @@ export default function BasicInformationSection({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="editor-sals3-category">Sals3 Category</Label>
-          <Select
-            value={sals3CategoryL1}
-            onValueChange={(value) => onSals3CategoryL1Change(value ?? '')}
-          >
-            <SelectTrigger
-              id="editor-sals3-category"
-              aria-invalid={categoryMissing ? true : undefined}
-              aria-describedby={
-                categoryMissing
-                  ? 'editor-sals3-category-error'
-                  : 'editor-sals3-category-help'
-              }
-              className={`w-full bg-card ${
-                categoryMissing
-                  ? 'border-red-500 text-red-700 focus-visible:ring-red-500'
-                  : ''
-              }`}
-            >
-              <SelectValue placeholder="None — choose a Sals3 category" />
-            </SelectTrigger>
-            <SelectContent>
-              {SALS3_CATEGORY_L1_OPTIONS.map((option) => (
-                <SelectItem key={option} value={option}>
-                  {option}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {categoryMissing ? (
-            <p
-              id="editor-sals3-category-error"
-              className="text-xs font-medium text-red-600"
-            >
-              Choose one Sals3 category from the list.
-            </p>
-          ) : (
-            <p
-              id="editor-sals3-category-help"
-              className="text-xs text-muted-foreground"
-            >
-              Draft L1 category shown in Sals3. Leaf category, pricing, and
-              publication mapping stay unchanged.
-            </p>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-1.5">
           <Label htmlFor="editor-seller-sku">Seller SKU (optional)</Label>
           <Input
             id="editor-seller-sku"
@@ -259,6 +217,14 @@ export default function BasicInformationSection({
           )}
         </div>
       </div>
+
+      {onDecideSals3Category === undefined ? null : (
+        <Sals3CategoryPicker
+          options={sals3CategoryOptions}
+          currentPath={fixture.sals3CategoryPath}
+          onSave={onDecideSals3Category}
+        />
+      )}
 
       {/* Compact by design: this is a source summary, not the evidence
           itself. Supplier status, source currency and the original

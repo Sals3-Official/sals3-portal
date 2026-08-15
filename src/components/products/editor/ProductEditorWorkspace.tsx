@@ -105,6 +105,19 @@ type ProductEditorWorkspaceProps = {
     | { ok: true; recoveredCount: number; alreadyLabelledCount: number }
     | { ok: false; reason: string; message: string }
   >;
+  /** The full Sals3 Taxonomy v1 tree, for the category picker's search. */
+  sals3CategoryOptions?: { code: string; path: string }[];
+  /**
+   * Category-mapping decision boundary. Omitted for fixture/design-preview
+   * mode, so the picker still lets someone search the tree but offers no
+   * save (owner decision 2026-08-15 — see `taxonomy/authorization.ts`).
+   */
+  decideCategoryAction?: (
+    input: unknown,
+  ) => Promise<
+    | { ok: true; categoryCode: string; categoryPath: string }
+    | { ok: false; reason: string; message: string }
+  >;
 };
 
 const EXIT_HREF = '/products/pipeline?tab=ready';
@@ -155,17 +168,27 @@ function retailPriceIssue(fixture: ProductEditorFixture): ReadinessIssue {
   };
 }
 
+/**
+ * A warning, not a blocker (owner decision 2026-08-15): a missing or wrong
+ * Sals3 category is each seller's own business risk — a mistagged product
+ * simply sells worse — not something a technical gate should decide for
+ * them. A blocker here would also retroactively stop every already-live
+ * product from republishing the moment this shipped, since none of them
+ * have ever gone through this picker; a warning still surfaces the reminder
+ * without that disruption.
+ */
 function sals3CategoryIssue(fixture: ProductEditorFixture): ReadinessIssue {
   return {
-    id: `${fixture.fixtureKey}-sals3-category-l1`,
-    severity: 'BLOCKER',
-    title: 'Sals3 category is required',
-    explanation: 'Choose one Sals3 category from the Basic Information list.',
+    id: `${fixture.fixtureKey}-sals3-category`,
+    severity: 'WARNING',
+    title: 'No Sals3 category has been decided yet',
+    explanation:
+      'Choosing a real Sals3 category from Basic Information helps buyers find and trust this listing. Publishing without one is allowed.',
     affectedScope: 'Basic Information',
     source: 'AUTOMATED_VALIDATION',
     section: 'basic',
     reasonCode: null,
-    resolution: 'Select a Sals3 category.',
+    resolution: 'Decide a Sals3 category.',
   };
 }
 
@@ -195,13 +218,12 @@ export default function ProductEditorWorkspace({
   publishAction,
   optionMappingAction,
   recoverLabelsAction,
+  sals3CategoryOptions = [],
+  decideCategoryAction,
 }: ProductEditorWorkspaceProps) {
   const router = useRouter();
 
   const [productName, setProductName] = useState(fixture.productName);
-  const [sals3CategoryL1, setSals3CategoryL1] = useState(
-    fixture.sals3CategoryL1 ?? '',
-  );
   const [sellerSku, setSellerSku] = useState(fixture.sellerSku);
   const [brandDeclaration, setBrandDeclaration] = useState(
     fixture.brandDeclaration,
@@ -324,12 +346,18 @@ export default function ProductEditorWorkspace({
     const hasMissingRetailPrice = variants.some(
       (variant) => variant.retailPrice.amountMinor <= 0,
     );
-    const hasMissingSals3Category = sals3CategoryL1.trim() === '';
+    // Keyed off `sals3CategoryDeclaredBySeller`, not `categoryMappingConfidence`:
+    // the CJ auto-mirror already resolves EXACT/ACCEPTABLE confidence for
+    // almost every CJ-sourced product before any seller ever opens the
+    // picker, which made confidence alone a no-op gate (see the review that
+    // caught this before the PR — twice: once for the retired draft L1
+    // dropdown, once for this).
+    const hasMissingSals3Category = !fixture.sals3CategoryDeclaredBySeller;
     const withoutLocalIssues = fixture.issues.filter(
       (issue) =>
         issue.title !== 'Selling price is not resolved' &&
         issue.title !== 'Retail price is required' &&
-        issue.title !== 'Sals3 category is required',
+        issue.title !== 'No Sals3 category has been decided yet',
     );
     const localIssues = [
       ...(hasMissingRetailPrice ? [retailPriceIssue(fixture)] : []),
@@ -337,7 +365,7 @@ export default function ProductEditorWorkspace({
     ];
 
     return [...withoutLocalIssues, ...localIssues];
-  }, [fixture, sals3CategoryL1, variants]);
+  }, [fixture, variants]);
 
   const currentFixture = useMemo(
     () => ({
@@ -407,7 +435,11 @@ export default function ProductEditorWorkspace({
         revisionId: fixture.draftSaveTarget.revisionId,
         expectedRevisionVersion: draftRevisionVersion,
         title: productName,
-        sals3CategoryL1: sals3CategoryL1 === '' ? null : sals3CategoryL1,
+        // The draft L1 dropdown that used to set this was removed from the
+        // screen (superseded by the real curated category decision) — this
+        // is now a read-only pass-through of whatever value was already
+        // stored, never a value this screen can change.
+        sals3CategoryL1: fixture.sals3CategoryL1,
         descriptionDocument: descriptionDocumentFromText(description),
         variantRetailPrices: variants
           .filter((variant) => UUID_PATTERN.test(variant.id))
@@ -603,6 +635,30 @@ export default function ProductEditorWorkspace({
           };
         };
 
+  /**
+   * Same compare-and-set token as option mapping — a category decision is
+   * also a real, versioned write, not local draft state.
+   */
+  const handleDecideCategory =
+    decideCategoryAction === undefined || optionMappingTarget === null
+      ? undefined
+      : async (sals3CategoryCode: string, reason: string) => {
+          const result = await decideCategoryAction({
+            productId: optionMappingTarget.productId,
+            expectedProductVersion: optionMappingTarget.expectedProductVersion,
+            sals3CategoryCode,
+            reason,
+          });
+
+          // The resolved category, pricing, and publish gates all re-derive
+          // from the read-model, not from local state.
+          if (result.ok) router.refresh();
+
+          return result.ok
+            ? { ok: true as const, categoryPath: result.categoryPath }
+            : { ok: false as const, message: result.message };
+        };
+
   return (
     <div className="@container flex flex-col gap-4">
       <ProductEditorHeader
@@ -660,11 +716,6 @@ export default function ProductEditorWorkspace({
                 setProductName(value);
                 touch();
               }}
-              sals3CategoryL1={sals3CategoryL1}
-              onSals3CategoryL1Change={(value) => {
-                setSals3CategoryL1(value);
-                touch();
-              }}
               sellerSku={sellerSku}
               onSellerSkuChange={(value) => {
                 setSellerSku(value);
@@ -676,6 +727,8 @@ export default function ProductEditorWorkspace({
                 touch();
               }}
               onOpenSourceDrawer={() => setSourceDrawerOpen(true)}
+              sals3CategoryOptions={sals3CategoryOptions}
+              onDecideSals3Category={handleDecideCategory}
             />
           </EditorSectionCard>
 
@@ -693,6 +746,11 @@ export default function ProductEditorWorkspace({
             <SpecificationsSection
               specifications={specifications}
               onSpecificationChange={(key, value) => {
+                // Never called for a locked field — `SpecificationField`
+                // only wires `onChange` to a genuinely seller-fillable one
+                // (SpecificationsSection.tsx). `source: 'SELLER'` records
+                // that this specific value came from the seller, not from
+                // re-deriving it as `SUPPLIER` on every keystroke.
                 setSpecifications((current) =>
                   current.map((spec) =>
                     spec.key === key
