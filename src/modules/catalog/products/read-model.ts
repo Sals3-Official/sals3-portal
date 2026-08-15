@@ -694,6 +694,7 @@ function buildCatalogueProducts(
         categoryPath:
           categoryPath ?? supplier.categoryPath ?? 'Unmapped category',
         categoryCode,
+        categoryMappingId: product.categoryMappingId,
         sals3CategoryL1: product.sals3CategoryL1 ?? categoryL1 ?? null,
         supplierCategoryPath: supplier.categoryPath,
         supplierCategoryId: supplier.categoryId,
@@ -843,6 +844,27 @@ function effectiveSals3CategoryL1(
   product: CatalogueProductFixture,
 ): string | null {
   return product.sals3CategoryL1 ?? null;
+}
+
+/**
+ * True only when this product's own category came from a seller explicitly
+ * deciding it (`decideProductSals3Category`), not from the CJ auto-mirror or
+ * a reviewed crosswalk decision (`ensureCjCategoryMirror`,
+ * `applyResolvedCategoryToProduct`) — both of those always leave
+ * `categoryMappingId` pointing at the `provider_category_mappings` row that
+ * produced them. A seller's own decision writes a category with no such row
+ * behind it (see `taxonomy/repository.ts`'s `assignProductCategory`), which
+ * is the only reliable signal here: `categoryMappingConfidence` alone cannot
+ * distinguish the two, since the mirror also resolves `EXACT`.
+ */
+function sellerDeclaredSals3Category(
+  product: CatalogueProductFixture,
+): boolean {
+  return (
+    product.categoryCode !== null &&
+    product.categoryCode !== undefined &&
+    (product.categoryMappingId ?? null) === null
+  );
 }
 
 function editorIssues(product: CatalogueProductFixture): ReadinessIssue[] {
@@ -1138,6 +1160,7 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
       effectiveCategoryPath(product) === 'Unmapped category'
         ? 'UNMAPPED'
         : 'ACCEPTABLE',
+    sals3CategoryDeclaredBySeller: sellerDeclaredSals3Category(product),
     realSupplierCandidateId: product.sourceCandidateId ?? null,
     sellerSku: variants[0]?.sellerSku ?? product.sals3ProductId,
     brandDeclaration: 'No brand / generic',

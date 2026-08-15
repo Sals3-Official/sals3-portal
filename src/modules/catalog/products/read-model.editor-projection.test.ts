@@ -306,3 +306,49 @@ describe('productToEditorFixture — the CJ category is the category', () => {
     expect(fixture.markets[0].packageWeightLabel).toBe('1180.00-1300.00 g');
   });
 });
+
+/**
+ * Owner decision 2026-08-15: category tagging is per-seller, not a shared
+ * mapping. `categoryMappingConfidence` cannot say whether THIS product's own
+ * seller ever decided anything — the CJ auto-mirror (`cj-mirror.ts`) already
+ * resolves `EXACT`/`ACCEPTABLE` confidence for almost every CJ-sourced
+ * product before any seller opens the picker. `categoryMappingId` is the
+ * real signal: null means the seller's own direct decision
+ * (`decideProductSals3Category` never creates a `provider_category_mappings`
+ * row), non-null means the auto-mirror or a reviewed crosswalk rule produced
+ * it.
+ */
+describe('productToEditorFixture — seller-declared vs. auto-derived category', () => {
+  it('is false when no category exists at all', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      categoryCode: null,
+      categoryMappingId: null,
+    });
+
+    expect(fixture.sals3CategoryDeclaredBySeller).toBe(false);
+  });
+
+  it('is false for the CJ auto-mirror or a reviewed crosswalk rule, even at EXACT confidence', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      categoryPath: "CJ's own mirrored category name",
+      categoryCode: 'CJ-1042',
+      categoryMappingId: 'mapping-row-1',
+    });
+
+    expect(fixture.categoryMappingConfidence).toBe('ACCEPTABLE');
+    expect(fixture.sals3CategoryDeclaredBySeller).toBe(false);
+  });
+
+  it('is true only for a category with no mapping row behind it', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      categoryPath: 'Apparel & Accessories > Jackets',
+      categoryCode: 'CAT-GGL-100230',
+      categoryMappingId: null,
+    });
+
+    expect(fixture.sals3CategoryDeclaredBySeller).toBe(true);
+  });
+});

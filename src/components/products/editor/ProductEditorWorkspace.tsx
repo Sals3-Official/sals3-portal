@@ -336,12 +336,13 @@ export default function ProductEditorWorkspace({
     const hasMissingRetailPrice = variants.some(
       (variant) => variant.retailPrice.amountMinor <= 0,
     );
-    // Keyed off the real curated decision (`decideCategoryMappingAction`),
-    // never the retired draft L1 dropdown — that field tracked no actual
-    // category decision and could leave this blocker wrong in both
-    // directions (see the review that caught this before the PR).
-    const hasMissingSals3Category =
-      fixture.categoryMappingConfidence === 'UNMAPPED';
+    // Keyed off `sals3CategoryDeclaredBySeller`, not `categoryMappingConfidence`:
+    // the CJ auto-mirror already resolves EXACT/ACCEPTABLE confidence for
+    // almost every CJ-sourced product before any seller ever opens the
+    // picker, which made confidence alone a no-op gate (see the review that
+    // caught this before the PR — twice: once for the retired draft L1
+    // dropdown, once for this).
+    const hasMissingSals3Category = !fixture.sals3CategoryDeclaredBySeller;
     const withoutLocalIssues = fixture.issues.filter(
       (issue) =>
         issue.title !== 'Selling price is not resolved' &&

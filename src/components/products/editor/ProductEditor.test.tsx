@@ -609,16 +609,20 @@ describe('Product Editor - the photo a real product actually has', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('blocks publication when no real Sals3 category has been decided yet', () => {
+  it('blocks publication when no seller has ever declared a real Sals3 category', () => {
     const resolved = withCoverAddress();
 
     render(
       <ProductEditor
         fixture={{
           ...resolved,
-          sals3CategoryPath: 'Unmapped category',
-          sals3CategoryCode: null,
-          categoryMappingConfidence: 'UNMAPPED',
+          // The auto-mirrored/no-category case: `categoryMappingConfidence`
+          // is deliberately left at whatever `withCoverAddress()` already
+          // carries (typically 'EXACT', matching how the CJ auto-mirror
+          // resolves confidence too) — this blocker must not be fooled by
+          // that. `sals3CategoryDeclaredBySeller: false` is the actual
+          // "nobody has decided this yet" signal.
+          sals3CategoryDeclaredBySeller: false,
         }}
         initialLifecycle="IDLE"
         variantGuidance={[]}
@@ -632,7 +636,7 @@ describe('Product Editor - the photo a real product actually has', () => {
     expect(publishButton()).toBeDisabled();
   });
 
-  it('never blocks on a real curated Sals3 category, however the retired draft L1 field looks', () => {
+  it('never blocks once a seller has declared a real Sals3 category, however confidence alone reads', () => {
     const resolved = withCoverAddress();
 
     render(
@@ -641,8 +645,7 @@ describe('Product Editor - the photo a real product actually has', () => {
           ...resolved,
           sals3CategoryPath: 'Health & Beauty > Personal Care',
           sals3CategoryCode: 'CAT-GGL-200',
-          sals3CategoryL1: null,
-          categoryMappingConfidence: 'EXACT',
+          sals3CategoryDeclaredBySeller: true,
         }}
         initialLifecycle="IDLE"
         variantGuidance={[]}
@@ -653,5 +656,28 @@ describe('Product Editor - the photo a real product actually has', () => {
     expect(
       screen.queryByText('Sals3 category is required'),
     ).not.toBeInTheDocument();
+  });
+
+  it('stays blocked even with EXACT confidence and a category path, when the auto-mirror produced them rather than a seller decision', () => {
+    const resolved = withCoverAddress();
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          sals3CategoryPath: "CJ's own mirrored category name",
+          sals3CategoryCode: 'CJ-1042',
+          categoryMappingConfidence: 'EXACT',
+          sals3CategoryDeclaredBySeller: false,
+        }}
+        initialLifecycle="IDLE"
+        variantGuidance={[]}
+        dataMode="database"
+      />,
+    );
+
+    expect(
+      screen.getAllByText('Sals3 category is required').length,
+    ).toBeGreaterThan(0);
   });
 });
