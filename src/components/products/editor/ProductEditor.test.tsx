@@ -10,6 +10,7 @@ import { publishProductAction } from '@/app/(portal)/listings/publish-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
 import type {
   EditorLifecycle,
+  MediaItemFixture,
   ProductEditorFixture,
 } from '@/lib/seller-center/product-editor/types';
 import ProductEditor from './ProductEditor';
@@ -40,6 +41,12 @@ vi.mock('@/app/(portal)/listings/category-mapping-actions', () => ({
   decideCategoryMappingAction: vi.fn(),
 }));
 
+// Same reasoning: `upload-seller-media.ts` reaches the server-only db client
+// and `@vercel/blob` too.
+vi.mock('@/app/(portal)/listings/media-actions', () => ({
+  uploadSellerMediaAction: vi.fn(),
+}));
+
 function fixture(key: string): ProductEditorFixture {
   const resolved = resolveProductEditorFixture(key);
 
@@ -58,6 +65,24 @@ function renderEditor(key: string, lifecycle: EditorLifecycle = 'IDLE') {
 
 function openSourceChangesTab() {
   fireEvent.click(screen.getByRole('tab', { name: /Source Changes/ }));
+}
+
+function sellerUploadItem(
+  overrides: Partial<MediaItemFixture> & { id: string },
+): MediaItemFixture {
+  return {
+    label: 'Photo',
+    sourceUrl: null,
+    altText: 'Seller-uploaded photo',
+    rightsCheck: 'VERIFIED',
+    storageState: 'SALS3_STORED',
+    sourceType: 'SELLER_UPLOAD',
+    pixelWidth: 1200,
+    pixelHeight: 1200,
+    note: null,
+    isCover: false,
+    ...overrides,
+  };
 }
 
 function publishButton(): HTMLButtonElement {
@@ -413,22 +438,33 @@ describe('Product Editor - structure', () => {
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
   });
 
-  it('lets the seller re-cover and reorder media locally', () => {
-    renderEditor('pass');
+  it('lets the seller re-cover and reorder their own uploaded media locally', () => {
+    const resolved = fixture('pass');
+    const media: MediaItemFixture[] = [
+      sellerUploadItem({ id: 's1', label: 'Photo 1', isCover: true }),
+      sellerUploadItem({ id: 's2', label: 'Photo 2' }),
+    ];
 
-    const media = screen.getByRole('region', { name: 'Media' });
-    const items = within(media).getAllByRole('listitem');
+    render(
+      <ProductEditor
+        fixture={{ ...resolved, media }}
+        initialLifecycle="IDLE"
+      />,
+    );
+
+    const mediaRegion = screen.getByRole('region', { name: 'Media' });
+    const items = within(mediaRegion).getAllByRole('listitem');
 
     // The cover badge starts on the first tile and only ever sits on one.
     expect(within(items[0]).getByText('Cover')).toBeInTheDocument();
-    expect(within(media).getAllByText('Cover')).toHaveLength(1);
+    expect(within(mediaRegion).getAllByText('Cover')).toHaveLength(1);
 
     fireEvent.click(
       within(items[1]).getByRole('button', { name: 'Make cover' }),
     );
 
     expect(within(items[1]).getByText('Cover')).toBeInTheDocument();
-    expect(within(media).getAllByText('Cover')).toHaveLength(1);
+    expect(within(mediaRegion).getAllByText('Cover')).toHaveLength(1);
     expect(
       within(items[0]).getByRole('button', { name: 'Make cover' }),
     ).toBeInTheDocument();
@@ -442,16 +478,36 @@ describe('Product Editor - structure', () => {
     ).toBeEnabled();
   });
 
-  it('never offers to replace a rejected image without an upload backend', () => {
+  it('shows an honest empty state, with a disabled Upload, when no seller photo is uploaded yet', () => {
+    renderEditor('pass');
+
+    const mediaRegion = screen.getByRole('region', { name: 'Media' });
+
+    expect(
+      within(mediaRegion).getByText(/no photos have been uploaded/i),
+    ).toBeInTheDocument();
+    expect(
+      within(mediaRegion).getByRole('button', { name: 'Upload image' }),
+    ).toBeDisabled();
+    expect(within(mediaRegion).queryAllByRole('listitem')).toHaveLength(0);
+  });
+
+  it('never offers to reorder, cover, or replace a supplier photo - it is read-only evidence', () => {
     renderEditor('attention');
 
-    const replace = screen.getByRole('button', { name: 'Replace' });
-
-    expect(replace).toBeDisabled();
-    expect(replace).toHaveAttribute(
-      'title',
-      expect.stringContaining('does not exist yet'),
-    );
+    // The rejected watermarked image lives in Supplier Details now, not Media
+    // section, and nothing in this repo copies a supplier photo into
+    // something the seller can edit.
+    expect(
+      screen.queryByRole('button', { name: 'Make cover' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Move .* earlier/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Replace' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Image 5')).toBeInTheDocument();
   });
 });
 
@@ -464,7 +520,7 @@ describe('Product Editor - the photo a real product actually has', () => {
 
     return {
       ...resolved,
-      media: resolved.media.map((item, index) =>
+      supplierMedia: resolved.supplierMedia.map((item, index) =>
         index === 0
           ? {
               ...item,
@@ -495,8 +551,10 @@ describe('Product Editor - the photo a real product actually has', () => {
       .getAllByRole('img')
       .filter((image) => image.getAttribute('src')?.includes('697a2372'));
 
-    // Four on purpose: header, Basic Information strip, Media tile, and the
-    // Draft Storefront Preview cover.
+    // Four on purpose: header, Basic Information strip, Supplier Details'
+    // read-only gallery, and the Draft Storefront Preview cover. Media
+    // section itself shows none - it renders only seller uploads, and this
+    // fixture has none.
     expect(rendered).toHaveLength(4);
     rendered.forEach((image) => {
       expect(image).toHaveAccessibleName(/Supplier listing photo/);

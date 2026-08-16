@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { VariantFixture } from '@/lib/seller-center/product-editor/types';
@@ -45,5 +45,53 @@ describe('VariantPricingTable', () => {
     expect(
       screen.getByText(/stored supplier evidence only/),
     ).toBeInTheDocument();
+  });
+
+  it('lists an enabled variant with an on switch, not a checkbox', () => {
+    render(
+      <VariantPricingTable
+        variants={[VARIANT]}
+        expandedVariantId={null}
+        onToggleExpanded={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onRetailChange={vi.fn()}
+        onSellerSkuChange={vi.fn()}
+        onBulkEnableInStock={vi.fn()}
+        onBulkDisableUnavailable={vi.fn()}
+        onBulkSetPrice={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+
+    const toggle = screen.getByRole('switch', {
+      name: `List ${VARIANT.optionLabel}`,
+    });
+
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('calls onToggleEnabled when the switch is flipped', () => {
+    const onToggleEnabled = vi.fn();
+
+    render(
+      <VariantPricingTable
+        variants={[VARIANT]}
+        expandedVariantId={null}
+        onToggleExpanded={vi.fn()}
+        onToggleEnabled={onToggleEnabled}
+        onRetailChange={vi.fn()}
+        onSellerSkuChange={vi.fn()}
+        onBulkEnableInStock={vi.fn()}
+        onBulkDisableUnavailable={vi.fn()}
+        onBulkSetPrice={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('switch', { name: `List ${VARIANT.optionLabel}` }),
+    );
+
+    expect(onToggleEnabled).toHaveBeenCalledWith(VARIANT.id);
   });
 });

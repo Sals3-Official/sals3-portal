@@ -247,6 +247,7 @@ export const PRODUCT_AUDIT_ACTIONS = {
   offerCreated: 'catalog_product_offer.created',
   bindingCreated: 'catalog_offer_supplier_binding.created',
   draftRequestConflict: 'catalog_product_draft.idempotency_conflict',
+  mediaUploaded: 'catalog_product_media.seller_uploaded',
 } as const;
 
 /** Operation name recorded on `idempotency_records.operation`. */

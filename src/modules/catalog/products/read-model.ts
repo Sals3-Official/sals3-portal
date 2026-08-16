@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import getDb, { type Database } from '@/lib/db/client';
 import { cjImageUrl } from '@/lib/cj/primitives';
+import { vercelBlobImageUrl } from '@/lib/storage/blob-url';
 import {
   ACTIVE_TAXONOMY_VERSION,
   candidateEvaluations,
@@ -96,6 +97,7 @@ const evidenceSchema = z.object({
  * price, so it is labelled a "from" reference and never used to price anything.
  */
 type SupplierFacts = {
+  name: string | null;
   categoryPath: string | null;
   categoryId: string | null;
   sku: string | null;
@@ -109,6 +111,7 @@ type SupplierFacts = {
 };
 
 const NO_SUPPLIER_FACTS: SupplierFacts = {
+  name: null,
   categoryPath: null,
   categoryId: null,
   sku: null,
@@ -121,8 +124,10 @@ const NO_SUPPLIER_FACTS: SupplierFacts = {
 };
 
 /**
- * Re-checks a stored image address against the CJ host allow-list on the way
- * out of the database.
+ * Re-checks a stored image address against the right host allow-list on the
+ * way out of the database - CJ's for supplier evidence (the default, since
+ * every call site but `productImageUrls` is always supplier-origin), Vercel
+ * Blob's for a real `SELLER_UPLOAD` row.
  *
  * Not redundant with the check at intake: `feed_snapshot.imageUrl` is a plain
  * string column, `next.config.ts` sets `images.loader: 'custom'` so
@@ -132,8 +137,14 @@ const NO_SUPPLIER_FACTS: SupplierFacts = {
  * `components/products/cj/candidate-view.ts`'s `imageUrl()` on the pipeline
  * read path.
  */
-function allowedImageUrl(value: unknown): string | null {
-  const parsed = cjImageUrl.safeParse(value);
+function allowedImageUrl(
+  value: unknown,
+  sourceType: ProductMediaSourceRow['sourceType'] = 'SUPPLIER_ORIGINAL',
+): string | null {
+  const parsed =
+    sourceType === 'SELLER_UPLOAD'
+      ? vercelBlobImageUrl.safeParse(value)
+      : cjImageUrl.safeParse(value);
 
   return parsed.success ? parsed.data : null;
 }
@@ -152,6 +163,11 @@ function supplierFacts(
   const cents = feed.data.priceUsdCents;
 
   return {
+    // The raw name discovery captured from the supplier feed at intake time
+    // - never the seller-editable Product Name, and never re-fetched, so it
+    // stays exactly what the supplier called it even after the seller
+    // rewrites their own copy.
+    name: feed.data.name,
     // Evidence first: a product-detail fetch is more specific than the
     // list-level summary discovery wrote.
     categoryPath: evidence?.categoryName ?? feed.data.category ?? null,
@@ -170,7 +186,7 @@ function supplierFacts(
 
 function productImageUrls(media: ProductMediaSourceRow[]): string[] {
   const urls = media
-    .map((item) => allowedImageUrl(item.sourceUrl))
+    .map((item) => allowedImageUrl(item.sourceUrl, item.sourceType))
     .filter((url): url is string => url !== null);
 
   return [...new Set(urls)];
@@ -781,6 +797,23 @@ function buildCatalogueProducts(
           ? [supplier.imageUrl]
           : imageUrls;
 
+      // Kept apart from `mediaImageUrls` above for the editor's Supplier
+      // Details / Media split (ADR-011): a supplier's own photo is
+      // provenance, never something a seller can reorder or pick a cover
+      // from, while a `SELLER_UPLOAD` row is the seller's own and belongs in
+      // the editable Media section. The bare feed `imageUrl` fallback is
+      // still supplier-origin even with no `product_media_sources` row yet.
+      const recordedSupplierImageUrls = productImageUrls(
+        media.filter((item) => item.sourceType === 'SUPPLIER_ORIGINAL'),
+      );
+      const supplierMediaUrls =
+        recordedSupplierImageUrls.length === 0 && supplier.imageUrl !== null
+          ? [supplier.imageUrl]
+          : recordedSupplierImageUrls;
+      const sellerMediaUrls = productImageUrls(
+        media.filter((item) => item.sourceType === 'SELLER_UPLOAD'),
+      );
+
       const catalogueVariants: CatalogueVariantFixture[] = variants
         .map((variant) => {
           const providerVariant = providerVariantByVariant.get(variant.id);
@@ -849,6 +882,8 @@ function buildCatalogueProducts(
         hasImage: mediaImageUrls.length > 0,
         coverImageUrl: supplier.imageUrl,
         mediaImageUrls,
+        supplierMediaUrls,
+        sellerMediaUrls,
         status,
         // The CJ category is the Sals3 category (owner decision 2026-08-14):
         // a row not yet carrying a mapped category shows the supplier's own
@@ -860,6 +895,7 @@ function buildCatalogueProducts(
         categoryCode,
         categoryMappingId: product.categoryMappingId,
         sals3CategoryL1: product.sals3CategoryL1 ?? categoryL1 ?? null,
+        supplierProductName: supplier.name,
         supplierCategoryPath: supplier.categoryPath,
         supplierCategoryId: supplier.categoryId,
         supplierSku: supplier.sku,
@@ -1097,6 +1133,20 @@ function editorIssues(product: CatalogueProductFixture): ReadinessIssue[] {
 
 function editorVariants(product: CatalogueProductFixture): VariantFixture[] {
   if (product.variants.length === 0) {
+    const supplierStock = product.supplierObservedQuantity ?? 0;
+    // A newly-drafted product has no listing decision to inherit, so every
+    // eligible variant defaults to listing rather than starting the seller
+    // at zero — the same "in stock, not paused" bar the bulk enable action
+    // already uses (`canBulkEnable`), not `product.status === 'LIVE'`, which
+    // only ever describes a product that already published.
+    let listingState: VariantFixture['listingState'] = 'NOT_LISTED';
+
+    if (product.status === 'AUTO_PAUSED') {
+      listingState = 'PAUSED';
+    } else if (supplierStock > 0) {
+      listingState = 'WILL_LIST';
+    }
+
     return [
       {
         id: `${product.id}-single`,
@@ -1104,11 +1154,11 @@ function editorVariants(product: CatalogueProductFixture): VariantFixture[] {
         sellerSku: product.sals3ProductId,
         supplierCost: ZERO_USD,
         retailPrice: product.sellingPrice ?? ZERO_USD,
-        supplierStock: product.supplierObservedQuantity ?? 0,
+        supplierStock,
         warehouseLabel: 'Not recorded',
         hasImage: product.hasImage,
-        enabled: product.status === 'LIVE',
-        listingState: product.status === 'LIVE' ? 'WILL_LIST' : 'NOT_LISTED',
+        enabled: listingState === 'WILL_LIST',
+        listingState,
         attention:
           product.sellingPrice === null ? 'Retail price required' : null,
         supplierVariantId: product.cjProductId,
@@ -1118,9 +1168,10 @@ function editorVariants(product: CatalogueProductFixture): VariantFixture[] {
     ];
   }
 
-  return [...product.variants]
-    .sort(compareCatalogueVariants)
-    .map((variant) => ({
+  return [...product.variants].sort(compareCatalogueVariants).map((variant) => {
+    const listingState = editorVariantListingState(product, variant);
+
+    return {
       id: variant.id,
       optionLabel: variant.optionLabel,
       sellerSku: variant.sellerSku,
@@ -1129,14 +1180,17 @@ function editorVariants(product: CatalogueProductFixture): VariantFixture[] {
       supplierStock: variant.supplierObservedQuantity ?? 0,
       warehouseLabel: 'Not recorded',
       hasImage: variant.hasImage,
-      enabled:
-        product.status === 'LIVE' && variant.availability === 'AVAILABLE',
-      listingState: editorVariantListingState(product, variant),
+      // Same reasoning as the single-variant case above: eligibility
+      // (in stock, not paused) decides the default, not whether the
+      // product happens to be published yet.
+      enabled: listingState === 'WILL_LIST',
+      listingState,
       attention: variant.sellingPrice === null ? 'Retail price required' : null,
       supplierVariantId: variant.cjVariantId,
       packedWeightGrams: 0,
       evidenceCapturedAt: variant.lastCheckedAt,
-    }));
+    };
+  });
 }
 
 function editorMarkets(
@@ -1249,7 +1303,8 @@ function editorSpecifications(
 }
 
 /**
- * The product's real media rows, as editor tiles.
+ * The supplier's own photos (ADR-011), as read-only editor tiles for Supplier
+ * Details.
  *
  * This used to return a single label-only placeholder even when
  * `product_media_sources` held an address, and `MediaItemFixture` had no URL
@@ -1266,29 +1321,19 @@ function editorSpecifications(
  * `product_media_sources` row exists. An address shown from the discovery
  * snapshot alone is `PENDING_VERIFICATION` and says so: it is a preview of what
  * the seller sourced, not a publishable asset with a recorded basis (ADR-011
- * §6).
+ * §6). These are provenance, not the seller's to change — `isCover` marks the
+ * storefront's current fallback pick for display only, never a control this
+ * evidence exposes.
  */
-function editorMedia(product: CatalogueProductFixture): MediaItemFixture[] {
-  let imageUrls: string[] = [];
+function editorSupplierMedia(
+  product: CatalogueProductFixture,
+): MediaItemFixture[] {
+  const imageUrls = product.supplierMediaUrls ?? [];
 
-  if (
-    product.mediaImageUrls !== undefined &&
-    product.mediaImageUrls.length > 0
-  ) {
-    imageUrls = product.mediaImageUrls;
-  } else if (
-    product.coverImageUrl !== null &&
-    product.coverImageUrl !== undefined
-  ) {
-    imageUrls = [product.coverImageUrl];
-  }
-
-  if (imageUrls.length === 0) {
-    return [];
-  }
+  if (imageUrls.length === 0) return [];
 
   return imageUrls.map((imageUrl, index) => ({
-    id: `${product.id}-media-${index + 1}`,
+    id: `${product.id}-supplier-media-${index + 1}`,
     label: `Supplier photo ${index + 1}`,
     sourceUrl: imageUrl,
     altText: `Supplier listing photo for ${product.name}`,
@@ -1297,12 +1342,39 @@ function editorMedia(product: CatalogueProductFixture): MediaItemFixture[] {
         ? 'VERIFIED'
         : 'PENDING_VERIFICATION',
     storageState: 'SUPPLIER_HOSTED_SOURCE',
+    sourceType: 'SUPPLIER_ORIGINAL',
     pixelWidth: 0,
     pixelHeight: 0,
     note:
       product.mediaStatus === 'OWN_PICTURES'
         ? 'Supplier-hosted address with a recorded rights basis. Sals3 holds no copy of the file, so its dimensions are unknown.'
         : 'Shown from the stored discovery snapshot. No media provenance row exists for it yet, so it is not publishable.',
+    isCover: index === 0,
+  }));
+}
+
+/**
+ * The seller's own uploaded photos only (ADR-011) - the sole rows Media
+ * section's reorder/cover/replace controls may touch. Empty on every real
+ * product today: no upload path exists yet to write a `SELLER_UPLOAD` row,
+ * so this is honestly `[]` rather than borrowing the supplier's picture.
+ */
+function editorSellerMedia(
+  product: CatalogueProductFixture,
+): MediaItemFixture[] {
+  const imageUrls = product.sellerMediaUrls ?? [];
+
+  return imageUrls.map((imageUrl, index) => ({
+    id: `${product.id}-seller-media-${index + 1}`,
+    label: `Photo ${index + 1}`,
+    sourceUrl: imageUrl,
+    altText: `Seller-uploaded photo for ${product.name}`,
+    rightsCheck: 'VERIFIED',
+    storageState: 'SALS3_STORED',
+    sourceType: 'SELLER_UPLOAD',
+    pixelWidth: 0,
+    pixelHeight: 0,
+    note: null,
     isCover: index === 0,
   }));
 }
@@ -1330,7 +1402,13 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
     fixtureKey: product.id,
     scenarioLabel: `Database product - ${product.status}`,
     productName: product.name,
-    supplierProductName: product.name,
+    // The supplier's own name for this listing, captured at discovery and
+    // never re-fetched - distinct from `productName` above, which is the
+    // seller's editable copy. Falls back to the current product name only
+    // when no candidate/feed snapshot is linked (no supplier evidence to
+    // show at all), which is an honest "nothing better exists" rather than
+    // a claim that the supplier used this exact wording.
+    supplierProductName: product.supplierProductName ?? product.name,
     // CJ's own category name, not the Sals3 one. These were the same value
     // until 2026-08-14, which made the supplier evidence block report
     // "Unmapped category" as if the supplier had said it.
@@ -1423,7 +1501,8 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
     variants,
     markets: editorMarkets(product),
     marketsNotEnabledCount: 0,
-    media: editorMedia(product),
+    media: editorSellerMedia(product),
+    supplierMedia: editorSupplierMedia(product),
     policyVersion: 'database',
     draftSaveTarget:
       product.currentRevisionId === undefined ||

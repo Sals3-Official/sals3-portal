@@ -126,6 +126,12 @@ connection from `CJ_API_KEY` once:
 npm run bootstrap:cj
 ```
 
+Set `BLOB_READ_WRITE_TOKEN` for a seller's own product-photo uploads (see
+[Product Editor](#product-editor-add-product-from-a-supplier-product)) —
+Vercel injects it automatically once a Blob store is connected to the
+project, so `vercel env pull .env.local` above already covers it; nothing
+manual is needed in a deployed environment.
+
 Set `SALS3_STOREFRONT_API_TOKEN` to a long random value if
 `sals3-ecommerce` will read products from this portal. Use the same value in
 `sals3-ecommerce/.env.local`.
@@ -532,9 +538,26 @@ the persisted draft; `Save Draft` stores the product name, structured
 description, seller-entered retail prices, and the required Basic Information
 `Sals3 Category` L1 draft field through the protected draft-save Server Action.
 That field starts as `None` until the seller chooses one of the approved Sals3
-L1 categories; it never defaults itself from CJ's supplier category. Seller SKU, brand, media, variants, and
-publication controls remain local/editor-only until their dedicated persistence
-paths exist. The screen says which mode it loaded in the notice at the top.
+L1 categories; it never defaults itself from CJ's supplier category. Seller SKU,
+brand, variants, and publication controls remain local/editor-only until their
+dedicated persistence paths exist. The screen says which mode it loaded in the
+notice at the top.
+
+**A seller's own product photos persist for real (2026-08-17, Vercel Blob).**
+Basic Information's `Product media` summary and Media section's `Upload image`
+call `uploadSellerMediaAction`, which writes a real `product_media_sources` row
+(`sourceType: 'SELLER_UPLOAD'`) after re-checking the file's own magic number
+(JPEG/PNG/WebP only, 8 MB max, 12 photos max per product) - never the
+browser-supplied `File.type`. The supplier's own photos are a separate,
+**read-only** gallery in Basic Information's Supplier Details
+(`SupplierMediaGallery`) - never reorderable, never a cover choice, never
+replaced - while Media section only ever shows and manages the seller's own
+uploads. Until a seller uploads at least one photo, the editor's previews
+(header thumbnail, Product media summary, Draft Storefront Preview) fall back
+to the supplier's photo automatically, matching what the live storefront
+already does. Requires `BLOB_READ_WRITE_TOKEN` (see
+[Environment setup](#setup)); with it unset, Upload stays visibly disabled
+with an honest reason instead of a fake success.
 
 Open a state directly:
 

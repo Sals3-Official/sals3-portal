@@ -37,6 +37,11 @@ const CATALOGUE_PRODUCT: CatalogueProductFixture = {
     'https://cf.cjdropshipping.com/quick/product/697a2372-330c-4a72-8837-6ca100d99fab.jpg',
     'https://cf.cjdropshipping.com/quick/product/a7657750-4318-47e8-875f-b6220ac35354.jpg',
   ],
+  supplierMediaUrls: [
+    'https://cf.cjdropshipping.com/quick/product/697a2372-330c-4a72-8837-6ca100d99fab.jpg',
+    'https://cf.cjdropshipping.com/quick/product/a7657750-4318-47e8-875f-b6220ac35354.jpg',
+  ],
+  sellerMediaUrls: [],
   status: 'DRAFT',
   categoryPath: 'Unmapped category',
   categoryCode: null,
@@ -105,20 +110,25 @@ describe('productToEditorFixture — supplier media', () => {
   it('carries the recorded image address and alternative text onto the tile', () => {
     const { fixture } = productToEditorFixture(CATALOGUE_PRODUCT);
 
-    expect(fixture.media).toHaveLength(2);
-    expect(fixture.media[0].sourceUrl).toBe(CATALOGUE_PRODUCT.coverImageUrl);
-    expect(fixture.media[1].sourceUrl).toContain('a7657750');
-    expect(fixture.media[0].altText).toContain(CATALOGUE_PRODUCT.name);
-    expect(fixture.media[0].isCover).toBe(true);
-    expect(fixture.media[1].isCover).toBe(false);
+    expect(fixture.supplierMedia).toHaveLength(2);
+    expect(fixture.supplierMedia[0].sourceUrl).toBe(
+      CATALOGUE_PRODUCT.coverImageUrl,
+    );
+    expect(fixture.supplierMedia[1].sourceUrl).toContain('a7657750');
+    expect(fixture.supplierMedia[0].altText).toContain(CATALOGUE_PRODUCT.name);
+    expect(fixture.supplierMedia[0].isCover).toBe(true);
+    expect(fixture.supplierMedia[1].isCover).toBe(false);
   });
 
   it('claims no Sals3-held copy of the file, and no dimensions it never measured', () => {
     const { fixture } = productToEditorFixture(CATALOGUE_PRODUCT);
 
-    expect(fixture.media[0].storageState).toBe('SUPPLIER_HOSTED_SOURCE');
-    expect(fixture.media[0].pixelWidth).toBe(0);
-    expect(fixture.media[0].pixelHeight).toBe(0);
+    expect(fixture.supplierMedia[0].storageState).toBe(
+      'SUPPLIER_HOSTED_SOURCE',
+    );
+    expect(fixture.supplierMedia[0].sourceType).toBe('SUPPLIER_ORIGINAL');
+    expect(fixture.supplierMedia[0].pixelWidth).toBe(0);
+    expect(fixture.supplierMedia[0].pixelHeight).toBe(0);
   });
 
   it('reports an address with no provenance row as pending, not verified', () => {
@@ -127,7 +137,7 @@ describe('productToEditorFixture — supplier media', () => {
       mediaStatus: 'NEEDS_MEDIA_REVIEW',
     });
 
-    expect(fixture.media[0].rightsCheck).toBe('PENDING_VERIFICATION');
+    expect(fixture.supplierMedia[0].rightsCheck).toBe('PENDING_VERIFICATION');
   });
 
   it('shows no tile at all when no address is recorded', () => {
@@ -136,9 +146,44 @@ describe('productToEditorFixture — supplier media', () => {
       hasImage: false,
       coverImageUrl: null,
       mediaImageUrls: [],
+      supplierMediaUrls: [],
     });
 
+    expect(fixture.supplierMedia).toEqual([]);
+  });
+
+  it('is never returned as seller media, even though it is the only imagery the product has', () => {
+    const { fixture } = productToEditorFixture(CATALOGUE_PRODUCT);
+
     expect(fixture.media).toEqual([]);
+  });
+});
+
+/**
+ * Seller-uploaded photos are a distinct, currently-always-empty pool
+ * (ADR-011): no upload path writes a `SELLER_UPLOAD` `product_media_sources`
+ * row yet, so `fixture.media` must never borrow the supplier's own picture to
+ * fill the gap - that is exactly what `fixture.supplierMedia` is for.
+ */
+describe('productToEditorFixture — seller-uploaded media', () => {
+  it('is empty when no seller upload is recorded, not a copy of the supplier photo', () => {
+    const { fixture } = productToEditorFixture(CATALOGUE_PRODUCT);
+
+    expect(fixture.media).toEqual([]);
+  });
+
+  it('carries a real seller upload as its own tile, distinct from supplier media', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      sellerMediaUrls: [
+        'https://cf.cjdropshipping.com/quick/product/seller-owned.jpg',
+      ],
+    });
+
+    expect(fixture.media).toHaveLength(1);
+    expect(fixture.media[0].sourceType).toBe('SELLER_UPLOAD');
+    expect(fixture.media[0].storageState).toBe('SALS3_STORED');
+    expect(fixture.supplierMedia).toHaveLength(2);
   });
 });
 
@@ -525,5 +570,113 @@ describe('productToEditorFixture — seller-declared vs. auto-derived category',
     });
 
     expect(fixture.sals3CategoryDeclaredBySeller).toBe(true);
+  });
+});
+
+/**
+ * The supplier's own name for the listing (Basic Information's "Original
+ * product name") is a distinct fact from the seller-editable "Product Name" -
+ * they only ever start identical.
+ */
+describe('productToEditorFixture — original supplier product name', () => {
+  it('carries the supplier-captured name separately from the seller product name', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      name: 'Waterproof Winter Jacket',
+      supplierProductName:
+        'Mens Short-Style Cold-Weather Waterproof Shell Jacket With Hood',
+    });
+
+    expect(fixture.productName).toBe('Waterproof Winter Jacket');
+    expect(fixture.supplierProductName).toBe(
+      'Mens Short-Style Cold-Weather Waterproof Shell Jacket With Hood',
+    );
+  });
+
+  it('falls back to the product name when no supplier evidence is linked, rather than inventing one', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      name: 'Waterproof Winter Jacket',
+      supplierProductName: undefined,
+    });
+
+    expect(fixture.supplierProductName).toBe('Waterproof Winter Jacket');
+  });
+});
+
+/**
+ * Reported by the owner: a freshly-drafted product's variants all started
+ * unlisted (`0 of N will list`) even though every one of them was in stock
+ * and not blocked or paused. The old default gated on `product.status ===
+ * 'LIVE'`, so nothing could ever default to enabled before its first
+ * publish. Eligibility - in stock, not paused - is what should decide the
+ * default, matching the "Enable eligible in-stock variants" bulk action's
+ * own rule (`canBulkEnable`).
+ */
+describe('productToEditorFixture — variants default to enabled when eligible', () => {
+  it('defaults an available variant to enabled on an unpublished (DRAFT) product', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      status: 'DRAFT',
+      variants: [
+        catalogueVariant({
+          id: 'v1',
+          optionLabel: 'Blue-M',
+          supplierOptionLabel: 'Blue-M',
+          availability: 'AVAILABLE',
+        }),
+      ],
+    });
+
+    expect(fixture.variants).toHaveLength(1);
+    expect(fixture.variants[0]?.enabled).toBe(true);
+    expect(fixture.variants[0]?.listingState).toBe('WILL_LIST');
+  });
+
+  it('still defaults an unavailable variant to disabled', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      status: 'DRAFT',
+      variants: [
+        catalogueVariant({
+          id: 'v2',
+          optionLabel: 'Blue-XL',
+          supplierOptionLabel: 'Blue-XL',
+          availability: 'OUT_OF_STOCK',
+        }),
+      ],
+    });
+
+    expect(fixture.variants[0]?.enabled).toBe(false);
+  });
+
+  it('still defaults every variant to disabled on an auto-paused product', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      status: 'AUTO_PAUSED',
+      variants: [
+        catalogueVariant({
+          id: 'v3',
+          optionLabel: 'Blue-L',
+          supplierOptionLabel: 'Blue-L',
+          availability: 'AVAILABLE',
+        }),
+      ],
+    });
+
+    expect(fixture.variants[0]?.enabled).toBe(false);
+    expect(fixture.variants[0]?.listingState).toBe('PAUSED');
+  });
+
+  it('defaults the synthesised single "Default" variant to enabled when the product has in-stock evidence', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      status: 'DRAFT',
+      supplierObservedQuantity: 25,
+      variants: [],
+    });
+
+    expect(fixture.variants).toHaveLength(1);
+    expect(fixture.variants[0]?.enabled).toBe(true);
   });
 });

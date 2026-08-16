@@ -166,6 +166,7 @@ const BASE_MEDIA: MediaItemFixture[] = [
     altText: 'Cover image placeholder',
     rightsCheck: 'VERIFIED',
     storageState: 'SUPPLIER_HOSTED_SOURCE',
+    sourceType: 'SUPPLIER_ORIGINAL',
     pixelWidth: 1200,
     pixelHeight: 1200,
     note: null,
@@ -178,6 +179,7 @@ const BASE_MEDIA: MediaItemFixture[] = [
     altText: 'Image 2 placeholder',
     rightsCheck: 'VERIFIED',
     storageState: 'SUPPLIER_HOSTED_SOURCE',
+    sourceType: 'SUPPLIER_ORIGINAL',
     pixelWidth: 1200,
     pixelHeight: 1200,
     note: null,
@@ -190,6 +192,7 @@ const BASE_MEDIA: MediaItemFixture[] = [
     altText: 'Image 3 placeholder',
     rightsCheck: 'VERIFIED',
     storageState: 'SUPPLIER_HOSTED_SOURCE',
+    sourceType: 'SUPPLIER_ORIGINAL',
     pixelWidth: 1000,
     pixelHeight: 1000,
     note: null,
@@ -202,6 +205,7 @@ const BASE_MEDIA: MediaItemFixture[] = [
     altText: 'Image 4 placeholder',
     rightsCheck: 'VERIFIED',
     storageState: 'SUPPLIER_HOSTED_SOURCE',
+    sourceType: 'SUPPLIER_ORIGINAL',
     pixelWidth: 900,
     pixelHeight: 900,
     note: null,
@@ -214,6 +218,7 @@ const BASE_MEDIA: MediaItemFixture[] = [
     altText: 'Image 5 placeholder',
     rightsCheck: 'PENDING_VERIFICATION',
     storageState: 'PENDING_IMPORT',
+    sourceType: 'SUPPLIER_ORIGINAL',
     pixelWidth: 640,
     pixelHeight: 640,
     note: 'Below the 800 px recommendation. Storage status unavailable.',
@@ -379,7 +384,11 @@ const BASE: ProductEditorFixture = {
   variants: BASE_VARIANTS,
   markets: BASE_MARKETS,
   marketsNotEnabledCount: 1,
-  media: BASE_MEDIA,
+  // No fixture claims a seller-upload capability that does not exist yet
+  // (ADR-011): every illustrative photo here is the supplier's, so `media`
+  // (seller uploads) stays empty and `BASE_MEDIA` becomes `supplierMedia`.
+  media: [],
+  supplierMedia: BASE_MEDIA,
   policyVersion: '2026.08.01',
   draftSaveTarget: null,
   publishTarget: null,
@@ -430,7 +439,7 @@ const ATTENTION = withOverrides({
   completionPercent: 78,
   variants: ATTENTION_VARIANTS,
   specifications: ATTENTION_SPECIFICATIONS,
-  media: ATTENTION_MEDIA,
+  supplierMedia: ATTENTION_MEDIA,
   issues: [
     {
       id: 'warning-watermarked-image',

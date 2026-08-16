@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronUp, ImageOff, Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import RetailPriceInput from '@/components/products/editor/RetailPriceInput';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
 import {
@@ -169,11 +169,15 @@ export default function VariantPricingTable({
               return [
                 <TableRow key={variant.id}>
                   <TableCell>
-                    <Checkbox
+                    <Switch
                       checked={variant.enabled}
                       disabled={lockedOut}
                       aria-label={`List ${variant.optionLabel}`}
                       onCheckedChange={() => onToggleEnabled(variant.id)}
+                      // Sals3 brand blues, not the theme's `--primary` token -
+                      // scoped to this one control rather than a global
+                      // restyle.
+                      className="data-checked:bg-[#018CC9] data-unchecked:bg-[#002B53]"
                     />
                   </TableCell>
                   <TableCell>

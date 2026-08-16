@@ -116,6 +116,24 @@ type ProductEditorWorkspaceProps = {
     | { ok: true; categoryCode: string; categoryPath: string }
     | { ok: false; reason: string; message: string }
   >;
+  /**
+   * Seller-photo upload boundary (Vercel Blob, owner decision 2026-08-17).
+   * Omitted for fixture/design-preview mode, so Media section's Upload
+   * control stays disabled with an honest "no real product to attach a
+   * photo to" reason instead of a fake success.
+   */
+  uploadMediaAction?: (formData: FormData) => Promise<
+    | {
+        ok: true;
+        media: {
+          id: string;
+          sourceUrl: string;
+          contentType: string;
+          byteSize: number;
+        };
+      }
+    | { ok: false; reason: string; message: string }
+  >;
 };
 
 const EXIT_HREF = '/products/pipeline?tab=ready';
@@ -217,6 +235,7 @@ export default function ProductEditorWorkspace({
   recoverLabelsAction,
   sals3CategoryOptions = [],
   decideCategoryAction,
+  uploadMediaAction,
 }: ProductEditorWorkspaceProps) {
   const router = useRouter();
 
@@ -231,6 +250,7 @@ export default function ProductEditorWorkspace({
   );
   const [variants, setVariants] = useState<VariantFixture[]>(fixture.variants);
   const [media, setMedia] = useState<MediaItemFixture[]>(fixture.media);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
 
   const [isDirty, setIsDirty] = useState(false);
   const [lifecycle, setLifecycle] = useState<EditorLifecycle>(initialLifecycle);
@@ -546,13 +566,21 @@ export default function ProductEditorWorkspace({
     />
   );
 
+  // What the storefront will actually render (ADR-011's `SELLER_FIRST`
+  // default): the seller's own uploads when any exist, otherwise the
+  // supplier's original photos. `media` alone would show nothing for the
+  // (currently universal) case where no seller upload exists yet, even
+  // though a real buyer would still see the supplier's photo.
+  const effectivePreviewMedia =
+    media.length > 0 ? media : fixture.supplierMedia;
+
   const renderPreview = (showHeading: boolean) => (
     <DraftStorefrontPreview
       productName={productName}
       description={description}
       variants={variants}
       markets={fixture.markets}
-      media={media}
+      media={effectivePreviewMedia}
       specifications={specifications}
       previewMarketCode={previewMarketCode}
       onPreviewMarketChange={setPreviewMarketCode}
@@ -655,6 +683,57 @@ export default function ProductEditorWorkspace({
             : { ok: false as const, message: result.message };
         };
 
+  /**
+   * Only the product id, same reasoning as `handleRecoverLabels` — a photo
+   * upload is additive, so there is no prior value to compare-and-set
+   * against. Each file is its own request and its own DB row, so one
+   * rejected file (too large, wrong type) does not block the rest.
+   */
+  const handleUploadMedia =
+    uploadMediaAction === undefined || optionMappingTarget === null
+      ? undefined
+      : async (files: FileList) => {
+          setIsUploadingMedia(true);
+
+          try {
+            // eslint-disable-next-line no-restricted-syntax -- sequential: each upload is its own request and DB write against the same product row.
+            for (const file of Array.from(files)) {
+              const formData = new FormData();
+
+              formData.set('productId', optionMappingTarget.productId);
+              formData.set('file', file);
+
+              // eslint-disable-next-line no-await-in-loop
+              const result = await uploadMediaAction(formData);
+
+              if (!result.ok) {
+                toast.error(result.message);
+                // eslint-disable-next-line no-continue
+                continue;
+              }
+
+              setMedia((current) => [
+                ...current,
+                {
+                  id: result.media.id,
+                  label: `Photo ${current.length + 1}`,
+                  sourceUrl: result.media.sourceUrl,
+                  altText: `Seller-uploaded photo for ${productName}`,
+                  rightsCheck: 'VERIFIED',
+                  storageState: 'SALS3_STORED',
+                  sourceType: 'SELLER_UPLOAD',
+                  pixelWidth: 0,
+                  pixelHeight: 0,
+                  note: null,
+                  isCover: current.length === 0,
+                },
+              ]);
+            }
+          } finally {
+            setIsUploadingMedia(false);
+          }
+        };
+
   return (
     <div className="@container flex flex-col gap-4">
       <ProductEditorHeader
@@ -722,6 +801,7 @@ export default function ProductEditorWorkspace({
                 setBrandDeclaration(value);
                 touch();
               }}
+              onGoToSection={goToSection}
               sals3CategoryOptions={sals3CategoryOptions}
               onDecideSals3Category={handleDecideCategory}
             />
@@ -740,7 +820,9 @@ export default function ProductEditorWorkspace({
           >
             <SpecificationsSection
               source={fixture.source}
+              supplierProductName={fixture.supplierProductName}
               supplierCategoryPath={fixture.supplierCategoryPath}
+              supplierMedia={fixture.supplierMedia}
               onOpenSourceDrawer={() => setSourceDrawerOpen(true)}
               specifications={specifications}
               onSpecificationChange={(key, value) => {
@@ -915,6 +997,8 @@ export default function ProductEditorWorkspace({
                 });
                 touch();
               }}
+              onUpload={handleUploadMedia}
+              isUploading={isUploadingMedia}
             />
           </EditorSectionCard>
 

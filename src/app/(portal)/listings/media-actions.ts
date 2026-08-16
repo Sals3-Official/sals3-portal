@@ -1,0 +1,144 @@
+'use server';
+
+import { revalidatePath } from 'next/cache';
+import { z } from 'zod';
+import { PermissionError } from '@/lib/auth/permissions';
+import { requirePermission } from '@/lib/auth/session';
+import { isDatabaseConfigured } from '@/lib/db/client';
+import { checkRateLimit } from '@/lib/rate-limit';
+import { uploadSellerProductMedia } from '@/modules/catalog/products/upload-seller-media';
+
+/**
+ * The one authorized entry point for a seller uploading their own product
+ * photo (ADR-011 "Your pictures"; storage backend, Vercel Blob, owner
+ * decision 2026-08-17).
+ *
+ * Same discipline as `category-mapping-actions.ts`: authorize, rate-limit,
+ * validate, then hand a server-resolved tenant and actor to the domain
+ * module. Called directly with a `FormData` (not through a `<form action>`)
+ * so the calling client component can await a per-file result and update its
+ * own list - see `ProductEditorWorkspace.tsx`'s `handleUploadMedia`.
+ *
+ * Next.js verifies the request origin for Server Actions, which is the CSRF
+ * control for this cookie-backed mutation. `serverActions.bodySizeLimit` in
+ * `next.config.ts` is the framework-level ceiling above the domain module's
+ * own `MAX_UPLOAD_BYTES` check.
+ */
+
+const RATE_LIMIT = { capacity: 20, refillIntervalMs: 60_000 };
+
+const uploadMediaInputSchema = z.object({
+  productId: z.string().uuid(),
+});
+
+export type UploadMediaActionResult =
+  | {
+      ok: true;
+      media: {
+        id: string;
+        sourceUrl: string;
+        contentType: string;
+        byteSize: number;
+      };
+    }
+  | { ok: false; reason: string; message: string };
+
+const REFUSAL_MESSAGES: Record<string, string> = {
+  invalid_input: 'That product could not be identified. Reload and try again.',
+  denied: 'Your account cannot upload photos for this product.',
+  rate_limited: 'Too many uploads. Wait a moment and try again.',
+  not_configured: 'The catalogue database is not available right now.',
+  NOT_FOUND: 'This product no longer exists, or it is not yours.',
+  EMPTY_FILE: 'That file is empty.',
+  FILE_TOO_LARGE: 'That photo is too large. The limit is 8 MB per photo.',
+  UNSUPPORTED_FILE_TYPE: 'Only JPEG, PNG, and WebP photos can be uploaded.',
+  STORAGE_NOT_CONFIGURED: 'Photo storage is not configured yet.',
+  DUPLICATE_FILE: 'That exact photo has already been uploaded.',
+  LIMIT_REACHED: 'This product already has the maximum number of photos.',
+  UPLOAD_FAILED: 'The photo could not be uploaded.',
+};
+
+function refuse(reason: string): UploadMediaActionResult {
+  return {
+    ok: false,
+    reason,
+    message: REFUSAL_MESSAGES[reason] ?? REFUSAL_MESSAGES.UPLOAD_FAILED ?? '',
+  };
+}
+
+type Authorized = { ok: true; sellerAccountId: string; actorId: string };
+type AuthorizationFailure = {
+  ok: false;
+  reason: 'denied' | 'rate_limited' | 'not_configured';
+};
+
+async function authorize(): Promise<Authorized | AuthorizationFailure> {
+  if (!isDatabaseConfigured()) {
+    return { ok: false, reason: 'not_configured' };
+  }
+
+  let session;
+
+  try {
+    session = await requirePermission('product:edit');
+  } catch (error) {
+    if (error instanceof PermissionError)
+      return { ok: false, reason: 'denied' };
+    throw error;
+  }
+
+  // ADR-006: this screen is the Dropshipper product editor, same scope as
+  // `category-mapping-actions.ts`/`option-mapping-actions.ts`.
+  if (session.sellerBusinessModel !== 'DROPSHIPPER') {
+    return { ok: false, reason: 'denied' };
+  }
+
+  const limit = checkRateLimit(`media-upload:${session.sellerId}`, RATE_LIMIT);
+
+  if (!limit.allowed) return { ok: false, reason: 'rate_limited' };
+
+  return {
+    ok: true,
+    sellerAccountId: session.sellerId,
+    actorId: session.userId,
+  };
+}
+
+export async function uploadSellerMediaAction(
+  formData: FormData,
+): Promise<UploadMediaActionResult> {
+  const parsed = uploadMediaInputSchema.safeParse({
+    productId: formData.get('productId'),
+  });
+
+  if (!parsed.success) return refuse('invalid_input');
+
+  const file = formData.get('file');
+
+  // `FormData.get` on a browser's own upload always returns a `File` for a
+  // `<input type="file">`-backed field; anything else means the request was
+  // hand-crafted, not sent through the real editor.
+  if (!(file instanceof File)) return refuse('invalid_input');
+
+  const authorization = await authorize();
+
+  if (!authorization.ok) return refuse(authorization.reason);
+
+  const result = await uploadSellerProductMedia({
+    productId: parsed.data.productId,
+    sellerAccountId: authorization.sellerAccountId,
+    actorId: authorization.actorId,
+    fileBytes: await file.arrayBuffer(),
+  });
+
+  if (!result.ok) return refuse(result.reason);
+
+  // Same reasoning as `decideCategoryMappingAction`: this product's Product
+  // Catalogue row can show its media too. The editor itself updates from
+  // this action's own return value - see `ProductEditorWorkspace.tsx`'s
+  // `handleUploadMedia`, which appends the new tile to local state rather
+  // than waiting on a cache-busted re-render.
+  revalidatePath('/listings');
+
+  return { ok: true, media: result.media };
+}

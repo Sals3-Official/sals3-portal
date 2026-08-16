@@ -259,6 +259,21 @@ export type CatalogueProductFixture = {
   coverImageUrl?: string | null;
   /** All host-checked supplier image addresses recorded for this product. */
   mediaImageUrls?: string[];
+  /**
+   * The subset of `mediaImageUrls` that is the supplier's own photo (ADR-011):
+   * a real `product_media_sources` row with `sourceType: 'SUPPLIER_ORIGINAL'`,
+   * or the feed's bare `imageUrl` when no such row exists yet. Always
+   * provenance, never something a seller can reorder or pick a cover from -
+   * kept apart so the editor can show it as read-only evidence instead of
+   * inside editable media management.
+   */
+  supplierMediaUrls?: string[];
+  /**
+   * The subset of `mediaImageUrls` the seller actually uploaded themselves
+   * (`product_media_sources` rows with `sourceType: 'SELLER_UPLOAD'`).
+   * Empty today on every real product - no upload path writes this row yet.
+   */
+  sellerMediaUrls?: string[];
   status: ListingStatus;
   categoryPath: string;
   categoryCode?: string | null;
@@ -283,6 +298,13 @@ export type CatalogueProductFixture = {
    * which made the supplier evidence block print "Unmapped category" as though
    * the supplier had said it.
    */
+  /**
+   * The supplier's own name for this listing, captured at discovery and
+   * never re-fetched. Distinct from `name` above, which is the seller's
+   * editable "Product Name" - the two start identical and diverge the
+   * moment a seller rewrites their own copy.
+   */
+  supplierProductName?: string | null;
   supplierCategoryPath?: string | null;
   supplierCategoryId?: string | null;
   supplierSku?: string | null;

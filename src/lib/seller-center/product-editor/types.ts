@@ -140,11 +140,22 @@ export type MarketEvidenceFixture = {
 export type MediaRightsCheck = 'VERIFIED' | 'PENDING_VERIFICATION' | 'REJECTED';
 
 /**
- * Where the file lives. Nothing copies media into Sals3-controlled storage
- * today, so no value here may imply that it has.
+ * Where the file lives. `SALS3_STORED` is the one state that says Sals3 holds
+ * an actual copy - reserved for a real `SELLER_UPLOAD` row, since nothing
+ * else in this repository copies media into Sals3-controlled storage today.
  */
 export type MediaStorageState =
-  'SUPPLIER_HOSTED_SOURCE' | 'PENDING_IMPORT' | 'STORAGE_STATUS_UNAVAILABLE';
+  | 'SUPPLIER_HOSTED_SOURCE'
+  | 'SALS3_STORED'
+  | 'PENDING_IMPORT'
+  | 'STORAGE_STATUS_UNAVAILABLE';
+
+/**
+ * Mirrors `product_media_sources.source_type` (ADR-011 §1). Declared locally
+ * rather than imported from `src/lib/db/schema`, same reasoning as
+ * `SupplierConnectionStatus` above.
+ */
+export type MediaSourceType = 'SUPPLIER_ORIGINAL' | 'SELLER_UPLOAD';
 
 export type MediaItemFixture = {
   id: string;
@@ -162,6 +173,14 @@ export type MediaItemFixture = {
   altText: string;
   rightsCheck: MediaRightsCheck;
   storageState: MediaStorageState;
+  /**
+   * `SUPPLIER_ORIGINAL` items are read-only provenance (Supplier Details,
+   * `ProductEditorFixture.supplierMedia`) - never reorderable and never
+   * eligible for `isCover`/`onMakeCover`. `SELLER_UPLOAD` items are the
+   * seller's own (`ProductEditorFixture.media`), the only ones Media section
+   * controls may touch.
+   */
+  sourceType: MediaSourceType;
   pixelWidth: number;
   pixelHeight: number;
   note: string | null;
@@ -323,7 +342,14 @@ export type ProductEditorFixture = {
   markets: MarketEvidenceFixture[];
   /** Markets not enabled for this seller - stated, never rendered as evidence. */
   marketsNotEnabledCount: number;
+  /** The seller's own uploaded photos only (ADR-011). Editable in Media section. */
   media: MediaItemFixture[];
+  /**
+   * The supplier's own photos (or the feed's bare `imageUrl` when no
+   * `product_media_sources` row exists yet) - read-only provenance shown in
+   * Basic Information's Supplier Details, never in Media section.
+   */
+  supplierMedia: MediaItemFixture[];
   policyVersion: string;
   /** Present only for database-backed rows whose open draft can be saved. */
   draftSaveTarget: {

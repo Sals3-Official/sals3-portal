@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import Image from 'next/image';
 import { ArrowLeft, ArrowRight, Upload, Video } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -13,36 +14,107 @@ type MediaSectionProps = {
   media: MediaItemFixture[];
   onMakeCover: (id: string) => void;
   onMove: (id: string, direction: -1 | 1) => void;
+  /** Omitted for fixture/design-preview mode — no real product to attach a photo to. */
+  onUpload?: (files: FileList) => void | Promise<void>;
+  isUploading?: boolean;
 };
 
+const ACCEPTED_TYPES = 'image/jpeg,image/png,image/webp';
+
 /**
- * Media management with two independent label families that must never be
- * conflated:
+ * Media management for the seller's **own** uploaded photos only
+ * (ADR-011) - `product_media_sources` rows with `sourceType: 'SELLER_UPLOAD'`.
+ * The supplier's own photos are read-only provenance shown instead in Basic
+ * Information's Supplier Details (`SupplierMediaGallery`), never here: they
+ * are not the seller's to reorder, pick a cover from, or replace.
+ *
+ * Two independent label families that must never be conflated:
  *
  * - the **rights check** - Verified / Pending verification / Rejected;
- * - the **storage state** - Supplier-hosted source / Pending import /
- *   Storage status unavailable.
- *
- * "Verified" says the image is cleared for use. It does not say Sals3 has
- * a copy of it. Nothing in this repo copies supplier media into
- * Sals3-controlled storage today, so no label here may imply that it has.
+ * - the **storage state** - Uploaded to Sals3 / Pending import / Storage
+ *   status unavailable.
  *
  * Ordering and cover selection are real and local - they change what the
- * draft preview shows. Replace, Upload and Add video are disabled and say
- * why: there is no media upload or storage backend, and a control that
- * silently did nothing would be worse than one that admits it.
+ * draft preview shows. Upload is real when `onUpload` is passed (a real
+ * product to attach a photo to, and Vercel Blob configured server-side);
+ * otherwise it stays disabled and says why, same as Add video, which has no
+ * upload path at all yet.
  *
- * A tile with a `sourceUrl` renders that photo; a tile without one renders its
- * label in a placeholder box. Both cases are real: a database-backed product
- * carries the supplier address the catalogue actually stores, while the
- * illustrative fixtures carry none, because a fictional product must not be
- * illustrated with a real supplier's photograph.
+ * Empty is the honest, currently-universal state: no upload path exists to
+ * write a `SELLER_UPLOAD` row, so every real product renders the empty state
+ * below rather than borrowing the supplier's picture to avoid looking bare.
  */
 export default function MediaSection({
   media,
   onMakeCover,
   onMove,
+  onUpload,
+  isUploading = false,
 }: MediaSectionProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFilesSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const input = event.target;
+    const { files } = input;
+
+    if (files !== null && files.length > 0) onUpload?.(files);
+
+    // Reset so selecting the exact same file again still fires `onChange`.
+    input.value = '';
+  };
+
+  const uploadControls = (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={ACCEPTED_TYPES}
+        multiple
+        hidden
+        onChange={handleFilesSelected}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        size="lg"
+        disabled={onUpload === undefined || isUploading}
+        title={
+          onUpload === undefined
+            ? 'Uploading media needs a storage backend, which does not exist yet'
+            : undefined
+        }
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <Upload aria-hidden="true" />
+        {isUploading ? 'Uploading…' : 'Upload image'}
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        size="lg"
+        disabled
+        title="Video needs a storage backend, which does not exist yet"
+      >
+        <Video aria-hidden="true" />
+        Add video (optional)
+      </Button>
+    </div>
+  );
+
+  if (media.length === 0) {
+    return (
+      <div className="flex flex-col gap-3.5">
+        <div className="rounded-lg border border-dashed border-border-strong bg-background p-4 text-sm text-muted-foreground">
+          No photos have been uploaded for this product yet. Until you upload
+          your own, the storefront automatically shows the supplier&apos;s
+          original photos — see Supplier Details in Basic Information.
+        </div>
+
+        {uploadControls}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-3.5">
       <p className="text-xs text-muted-foreground">
@@ -173,36 +245,14 @@ export default function MediaSection({
         })}
       </ul>
 
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="lg"
-          disabled
-          title="Uploading media needs a storage backend, which does not exist yet"
-        >
-          <Upload aria-hidden="true" />
-          Upload image
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="lg"
-          disabled
-          title="Video needs a storage backend, which does not exist yet"
-        >
-          <Video aria-hidden="true" />
-          Add video (optional)
-        </Button>
-      </div>
+      {uploadControls}
 
       <div className="rounded-lg border border-border p-3 text-xs leading-relaxed text-ink-muted">
         <p className="font-semibold">What the status labels mean</p>
         <p>
           Verified · Pending verification · Rejected describe the media-rights
-          check. Supplier-hosted source · Pending import · Storage status
-          unavailable describe where the file lives. Nothing here claims an
-          image has been copied into Sals3-controlled storage.
+          check. Uploaded to Sals3 · Pending import · Storage status unavailable
+          describe where the file lives.
         </p>
       </div>
     </div>

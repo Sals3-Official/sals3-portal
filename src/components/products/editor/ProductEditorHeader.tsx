@@ -42,10 +42,16 @@ export default function ProductEditorHeader({
   onOpenSourceDrawer,
 }: ProductEditorHeaderProps) {
   const status = presentEvaluationStatus(fixture.evaluationStatus);
+  // ADR-011's `SELLER_FIRST` default: the seller's own upload when one
+  // exists, otherwise the supplier's original - `fixture.media` alone is
+  // empty for every product today, which would silently drop the thumbnail
+  // a real buyer would still see.
+  const effectiveMedia =
+    fixture.media.length > 0 ? fixture.media : fixture.supplierMedia;
   // The cover tile, but only when it carries a real address. The fixture
   // previews carry none, so they keep the placeholder they always had.
   const coverItem =
-    fixture.media.find((item) => item.isCover) ?? fixture.media[0];
+    effectiveMedia.find((item) => item.isCover) ?? effectiveMedia[0];
   const cover =
     coverItem === undefined || coverItem.sourceUrl === null
       ? null
