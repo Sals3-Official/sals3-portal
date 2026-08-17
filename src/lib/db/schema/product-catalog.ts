@@ -1107,65 +1107,6 @@ export const productMediaSources = pgTable(
   ],
 );
 
-/**
- * Seller-entered answers to category-driven attribute controls (the
- * "Specification" editor section) - see
- * `src/modules/catalog/taxonomy/attribute-contract.ts` for the contract that
- * decides what is required/recognized for a product's current category.
- *
- * Deliberately carries no FK to `category_attribute_controls`: a composite
- * FK here would go stale the moment a seller changes category (the old
- * control row is still valid reference data, just no longer this product's
- * current contract) or would force deleting/reassigning rows on a category
- * change, which conflicts with "never drop a seller-entered value". Instead,
- * `attributeName`/`controlsVersion` on a row are a snapshot for audit and
- * display; whether an attribute is currently required/recognized/valid is
- * answered by re-resolving the contract fresh against the product's current
- * category at read/save time. An attribute name that no longer matches any
- * control row for the current category is simply "unrecognized" at read
- * time - the row itself is never touched.
- *
- * Numbers/dates/booleans are stored as their canonical string form inside
- * `values` (e.g. `"12.5"`, `"2026-08-17"`, `"true"`) rather than nullable
- * typed columns - a Postgres CHECK cannot join to `category_attribute_controls`
- * to know which typed column should be non-null for a given row, so that
- * shape would only be enforceable in application code anyway. What a valid
- * string looks like for a given `Input Control Type` lives in
- * `attribute-contract.ts`'s Zod shapes instead.
- */
-export const productCategoryAttributeValues = pgTable(
-  'product_category_attribute_values',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    productId: uuid('product_id')
-      .notNull()
-      .references(() => products.id, { onDelete: 'cascade' }),
-    attributeName: text('attribute_name').notNull(),
-    /** Which extraction this value was validated against - a snapshot, not a live FK. */
-    controlsVersion: text('controls_version').notNull(),
-    /** 0/1 entries for a single-value control, N for multi-select. */
-    values: text('values').array().notNull().default([]),
-    /** True when the seller typed a value rather than picking one from `Allowed Values`. */
-    isCustomValue: boolean('is_custom_value').notNull().default(false),
-    updatedAt: timestamp('updated_at', { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    updatedBy: text('updated_by').notNull(),
-  },
-  (table) => [
-    /** One current seller answer per attribute per product - save is an upsert, not an append. */
-    uniqueIndex('product_category_attribute_values_product_attribute_key').on(
-      table.productId,
-      table.attributeName,
-    ),
-    index('product_category_attribute_values_product_idx').on(table.productId),
-    check(
-      'product_category_attribute_values_name_not_blank',
-      sql`length(btrim(${table.attributeName})) > 0`,
-    ),
-  ],
-);
-
 // --- Row types ---------------------------------------------------------------
 
 export type ProductPublicationState =
@@ -1201,7 +1142,3 @@ export type ProductOfferRow = typeof productOffers.$inferSelect;
 export type NewProductOfferRow = typeof productOffers.$inferInsert;
 export type OfferSupplierBindingRow = typeof offerSupplierBindings.$inferSelect;
 export type ProductMediaSourceRow = typeof productMediaSources.$inferSelect;
-export type ProductCategoryAttributeValueRow =
-  typeof productCategoryAttributeValues.$inferSelect;
-export type NewProductCategoryAttributeValueRow =
-  typeof productCategoryAttributeValues.$inferInsert;

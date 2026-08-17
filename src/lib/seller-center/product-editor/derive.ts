@@ -1,6 +1,5 @@
 import { PERMANENT_REASON_CODES } from '@/modules/catalog/candidates/rules/contracts';
 import type {
-  CategoryAttributeFieldFixture,
   EditorLifecycle,
   EditorSectionId,
   IssueSeverity,
@@ -120,25 +119,6 @@ export function filledSpecificationCount(
   specifications: SpecificationFixture[],
 ): number {
   return specifications.filter((spec) => spec.value !== '').length;
-}
-
-/**
- * Whether a category-driven attribute control (Specification section) still
- * needs a value, on the client and the server alike.
- *
- * Matches `validateCategoryAttributeSubmission`'s own rule exactly: every
- * value is trimmed, and an all-whitespace value counts as absent - not
- * `values.length === 0` alone. Without this, choosing "Other (type your
- * own)" on a required single-select emits `['']` (a real array entry, just
- * blank), and a length check alone would read that as already resolved
- * while the server would still reject it as missing.
- */
-export function isCategoryAttributeUnresolved(
-  field: Pick<CategoryAttributeFieldFixture, 'values' | 'requirement'>,
-): boolean {
-  if (field.requirement === 'OPTIONAL') return false;
-
-  return field.values.every((value) => value.trim() === '');
 }
 
 export function publishableMediaCount(

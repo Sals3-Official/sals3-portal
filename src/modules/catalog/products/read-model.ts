@@ -9,9 +9,7 @@ import { vercelBlobImageUrl } from '@/lib/storage/blob-url';
 import {
   ACTIVE_TAXONOMY_VERSION,
   candidateEvaluations,
-  categoryAttributeControls,
   offerSupplierBindings,
-  productCategoryAttributeValues,
   productMediaSources,
   productOffers,
   productOptionValues,
@@ -35,7 +33,6 @@ import {
   type ProductRevisionRow,
   type ProductRow,
 } from '@/lib/db/schema';
-import { ACTIVE_ATTRIBUTE_CONTROLS_VERSION } from '@/lib/db/schema/category-attribute-controls';
 import type {
   AttentionReasonFixture,
   Availability,
@@ -47,7 +44,6 @@ import type {
   SupplierConnectionHealth,
 } from '@/lib/seller-center/product-catalogue/types';
 import type {
-  CategoryAttributeFieldFixture,
   MarketEvidenceFixture,
   MediaItemFixture,
   MoneyValue,
@@ -59,8 +55,6 @@ import type {
   VariantPricingGuidance,
 } from '@/lib/seller-center/product-editor/types';
 import { feedSnapshotSchema } from '@/modules/catalog/candidates/rules/contracts';
-import type { CategoryAttributeContract } from '@/modules/catalog/taxonomy/attribute-types';
-import { validateCategoryAttributeSubmission } from '@/modules/catalog/taxonomy/attribute-contract';
 import { descriptionDocumentSchema } from './description-document';
 import { deriveOptionSplit } from './option-split';
 import { deriveSourceChanges } from './source-changes';
@@ -511,8 +505,6 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
       referenceRows: [],
       optionRows: [],
       presetRows: [],
-      attributeControlRows: [],
-      attributeValueRows: [],
       variantOptionRows: [],
       providerVariantRows: [],
       offerRows: [],
@@ -538,8 +530,6 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
     mediaRows,
     optionRows,
     presetRows,
-    attributeControlRows,
-    attributeValueRows,
   ] = await Promise.all([
     executor
       .select()
@@ -590,24 +580,6 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
               eq(sals3CategoryPresets.taxonomyVersion, ACTIVE_TAXONOMY_VERSION),
             ),
           ),
-    categoryIds.length === 0
-      ? Promise.resolve([])
-      : executor
-          .select()
-          .from(categoryAttributeControls)
-          .where(
-            and(
-              inArray(categoryAttributeControls.categoryId, categoryIds),
-              eq(
-                categoryAttributeControls.controlsVersion,
-                ACTIVE_ATTRIBUTE_CONTROLS_VERSION,
-              ),
-            ),
-          ),
-    executor
-      .select()
-      .from(productCategoryAttributeValues)
-      .where(inArray(productCategoryAttributeValues.productId, ids)),
   ]);
 
   const variantIds = variantRows.map((row) => row.id);
@@ -721,8 +693,6 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
     referenceRows,
     optionRows,
     presetRows,
-    attributeControlRows,
-    attributeValueRows,
     variantOptionRows,
     providerVariantRows,
     offerRows,
@@ -773,14 +743,6 @@ function buildCatalogueProducts(
   );
   const presetByCategory = new Map(
     rows.presetRows.map((preset) => [preset.categoryId, preset]),
-  );
-  const attributeControlsByCategory = groupBy(
-    rows.attributeControlRows,
-    (control) => control.categoryId,
-  );
-  const attributeValuesByProduct = groupBy(
-    rows.attributeValueRows,
-    (value) => value.productId,
   );
 
   return rows.productRows.map(
@@ -1001,47 +963,6 @@ function buildCatalogueProducts(
             ? undefined
             : presetByCategory.get(product.categoryId),
         ),
-        categoryAttributeControls: (
-          (product.categoryId === null
-            ? undefined
-            : attributeControlsByCategory.get(product.categoryId)) ?? []
-        ).map((control) => ({
-          attributeName: control.attributeName,
-          requirementLevel: control.requirementLevel,
-          inputControlType: control.inputControlType,
-          allowedValues: control.allowedValues,
-          allowCustomValue: control.allowCustomValue,
-          allowMultipleValues: control.allowMultipleValues,
-          sellerHelpText: control.sellerHelpText,
-          seoVisibility: control.seoVisibility,
-          aeoGeoVisibility: control.aeoGeoVisibility,
-        })),
-        categoryAttributeControlsVersion:
-          product.categoryId !== null &&
-          (attributeControlsByCategory.get(product.categoryId)?.length ?? 0) > 0
-            ? ACTIVE_ATTRIBUTE_CONTROLS_VERSION
-            : undefined,
-        categoryAttributeControlsSource: (() => {
-          const first =
-            product.categoryId === null
-              ? undefined
-              : attributeControlsByCategory.get(product.categoryId)?.[0];
-
-          return first === undefined
-            ? undefined
-            : {
-                workbook: first.sourceWorkbook,
-                sheet: first.sourceSheet,
-                checksum: first.sourceChecksum,
-              };
-        })(),
-        categoryAttributeValues: (
-          attributeValuesByProduct.get(product.id) ?? []
-        ).map((row) => ({
-          attributeName: row.attributeName,
-          values: row.values,
-          isCustomValue: row.isCustomValue,
-        })),
         variants: catalogueVariants,
       };
     },
@@ -1208,104 +1129,6 @@ function editorIssues(product: CatalogueProductFixture): ReadinessIssue[] {
   }
 
   return issues;
-}
-
-/**
- * Category-driven attribute controls, already joined with whatever the
- * seller has stored (the Specification section) - distinct from
- * `editorSpecifications` above, the unrelated read-only Supplier Details
- * tab.
- *
- * A category with no attribute controls for the active
- * `ACTIVE_ATTRIBUTE_CONTROLS_VERSION` yet returns no fields and no issues -
- * that is not an error, it means the workbook has nothing to say about this
- * category yet, not that everything is required.
- *
- * Delegates every rule about what counts as valid to
- * `validateCategoryAttributeSubmission` (`taxonomy/attribute-contract.ts`) -
- * this function only assembles the contract-shaped object from the
- * already-batched fixture data (no query of its own) and turns the
- * validation result into display fields and `ReadinessIssue`s.
- */
-function editorCategoryAttributes(product: CatalogueProductFixture): {
-  fields: CategoryAttributeFieldFixture[];
-  issues: ReadinessIssue[];
-} {
-  const controls = product.categoryAttributeControls ?? [];
-
-  if (
-    controls.length === 0 ||
-    product.categoryAttributeControlsVersion === undefined ||
-    product.categoryAttributeControlsSource === undefined ||
-    product.categoryCode === null ||
-    product.categoryCode === undefined
-  ) {
-    return { fields: [], issues: [] };
-  }
-
-  const contract: Extract<
-    CategoryAttributeContract,
-    { outcome: 'CATEGORY_ATTRIBUTE_CONTRACT' }
-  > = {
-    outcome: 'CATEGORY_ATTRIBUTE_CONTRACT',
-    categoryCode: product.categoryCode,
-    categoryPath: product.categoryPath,
-    controlsVersion: product.categoryAttributeControlsVersion,
-    controls,
-    source: product.categoryAttributeControlsSource,
-    contractVersion: 'category-attribute-contract-v1',
-  };
-
-  const payload = Object.fromEntries(
-    (product.categoryAttributeValues ?? []).map((value) => [
-      value.attributeName,
-      [...value.values],
-    ]),
-  );
-
-  const validation = validateCategoryAttributeSubmission(contract, payload);
-
-  const fields: CategoryAttributeFieldFixture[] = controls.map((control) => {
-    const accepted = validation.acceptedAttributes[control.attributeName];
-    const unresolved =
-      accepted === undefined && control.requirementLevel !== 'OPTIONAL';
-
-    return {
-      attributeName: control.attributeName,
-      requirement: control.requirementLevel,
-      inputControlType: control.inputControlType,
-      allowedValues: control.allowedValues,
-      allowCustomValue: control.allowCustomValue,
-      allowMultipleValues: control.allowMultipleValues,
-      sellerHelpText: control.sellerHelpText,
-      values: accepted?.values ?? [],
-      isCustomValue: accepted?.isCustomValue ?? false,
-      unresolved,
-    };
-  });
-
-  const issues: ReadinessIssue[] = [
-    ...validation.missingRequiredAttributes.map((name) =>
-      catalogueIssue(
-        `${product.id}-specification-${name}`,
-        'BLOCKER',
-        `${name} is required`,
-        `This category requires a value for "${name}" before publishing.`,
-        'specification',
-      ),
-    ),
-    ...validation.missingRecommendedAttributes.map((name) =>
-      catalogueIssue(
-        `${product.id}-specification-${name}`,
-        'WARNING',
-        `${name} is recommended`,
-        `This category recommends a value for "${name}".`,
-        'specification',
-      ),
-    ),
-  ];
-
-  return { fields, issues };
 }
 
 function editorVariants(product: CatalogueProductFixture): VariantFixture[] {
@@ -1561,8 +1384,7 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
   variantGuidance: VariantPricingGuidance[];
 } {
   const variants = editorVariants(product);
-  const categoryAttributesResult = editorCategoryAttributes(product);
-  const issues = [...editorIssues(product), ...categoryAttributesResult.issues];
+  const issues = editorIssues(product);
   // Derived from `product.variants`, not from `variants` above: the latter
   // synthesises a "Default" row for a product with no variant rows at all, and
   // splitting an invented label would propose an axis no supplier ever sent.
@@ -1676,9 +1498,6 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
       ).length,
     },
     specifications: editorSpecifications(product),
-    categoryAttributes: categoryAttributesResult.fields,
-    categoryAttributesControlsVersion:
-      product.categoryAttributeControlsVersion ?? null,
     variants,
     markets: editorMarkets(product),
     marketsNotEnabledCount: 0,

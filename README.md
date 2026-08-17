@@ -570,18 +570,6 @@ storefront already does. Requires `BLOB_READ_WRITE_TOKEN` (see
 [Environment setup](#setup)); with it unset, Upload stays visibly disabled
 with an honest reason instead of a fake success.
 
-**A new `Specification` section sits between Basic Information and
-Description (2026-08-17)** — category-driven attribute controls
-(dropdowns, multi-selects, text/number/measurement/boolean/date fields)
-resolved from the finalized taxonomy workbook's attribute-controls
-extraction (see
-[Category-driven Specification controls](#category-driven-specification-controls-attribute-controls-workbook)
-below). It is unrelated to the read-only `Supplier Details` tab further
-down — that one shows CJ-supplier evidence and never changed. Required
-specifications are real publish blockers, re-validated server-side on
-save and again at publish; recommended ones are warnings; optional ones
-are neither.
-
 Open a state directly:
 
 ```text
@@ -1610,83 +1598,6 @@ publishing against a withdrawn one is not.
   `authorizeCategoryGovernance()` is an allow list that is currently empty —
   it denies **every** role including `admin`, with one identical message. A
   test fails if anything under `src/app/` imports those modules.
-
-## Category-driven Specification controls (attribute controls workbook)
-
-A second, independent extraction from a different sheet of the same
-finalized taxonomy workbook (`Category_Attribute_Controls` +
-`Attribute_Control_Dictionary`) adds per-category **specification**
-controls on top of the already-live, locked v1 category hierarchy: 53,625
-(category, attribute) rows across the 5,595 v1 categories, plus a
-149-entry canonical attribute dictionary. This is purely additive — it
-does not touch `sals3_categories`, and it does not touch the older,
-dormant `sals3_category_presets`/`CategoryFormContract` system above
-(that one still exists for variation-tier/SKU-format suggestions and is
-untouched).
-
-| Piece                                              | File                                                                          |
-| -------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Reference tables (controls, dictionary)            | `src/lib/db/schema/category-attribute-controls.ts`                            |
-| Seller-answer table                                | `product_category_attribute_values` in `src/lib/db/schema/product-catalog.ts` |
-| Extraction script (the only place `.xlsx` is read) | `scripts/extract-category-attribute-controls.mts`                             |
-| Seed script                                        | `scripts/seed-category-attribute-controls.mts`                                |
-| Frozen extraction JSON                             | `src/lib/db/seed-data/sals3-category-attribute-controls-v1.json`              |
-| Contract + validation                              | `src/modules/catalog/taxonomy/attribute-contract.ts`                          |
-| Domain write path                                  | `src/modules/catalog/products/save-category-attributes.ts`                    |
-| Server Action                                      | `src/app/(portal)/listings/category-attributes-actions.ts`                    |
-| Product Editor UI                                  | `src/components/products/editor/category-attributes/`                         |
-
-Versioned independently from the category tree: `controlsVersion`
-(`ACTIVE_ATTRIBUTE_CONTROLS_VERSION = 'sals3-attribute-controls-v1'`) is a
-free-text string on its own axis from `ACTIVE_TAXONOMY_VERSION`, because
-the category hierarchy is locked forever but attribute controls are
-expected to be revised — a corrected extraction lands beside the old one
-under a new version string rather than overwriting it.
-
-Seven input control types (`SINGLE_SELECT_DROPDOWN`,
-`MULTI_SELECT_DROPDOWN`, `TEXT_INPUT`, `NUMBER_INPUT`,
-`MEASUREMENT_INPUT`, `BOOLEAN_TOGGLE`, `DATE_PICKER`) — the workbook only
-actually uses the first four today, but the Product Editor renders all
-seven so a future extraction using the other three needs no UI change.
-Three requirement levels (`REQUIRED`/`RECOMMENDED`/`OPTIONAL`) drive
-severity exactly like the existing Supplier Details specifications:
-`REQUIRED` unresolved is a hard publish blocker
-(`publish.ts`'s `requiredCategoryAttributesMissing`), `RECOMMENDED`
-unresolved is a warning, `OPTIONAL` is neither.
-
-`validateCategoryAttributeSubmission` (`attribute-contract.ts`) is the
-single source of truth for what counts as valid, re-run server-side on
-every save (`saveCategoryAttributes`) and again at publish
-(`publish.ts`) — never trusted from client state. A dropdown value
-outside `Allowed Values` is rejected unless the control permits a custom
-value, in which case it is accepted and flagged `isCustomValue: true`. An
-attribute name the contract does not recognize is preserved verbatim for
-review, never silently dropped — the same guarantee the older
-`validateCategoryAttributes` already held for required-attribute names.
-
-SEO/AEO/GEO visibility and compliance-review-flag metadata are extracted
-and persisted but **not** yet surfaced as PDP structured data — reference
-metadata only, pending a future PDP/schema mapping task, consistent with
-this repo's standing rule against fabricated structured-data fields.
-
-Extraction re-asserts every invariant already verified true of the
-source workbook as a regression guard (exact sheet names/counts, zero
-duplicate `(category, attribute)` pairs, the dropdown/allowed-values
-invariant, dictionary↔controls 1:1, cross-sheet hierarchy match against
-the **live** `sals3_categories` table) and aborts loudly on any
-unrecognized enum value rather than guessing — same discipline as
-`readVariationTiers`'s allow-listed prefix match. The workbook's own XML
-parts use a nonstandard `x:`-prefixed OOXML namespace that `exceljs` does
-not recognize; the extraction script repairs a temporary in-memory copy
-via `jszip` before reading it — the file on disk is never modified.
-
-```bash
-npm run extract:attribute-controls -- --discover-enums   # print distinct values for every enum-shaped column
-npm run extract:attribute-controls -- --dry-run          # validate without writing the JSON
-npm run extract:attribute-controls                       # write the frozen JSON
-npm run seed:attribute-controls -- --dry-run              # validate without writing to the DB
-npm run seed:attribute-controls                            # seed the reference tables
-```
 
 ## Seller market configuration
 
