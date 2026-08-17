@@ -301,6 +301,32 @@ export default function ProductEditorWorkspace({
   const [categoryAttributes, setCategoryAttributes] = useState<
     CategoryAttributeFieldFixture[]
   >(fixture.categoryAttributes);
+
+  /**
+   * `useState(fixture.categoryAttributes)` only reads its argument on mount.
+   * `handleDecideCategory` calls `router.refresh()` after a category
+   * decision, which re-renders this already-mounted client component with a
+   * fresh `fixture` prop carrying the new category's controls - but the
+   * `categoryAttributes` copy above stayed frozen at whatever the very first
+   * render saw, so the Specification section kept showing the old category's
+   * fields (or none) until a full page reload remounted the component.
+   * `sals3CategoryCode` changes exactly when the resolved category changes
+   * (unlike `categoryAttributesControlsVersion`, which names the shared
+   * workbook extraction and is identical across every category), so it is
+   * the correct resync key - and only that, so unrelated refreshes (media
+   * upload, option mapping save) do not discard a seller's in-progress,
+   * unsaved specification edits. Adjusted during render (React's documented
+   * "adjusting state when a prop changes" pattern) rather than in an effect,
+   * so the stale fields never commit to the screen even for one frame.
+   */
+  const [prevCategoryCode, setPrevCategoryCode] = useState(
+    fixture.sals3CategoryCode,
+  );
+
+  if (fixture.sals3CategoryCode !== prevCategoryCode) {
+    setPrevCategoryCode(fixture.sals3CategoryCode);
+    setCategoryAttributes(fixture.categoryAttributes);
+  }
   const [variants, setVariants] = useState<VariantFixture[]>(fixture.variants);
   const [media, setMedia] = useState<MediaItemFixture[]>(fixture.media);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);

@@ -368,6 +368,58 @@ describe('Product Editor - category-driven Specification section', () => {
 
     expect(Object.keys(submitted.attributes)).toEqual(['Brand']);
   });
+
+  /**
+   * Regression: `categoryAttributes` was `useState(fixture.categoryAttributes)`,
+   * which only reads its argument on mount. `handleDecideCategory` calls
+   * `router.refresh()` after a category decision, which re-renders this
+   * already-mounted client component with a fresh `fixture` prop (a real
+   * Next.js refresh never remounts it - there is no `key` on
+   * `ProductEditorWorkspace`) - but the old-category fields kept rendering
+   * until a full page reload. `rerender` with a changed `sals3CategoryCode`
+   * is the jsdom equivalent of that refreshed prop.
+   */
+  it('replaces the rendered fields when the resolved category changes without a remount', () => {
+    const resolved = fixture('pass');
+    const { rerender } = render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          sals3CategoryCode: 'CAT-GGL-100',
+          categoryAttributes: [
+            categoryAttributeField({ attributeName: 'Brand' }),
+          ],
+          categoryAttributesControlsVersion: 'sals3-attribute-controls-v1',
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    expect(screen.getByText('Brand *')).toBeInTheDocument();
+    expect(screen.queryByText('Screen Size *')).not.toBeInTheDocument();
+
+    rerender(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          sals3CategoryCode: 'CAT-GGL-200',
+          categoryAttributes: [
+            categoryAttributeField({
+              attributeName: 'Screen Size',
+              values: [],
+            }),
+          ],
+          categoryAttributesControlsVersion: 'sals3-attribute-controls-v1',
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    expect(screen.getByText('Screen Size *')).toBeInTheDocument();
+    expect(screen.queryByText('Brand *')).not.toBeInTheDocument();
+  });
 });
 
 describe('Product Editor - money that is not known', () => {
