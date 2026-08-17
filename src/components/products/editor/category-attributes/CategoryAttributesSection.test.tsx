@@ -260,7 +260,7 @@ describe('CategoryAttributesSection', () => {
     expect(screen.getByText('Not set')).toBeInTheDocument();
   });
 
-  it('renders a checkbox per allowed value for MULTI_SELECT_DROPDOWN', () => {
+  it('renders a closed dropdown that opens to a checkbox per allowed value for MULTI_SELECT_DROPDOWN', async () => {
     render(
       <CategoryAttributesSection
         fields={[
@@ -277,7 +277,14 @@ describe('CategoryAttributesSection', () => {
       />,
     );
 
-    expect(screen.getAllByRole('checkbox')).toHaveLength(3);
+    // Closed by default - same footprint as a single-select dropdown, not an
+    // always-expanded checklist.
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(screen.getByText('Select values')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Select values'));
+
+    expect(await screen.findAllByRole('checkbox')).toHaveLength(3);
     expect(screen.getByText('Adult')).toBeInTheDocument();
   });
 
