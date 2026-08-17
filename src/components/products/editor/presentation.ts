@@ -127,6 +127,7 @@ export const MEDIA_RIGHTS_PRESENTATION: Record<MediaRightsCheck, Presentation> =
  */
 export const MEDIA_STORAGE_LABELS: Record<MediaStorageState, string> = {
   SUPPLIER_HOSTED_SOURCE: 'Supplier-hosted source',
+  SALS3_STORED: 'Uploaded to Sals3',
   PENDING_IMPORT: 'Pending import',
   STORAGE_STATUS_UNAVAILABLE: 'Storage status unavailable',
 };

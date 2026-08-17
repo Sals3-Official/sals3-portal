@@ -1,5 +1,6 @@
 import Image from 'next/image';
-import { OctagonAlert } from 'lucide-react';
+import { OctagonAlert, Upload } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -9,7 +10,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { ProductEditorFixture } from '@/lib/seller-center/product-editor/types';
+import type {
+  EditorSectionId,
+  ProductEditorFixture,
+} from '@/lib/seller-center/product-editor/types';
 import Sals3CategoryPicker, {
   type Sals3CategoryOption,
 } from './Sals3CategoryPicker';
@@ -29,6 +33,7 @@ type BasicInformationSectionProps = {
   onSellerSkuChange: (value: string) => void;
   brandDeclaration: string;
   onBrandDeclarationChange: (value: string) => void;
+  onGoToSection: (section: EditorSectionId) => void;
   sals3CategoryOptions?: Sals3CategoryOption[];
   onDecideSals3Category?: (
     code: string,
@@ -53,6 +58,7 @@ export default function BasicInformationSection({
   onSellerSkuChange,
   brandDeclaration,
   onBrandDeclarationChange,
+  onGoToSection,
   sals3CategoryOptions = [],
   onDecideSals3Category,
 }: BasicInformationSectionProps) {
@@ -60,7 +66,16 @@ export default function BasicInformationSection({
     (issue) => issue.reasonCode === 'COUNTERFEIT_HIGH_CONFIDENCE',
   );
 
-  const rejectedMediaCount = fixture.media.filter(
+  // What the storefront actually shows (ADR-011's `SELLER_FIRST` default):
+  // the seller's own uploads when any exist, otherwise the supplier's
+  // original photos - never an invented placeholder. Detailed per-image
+  // evidence (rights check, storage state) is full detail that belongs in
+  // Media section / Supplier Details, not repeated here as a second copy
+  // that could drift from it.
+  const effectiveMedia =
+    fixture.media.length > 0 ? fixture.media : fixture.supplierMedia;
+
+  const rejectedMediaCount = effectiveMedia.filter(
     (item) => item.rightsCheck === 'REJECTED',
   ).length;
 
@@ -70,19 +85,15 @@ export default function BasicInformationSection({
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h3 className="text-[13px] font-semibold">Product media</h3>
           <span className="text-xs text-muted-foreground">
-            {fixture.media.length} images · minimum 3 · recommended 5
+            {effectiveMedia.length} images · minimum 3 · recommended 5
           </span>
         </div>
 
-        {/* A summary only - each image's rights check and storage state are
-            full detail that belongs in the Media section, not repeated here
-            as a second copy that could drift from it.
-
-            The thumbnails carry the real address when there is one. They used
+        {/* The thumbnails carry the real address when there is one. They used
             to be empty 44px squares in every case, so a product whose photo the
             catalogue genuinely stored still showed nothing above this section. */}
         <ul className="mt-2.5 flex list-none flex-wrap gap-1.5 p-0">
-          {fixture.media.map((item) => (
+          {effectiveMedia.map((item) => (
             <li
               key={item.id}
               className={`relative flex size-11 items-center justify-center overflow-hidden rounded-md border text-center text-xs font-medium text-muted-foreground ${
@@ -107,7 +118,7 @@ export default function BasicInformationSection({
           ))}
         </ul>
 
-        {fixture.media.length === 0 ? (
+        {effectiveMedia.length === 0 ? (
           <p className="mt-2 text-xs text-muted-foreground">
             No image address is recorded for this product yet, so there is
             nothing to show. Nothing was fetched from the supplier to fill this
@@ -123,10 +134,24 @@ export default function BasicInformationSection({
           </p>
         ) : (
           <p className="mt-2 text-xs text-muted-foreground">
-            The first image is the storefront cover. Full media management,
-            including video, is in the Media section below.
+            {fixture.media.length > 0
+              ? 'The first image is the storefront cover.'
+              : 'Shown from the supplier until you upload your own — the first image is the storefront cover.'}{' '}
+            Upload your own photos, reordering, and video are in the Media
+            section below.
           </p>
         )}
+
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mt-2.5"
+          onClick={() => onGoToSection('media')}
+        >
+          <Upload aria-hidden="true" />
+          Upload your own photos
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 gap-4 @2xl:grid-cols-2">

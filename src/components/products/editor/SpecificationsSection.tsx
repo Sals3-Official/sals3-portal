@@ -5,17 +5,21 @@ import { Label } from '@/components/ui/label';
 import { severityForUnresolvedSpecification } from '@/lib/seller-center/product-editor/derive';
 import { formatDateTime } from '@/lib/seller-center/product-editor/format';
 import type {
+  MediaItemFixture,
   SpecificationFixture,
   SpecificationRequirement,
   SupplierSourceIdentity,
 } from '@/lib/seller-center/product-editor/types';
 import FieldSourceBadge from './FieldSourceBadge';
 import ReadOnlyField from './ReadOnlyField';
+import SupplierMediaGallery from './SupplierMediaGallery';
 import SupplierSourceBadge from './SupplierSourceBadge';
 
 type SpecificationsSectionProps = {
   source: SupplierSourceIdentity;
+  supplierProductName: string;
   supplierCategoryPath: string;
+  supplierMedia: MediaItemFixture[];
   onOpenSourceDrawer: () => void;
   specifications: SpecificationFixture[];
   onSpecificationChange: (key: string, value: string) => void;
@@ -162,7 +166,9 @@ function SpecificationField({
 
 export default function SpecificationsSection({
   source,
+  supplierProductName,
   supplierCategoryPath,
+  supplierMedia,
   onOpenSourceDrawer,
   specifications,
   onSpecificationChange,
@@ -171,6 +177,18 @@ export default function SpecificationsSection({
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3">
         <SupplierSourceBadge source={source} />
+
+        <ReadOnlyField
+          label="Original product name"
+          value={supplierProductName}
+        />
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs font-semibold text-ink-muted">
+            Original photos
+          </span>
+          <SupplierMediaGallery media={supplierMedia} />
+        </div>
 
         <div className="grid grid-cols-1 gap-3 @lg:grid-cols-3">
           <ReadOnlyField

@@ -165,7 +165,7 @@ export default function SupplierSourceDrawer({
 
         <DrawerSection title="Media provenance">
           <ul className="m-0 list-disc pl-4 text-xs leading-relaxed text-ink-muted">
-            {fixture.media.map((item) => (
+            {fixture.supplierMedia.map((item) => (
               <li key={item.id}>
                 {item.label} — {MEDIA_STORAGE_LABELS[item.storageState]}
               </li>

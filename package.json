@@ -32,6 +32,7 @@
     "@base-ui/react": "^1.7.0",
     "@better-auth/drizzle-adapter": "^1.6.26",
     "@better-auth/infra": "^0.3.7",
+    "@vercel/blob": "^2.8.0",
     "@vercel/queue": "^0.4.0",
     "better-auth": "^1.6.26",
     "class-variance-authority": "^0.7.1",

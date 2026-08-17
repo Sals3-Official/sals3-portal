@@ -1,6 +1,14 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
+  experimental: {
+    serverActions: {
+      // Default is 1 MB; a seller's own product photo upload
+      // (`uploadSellerMediaAction`) needs headroom above the domain
+      // module's own `MAX_UPLOAD_BYTES` (8 MB) for the multipart envelope.
+      bodySizeLimit: '9mb',
+    },
+  },
   async headers() {
     const securityHeaders = [
       { key: 'X-Content-Type-Options', value: 'nosniff' },
@@ -63,6 +71,16 @@ const nextConfig: NextConfig = {
       {
         protocol: 'https',
         hostname: 'oss-cf.cjdropshipping.com',
+        pathname: '/**',
+      },
+      // Seller-uploaded photos (`upload-seller-media.ts`), stored in Vercel
+      // Blob. Store subdomains are per-project, hence the wildcard. Purely
+      // documentation while `loader: 'custom'` bypasses the optimizer this
+      // gates - `vercelBlobImageUrl` in `src/lib/storage/blob-url.ts` is the
+      // enforcing check, same relationship `cjImageUrl` has to the list above.
+      {
+        protocol: 'https',
+        hostname: '*.public.blob.vercel-storage.com',
         pathname: '/**',
       },
     ],
