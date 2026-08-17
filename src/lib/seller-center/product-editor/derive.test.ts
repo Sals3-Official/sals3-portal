@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canBulkEnable,
+  isCategoryAttributeUnresolved,
   publishDecision,
   retailRange,
   sectionSeverity,
@@ -80,6 +81,53 @@ describe('specification severity', () => {
 
   it('treats a missing optional attribute as a suggestion', () => {
     expect(severityForUnresolvedSpecification('OPTIONAL')).toBe('SUGGESTION');
+  });
+});
+
+describe('isCategoryAttributeUnresolved', () => {
+  it('is unresolved when a REQUIRED field has no values', () => {
+    expect(
+      isCategoryAttributeUnresolved({ requirement: 'REQUIRED', values: [] }),
+    ).toBe(true);
+  });
+
+  /**
+   * A required custom single-select emits `['']` the instant "Other" is
+   * chosen, before anything is typed - a real array entry, just blank. This
+   * must not be read as resolved on the client while the server would
+   * still reject it as missing.
+   */
+  it('is unresolved when every value is blank or whitespace-only', () => {
+    expect(
+      isCategoryAttributeUnresolved({
+        requirement: 'REQUIRED',
+        values: [''],
+      }),
+    ).toBe(true);
+    expect(
+      isCategoryAttributeUnresolved({
+        requirement: 'RECOMMENDED',
+        values: ['   '],
+      }),
+    ).toBe(true);
+  });
+
+  it('is resolved once at least one value is non-blank', () => {
+    expect(
+      isCategoryAttributeUnresolved({
+        requirement: 'REQUIRED',
+        values: ['Royal Canin'],
+      }),
+    ).toBe(false);
+  });
+
+  it('is never unresolved for an OPTIONAL field, blank or not', () => {
+    expect(
+      isCategoryAttributeUnresolved({ requirement: 'OPTIONAL', values: [] }),
+    ).toBe(false);
+    expect(
+      isCategoryAttributeUnresolved({ requirement: 'OPTIONAL', values: [''] }),
+    ).toBe(false);
   });
 });
 

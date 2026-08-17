@@ -14,5 +14,6 @@ export * from './discovery';
 export * from './lean-intake';
 export * from './pricing-policy';
 export * from './category-mapping';
+export * from './category-attribute-controls';
 export * from './seller-market-profile';
 export * from './product-catalog';
