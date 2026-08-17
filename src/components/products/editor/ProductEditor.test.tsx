@@ -7,6 +7,7 @@ import {
 } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import saveCategoryAttributesAction from '@/app/(portal)/listings/category-attributes-actions';
+import saveMetaDescriptionAction from '@/app/(portal)/listings/meta-description-actions';
 import { publishProductAction } from '@/app/(portal)/listings/publish-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
 import type {
@@ -44,7 +45,7 @@ vi.mock('@/app/(portal)/listings/category-mapping-actions', () => ({
 }));
 
 // Same reasoning: `upload-seller-media.ts` reaches the server-only db client
-// and `@vercel/blob` too.
+// and `@aws-sdk/client-s3` too.
 vi.mock('@/app/(portal)/listings/media-actions', () => ({
   uploadSellerMediaAction: vi.fn(),
   deleteSellerMediaAction: vi.fn(),
@@ -52,6 +53,11 @@ vi.mock('@/app/(portal)/listings/media-actions', () => ({
 
 // Same reasoning: `save-category-attributes.ts` reaches the server-only db client too.
 vi.mock('@/app/(portal)/listings/category-attributes-actions', () => ({
+  default: vi.fn(),
+}));
+
+// Same reasoning: `save-meta-description.ts` reaches the server-only db client too.
+vi.mock('@/app/(portal)/listings/meta-description-actions', () => ({
   default: vi.fn(),
 }));
 
@@ -419,6 +425,103 @@ describe('Product Editor - category-driven Specification section', () => {
 
     expect(screen.getByText('Screen Size *')).toBeInTheDocument();
     expect(screen.queryByText('Brand *')).not.toBeInTheDocument();
+  });
+});
+
+describe('Product Editor - Meta Description', () => {
+  it('sits in the same Description section as the product description, directly below it', () => {
+    renderEditor('pass');
+
+    const descriptionSection = screen
+      .getByRole('heading', { name: 'Description' })
+      .closest('section');
+
+    expect(descriptionSection).not.toBeNull();
+    expect(
+      within(descriptionSection as HTMLElement).getByLabelText(
+        'Meta Description',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('pre-fills an unsaved field with a local suggestion, never blank', () => {
+    renderEditor('pass');
+
+    const field = screen.getByLabelText(
+      'Meta Description',
+    ) as HTMLTextAreaElement;
+
+    expect(field.value.length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/Suggested from your product details/),
+    ).toBeInTheDocument();
+  });
+
+  it('shows exactly what was saved, not a re-derived suggestion, once a value exists', () => {
+    const resolved = fixture('pass');
+
+    render(
+      <ProductEditor
+        fixture={{ ...resolved, metaDescriptionText: 'Already decided copy.' }}
+        initialLifecycle="IDLE"
+      />,
+    );
+
+    expect(
+      screen.getByDisplayValue('Already decided copy.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Suggested from your product details/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('saves the edited meta description with the compare-and-set version, not the client-supplied tenant', async () => {
+    const resolved = fixture('pass');
+
+    vi.mocked(saveMetaDescriptionAction).mockResolvedValue({
+      ok: true,
+      productVersion: 8,
+    });
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          metaDescriptionText: 'Old copy.',
+          publishTarget: {
+            productId: '11111111-1111-4111-8111-111111111111',
+            expectedProductVersion: 7,
+          },
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Meta Description'), {
+      target: { value: 'New copy the seller wrote.' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save Meta Description' }),
+    );
+
+    await waitFor(() =>
+      expect(saveMetaDescriptionAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          productId: '11111111-1111-4111-8111-111111111111',
+          expectedProductVersion: 7,
+          metaDescription: 'New copy the seller wrote.',
+        }),
+      ),
+    );
+  });
+
+  it('offers no save button in design-preview mode, where there is nothing real to save to', () => {
+    renderEditor('pass');
+
+    expect(
+      screen.queryByRole('button', { name: 'Save Meta Description' }),
+    ).not.toBeInTheDocument();
   });
 });
 

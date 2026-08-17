@@ -1,21 +1,25 @@
 'use client';
 
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import EditorSectionCard from '@/components/products/editor/EditorSectionCard';
+import type { IssueSeverity } from '@/lib/seller-center/product-editor/types';
+import EditorStatusPill from './EditorStatusPill';
+import { sectionBadge } from './presentation';
 
 /**
- * Naming the option groups a supplier encoded in one string.
+ * Naming the Variant Matrix — the buyer-facing options a supplier encoded in
+ * one string.
  *
  * CJ sends `Black-1XL` and nothing else — no structured attributes anywhere in
  * its payload. `deriveOptionSplit` proves how many positions there are and which
  * values sit at each, but it cannot know that position 0 is a *Colour*: on a
  * phone the same two slots could be plug type and storage. So the split is
- * pre-filled and a person supplies the two things only a person can — the axis
- * names, and the order values should appear in.
+ * pre-filled and a person supplies the two things only a person can — the
+ * option names, and the order values should appear in.
  *
  * ## Two fields per value, and why the left one is locked
  *
@@ -23,7 +27,8 @@ import EditorSectionCard from '@/components/products/editor/EditorSectionCard';
  * supplier content is never overwritten, so the raw token stays read-only and the
  * seller edits a display label beside it. That is also what makes re-sync safe: a
  * CJ label change is matched on the token, and renaming the display label can
- * never silently repoint a variant at another variant's price.
+ * never silently repoint a variant at another variant's price — and never
+ * changes what CJ fulfillment matches on.
  *
  * ## Order is a human decision too
  *
@@ -31,6 +36,15 @@ import EditorSectionCard from '@/components/products/editor/EditorSectionCard';
  * XXL`. No algorithm recovers the intended order, which is why the rows move by
  * hand. Up/down buttons rather than drag: drag alone is unreachable by keyboard,
  * and this needs no new dependency.
+ *
+ * ## A presentational subsection, not its own section
+ *
+ * This renders no `EditorSectionCard` of its own. `ProductEditorWorkspace`
+ * mounts it as the first child inside the `variants` card, directly above
+ * `VariantPricingTable` — naming the matrix is what makes the pricing rows
+ * below it readable, and a card inside a card would read as a subsection of
+ * pricing, which this is not. Its own header row and severity pill carry
+ * the same information a full section card would have shown.
  */
 
 export type OptionMappingProposalAxis = {
@@ -118,6 +132,38 @@ function move<T>(items: T[], from: number, to: number): T[] {
   return next;
 }
 
+/**
+ * The subsection's own header row: a title plus the same status-pill
+ * language every full `EditorSectionCard` uses, so a blocker here reads
+ * exactly like a blocker anywhere else in the editor even though this is
+ * not a section of its own.
+ */
+function VariantMatrixHeader({
+  meta,
+  severity,
+}: {
+  meta: ReactNode;
+  severity: IssueSeverity | null;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <h3 className="flex items-center gap-2 font-display text-sm font-semibold">
+        {/* Brand accent, not a status color - a status is the pill on the
+            right, this dot only says "this is the Variant Matrix." */}
+        <span
+          aria-hidden="true"
+          className="size-2 rounded-full bg-gradient-to-br from-[#018CC9] to-[#002B53]"
+        />
+        Variant Matrix
+      </h3>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-muted-foreground">{meta}</span>
+        <EditorStatusPill presentation={sectionBadge(severity)} />
+      </div>
+    </div>
+  );
+}
+
 export default function VariantOptionMappingSection({
   proposal,
   mappedAxisNames,
@@ -171,17 +217,17 @@ export default function VariantOptionMappingSection({
     effectiveMappedAxisNames.length > 0
   ) {
     return (
-      <EditorSectionCard
-        id="options"
-        title="Option groups"
-        severity={null}
-        meta={`${effectiveMappedAxisNames.length} groups`}
-      >
+      <div className="flex flex-col gap-3 border-b border-border pb-5">
+        <VariantMatrixHeader
+          meta={`${effectiveMappedAxisNames.length} options mapped`}
+          severity={null}
+        />
         <p className="text-sm text-muted-foreground">
           Mapped as {effectiveMappedAxisNames.join(' × ')}. Supplier labels stay
-          as received; the display names above are Sals3&rsquo;s.
+          as received and are what CJ fulfillment still matches on; the display
+          names above are only what buyers see on the storefront.
         </p>
-      </EditorSectionCard>
+      </div>
     );
   }
 
@@ -199,22 +245,22 @@ export default function VariantOptionMappingSection({
     const recoverable = unlabelledVariantCount > 0;
 
     return (
-      <EditorSectionCard
-        id="options"
-        title="Option groups"
-        severity={null}
-        meta={recoverable ? 'Labels missing' : 'Not detected'}
-      >
+      <div className="flex flex-col gap-3 border-b border-border pb-5">
+        <VariantMatrixHeader
+          meta={recoverable ? 'Labels missing' : 'Not detected'}
+          severity={null}
+        />
         {recoverable ? (
           <>
             <p className="text-sm text-muted-foreground">
               {unlabelledVariantCount} of {variantCount} variants have no
-              supplier label recorded, which is why no option groups can be
-              proposed. This product was drafted before Sals3 started storing
-              those labels; they are still in the supplier evidence already held
-              for it and can be recovered without contacting the supplier.
+              supplier label recorded, which is why a Variant Matrix can&rsquo;t
+              be proposed yet. This product was drafted before Sals3 started
+              storing those labels; they are still in the supplier evidence
+              already held for it and can be recovered without contacting the
+              supplier.
             </p>
-            <div className="mt-4 flex items-center gap-3">
+            <div className="flex items-center gap-3">
               <Button
                 type="button"
                 variant="outline"
@@ -239,11 +285,12 @@ export default function VariantOptionMappingSection({
         ) : (
           <p className="text-sm text-muted-foreground">
             The supplier labels on this product do not form a complete grid, so
-            no split could be proposed. Nothing is guessed here — mapping stays
-            empty and the storefront shows each supplier label whole.
+            no Variant Matrix could be proposed. Nothing is guessed here —
+            mapping stays empty and the storefront shows each supplier label
+            whole.
           </p>
         )}
-      </EditorSectionCard>
+      </div>
     );
   }
 
@@ -273,29 +320,39 @@ export default function VariantOptionMappingSection({
   }
 
   return (
-    <EditorSectionCard
-      id="options"
-      title="Option groups"
-      // Unmapped blocks publication by owner decision, so the badge says so
-      // rather than reading as an optional nicety.
-      severity={named ? null : 'BLOCKER'}
-      meta={`${proposal.length} detected`}
-    >
-      <p className="mb-4 text-sm text-muted-foreground">
-        Detected {proposal.length} groups across {variantCount} variants from
-        the supplier&rsquo;s own labels. Name each group and put its values in
-        the order a buyer should see them. The supplier column is read-only.
+    <div className="flex flex-col gap-4 border-b border-border pb-5">
+      <VariantMatrixHeader
+        meta={`${proposal.length} options detected`}
+        // Unmapped blocks publication by owner decision, so the badge says so
+        // rather than reading as an optional nicety.
+        severity={named ? null : 'BLOCKER'}
+      />
+
+      <p className="text-sm text-muted-foreground">
+        Detected {proposal.length} buyer options across {variantCount} variants
+        from the supplier&rsquo;s own labels. Name each option and put its
+        values in the order a buyer should see them. The supplier column is
+        read-only — editing a buyer label only changes what shows on the
+        storefront; CJ fulfillment still matches variants by the
+        supplier&rsquo;s own value.
       </p>
 
-      <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-4">
         {axes.map((axis, axisIndex) => {
-          const nameId = `option-group-${axisIndex}`;
+          const nameId = `variant-matrix-option-${axisIndex}`;
           const missingName =
             touched[axisIndex] === true && axis.name.trim() === '';
 
           return (
-            <div key={proposal[axisIndex]?.values.join('|') ?? axisIndex}>
-              <Label htmlFor={nameId}>Group {axisIndex + 1} name</Label>
+            <div
+              key={proposal[axisIndex]?.values.join('|') ?? axisIndex}
+              className="relative overflow-hidden rounded-lg border border-border bg-background/60 p-3 pt-4"
+            >
+              <span
+                aria-hidden="true"
+                className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-[#018CC9] to-[#002B53]"
+              />
+              <Label htmlFor={nameId}>Option {axisIndex + 1} name</Label>
               <Input
                 id={nameId}
                 value={axis.name}
@@ -321,7 +378,7 @@ export default function VariantOptionMappingSection({
                   id={`${nameId}-error`}
                   className="mt-1 text-xs text-destructive"
                 >
-                  Give this group a name before saving.
+                  Give this option a name before saving.
                 </p>
               ) : null}
 
@@ -436,13 +493,14 @@ export default function VariantOptionMappingSection({
         })}
       </div>
 
-      <div className="mt-6 flex items-center gap-3">
+      <div className="flex items-center gap-3">
         <Button
           type="button"
           disabled={!named || state === 'SAVING'}
           onClick={() => save()}
+          className="bg-gradient-to-r from-[#018CC9] to-[#002B53] text-white hover:brightness-110 disabled:from-muted disabled:to-muted disabled:text-muted-foreground"
         >
-          {state === 'SAVING' ? 'Saving…' : 'Save option groups'}
+          {state === 'SAVING' ? 'Saving…' : 'Save Variant Matrix'}
         </Button>
         {/*
           Always mounted so the outcome is announced when it appears, rather than
@@ -450,7 +508,7 @@ export default function VariantOptionMappingSection({
         */}
         <p aria-live="polite" className="text-sm">
           {state === 'SAVED' ? (
-            <span className="text-muted-foreground">Option groups saved.</span>
+            <span className="text-muted-foreground">Variant Matrix saved.</span>
           ) : null}
           {state === 'FAILED' ? (
             <span className="text-destructive">
@@ -459,6 +517,6 @@ export default function VariantOptionMappingSection({
           ) : null}
         </p>
       </div>
-    </EditorSectionCard>
+    </div>
   );
 }

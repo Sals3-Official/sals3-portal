@@ -172,6 +172,110 @@ describe('CategoryAttributesSection', () => {
     ).not.toBeInTheDocument();
   });
 
+  describe('buyer-facing display defaults', () => {
+    it('shows Generic, never the raw UNBRANDED token, for an already-selected no-brand value', () => {
+      render(
+        <CategoryAttributesSection
+          fields={[
+            field({
+              attributeName: 'Brand',
+              inputControlType: 'SINGLE_SELECT_DROPDOWN',
+              allowedValues: ['UNBRANDED', 'Royal Canin'],
+              values: ['UNBRANDED'],
+            }),
+          ]}
+          controlsVersion="sals3-attribute-controls-v1"
+          onFieldChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText('Generic')).toBeInTheDocument();
+      expect(screen.queryByText('UNBRANDED')).not.toBeInTheDocument();
+    });
+
+    it('still submits the raw UNBRANDED token when the seller picks the no-brand option', () => {
+      const onFieldChange = vi.fn();
+
+      render(
+        <CategoryAttributesSection
+          fields={[
+            field({
+              attributeName: 'Brand',
+              inputControlType: 'SINGLE_SELECT_DROPDOWN',
+              allowedValues: ['UNBRANDED', 'Royal Canin'],
+              values: [],
+            }),
+          ]}
+          controlsVersion="sals3-attribute-controls-v1"
+          onFieldChange={onFieldChange}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('combobox'));
+      fireEvent.click(screen.getByRole('option', { name: 'Generic' }));
+
+      expect(onFieldChange).toHaveBeenCalledWith('Brand', ['UNBRANDED'], false);
+    });
+
+    it('defaults an unresolved Brand dropdown to a Generic placeholder, not a blank one', () => {
+      render(
+        <CategoryAttributesSection
+          fields={[
+            field({
+              attributeName: 'Brand',
+              inputControlType: 'SINGLE_SELECT_DROPDOWN',
+              allowedValues: ['UNBRANDED', 'Royal Canin'],
+              values: [],
+            }),
+          ]}
+          controlsVersion="sals3-attribute-controls-v1"
+          onFieldChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText('Generic')).toBeInTheDocument();
+    });
+
+    it('defaults an unresolved Country of Origin dropdown to an Others placeholder', () => {
+      render(
+        <CategoryAttributesSection
+          fields={[
+            field({
+              attributeName: 'Country of Origin',
+              inputControlType: 'SINGLE_SELECT_DROPDOWN',
+              allowedValues: ['Vietnam', 'China'],
+              values: [],
+            }),
+          ]}
+          controlsVersion="sals3-attribute-controls-v1"
+          onFieldChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText('Others')).toBeInTheDocument();
+    });
+
+    it('leaves a real Country of Origin selection exactly as the supplier/seller value reads', () => {
+      render(
+        <CategoryAttributesSection
+          fields={[
+            field({
+              attributeName: 'Country of Origin',
+              inputControlType: 'SINGLE_SELECT_DROPDOWN',
+              allowedValues: ['Vietnam', 'China'],
+              values: ['Vietnam'],
+            }),
+          ]}
+          controlsVersion="sals3-attribute-controls-v1"
+          onFieldChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText('Vietnam')).toBeInTheDocument();
+      expect(screen.queryByText('Others')).not.toBeInTheDocument();
+    });
+  });
+
   it('renders a text input for TEXT_INPUT and reports a typed value', () => {
     const onFieldChange = vi.fn();
 

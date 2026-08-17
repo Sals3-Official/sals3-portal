@@ -251,6 +251,8 @@ export type CatalogueProductFixture = {
   name: string;
   /** Structured description rendered as plain text for the existing editor UI. */
   descriptionText?: string;
+  /** The seller-edited page meta description, distinct from `descriptionText`. */
+  metaDescriptionText?: string;
   hasImage: boolean;
   /**
    * The supplier image address this product actually has, host-checked on the

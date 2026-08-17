@@ -94,4 +94,41 @@ describe('VariantPricingTable', () => {
 
     expect(onToggleEnabled).toHaveBeenCalledWith(VARIANT.id);
   });
+
+  it('splits a mapped Variant Matrix label into per-axis chips', () => {
+    render(
+      <VariantPricingTable
+        variants={[VARIANT]}
+        expandedVariantId={null}
+        onToggleExpanded={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onRetailChange={vi.fn()}
+        onSellerSkuChange={vi.fn()}
+        onBulkEnableInStock={vi.fn()}
+        onBulkDisableUnavailable={vi.fn()}
+        onBulkSetPrice={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Color: Black')).toBeInTheDocument();
+    expect(screen.getByText('Size: M')).toBeInTheDocument();
+  });
+
+  it('renders an unmapped raw supplier label as plain text', () => {
+    render(
+      <VariantPricingTable
+        variants={[{ ...VARIANT, optionLabel: 'Army Green-XL' }]}
+        expandedVariantId={null}
+        onToggleExpanded={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onRetailChange={vi.fn()}
+        onSellerSkuChange={vi.fn()}
+        onBulkEnableInStock={vi.fn()}
+        onBulkDisableUnavailable={vi.fn()}
+        onBulkSetPrice={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Army Green-XL')).toBeInTheDocument();
+  });
 });

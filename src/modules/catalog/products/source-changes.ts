@@ -177,7 +177,7 @@ export function deriveSourceChanges(input: {
       changes.push({
         id: `${variant.variantId}-label`,
         title: `${variant.displayLabel} was renamed by the supplier`,
-        body: `The supplier's own label changed from "${variant.supplierOptionLabel}" to "${labelNow}". Option groups are matched on the label recorded at draft time, so an existing mapping still points at the right variant.`,
+        body: `The supplier's own label changed from "${variant.supplierOptionLabel}" to "${labelNow}". The Variant Matrix is matched on the label recorded at draft time, so an existing mapping still points at the right variant.`,
         occurredAt,
         currentListingImpact:
           'The storefront shows the label recorded when this product was drafted, not the new one.',

@@ -94,7 +94,7 @@ describe('uploadSellerMediaAction', () => {
       ok: true,
       media: {
         id: 'media-1',
-        sourceUrl: 'https://x.public.blob.vercel-storage.com/a.jpg',
+        sourceUrl: 'https://media.example-r2.dev/a.jpg',
         contentType: 'image/webp',
         byteSize: 3,
         widthPixels: 800,
@@ -118,7 +118,7 @@ describe('uploadSellerMediaAction', () => {
       ok: true,
       media: {
         id: 'media-1',
-        sourceUrl: 'https://x.public.blob.vercel-storage.com/a.jpg',
+        sourceUrl: 'https://media.example-r2.dev/a.jpg',
         contentType: 'image/webp',
         byteSize: 3,
         widthPixels: 800,
@@ -132,7 +132,7 @@ describe('uploadSellerMediaAction', () => {
       ok: true,
       media: {
         id: 'media-1',
-        sourceUrl: 'https://x.public.blob.vercel-storage.com/a.jpg',
+        sourceUrl: 'https://media.example-r2.dev/a.jpg',
         contentType: 'image/webp',
         byteSize: 3,
         widthPixels: 800,

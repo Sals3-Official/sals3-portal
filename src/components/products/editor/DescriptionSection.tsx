@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import FieldSourceBadge from './FieldSourceBadge';
+import MetaDescriptionField from './MetaDescriptionField';
 
 const DESCRIPTION_MAX = 4000;
 
@@ -10,6 +11,12 @@ type DescriptionSectionProps = {
   description: string;
   supplierDescription: string;
   onDescriptionChange: (value: string) => void;
+  productName: string;
+  metaDescription: string;
+  onMetaDescriptionChange: (value: string) => void;
+  /** True only while `metaDescription` still holds an unedited suggestion. */
+  isMetaDescriptionSuggested: boolean;
+  onSaveMetaDescription?: () => Promise<{ ok: boolean; message?: string }>;
 };
 
 /**
@@ -25,6 +32,11 @@ export default function DescriptionSection({
   description,
   supplierDescription,
   onDescriptionChange,
+  productName,
+  metaDescription,
+  onMetaDescriptionChange,
+  isMetaDescriptionSuggested,
+  onSaveMetaDescription,
 }: DescriptionSectionProps) {
   const isEmpty = description.trim() === '';
   const isUnchanged = description === supplierDescription;
@@ -93,6 +105,15 @@ export default function DescriptionSection({
           </p>
         )}
       </div>
+
+      <MetaDescriptionField
+        value={metaDescription}
+        onChange={onMetaDescriptionChange}
+        isSuggested={isMetaDescriptionSuggested}
+        productName={productName}
+        fallbackDescription={description}
+        onSave={onSaveMetaDescription}
+      />
     </div>
   );
 }

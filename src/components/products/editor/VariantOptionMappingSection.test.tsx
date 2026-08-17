@@ -38,7 +38,7 @@ describe('VariantOptionMappingSection', () => {
 
     expect(screen.getByText(/Mapped as Colour × Size/)).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: 'Save option groups' }),
+      screen.queryByRole('button', { name: 'Save Variant Matrix' }),
     ).not.toBeInTheDocument();
   });
 
@@ -80,7 +80,8 @@ describe('VariantOptionMappingSection', () => {
   it('reports what recovery actually did, in the seller’s terms', async () => {
     const onRecoverLabels = vi.fn(async () => ({
       ok: true,
-      message: 'Recovered 10 supplier labels. Option groups can now be named.',
+      message:
+        'Recovered 10 supplier labels. The Variant Matrix can now be named.',
     }));
 
     render(
@@ -151,7 +152,9 @@ describe('VariantOptionMappingSection', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save option groups' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save Variant Matrix' }),
+    );
 
     expect(onSave).not.toHaveBeenCalled();
   });
@@ -168,14 +171,16 @@ describe('VariantOptionMappingSection', () => {
       />,
     );
 
-    expect(screen.getByLabelText('Group 1 name')).toHaveValue(
+    expect(screen.getByLabelText('Option 1 name')).toHaveValue(
       'Color / Camo Pattern',
     );
-    expect(screen.getByLabelText('Group 2 name')).toHaveValue(
+    expect(screen.getByLabelText('Option 2 name')).toHaveValue(
       'Garment Size (S/M/L/XL)',
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save option groups' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save Variant Matrix' }),
+    );
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     expect(onSave).toHaveBeenCalledWith([
@@ -193,8 +198,8 @@ describe('VariantOptionMappingSection', () => {
       />,
     );
 
-    expect(screen.getByLabelText('Group 1 name')).toHaveValue('');
-    expect(screen.getByLabelText('Group 2 name')).toHaveValue('');
+    expect(screen.getByLabelText('Option 1 name')).toHaveValue('');
+    expect(screen.getByLabelText('Option 2 name')).toHaveValue('');
   });
 
   /**
@@ -216,13 +221,15 @@ describe('VariantOptionMappingSection', () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText('Group 1 name'), {
+    fireEvent.change(screen.getByLabelText('Option 1 name'), {
       target: { value: 'Colour' },
     });
-    fireEvent.change(screen.getByLabelText('Group 2 name'), {
+    fireEvent.change(screen.getByLabelText('Option 2 name'), {
       target: { value: 'Size' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save option groups' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save Variant Matrix' }),
+    );
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
 
@@ -230,7 +237,7 @@ describe('VariantOptionMappingSection', () => {
       await screen.findByText(/Mapped as Colour × Size/),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: 'Save option groups' }),
+      screen.queryByRole('button', { name: 'Save Variant Matrix' }),
     ).not.toBeInTheDocument();
   });
 
@@ -245,13 +252,15 @@ describe('VariantOptionMappingSection', () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText('Group 1 name'), {
+    fireEvent.change(screen.getByLabelText('Option 1 name'), {
       target: { value: 'Colour' },
     });
-    fireEvent.change(screen.getByLabelText('Group 2 name'), {
+    fireEvent.change(screen.getByLabelText('Option 2 name'), {
       target: { value: 'Size' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save option groups' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save Variant Matrix' }),
+    );
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     expect(onSave).toHaveBeenCalledWith([
