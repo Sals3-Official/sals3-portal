@@ -27,6 +27,7 @@ const DETAIL: CjProductDetail = {
   createrTime: '2026-08-06T10:16:49+08:00',
   materialNameEnSet: ['Plastic'],
   packingNameEnSet: ['Plastic bags'],
+  productProEnSet: ['COMMON'],
   productKeyEnSet: ['Color', 'Size'],
   isTestProduct: false,
   variants: [

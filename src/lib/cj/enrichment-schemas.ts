@@ -73,6 +73,7 @@ export const cjProductDetailSchema = z.object({
   createrTime: looseText,
   materialNameEnSet: looseStringArray,
   packingNameEnSet: looseStringArray,
+  productProEnSet: looseStringArray,
   productKeyEnSet: looseStringArray,
   variants: looseArrayOf(cjVariantSchema),
   isTestProduct: looseBoolean,

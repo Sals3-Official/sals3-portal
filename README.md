@@ -133,8 +133,12 @@ project, so `vercel env pull .env.local` above already covers it; nothing
 manual is needed in a deployed environment.
 
 Set `SALS3_STOREFRONT_API_TOKEN` to a long random value if
-`sals3-ecommerce` will read products from this portal. Use the same value in
-`sals3-ecommerce/.env.local`.
+`sals3-ecommerce` will read products or request checkout freight quotes from
+this portal. Use the same value in `sals3-ecommerce/.env.local`. The checkout
+quote route keeps CJ credentials server-side: ecommerce sends cart lines and a
+completed delivery address, then Portal resolves the published product,
+supplier connection, encrypted CJ credentials, governed CJ limiter, and current
+stock/origin evidence before calling CJ.
 
 Set `DISCOVERY_CONTROL_SECRET` to a long random value so the discovery
 control routes (see
@@ -239,6 +243,7 @@ Redis, KV, or paid cache service is used for this path.
 | `/api/storefront/products`                                 | Protected published-catalogue feed for `sals3-ecommerce` (database only)                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `/api/storefront/products/[id]`                            | Protected single-product lookup by public slug for `sals3-ecommerce`'s PDP                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `/api/storefront/categories`                               | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `/api/storefront/checkout/freight-quotes`                  | Protected checkout freight quote endpoint for `sals3-ecommerce`: validates live published cart lines, resolves CJ origin/stock evidence through the governed supplier path, calls CJ `freightCalculateTip` per package, and returns buyer-safe shipping options only                                                                                                                                                                                                                           |
 
 ## Candidate detail drawer
 
