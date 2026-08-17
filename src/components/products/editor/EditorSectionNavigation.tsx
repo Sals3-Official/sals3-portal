@@ -25,6 +25,7 @@ type SectionFlagProps = {
 /** Shorter than the section-card title, so seven labels read as a calm row instead of a wrapped paragraph. */
 const NAV_LABELS: Record<EditorSectionId, string> = {
   basic: 'Basic Information',
+  specification: 'Specification',
   description: 'Description',
   variants: 'Variants & Pricing',
   markets: 'Markets',

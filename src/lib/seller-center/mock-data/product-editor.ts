@@ -381,6 +381,11 @@ const BASE: ProductEditorFixture = {
     unlabelledVariantCount: 0,
   },
   specifications: BASE_SPECIFICATIONS,
+  // Design-preview fixtures carry no real category-attribute extraction -
+  // empty is the honest "nothing to render" state, same posture as every
+  // other design-only field in this file.
+  categoryAttributes: [],
+  categoryAttributesControlsVersion: null,
   variants: BASE_VARIANTS,
   markets: BASE_MARKETS,
   marketsNotEnabledCount: 1,

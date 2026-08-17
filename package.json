@@ -26,7 +26,9 @@
     "backup:local": "tsx scripts/backup-local-db.mts",
     "backfill:option-labels": "tsx scripts/backfill-supplier-option-labels.mts",
     "verify": "npm run lint && npm run format:check && npm run typecheck:clean && npm run build && npm run test:run && npm run test:e2e",
-    "seed:taxonomy-v1": "tsx scripts/guard-remote-db.mts seed:taxonomy-v1 && tsx scripts/seed-sals3-taxonomy-v1.mts"
+    "seed:taxonomy-v1": "tsx scripts/guard-remote-db.mts seed:taxonomy-v1 && tsx scripts/seed-sals3-taxonomy-v1.mts",
+    "extract:attribute-controls": "tsx scripts/extract-category-attribute-controls.mts",
+    "seed:attribute-controls": "tsx scripts/guard-remote-db.mts seed:attribute-controls && tsx scripts/seed-category-attribute-controls.mts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -38,6 +40,8 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",
+    "exceljs": "^4.4.0",
+    "jszip": "^3.10.1",
     "lucide-react": "^1.28.0",
     "next": "16.3.0",
     "next-themes": "^0.4.6",

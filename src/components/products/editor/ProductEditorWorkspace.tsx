@@ -16,12 +16,14 @@ import {
 import {
   canBulkEnable,
   filledSpecificationCount,
+  isCategoryAttributeUnresolved,
   issuesOfSeverity,
   publishDecision,
   sectionSeverity,
 } from '@/lib/seller-center/product-editor/derive';
 import {
   EDITOR_SECTIONS,
+  type CategoryAttributeFieldFixture,
   type EditorLifecycle,
   type EditorSectionId,
   type MediaItemFixture,
@@ -32,6 +34,7 @@ import {
 } from '@/lib/seller-center/product-editor/types';
 import BasicInformationSection from './BasicInformationSection';
 import BulkPricingDialog, { type BulkPricingMode } from './BulkPricingDialog';
+import CategoryAttributesSection from './category-attributes/CategoryAttributesSection';
 import DescriptionSection from './DescriptionSection';
 import DraftStorefrontPreview from './DraftStorefrontPreview';
 import EditorActionBar from './EditorActionBar';
@@ -139,6 +142,17 @@ type ProductEditorWorkspaceProps = {
   deleteMediaAction?: (
     input: unknown,
   ) => Promise<{ ok: true } | { ok: false; reason: string; message: string }>;
+  /**
+   * Category-driven specification save boundary. Omitted for fixture/
+   * design-preview mode, so the section still renders and explains itself
+   * but offers no save.
+   */
+  saveCategoryAttributesAction?: (
+    input: unknown,
+  ) => Promise<
+    | { ok: true; productVersion: number }
+    | { ok: false; reason: string; message: string }
+  >;
 };
 
 const EXIT_HREF = '/products/pipeline?tab=ready';
@@ -214,6 +228,35 @@ function sals3CategoryIssue(fixture: ProductEditorFixture): ReadinessIssue {
 }
 
 /**
+ * Locally re-derived, the same way `retailPriceIssue` is: a lightweight
+ * "is it filled" check the seller sees update as they type, not a re-run of
+ * `validateCategoryAttributeSubmission`'s full dropdown/custom-value/shape
+ * rules — that authoritative check happens server-side on save
+ * (`saveCategoryAttributes`) and again at publish (`publish.ts`).
+ */
+function categoryAttributeIssues(
+  fixture: ProductEditorFixture,
+  fields: CategoryAttributeFieldFixture[],
+): ReadinessIssue[] {
+  return fields
+    .filter((field) => isCategoryAttributeUnresolved(field))
+    .map((field) => ({
+      id: `${fixture.fixtureKey}-specification-${field.attributeName}`,
+      severity: field.requirement === 'REQUIRED' ? 'BLOCKER' : 'WARNING',
+      title: `${field.attributeName} is ${field.requirement === 'REQUIRED' ? 'required' : 'recommended'}`,
+      explanation:
+        field.requirement === 'REQUIRED'
+          ? `This category requires a value for "${field.attributeName}" before publishing.`
+          : `This category recommends a value for "${field.attributeName}".`,
+      affectedScope: 'Specification',
+      source: 'AUTOMATED_VALIDATION',
+      section: 'specification',
+      reasonCode: null,
+      resolution: `Fill in ${field.attributeName}.`,
+    }));
+}
+
+/**
  * The interactive shell. Everything stateful in the editor lives here and
  * nowhere else, so the section components stay presentational and the page
  * stays a Server Component.
@@ -242,6 +285,7 @@ export default function ProductEditorWorkspace({
   decideCategoryAction,
   uploadMediaAction,
   deleteMediaAction,
+  saveCategoryAttributesAction,
 }: ProductEditorWorkspaceProps) {
   const router = useRouter();
 
@@ -254,6 +298,9 @@ export default function ProductEditorWorkspace({
   const [specifications, setSpecifications] = useState<SpecificationFixture[]>(
     fixture.specifications,
   );
+  const [categoryAttributes, setCategoryAttributes] = useState<
+    CategoryAttributeFieldFixture[]
+  >(fixture.categoryAttributes);
   const [variants, setVariants] = useState<VariantFixture[]>(fixture.variants);
   const [media, setMedia] = useState<MediaItemFixture[]>(fixture.media);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
@@ -389,15 +436,17 @@ export default function ProductEditorWorkspace({
       (issue) =>
         issue.title !== 'Selling price is not resolved' &&
         issue.title !== 'Retail price is required' &&
-        issue.title !== 'No Sals3 category has been decided yet',
+        issue.title !== 'No Sals3 category has been decided yet' &&
+        issue.section !== 'specification',
     );
     const localIssues = [
       ...(hasMissingRetailPrice ? [retailPriceIssue(fixture)] : []),
       ...(hasMissingSals3Category ? [sals3CategoryIssue(fixture)] : []),
+      ...categoryAttributeIssues(fixture, categoryAttributes),
     ];
 
     return [...withoutLocalIssues, ...localIssues];
-  }, [fixture, variants]);
+  }, [fixture, variants, categoryAttributes]);
 
   const currentFixture = useMemo(
     () => ({
@@ -698,6 +747,56 @@ export default function ProductEditorWorkspace({
             : { ok: false as const, message: result.message };
         };
 
+  const updateCategoryAttribute = useCallback(
+    (attributeName: string, values: string[], isCustomValue: boolean) => {
+      setCategoryAttributes((current) =>
+        current.map((field) =>
+          field.attributeName === attributeName
+            ? { ...field, values, isCustomValue }
+            : field,
+        ),
+      );
+      touch();
+    },
+    [touch],
+  );
+
+  /**
+   * Same compare-and-set token as option mapping and category decisions —
+   * this is a real, versioned write, not local draft state. The section's
+   * own `unresolved` state re-derives from the read-model on refresh, same
+   * reasoning as `handleOptionMappingSave`.
+   */
+  const handleSaveCategoryAttributes =
+    saveCategoryAttributesAction === undefined || optionMappingTarget === null
+      ? undefined
+      : async () => {
+          // Every currently-rendered field is submitted, including an empty
+          // array for one the seller cleared. `saveCategoryAttributes`
+          // treats an attribute name absent from the payload as "untouched"
+          // and one present with no accepted value as "delete the stored
+          // row" — omitting a cleared field here left its old, now-stale
+          // value in the database after save and refresh.
+          const attributes = Object.fromEntries(
+            categoryAttributes.map((field) => [
+              field.attributeName,
+              field.values,
+            ]),
+          );
+
+          const result = await saveCategoryAttributesAction({
+            productId: optionMappingTarget.productId,
+            expectedProductVersion: optionMappingTarget.expectedProductVersion,
+            attributes,
+          });
+
+          if (result.ok) router.refresh();
+
+          return result.ok
+            ? { ok: true }
+            : { ok: false, message: result.message };
+        };
+
   /**
    * Only the product id, same reasoning as `handleRecoverLabels` — a photo
    * upload is additive, so there is no prior value to compare-and-set
@@ -874,6 +973,19 @@ export default function ProductEditorWorkspace({
               deletingPhotoId={deletingMediaId}
               sals3CategoryOptions={sals3CategoryOptions}
               onDecideSals3Category={handleDecideCategory}
+            />
+          </EditorSectionCard>
+
+          <EditorSectionCard
+            id="specification"
+            title="Specification"
+            severity={sectionSeverity(currentIssues, 'specification')}
+          >
+            <CategoryAttributesSection
+              fields={categoryAttributes}
+              controlsVersion={fixture.categoryAttributesControlsVersion}
+              onFieldChange={updateCategoryAttribute}
+              onSave={handleSaveCategoryAttributes}
             />
           </EditorSectionCard>
 

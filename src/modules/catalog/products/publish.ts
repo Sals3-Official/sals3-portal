@@ -3,6 +3,7 @@ import getDb, { type Database } from '@/lib/db/client';
 import uniqueViolationConstraint from '@/lib/db/constraint-errors';
 import {
   offerSupplierBindings,
+  productCategoryAttributeValues,
   productMediaSources,
   productOffers,
   productOptions,
@@ -13,6 +14,7 @@ import {
   providerVariantReferences,
   sals3Categories,
 } from '@/lib/db/schema';
+import { ACTIVE_ATTRIBUTE_CONTROLS_VERSION } from '@/lib/db/schema/category-attribute-controls';
 import {
   appendAuditEvent,
   type Executor,
@@ -24,6 +26,10 @@ import {
 } from '@/modules/market-config/capabilities';
 import { findActiveProfileForSeller } from '@/modules/market-config/repository';
 import { resolveProductPricing } from '@/modules/pricing/resolver';
+import {
+  resolveCategoryAttributeContract,
+  validateCategoryAttributeSubmission,
+} from '@/modules/catalog/taxonomy/attribute-contract';
 import { ensureProductCjCategory } from './category-mirror';
 import { deriveOptionSplit } from './option-split';
 import {
@@ -125,10 +131,56 @@ async function optionMappingRequiredButMissing(
   return mapped.length === 0;
 }
 
+/**
+ * Whether this product's resolved category has a REQUIRED specification
+ * (Product Editor's Specification section) with no valid stored value.
+ *
+ * Mirrors `optionMappingRequiredButMissing`'s conditional posture: a category
+ * with no attribute controls for the active `controlsVersion` yet is not a
+ * refusal - `resolveCategoryAttributeContract` reporting
+ * `ATTRIBUTE_CONTROLS_UNAVAILABLE` means nothing is required, not that
+ * everything is. `validateCategoryAttributeSubmission` is the single source
+ * of truth for what "missing" means (blank counts, an unrecognised
+ * dropdown value with no custom-value permission counts) - this function
+ * re-runs it rather than approximating.
+ *
+ * Reads only. No CJ call, no points.
+ */
+async function requiredCategoryAttributesMissing(
+  executor: Executor,
+  productId: string,
+  categoryCode: string,
+): Promise<boolean> {
+  const contract = await resolveCategoryAttributeContract(executor, {
+    sals3CategoryCode: categoryCode,
+    controlsVersion: ACTIVE_ATTRIBUTE_CONTROLS_VERSION,
+  });
+
+  if (contract.outcome !== 'CATEGORY_ATTRIBUTE_CONTRACT') return false;
+
+  const storedRows = await executor
+    .select({
+      attributeName: productCategoryAttributeValues.attributeName,
+      values: productCategoryAttributeValues.values,
+    })
+    .from(productCategoryAttributeValues)
+    .where(eq(productCategoryAttributeValues.productId, productId));
+
+  const payload = Object.fromEntries(
+    storedRows.map((row) => [row.attributeName, row.values]),
+  );
+
+  return (
+    validateCategoryAttributeSubmission(contract, payload)
+      .missingRequiredAttributes.length > 0
+  );
+}
+
 export type PublishRefusal =
   | 'NO_ACTIVE_VARIANT'
   | 'CATEGORY_UNMAPPED'
   | 'OPTIONS_UNMAPPED'
+  | 'REQUIRED_SPECIFICATION_MISSING'
   | 'NO_APPROVED_MEDIA'
   | 'PRICING_UNRESOLVED'
   | 'RETAIL_BELOW_SUPPLIER_COST'
@@ -485,6 +537,12 @@ export default async function publishProduct(input: {
 
     if (await optionMappingRequiredButMissing(tx, input.productId)) {
       return { ok: false, reason: 'OPTIONS_UNMAPPED' };
+    }
+
+    if (
+      await requiredCategoryAttributesMissing(tx, input.productId, categoryCode)
+    ) {
+      return { ok: false, reason: 'REQUIRED_SPECIFICATION_MISSING' };
     }
 
     // A published supplier offer needs a persisted provider variant reference.

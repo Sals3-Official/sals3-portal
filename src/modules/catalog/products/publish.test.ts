@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  categoryAttributeControls,
+  productCategoryAttributeValues,
   productMediaSources,
   productOptions,
   productRevisions,
@@ -82,6 +84,12 @@ type Overrides = {
   revisions?: Record<string, unknown>[];
   /** `product_options` rows. Non-empty means the seller already mapped axes. */
   options?: Record<string, unknown>[];
+  /** `sals3_categories` row `findCategoryByCode` resolves to. `undefined` means "not found" (contract unavailable). */
+  attributeCategoryRow?: Record<string, unknown>;
+  /** `category_attribute_controls` rows for the resolved category. Empty means no controls exist yet. */
+  attributeControls?: Record<string, unknown>[];
+  /** `product_category_attribute_values` rows already stored for this product. */
+  attributeValues?: Record<string, unknown>[];
 };
 
 function productRow(overrides: Record<string, unknown> = {}) {
@@ -147,6 +155,28 @@ function transactionalDb(overrides: Overrides = {}) {
           },
         ]
       );
+    }
+
+    // `findCategoryByCode` reads this table directly (not through the
+    // `products` left-join above, which is already flattened onto the fixture
+    // row). Absent by default so every existing test's category resolves to
+    // `CATEGORY_NOT_FOUND` and the specification gate never engages.
+    if (table === sals3Categories) {
+      return overrides.attributeCategoryRow === undefined
+        ? []
+        : [overrides.attributeCategoryRow];
+    }
+
+    // `findAttributeControlsByCategoryCode` selects `{ control: ... }`, so the
+    // fixture rows must be wrapped the same way.
+    if (table === categoryAttributeControls) {
+      return (overrides.attributeControls ?? []).map((control) => ({
+        control,
+      }));
+    }
+
+    if (table === productCategoryAttributeValues) {
+      return overrides.attributeValues ?? [];
     }
 
     return [];
@@ -791,5 +821,93 @@ describe('publishProduct', () => {
       }),
     );
     expect(sals3Categories).toBeDefined();
+  });
+});
+
+describe('publishProduct — required specification gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findActiveProfileForSeller.mockResolvedValue(PROFILE);
+    mocks.findAuthorizedDestination.mockReturnValue(DESTINATION);
+    mocks.isAuthorizedSellingCurrency.mockReturnValue(true);
+    mocks.resolveSellerMarketCapabilities.mockReturnValue({
+      capabilityVersion: 'seller-market-capability-v2-au-ph-usd-publishable',
+      destinations: [DESTINATION],
+    });
+    mocks.resolveProductPricing.mockResolvedValue(PRICED);
+    mocks.projectSupplierMedia.mockResolvedValue({
+      inserted: 1,
+      skipped: 0,
+      source: 'DETAIL_EVIDENCE',
+    });
+    mocks.ensureProductCjCategory.mockResolvedValue(null);
+  });
+
+  const CATEGORY_ROW = {
+    id: 'cat-1',
+    code: 'CAT-APP-100412',
+    path: 'Apparel & Accessories',
+  };
+
+  const REQUIRED_CONTROL = {
+    attributeName: 'Fabric Material',
+    requirementLevel: 'REQUIRED',
+    inputControlType: 'TEXT_INPUT',
+    allowedValues: [],
+    allowCustomValue: true,
+    allowMultipleValues: false,
+    sellerHelpText: null,
+    seoVisibility: 'PDP_VISIBLE',
+    aeoGeoVisibility: 'ATTRIBUTE_CONTEXT_ONLY',
+    sourceWorkbook: 'universal_category_variation_taxonomy_final_clean.xlsx',
+    sourceSheet: 'Category_Attribute_Controls',
+    sourceChecksum: 'checksum-abc',
+  };
+
+  it('has no effect when the category has no attribute controls for the active version', async () => {
+    const { db } = transactionalDb({ attributeCategoryRow: CATEGORY_ROW });
+
+    // No `attributeControls` override — the category resolves, but has no
+    // controls, so `resolveCategoryAttributeContract` reports
+    // `ATTRIBUTE_CONTROLS_UNAVAILABLE`, which must never block a publish.
+    expect(await publish(db)).toMatchObject({ ok: true });
+  });
+
+  it('refuses to publish while a REQUIRED specification has no valid stored value', async () => {
+    const { db } = transactionalDb({
+      attributeCategoryRow: CATEGORY_ROW,
+      attributeControls: [REQUIRED_CONTROL],
+      attributeValues: [],
+    });
+
+    expect(await publish(db)).toEqual({
+      ok: false,
+      reason: 'REQUIRED_SPECIFICATION_MISSING',
+    });
+  });
+
+  it('refuses when the stored value is blank, not only when it is absent', async () => {
+    const { db } = transactionalDb({
+      attributeCategoryRow: CATEGORY_ROW,
+      attributeControls: [REQUIRED_CONTROL],
+      attributeValues: [{ attributeName: 'Fabric Material', values: ['   '] }],
+    });
+
+    expect(await publish(db)).toEqual({
+      ok: false,
+      reason: 'REQUIRED_SPECIFICATION_MISSING',
+    });
+  });
+
+  it('publishes once the REQUIRED specification has a valid stored value', async () => {
+    const { db } = transactionalDb({
+      attributeCategoryRow: CATEGORY_ROW,
+      attributeControls: [REQUIRED_CONTROL],
+      attributeValues: [
+        { attributeName: 'Fabric Material', values: ['Cotton'] },
+      ],
+    });
+
+    expect(await publish(db)).toMatchObject({ ok: true });
   });
 });
