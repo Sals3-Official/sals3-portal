@@ -1,9 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import getDb, { isDatabaseConfigured } from '@/lib/db/client';
-import {
-  runAttributeControlsDdl,
-  seedAttributeControlsData,
-} from '@/modules/catalog/taxonomy/migrate-attribute-controls';
 
 /**
  * POST /api/internal/catalog/taxonomy/migrate-attribute-controls - one-time
@@ -21,8 +17,15 @@ import {
  * the tables did not exist at all, so `/listings` (every call to
  * `listCatalogueProductsForSeller`) failed outright until this ran.
  *
- * Idempotent - see `runAttributeControlsDdl`/`seedAttributeControlsData`'s
- * own doc comments. Safe to call more than once.
+ * Idempotent - see `migrateAttributeControls` and the step functions it
+ * calls for the details. Safe to call more than once. Fails closed (HTTP
+ * 409, nothing written) if the seed references a category code not present
+ * in `sals3_categories`, rather than silently seeding a partial data set.
+ *
+ * The migration module (and the ~37MB seed reference data it imports) is
+ * loaded via a dynamic `import()` below, after the auth and
+ * database-configured checks, so an unauthorized or misconfigured-request
+ * never pays that module's load cost.
  */
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
@@ -55,11 +58,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const db = getDb();
-    const ddl = await runAttributeControlsDdl(db);
-    const seed = await seedAttributeControlsData(db);
+    // Loaded only after auth + db-configured checks pass, so an
+    // unauthorized or misconfigured-environment request never pays the cost
+    // of importing this module's ~37MB seed reference data.
+    const { migrateAttributeControls } =
+      await import('@/modules/catalog/taxonomy/migrate-attribute-controls');
+    const result = await migrateAttributeControls(getDb());
 
-    return NextResponse.json({ ok: true, ddl, seed }, { headers: NO_STORE });
+    if (!result.ok) {
+      return NextResponse.json(result, { status: 409, headers: NO_STORE });
+    }
+
+    return NextResponse.json(result, { headers: NO_STORE });
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('[portal] attribute-controls migration failed', {

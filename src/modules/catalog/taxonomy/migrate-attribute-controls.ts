@@ -8,6 +8,23 @@ import { sals3Categories } from '@/lib/db/schema/pricing-policy';
 import attributeControlsExtract from '@/lib/db/seed-data/sals3-category-attribute-controls-v1.json';
 
 /**
+ * `drizzle/meta/_journal.json`'s entry for tag `0020_shocking_hedge_knight`
+ * (`when`) and the sha256 of `drizzle/0020_shocking_hedge_knight.sql`'s raw
+ * file content, computed exactly the way `drizzle-orm`'s own
+ * `readMigrationFiles()` does it
+ * (`crypto.createHash('sha256').update(fs.readFileSync(path).toString()).digest('hex')`
+ * - see `node_modules/drizzle-orm/migrator.cjs`). Hard-coded rather than
+ * read from disk at runtime so this endpoint never depends on the migration
+ * file being present in the deployed serverless bundle. Re-derive with:
+ *   node -e "console.log(require('crypto').createHash('sha256').update(require('fs').readFileSync('drizzle/0020_shocking_hedge_knight.sql').toString()).digest('hex'))"
+ * if this migration is ever regenerated (only then - this value must never
+ * change for the already-shipped 0020 migration).
+ */
+const MIGRATION_0020_CREATED_AT = 1786935292882;
+const MIGRATION_0020_HASH =
+  'ea5a5929e0f823e49518609ae3b3af315245ff38caa6eb0d4c183ed2f7b70d52';
+
+/**
  * One-time, idempotent DDL + seed for the category-attribute-controls
  * feature (`category_attribute_dictionary`, `category_attribute_controls`,
  * `product_category_attribute_values`) - reachable only through
@@ -31,7 +48,9 @@ import attributeControlsExtract from '@/lib/db/seed-data/sals3-category-attribut
  * of this applied.
  */
 
-const DDL_STATEMENTS: string[] = [
+// Exported so tests can derive `runAttributeControlsDdl`'s expected call
+// count instead of hard-coding it.
+export const DDL_STATEMENTS: string[] = [
   `CREATE TYPE "public"."attribute_aeo_geo_visibility" AS ENUM('ANSWER_SUMMARY_USEFUL', 'ATTRIBUTE_CONTEXT_ONLY')`,
   `CREATE TYPE "public"."attribute_compliance_review_flag" AS ENUM('STANDARD_CATALOG_REVIEW', 'WARRANTY_TERMS_COMPLIANCE', 'FOOD_SAFETY_REGISTRATION', 'REGULATED_HEALTH_SAFETY_CLAIM', 'EXPIRATION_AND_SHELF_LIFE', 'COSMETIC_REGULATORY_NOTIFICATION', 'VEHICLE_FITMENT_CRITICAL', 'CHILD_SAFETY_CERTIFICATION', 'LEGAL_IDENTIFIER_VERIFICATION', 'DIGITAL_LICENSE_VALIDATION', 'DIGITAL_DELIVERY_REVIEW')`,
   `CREATE TYPE "public"."attribute_data_type" AS ENUM('STRING', 'STRING_ARRAY')`,
@@ -147,6 +166,57 @@ export async function runAttributeControlsDdl(
   return { statementsRun, statementsSkippedAlreadyExists };
 }
 
+export type MarkMigration0020AppliedResult = {
+  createdAt: number;
+  inserted: boolean;
+};
+
+/**
+ * Records migration `0020_shocking_hedge_knight` as applied in
+ * `drizzle.__drizzle_migrations`, the table `drizzle-orm`'s own migrator
+ * reads/writes (see `node_modules/drizzle-orm/pg-core/dialect.cjs`). Without
+ * this, a later `npm run db:migrate` against this database has no record of
+ * 0020 and will try to run it again, failing on objects `runAttributeControlsDdl`
+ * already created.
+ *
+ * Idempotent by construction: only inserts when no row with this exact
+ * `created_at` exists yet, so calling this more than once never duplicates
+ * the record. Values are fixed constants, not request input, so raw SQL
+ * here carries no injection risk.
+ */
+export async function markMigration0020Applied(
+  db: Database,
+): Promise<MarkMigration0020AppliedResult> {
+  await db.execute(sql.raw(`CREATE SCHEMA IF NOT EXISTS "drizzle"`));
+  await db.execute(
+    sql.raw(
+      `CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations" (
+        id SERIAL PRIMARY KEY,
+        hash text NOT NULL,
+        created_at bigint
+      )`,
+    ),
+  );
+
+  const existing = (await db.execute(
+    sql.raw(
+      `SELECT id FROM "drizzle"."__drizzle_migrations" WHERE created_at = ${MIGRATION_0020_CREATED_AT} LIMIT 1`,
+    ),
+  )) as unknown as unknown[];
+
+  if (existing.length > 0) {
+    return { createdAt: MIGRATION_0020_CREATED_AT, inserted: false };
+  }
+
+  await db.execute(
+    sql.raw(
+      `INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at") VALUES ('${MIGRATION_0020_HASH}', ${MIGRATION_0020_CREATED_AT})`,
+    ),
+  );
+
+  return { createdAt: MIGRATION_0020_CREATED_AT, inserted: true };
+}
+
 type DictionaryEntry = {
   attributeName: string;
   canonicalAttributeKey: string;
@@ -182,14 +252,24 @@ type ExtractionOutput = {
 
 const extract = attributeControlsExtract as unknown as ExtractionOutput;
 
-export type SeedAttributeControlsDataResult = {
-  controlsVersion: string;
-  dictionaryInExtract: number;
-  dictionaryInserted: number;
-  controlsInExtract: number;
-  controlsInserted: number;
-  missingCategoryCodes: string[];
-};
+/** How many missing category codes to echo back in a refusal - enough to diagnose, never the full list. */
+const MISSING_CATEGORY_CODES_SAMPLE_SIZE = 20;
+
+export type SeedAttributeControlsDataResult =
+  | {
+      ok: true;
+      controlsVersion: string;
+      dictionaryInExtract: number;
+      dictionaryInserted: number;
+      controlsInExtract: number;
+      controlsInserted: number;
+    }
+  | {
+      ok: false;
+      reason: 'missing-category-codes';
+      missingCategoryCodeCount: number;
+      missingCategoryCodesSample: string[];
+    };
 
 /**
  * Additive-only seed of the frozen extraction into
@@ -200,13 +280,39 @@ export type SeedAttributeControlsDataResult = {
  * appropriate for a CLI tool a person runs deliberately, not for a
  * break-glass endpoint that must tolerate being called twice).
  *
- * Never touches `sals3_categories` - a category code in the extract with no
- * matching row is reported in `missingCategoryCodes` and its control rows
- * are skipped, never invented as a new category.
+ * Never touches `sals3_categories`. If the extract references a category
+ * code with no matching row, this fails closed - it inserts nothing into
+ * either table - rather than silently seeding a partial data set that a
+ * caller could mistake for a complete migration.
  */
 export async function seedAttributeControlsData(
   db: Database,
 ): Promise<SeedAttributeControlsDataResult> {
+  const categories = await db
+    .select({ id: sals3Categories.id, code: sals3Categories.code })
+    .from(sals3Categories);
+  const categoryIdByCode = new Map(categories.map((row) => [row.code, row.id]));
+
+  const missingCategoryCodes = [
+    ...new Set(
+      extract.controls
+        .map((row) => row.categoryCode)
+        .filter((code) => !categoryIdByCode.has(code)),
+    ),
+  ];
+
+  if (missingCategoryCodes.length > 0) {
+    return {
+      ok: false,
+      reason: 'missing-category-codes',
+      missingCategoryCodeCount: missingCategoryCodes.length,
+      missingCategoryCodesSample: missingCategoryCodes.slice(
+        0,
+        MISSING_CATEGORY_CODES_SAMPLE_SIZE,
+      ),
+    };
+  }
+
   const dictionaryValues = extract.dictionary.map((entry) => ({
     controlsVersion: extract.controlsVersion,
     attributeName: entry.attributeName,
@@ -235,44 +341,29 @@ export async function seedAttributeControlsData(
     })
     .returning({ id: categoryAttributeDictionary.id });
 
-  const categories = await db
-    .select({ id: sals3Categories.id, code: sals3Categories.code })
-    .from(sals3Categories);
-  const categoryIdByCode = new Map(categories.map((row) => [row.code, row.id]));
-
-  const missingCategoryCodes = [
-    ...new Set(
-      extract.controls
-        .map((row) => row.categoryCode)
-        .filter((code) => !categoryIdByCode.has(code)),
-    ),
-  ];
-
-  const controlValues = extract.controls
-    .filter((row) => categoryIdByCode.has(row.categoryCode))
-    .map((row) => ({
-      categoryId: categoryIdByCode.get(row.categoryCode)!,
-      controlsVersion: extract.controlsVersion,
-      attributeName: row.attributeName,
-      requirementLevel:
-        row.requirementLevel as (typeof categoryAttributeControls.$inferInsert)['requirementLevel'],
-      inputControlType:
-        row.inputControlType as (typeof categoryAttributeControls.$inferInsert)['inputControlType'],
-      allowedValues: row.allowedValues,
-      allowCustomValue: row.allowCustomValue,
-      allowMultipleValues: row.allowMultipleValues,
-      sellerHelpText: row.sellerHelpText,
-      seoVisibility:
-        row.seoVisibility as (typeof categoryAttributeControls.$inferInsert)['seoVisibility'],
-      aeoGeoVisibility:
-        row.aeoGeoVisibility as (typeof categoryAttributeControls.$inferInsert)['aeoGeoVisibility'],
-      complianceReviewFlag:
-        row.complianceReviewFlag as (typeof categoryAttributeControls.$inferInsert)['complianceReviewFlag'],
-      sourceBasis: row.sourceBasis,
-      sourceWorkbook: extract.source.workbook,
-      sourceSheet: 'Category_Attribute_Controls',
-      sourceChecksum: extract.source.sha256,
-    }));
+  const controlValues = extract.controls.map((row) => ({
+    categoryId: categoryIdByCode.get(row.categoryCode)!,
+    controlsVersion: extract.controlsVersion,
+    attributeName: row.attributeName,
+    requirementLevel:
+      row.requirementLevel as (typeof categoryAttributeControls.$inferInsert)['requirementLevel'],
+    inputControlType:
+      row.inputControlType as (typeof categoryAttributeControls.$inferInsert)['inputControlType'],
+    allowedValues: row.allowedValues,
+    allowCustomValue: row.allowCustomValue,
+    allowMultipleValues: row.allowMultipleValues,
+    sellerHelpText: row.sellerHelpText,
+    seoVisibility:
+      row.seoVisibility as (typeof categoryAttributeControls.$inferInsert)['seoVisibility'],
+    aeoGeoVisibility:
+      row.aeoGeoVisibility as (typeof categoryAttributeControls.$inferInsert)['aeoGeoVisibility'],
+    complianceReviewFlag:
+      row.complianceReviewFlag as (typeof categoryAttributeControls.$inferInsert)['complianceReviewFlag'],
+    sourceBasis: row.sourceBasis,
+    sourceWorkbook: extract.source.workbook,
+    sourceSheet: 'Category_Attribute_Controls',
+    sourceChecksum: extract.source.sha256,
+  }));
 
   const CHUNK = 500;
   let controlsInserted = 0;
@@ -297,11 +388,40 @@ export async function seedAttributeControlsData(
   }
 
   return {
+    ok: true,
     controlsVersion: extract.controlsVersion,
     dictionaryInExtract: extract.dictionary.length,
     dictionaryInserted: insertedDictionary.length,
     controlsInExtract: extract.controls.length,
     controlsInserted,
-    missingCategoryCodes,
   };
+}
+
+export type MigrateAttributeControlsResult =
+  | {
+      ok: true;
+      ddl: MigrateAttributeControlsDdlResult;
+      migrationRecord: MarkMigration0020AppliedResult;
+      seed: Extract<SeedAttributeControlsDataResult, { ok: true }>;
+    }
+  | Extract<SeedAttributeControlsDataResult, { ok: false }>;
+
+/**
+ * Orchestrates the full break-glass run in the order that matters: DDL, then
+ * marking `0020` applied, then the seed. Each step is a plain sequential
+ * `await` with no `try`/`catch` swallowing in between, so if the DDL or the
+ * migration-record step throws, this function throws too and the seed step
+ * below it never runs - a caller does not need to re-implement that
+ * ordering guarantee.
+ */
+export async function migrateAttributeControls(
+  db: Database,
+): Promise<MigrateAttributeControlsResult> {
+  const ddl = await runAttributeControlsDdl(db);
+  const migrationRecord = await markMigration0020Applied(db);
+  const seed = await seedAttributeControlsData(db);
+
+  if (!seed.ok) return seed;
+
+  return { ok: true, ddl, migrationRecord, seed };
 }

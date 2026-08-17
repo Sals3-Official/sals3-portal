@@ -7,17 +7,13 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 vi.mock('@/modules/catalog/taxonomy/migrate-attribute-controls', () => ({
-  runAttributeControlsDdl: vi.fn(),
-  seedAttributeControlsData: vi.fn(),
+  migrateAttributeControls: vi.fn(),
 }));
 
 /* eslint-disable import/first */
 import { NextRequest } from 'next/server';
 import { isDatabaseConfigured } from '@/lib/db/client';
-import {
-  runAttributeControlsDdl,
-  seedAttributeControlsData,
-} from '@/modules/catalog/taxonomy/migrate-attribute-controls';
+import { migrateAttributeControls } from '@/modules/catalog/taxonomy/migrate-attribute-controls';
 import { POST } from './route';
 /* eslint-enable import/first */
 
@@ -27,14 +23,28 @@ const SECRET = 'cron-secret-1';
 const URL =
   'https://portal.example.com/api/internal/catalog/taxonomy/migrate-attribute-controls';
 
-const DDL_RESULT = { statementsRun: 15, statementsSkippedAlreadyExists: 0 };
-const SEED_RESULT = {
-  controlsVersion: 'sals3-attribute-controls-v1',
-  dictionaryInExtract: 149,
-  dictionaryInserted: 149,
-  controlsInExtract: 53625,
-  controlsInserted: 53625,
-  missingCategoryCodes: [],
+const SUCCESS_RESULT = {
+  ok: true,
+  ddl: { statementsRun: 19, statementsSkippedAlreadyExists: 0 },
+  migrationRecord: { createdAt: 1786935292882, inserted: true },
+  seed: {
+    ok: true,
+    controlsVersion: 'sals3-attribute-controls-v1',
+    dictionaryInExtract: 149,
+    dictionaryInserted: 149,
+    controlsInExtract: 53625,
+    controlsInserted: 53625,
+  },
+};
+
+const MISSING_CATEGORY_CODES_RESULT = {
+  ok: false,
+  reason: 'missing-category-codes',
+  missingCategoryCodeCount: 2,
+  missingCategoryCodesSample: [
+    'CAT-GGL-DOES-NOT-EXIST-1',
+    'CAT-GGL-DOES-NOT-EXIST-2',
+  ],
 };
 
 function request(headers: Record<string, string> = {}): NextRequest {
@@ -48,8 +58,7 @@ function authorized(): NextRequest {
 beforeEach(() => {
   process.env.CRON_SECRET = SECRET;
   asMock(isDatabaseConfigured).mockReturnValue(true);
-  asMock(runAttributeControlsDdl).mockResolvedValue(DDL_RESULT);
-  asMock(seedAttributeControlsData).mockResolvedValue(SEED_RESULT);
+  asMock(migrateAttributeControls).mockResolvedValue(SUCCESS_RESULT);
 });
 
 afterEach(() => {
@@ -64,8 +73,7 @@ describe('POST /api/internal/catalog/taxonomy/migrate-attribute-controls', () =>
 
     expect(missing.status).toBe(401);
     expect(wrong.status).toBe(401);
-    expect(runAttributeControlsDdl).not.toHaveBeenCalled();
-    expect(seedAttributeControlsData).not.toHaveBeenCalled();
+    expect(migrateAttributeControls).not.toHaveBeenCalled();
   });
 
   it('refuses when the control secret is unset rather than falling open', async () => {
@@ -74,7 +82,7 @@ describe('POST /api/internal/catalog/taxonomy/migrate-attribute-controls', () =>
     const response = await POST(authorized());
 
     expect(response.status).toBe(401);
-    expect(runAttributeControlsDdl).not.toHaveBeenCalled();
+    expect(migrateAttributeControls).not.toHaveBeenCalled();
   });
 
   it('reports no-database-configured instead of attempting a write', async () => {
@@ -83,33 +91,31 @@ describe('POST /api/internal/catalog/taxonomy/migrate-attribute-controls', () =>
     const response = await POST(authorized());
 
     expect(response.status).toBe(503);
-    expect(runAttributeControlsDdl).not.toHaveBeenCalled();
-    expect(seedAttributeControlsData).not.toHaveBeenCalled();
+    expect(migrateAttributeControls).not.toHaveBeenCalled();
   });
 
-  it('runs the DDL before the seed, and returns both results on an authorized request', async () => {
+  it('runs the migration and returns its result on an authorized request', async () => {
     const response = await POST(authorized());
     const body: unknown = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ ok: true, ddl: DDL_RESULT, seed: SEED_RESULT });
+    expect(body).toEqual(SUCCESS_RESULT);
   });
 
-  it('returns 500 without leaking internal detail when the DDL step throws', async () => {
-    asMock(runAttributeControlsDdl).mockRejectedValue(
-      new Error('connection terminated unexpectedly'),
+  it('returns 409 and writes nothing when the seed refuses due to missing category codes', async () => {
+    asMock(migrateAttributeControls).mockResolvedValue(
+      MISSING_CATEGORY_CODES_RESULT,
     );
 
     const response = await POST(authorized());
     const body: unknown = await response.json();
 
-    expect(response.status).toBe(500);
-    expect(seedAttributeControlsData).not.toHaveBeenCalled();
-    expect(JSON.stringify(body)).not.toContain('connection terminated');
+    expect(response.status).toBe(409);
+    expect(body).toEqual(MISSING_CATEGORY_CODES_RESULT);
   });
 
-  it('returns 500 without leaking internal detail when the seed step throws', async () => {
-    asMock(seedAttributeControlsData).mockRejectedValue(
+  it('returns 500 without leaking internal detail when the migration throws', async () => {
+    asMock(migrateAttributeControls).mockRejectedValue(
       new Error('connection terminated unexpectedly'),
     );
 
