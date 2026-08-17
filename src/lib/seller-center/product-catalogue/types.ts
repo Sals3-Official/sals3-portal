@@ -385,6 +385,48 @@ export type CatalogueProductFixture = {
    */
   categoryPresetVariationAttributes?: [string | null, string | null];
   /**
+   * Category-driven attribute controls (dropdowns, multi-selects, text/
+   * number/measurement/boolean/date fields) for this product's resolved
+   * category, from `category_attribute_controls`. Empty when the category
+   * has no controls for the active `categoryAttributeControlsVersion` yet -
+   * this is not an error, it means the Specification section has nothing to
+   * render for this product.
+   */
+  categoryAttributeControls?: ReadonlyArray<{
+    attributeName: string;
+    requirementLevel: 'REQUIRED' | 'RECOMMENDED' | 'OPTIONAL';
+    inputControlType:
+      | 'SINGLE_SELECT_DROPDOWN'
+      | 'MULTI_SELECT_DROPDOWN'
+      | 'TEXT_INPUT'
+      | 'NUMBER_INPUT'
+      | 'MEASUREMENT_INPUT'
+      | 'BOOLEAN_TOGGLE'
+      | 'DATE_PICKER';
+    allowedValues: readonly string[];
+    allowCustomValue: boolean;
+    allowMultipleValues: boolean;
+    sellerHelpText: string | null;
+    /** Metadata only - not yet surfaced as PDP structured data. */
+    seoVisibility:
+      'PDP_VISIBLE' | 'STRUCTURED_DATA_ELIGIBLE' | 'ATTRIBUTE_CONTEXT_ONLY';
+    aeoGeoVisibility: 'ANSWER_SUMMARY_USEFUL' | 'ATTRIBUTE_CONTEXT_ONLY';
+  }>;
+  /** Which extraction `categoryAttributeControls` was resolved against. `undefined` when there are none. */
+  categoryAttributeControlsVersion?: string;
+  /** Provenance of `categoryAttributeControls` - the same for every row in one category, so carried once. */
+  categoryAttributeControlsSource?: {
+    workbook: string;
+    sheet: string;
+    checksum: string;
+  };
+  /** The seller's already-stored answers, keyed by attribute name. */
+  categoryAttributeValues?: ReadonlyArray<{
+    attributeName: string;
+    values: readonly string[];
+    isCustomValue: boolean;
+  }>;
+  /**
    * The most recent supplier evidence Sals3 captured — the other half of the
    * source-change diff.
    *

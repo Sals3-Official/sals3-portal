@@ -72,7 +72,13 @@ export type FieldSource = 'SUPPLIER' | 'SELLER' | 'INFERRED' | 'NOT_PROVIDED';
 export type IssueSeverity = 'BLOCKER' | 'WARNING' | 'SUGGESTION';
 
 export type EditorSectionId =
-  'basic' | 'description' | 'variants' | 'markets' | 'specs' | 'review';
+  | 'basic'
+  | 'specification'
+  | 'description'
+  | 'variants'
+  | 'markets'
+  | 'specs'
+  | 'review';
 
 export type IssueSource =
   'AUTOMATED_VALIDATION' | 'SUPPLIER_CHANGE' | 'SUGGESTION';
@@ -202,6 +208,39 @@ export type SpecificationFixture = {
   unresolved: boolean;
 };
 
+export type CategoryAttributeInputControlType =
+  | 'SINGLE_SELECT_DROPDOWN'
+  | 'MULTI_SELECT_DROPDOWN'
+  | 'TEXT_INPUT'
+  | 'NUMBER_INPUT'
+  | 'MEASUREMENT_INPUT'
+  | 'BOOLEAN_TOGGLE'
+  | 'DATE_PICKER';
+
+/**
+ * One category-driven attribute control, already joined with whatever the
+ * seller has stored for it (the Specification section - distinct from
+ * `SpecificationFixture` above, which is the unrelated, read-only Supplier
+ * Details tab).
+ *
+ * `unresolved` follows the same rule as `SpecificationFixture.unresolved`:
+ * `REQUIRED` empty is a hard blocker, `RECOMMENDED` empty is a warning,
+ * `OPTIONAL` empty is neither - reused by `severityForUnresolvedSpecification`
+ * conceptually, not by import, since the two fixtures are different shapes.
+ */
+export type CategoryAttributeFieldFixture = {
+  attributeName: string;
+  requirement: SpecificationRequirement;
+  inputControlType: CategoryAttributeInputControlType;
+  allowedValues: readonly string[];
+  allowCustomValue: boolean;
+  allowMultipleValues: boolean;
+  sellerHelpText: string | null;
+  values: readonly string[];
+  isCustomValue: boolean;
+  unresolved: boolean;
+};
+
 /**
  * One supplier-side change since the candidate was first evaluated. The
  * two impact fields are kept separate on purpose (ADR-007): a supplier
@@ -298,6 +337,14 @@ export type ProductEditorFixture = {
   sourceChangesCapturedAt: string | null;
   specifications: SpecificationFixture[];
   /**
+   * Category-driven attribute controls for the Specification section.
+   * Empty when the resolved category has no controls for the active
+   * extraction yet - render nothing, not a placeholder.
+   */
+  categoryAttributes: CategoryAttributeFieldFixture[];
+  /** Which extraction `categoryAttributes` was resolved against. `null` when there are none. */
+  categoryAttributesControlsVersion: string | null;
+  /**
    * What the supplier's concatenated variant labels encode, and whether a seller
    * has already named it.
    *
@@ -392,6 +439,7 @@ export const EDITOR_SECTIONS: ReadonlyArray<{
   label: string;
 }> = [
   { id: 'basic', label: 'Basic Information' },
+  { id: 'specification', label: 'Specification' },
   { id: 'description', label: 'Description' },
   { id: 'variants', label: 'Variants & Pricing' },
   { id: 'markets', label: 'Markets' },

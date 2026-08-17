@@ -6,9 +6,11 @@ import {
   within,
 } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import saveCategoryAttributesAction from '@/app/(portal)/listings/category-attributes-actions';
 import { publishProductAction } from '@/app/(portal)/listings/publish-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
 import type {
+  CategoryAttributeFieldFixture,
   EditorLifecycle,
   MediaItemFixture,
   ProductEditorFixture,
@@ -46,6 +48,11 @@ vi.mock('@/app/(portal)/listings/category-mapping-actions', () => ({
 vi.mock('@/app/(portal)/listings/media-actions', () => ({
   uploadSellerMediaAction: vi.fn(),
   deleteSellerMediaAction: vi.fn(),
+}));
+
+// Same reasoning: `save-category-attributes.ts` reaches the server-only db client too.
+vi.mock('@/app/(portal)/listings/category-attributes-actions', () => ({
+  default: vi.fn(),
 }));
 
 function fixture(key: string): ProductEditorFixture {
@@ -208,6 +215,158 @@ describe('Product Editor - required vs recommended attributes', () => {
       screen.getByText(/Publishing is not blocked, and the attribute stays/i),
     ).toBeInTheDocument();
     expect(publishButton()).toBeEnabled();
+  });
+});
+
+function categoryAttributeField(
+  overrides: Partial<CategoryAttributeFieldFixture>,
+): CategoryAttributeFieldFixture {
+  return {
+    attributeName: 'Brand',
+    requirement: 'REQUIRED',
+    inputControlType: 'TEXT_INPUT',
+    allowedValues: [],
+    allowCustomValue: true,
+    allowMultipleValues: false,
+    sellerHelpText: null,
+    values: ['Royal Canin'],
+    isCustomValue: false,
+    unresolved: false,
+    ...overrides,
+  };
+}
+
+describe('Product Editor - category-driven Specification section', () => {
+  it('sits between Basic Information and Description in the section nav', () => {
+    renderEditor('pass');
+
+    const nav = screen.getByRole('navigation', { name: 'Editor sections' });
+    const labels = within(nav)
+      .getAllByRole('button')
+      .map((button) => button.textContent);
+    const basicIndex = labels.findIndex((text) =>
+      text?.includes('Basic Information'),
+    );
+    const specIndex = labels.findIndex((text) =>
+      text?.includes('Specification'),
+    );
+    const descriptionIndex = labels.findIndex((text) =>
+      text?.includes('Description'),
+    );
+
+    expect(basicIndex).toBeLessThan(specIndex);
+    expect(specIndex).toBeLessThan(descriptionIndex);
+  });
+
+  /**
+   * Regression: `saveCategoryAttributes` treats an attribute name absent
+   * from the submitted payload as "leave whatever is stored alone." Before
+   * this fix, `handleSaveCategoryAttributes` only submitted fields with a
+   * non-empty local value, so clearing a previously saved field never told
+   * the server anything happened — the old value survived the save.
+   */
+  it('submits a cleared field as an empty array rather than omitting it', async () => {
+    const resolved = fixture('pass');
+
+    vi.mocked(saveCategoryAttributesAction).mockResolvedValue({
+      ok: true,
+      productVersion: 8,
+      validation: {
+        outcome: 'VALID',
+        categoryCode: 'CAT-GGL-1',
+        controlsVersion: 'sals3-attribute-controls-v1',
+        acceptedAttributes: {},
+        missingRequiredAttributes: [],
+        missingRecommendedAttributes: [],
+        unrecognizedAttributes: [],
+        findings: [],
+        contractVersion: 'category-attribute-contract-v1',
+      },
+    });
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          categoryAttributes: [categoryAttributeField({})],
+          categoryAttributesControlsVersion: 'sals3-attribute-controls-v1',
+          publishTarget: {
+            productId: '11111111-1111-4111-8111-111111111111',
+            expectedProductVersion: 7,
+          },
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    fireEvent.change(screen.getByDisplayValue('Royal Canin'), {
+      target: { value: '' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save Specifications' }),
+    );
+
+    await waitFor(() =>
+      expect(saveCategoryAttributesAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          productId: '11111111-1111-4111-8111-111111111111',
+          expectedProductVersion: 7,
+          attributes: { Brand: [] },
+        }),
+      ),
+    );
+  });
+
+  it('never touches an attribute the Specification section did not render', async () => {
+    const resolved = fixture('pass');
+
+    vi.mocked(saveCategoryAttributesAction).mockResolvedValue({
+      ok: true,
+      productVersion: 8,
+      validation: {
+        outcome: 'VALID',
+        categoryCode: 'CAT-GGL-1',
+        controlsVersion: 'sals3-attribute-controls-v1',
+        acceptedAttributes: {},
+        missingRequiredAttributes: [],
+        missingRecommendedAttributes: [],
+        unrecognizedAttributes: [],
+        findings: [],
+        contractVersion: 'category-attribute-contract-v1',
+      },
+    });
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          categoryAttributes: [categoryAttributeField({})],
+          categoryAttributesControlsVersion: 'sals3-attribute-controls-v1',
+          publishTarget: {
+            productId: '11111111-1111-4111-8111-111111111111',
+            expectedProductVersion: 7,
+          },
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save Specifications' }),
+    );
+
+    await waitFor(() =>
+      expect(saveCategoryAttributesAction).toHaveBeenCalledWith(
+        expect.objectContaining({ attributes: { Brand: ['Royal Canin'] } }),
+      ),
+    );
+
+    const [call] = vi.mocked(saveCategoryAttributesAction).mock.calls;
+    const submitted = call[0] as { attributes: Record<string, string[]> };
+
+    expect(Object.keys(submitted.attributes)).toEqual(['Brand']);
   });
 });
 

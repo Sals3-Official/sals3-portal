@@ -2,11 +2,15 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 
 import type { Executor } from '@/modules/catalog/candidates/repository';
 import {
+  categoryAttributeControls,
+  categoryAttributeDictionary,
   categoryRemapReviewFindings,
   products,
   providerCategoryMappings,
   sals3Categories,
   sals3CategoryPresets,
+  type CategoryAttributeControlRow,
+  type CategoryAttributeDictionaryRow,
   type CategoryMappingConfidence,
   type CategoryRemapReviewFindingRow,
   type ProductRow,
@@ -47,6 +51,19 @@ export async function findCategoryByCode(
   return rows[0] ?? null;
 }
 
+export async function findCategoryById(
+  executor: Executor,
+  id: string,
+): Promise<Sals3CategoryRow | null> {
+  const rows = await executor
+    .select()
+    .from(sals3Categories)
+    .where(eq(sals3Categories.id, id))
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
 export async function findPresetByCategoryCode(
   executor: Executor,
   code: string,
@@ -68,6 +85,46 @@ export async function findPresetByCategoryCode(
     .limit(1);
 
   return rows[0]?.preset ?? null;
+}
+
+/**
+ * One category's attribute controls for one extraction, ordered by name for
+ * deterministic rendering. Served by
+ * `category_attribute_controls_category_idx`.
+ */
+export async function findAttributeControlsByCategoryCode(
+  executor: Executor,
+  code: string,
+  controlsVersion: string,
+): Promise<CategoryAttributeControlRow[]> {
+  const rows = await executor
+    .select({ control: categoryAttributeControls })
+    .from(categoryAttributeControls)
+    .innerJoin(
+      sals3Categories,
+      eq(sals3Categories.id, categoryAttributeControls.categoryId),
+    )
+    .where(
+      and(
+        eq(sals3Categories.code, code),
+        eq(categoryAttributeControls.controlsVersion, controlsVersion),
+      ),
+    )
+    .orderBy(asc(categoryAttributeControls.attributeName));
+
+  return rows.map((row) => row.control);
+}
+
+/** The full canonical dictionary for one extraction - global reference data, not per category. */
+export async function findAttributeDictionaryEntries(
+  executor: Executor,
+  controlsVersion: string,
+): Promise<CategoryAttributeDictionaryRow[]> {
+  return executor
+    .select()
+    .from(categoryAttributeDictionary)
+    .where(eq(categoryAttributeDictionary.controlsVersion, controlsVersion))
+    .orderBy(asc(categoryAttributeDictionary.attributeName));
 }
 
 // --- Mapping lookups -------------------------------------------------------
