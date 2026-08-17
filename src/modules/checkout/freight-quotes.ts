@@ -10,6 +10,7 @@ import {
   products,
   providerProductReferences,
   providerVariantReferences,
+  supplierCandidates,
   supplierConnections,
   supplierProviders,
 } from '@/lib/db/schema';
@@ -120,10 +121,23 @@ const cjRuleTipSchema = z.object({
   type: z.string().optional(),
 });
 
+const looseTextDefault = z.preprocess(
+  (value) => (value === null || value === undefined ? '' : value),
+  z.string(),
+);
+const looseRuleTips = z.preprocess(
+  (value) => (Array.isArray(value) ? value : []),
+  z.array(cjRuleTipSchema),
+);
+const looseNumberArray = z.preprocess(
+  (value) => (Array.isArray(value) ? value : []),
+  z.array(z.number()),
+);
+
 const cjFreightOptionSchema = z.object({
-  arrivalTime: z.string().default(''),
-  channelId: z.string().default(''),
-  optionId: z.string().default(''),
+  arrivalTime: looseTextDefault,
+  channelId: looseTextDefault,
+  optionId: looseTextDefault,
   postage: z.coerce.number().nullable().optional(),
   wrapPostage: z.coerce.number().nullable().optional(),
   discountFee: z.coerce.number().nullable().optional(),
@@ -131,11 +145,11 @@ const cjFreightOptionSchema = z.object({
   clearanceOperationFee: z.coerce.number().nullable().optional(),
   tariff: z.coerce.number().nullable().optional(),
   totalPostageFee: z.coerce.number().nullable().optional(),
-  error: z.string().default(''),
-  errorEn: z.string().default(''),
-  message: z.string().default(''),
-  ruleTips: z.array(cjRuleTipSchema).default([]),
-  allRuleTips: z.array(cjRuleTipSchema).default([]),
+  error: looseTextDefault,
+  errorEn: looseTextDefault,
+  message: looseTextDefault,
+  ruleTips: looseRuleTips,
+  allRuleTips: looseRuleTips,
   option: z
     .object({
       enName: z.string().optional(),
@@ -151,7 +165,7 @@ const cjFreightOptionSchema = z.object({
     })
     .nullable()
     .optional(),
-  recommendLogisticsTypeList: z.array(z.number()).optional(),
+  recommendLogisticsTypeList: looseNumberArray,
 });
 
 const cjFreightResponseSchema = z.object({
@@ -303,7 +317,7 @@ async function loadQuoteLines(
 ): Promise<QuoteLine[]> {
   const rows = await Promise.all(
     input.cart.items.map(async (line) => {
-      const conditions: Array<SQL | undefined> = [
+      const baseConditions: Array<SQL | undefined> = [
         eq(products.slug, line.productId),
         eq(products.publicationState, 'PUBLISHED'),
         isNotNull(products.publishedAt),
@@ -315,6 +329,9 @@ async function loadQuoteLines(
         eq(productOffers.pricingState, 'RESOLVED'),
         isNotNull(productOffers.priceAmountMinor),
         eq(productOffers.availabilityState, 'AVAILABLE'),
+      ];
+      const bindingConditions: Array<SQL | undefined> = [
+        ...baseConditions,
         eq(offerSupplierBindings.state, 'ACTIVE'),
         eq(supplierProviders.code, 'CJ_DROPSHIPPING'),
         eq(supplierConnections.status, 'CONNECTED'),
@@ -372,10 +389,80 @@ async function loadQuoteLines(
           supplierProviders,
           eq(supplierProviders.id, supplierConnections.providerId),
         )
-        .where(and(...conditions))
+        .where(and(...bindingConditions))
         .limit(20);
-      const matchedRows = await query;
-      const row = chooseOfferForDestination(matchedRows, input.address.country);
+      const bindingRows = await query;
+      const fallbackRows =
+        bindingRows.length === 0
+          ? await executor
+              .select({
+                slug: products.slug,
+                title: products.title,
+                productId: products.id,
+                variantId: productVariants.id,
+                priceMinor: productOffers.priceAmountMinor,
+                connectionId: supplierCandidates.supplierConnectionId,
+                externalProductId: providerProductReferences.externalProductId,
+                externalVariantId: providerVariantReferences.externalVariantId,
+                externalSku: providerVariantReferences.externalSku,
+                sals3Sku: productVariants.sals3Sku,
+                weightGrams: productVariants.weightGrams,
+                lengthMillimeters: productVariants.lengthMillimeters,
+                widthMillimeters: productVariants.widthMillimeters,
+                heightMillimeters: productVariants.heightMillimeters,
+                marketCode: productOffers.marketCode,
+              })
+              .from(products)
+              .innerJoin(
+                productVariants,
+                eq(productVariants.productId, products.id),
+              )
+              .innerJoin(
+                productOffers,
+                eq(productOffers.variantId, productVariants.id),
+              )
+              .innerJoin(
+                providerVariantReferences,
+                eq(providerVariantReferences.variantId, productVariants.id),
+              )
+              .innerJoin(
+                providerProductReferences,
+                eq(
+                  providerProductReferences.id,
+                  providerVariantReferences.providerProductReferenceId,
+                ),
+              )
+              .innerJoin(
+                supplierCandidates,
+                eq(
+                  supplierCandidates.id,
+                  providerProductReferences.sourceCandidateId,
+                ),
+              )
+              .innerJoin(
+                supplierConnections,
+                eq(
+                  supplierConnections.id,
+                  supplierCandidates.supplierConnectionId,
+                ),
+              )
+              .innerJoin(
+                supplierProviders,
+                eq(supplierProviders.id, supplierConnections.providerId),
+              )
+              .where(
+                and(
+                  ...baseConditions,
+                  eq(supplierProviders.code, 'CJ_DROPSHIPPING'),
+                  eq(supplierConnections.status, 'CONNECTED'),
+                ),
+              )
+              .limit(20)
+          : [];
+      const row = chooseOfferForDestination(
+        bindingRows.length > 0 ? bindingRows : fallbackRows,
+        input.address.country,
+      );
 
       if (row === undefined || row.slug === null || row.priceMinor === null) {
         throw new CheckoutFreightQuoteError(
