@@ -96,6 +96,12 @@ type QuoteLine = {
   heightMillimeters: number | null;
 };
 
+type OfferMatch = Omit<QuoteLine, 'quantity' | 'slug' | 'priceMinor'> & {
+  slug: string | null;
+  priceMinor: bigint | null;
+  marketCode: string;
+};
+
 type PackageInput = {
   packageId: string;
   connectionId: string;
@@ -204,6 +210,30 @@ function variantVolumeCm3(line: QuoteLine): number | null {
   );
 }
 
+function chooseOfferForDestination(
+  rows: OfferMatch[],
+  destinationCountry: string,
+): OfferMatch | undefined {
+  const eligibleRows = rows.filter(
+    (row): row is OfferMatch & { slug: string; priceMinor: bigint } =>
+      row.slug !== null && row.priceMinor !== null,
+  );
+  const variantIds = new Set(eligibleRows.map((row) => row.variantId));
+
+  if (variantIds.size !== 1) return undefined;
+
+  return [...eligibleRows].sort((left, right) => {
+    const leftMarketPriority = left.marketCode === destinationCountry ? 0 : 1;
+    const rightMarketPriority = right.marketCode === destinationCountry ? 0 : 1;
+
+    if (leftMarketPriority !== rightMarketPriority) {
+      return leftMarketPriority - rightMarketPriority;
+    }
+
+    return Number(left.priceMinor - right.priceMinor);
+  })[0];
+}
+
 async function postCjJson(
   connectionId: string,
   path: string,
@@ -280,7 +310,6 @@ async function loadQuoteLines(
         line.variantId === undefined
           ? undefined
           : eq(productVariants.id, line.variantId),
-        eq(productOffers.marketCode, input.address.country),
         eq(productOffers.fulfillmentMode, 'SUPPLIER_DROPSHIP'),
         eq(productOffers.publishState, 'PUBLISHED'),
         eq(productOffers.pricingState, 'RESOLVED'),
@@ -306,6 +335,7 @@ async function loadQuoteLines(
           lengthMillimeters: productVariants.lengthMillimeters,
           widthMillimeters: productVariants.widthMillimeters,
           heightMillimeters: productVariants.heightMillimeters,
+          marketCode: productOffers.marketCode,
         })
         .from(products)
         .innerJoin(productVariants, eq(productVariants.productId, products.id))
@@ -343,9 +373,9 @@ async function loadQuoteLines(
           eq(supplierProviders.id, supplierConnections.providerId),
         )
         .where(and(...conditions))
-        .limit(line.variantId === undefined ? 2 : 1);
+        .limit(20);
       const matchedRows = await query;
-      const row = matchedRows.length === 1 ? matchedRows[0] : undefined;
+      const row = chooseOfferForDestination(matchedRows, input.address.country);
 
       if (row === undefined || row.slug === null || row.priceMinor === null) {
         throw new CheckoutFreightQuoteError(
@@ -354,9 +384,20 @@ async function loadQuoteLines(
       }
 
       return {
-        ...row,
         slug: row.slug,
+        title: row.title,
+        productId: row.productId,
+        variantId: row.variantId,
         priceMinor: row.priceMinor,
+        connectionId: row.connectionId,
+        externalProductId: row.externalProductId,
+        externalVariantId: row.externalVariantId,
+        externalSku: row.externalSku,
+        sals3Sku: row.sals3Sku,
+        weightGrams: row.weightGrams,
+        lengthMillimeters: row.lengthMillimeters,
+        widthMillimeters: row.widthMillimeters,
+        heightMillimeters: row.heightMillimeters,
         quantity: line.quantity,
       };
     }),
