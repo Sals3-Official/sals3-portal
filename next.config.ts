@@ -5,8 +5,8 @@ const nextConfig: NextConfig = {
     serverActions: {
       // Default is 1 MB; a seller's own product photo upload
       // (`uploadSellerMediaAction`) needs headroom above the domain
-      // module's own `MAX_UPLOAD_BYTES` (8 MB) for the multipart envelope.
-      bodySizeLimit: '9mb',
+      // module's own `MAX_UPLOAD_BYTES` (5 MB) for the multipart envelope.
+      bodySizeLimit: '6mb',
     },
   },
   async headers() {

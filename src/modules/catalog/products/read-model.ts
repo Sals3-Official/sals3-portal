@@ -1111,7 +1111,7 @@ function editorIssues(product: CatalogueProductFixture): ReadinessIssue[] {
         'BLOCKER',
         'No publishable media is recorded',
         'The catalogue database has no media source row for this product.',
-        'media',
+        'basic',
       ),
     );
   }

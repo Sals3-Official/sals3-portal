@@ -22,15 +22,23 @@ vi.mock('@/modules/catalog/products/upload-seller-media', () => ({
   uploadSellerProductMedia: vi.fn(),
 }));
 
+vi.mock('@/modules/catalog/products/delete-seller-media', () => ({
+  deleteSellerProductMedia: vi.fn(),
+}));
+
 /* eslint-disable import/first */
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { deleteSellerProductMedia } from '@/modules/catalog/products/delete-seller-media';
 import { uploadSellerProductMedia } from '@/modules/catalog/products/upload-seller-media';
 import { revalidatePath } from 'next/cache';
 
-import { uploadSellerMediaAction } from './media-actions';
+import {
+  deleteSellerMediaAction,
+  uploadSellerMediaAction,
+} from './media-actions';
 /* eslint-enable import/first */
 
 const PRODUCT_ID = '11111111-1111-4111-8111-111111111111';
@@ -87,8 +95,10 @@ describe('uploadSellerMediaAction', () => {
       media: {
         id: 'media-1',
         sourceUrl: 'https://x.public.blob.vercel-storage.com/a.jpg',
-        contentType: 'image/jpeg',
+        contentType: 'image/webp',
         byteSize: 3,
+        widthPixels: 800,
+        heightPixels: 800,
       },
     });
 
@@ -109,8 +119,10 @@ describe('uploadSellerMediaAction', () => {
       media: {
         id: 'media-1',
         sourceUrl: 'https://x.public.blob.vercel-storage.com/a.jpg',
-        contentType: 'image/jpeg',
+        contentType: 'image/webp',
         byteSize: 3,
+        widthPixels: 800,
+        heightPixels: 800,
       },
     });
 
@@ -121,8 +133,10 @@ describe('uploadSellerMediaAction', () => {
       media: {
         id: 'media-1',
         sourceUrl: 'https://x.public.blob.vercel-storage.com/a.jpg',
-        contentType: 'image/jpeg',
+        contentType: 'image/webp',
         byteSize: 3,
+        widthPixels: 800,
+        heightPixels: 800,
       },
     });
     expect(revalidatePath).toHaveBeenCalledWith('/listings');
@@ -229,5 +243,96 @@ describe('uploadSellerMediaAction', () => {
     if (result.ok) throw new Error('expected a refusal');
     expect(result.reason).toBe('rate_limited');
     expect(uploadSellerProductMedia).not.toHaveBeenCalled();
+  });
+});
+
+const MEDIA_ID = '22222222-2222-4222-8222-222222222222';
+const VALID_DELETE_INPUT = { productId: PRODUCT_ID, mediaId: MEDIA_ID };
+
+describe('deleteSellerMediaAction', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isDatabaseConfigured).mockReturnValue(true);
+    vi.mocked(checkRateLimit).mockReturnValue({
+      allowed: true,
+      retryAfterMs: 0,
+    } as unknown as ReturnType<typeof checkRateLimit>);
+    authorized();
+  });
+
+  it('never lets the client supply the tenant or actor — only the product and media id', async () => {
+    vi.mocked(deleteSellerProductMedia).mockResolvedValue({ ok: true });
+
+    await deleteSellerMediaAction(VALID_DELETE_INPUT);
+
+    expect(deleteSellerProductMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        productId: PRODUCT_ID,
+        mediaId: MEDIA_ID,
+        sellerAccountId: 'seller-1',
+        actorId: 'user-1',
+      }),
+    );
+  });
+
+  it('revalidates the catalogue listing on success', async () => {
+    vi.mocked(deleteSellerProductMedia).mockResolvedValue({ ok: true });
+
+    const result = await deleteSellerMediaAction(VALID_DELETE_INPUT);
+
+    expect(result).toEqual({ ok: true });
+    expect(revalidatePath).toHaveBeenCalledWith('/listings');
+  });
+
+  it('refuses input the schema cannot read without calling the domain module', async () => {
+    const result = await deleteSellerMediaAction({
+      productId: 'not-a-uuid',
+      mediaId: MEDIA_ID,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).toBe('invalid_input');
+    expect(deleteSellerProductMedia).not.toHaveBeenCalled();
+  });
+
+  it('reports a real NOT_FOUND refusal from the domain module - never a supplier photo, own product only', async () => {
+    vi.mocked(deleteSellerProductMedia).mockResolvedValue({
+      ok: false,
+      reason: 'NOT_FOUND',
+    });
+
+    const result = await deleteSellerMediaAction(VALID_DELETE_INPUT);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).toBe('NOT_FOUND');
+    expect(result.message.length).toBeGreaterThan(0);
+  });
+
+  it('denies a caller without product:edit', async () => {
+    vi.mocked(requirePermission).mockRejectedValue(new PermissionError());
+
+    const result = await deleteSellerMediaAction(VALID_DELETE_INPUT);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).toBe('denied');
+    expect(deleteSellerProductMedia).not.toHaveBeenCalled();
+  });
+
+  it('reports a rate limit before reaching the domain module, independent of the upload bucket', async () => {
+    vi.mocked(checkRateLimit).mockImplementation((key: string) =>
+      key.startsWith('media-delete:')
+        ? { allowed: false, retryAfterMs: 1000 }
+        : { allowed: true, retryAfterMs: 0 },
+    );
+
+    const result = await deleteSellerMediaAction(VALID_DELETE_INPUT);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).toBe('rate_limited');
+    expect(deleteSellerProductMedia).not.toHaveBeenCalled();
   });
 });

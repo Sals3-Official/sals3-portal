@@ -72,13 +72,7 @@ export type FieldSource = 'SUPPLIER' | 'SELLER' | 'INFERRED' | 'NOT_PROVIDED';
 export type IssueSeverity = 'BLOCKER' | 'WARNING' | 'SUGGESTION';
 
 export type EditorSectionId =
-  | 'basic'
-  | 'specs'
-  | 'description'
-  | 'variants'
-  | 'markets'
-  | 'media'
-  | 'review';
+  'basic' | 'description' | 'variants' | 'markets' | 'specs' | 'review';
 
 export type IssueSource =
   'AUTOMATED_VALIDATION' | 'SUPPLIER_CHANGE' | 'SUGGESTION';
@@ -398,10 +392,9 @@ export const EDITOR_SECTIONS: ReadonlyArray<{
   label: string;
 }> = [
   { id: 'basic', label: 'Basic Information' },
-  { id: 'specs', label: 'Supplier Details' },
   { id: 'description', label: 'Description' },
   { id: 'variants', label: 'Variants & Pricing' },
   { id: 'markets', label: 'Markets' },
-  { id: 'media', label: 'Media' },
+  { id: 'specs', label: 'Supplier Details' },
   { id: 'review', label: 'Review & Publish' },
 ];

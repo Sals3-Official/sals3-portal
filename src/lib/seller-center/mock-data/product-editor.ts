@@ -447,9 +447,9 @@ const ATTENTION = withOverrides({
       title: 'One image carries a visible watermark',
       explanation:
         'Image 5 shows third-party branding. It will be withheld from the storefront until it is replaced.',
-      affectedScope: 'Media · Image 5',
+      affectedScope: 'Supplier Details · Image 5',
       source: 'AUTOMATED_VALIDATION',
-      section: 'media',
+      section: 'specs',
       reasonCode: null,
       resolution: 'Replace or remove the image.',
     },

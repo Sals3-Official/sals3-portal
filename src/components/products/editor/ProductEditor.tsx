@@ -1,6 +1,9 @@
 import { FlaskConical } from 'lucide-react';
 import { decideCategoryMappingAction } from '@/app/(portal)/listings/category-mapping-actions';
-import { uploadSellerMediaAction } from '@/app/(portal)/listings/media-actions';
+import {
+  deleteSellerMediaAction,
+  uploadSellerMediaAction,
+} from '@/app/(portal)/listings/media-actions';
 import saveOptionMappingAction, {
   recoverSupplierLabelsAction,
 } from '@/app/(portal)/listings/option-mapping-actions';
@@ -93,6 +96,9 @@ export default function ProductEditor({
         }
         uploadMediaAction={
           isDatabaseBacked ? uploadSellerMediaAction : undefined
+        }
+        deleteMediaAction={
+          isDatabaseBacked ? deleteSellerMediaAction : undefined
         }
       />
     </div>
