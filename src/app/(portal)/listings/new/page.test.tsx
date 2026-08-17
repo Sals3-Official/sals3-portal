@@ -71,6 +71,7 @@ vi.mock('@/app/(portal)/listings/category-mapping-actions', () => ({
 // and `@vercel/blob` too.
 vi.mock('@/app/(portal)/listings/media-actions', () => ({
   uploadSellerMediaAction: vi.fn(),
+  deleteSellerMediaAction: vi.fn(),
 }));
 
 // The page reads `getDb()` directly for the category picker's reference

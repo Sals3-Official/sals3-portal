@@ -543,19 +543,30 @@ brand, variants, and publication controls remain local/editor-only until their
 dedicated persistence paths exist. The screen says which mode it loaded in the
 notice at the top.
 
-**A seller's own product photos persist for real (2026-08-17, Vercel Blob).**
-Basic Information's `Product media` summary and Media section's `Upload image`
-call `uploadSellerMediaAction`, which writes a real `product_media_sources` row
-(`sourceType: 'SELLER_UPLOAD'`) after re-checking the file's own magic number
-(JPEG/PNG/WebP only, 8 MB max, 12 photos max per product) - never the
-browser-supplied `File.type`. The supplier's own photos are a separate,
-**read-only** gallery in Basic Information's Supplier Details
-(`SupplierMediaGallery`) - never reorderable, never a cover choice, never
-replaced - while Media section only ever shows and manages the seller's own
-uploads. Until a seller uploads at least one photo, the editor's previews
-(header thumbnail, Product media summary, Draft Storefront Preview) fall back
-to the supplier's photo automatically, matching what the live storefront
-already does. Requires `BLOB_READ_WRITE_TOKEN` (see
+**A seller's own product photos persist for real (2026-08-17, Vercel Blob +
+sharp).** Basic Information's `Product media` is a real photo manager
+(`ProductPhotoManager`) - upload, delete, and set-cover, no separate Media
+section any more (removed the same day; its whole reason to exist moved
+here). `uploadSellerMediaAction` re-checks the file's own magic number
+(JPEG/PNG/WebP only, never the browser-supplied `File.type`), refuses
+anything over 2000×2000px outright (a cheap `sharp` metadata read, no
+silent downscale - the seller resizes and re-uploads), then `sharp`
+auto-orients from EXIF and re-encodes as WebP at quality 82 before it ever
+reaches storage - a 5 MB input routinely lands under 300KB stored.
+`deleteSellerMediaAction`
+removes one, scoped to `sourceType = 'SELLER_UPLOAD'` in the same `WHERE` as
+the ownership check, so a supplier's photo is structurally impossible to
+delete through this path. The supplier's own photos stay a separate,
+**read-only** small-thumbnail gallery in Basic Information's Supplier
+Details (`SupplierMediaGallery`) - never reorderable, never a cover choice,
+never replaced. **Supplier Details itself moved to just above Review &
+Publish and is collapsible, collapsed by default** - evidence a seller
+checks occasionally, not something edited on every visit; "Go to section"
+expands it first if a blocker/warning lives inside, so a collapsed section
+never hides one. Until a seller uploads at least one photo, the editor's
+previews (header thumbnail, Product media, Draft Storefront Preview) fall
+back to the supplier's photo automatically, matching what the live
+storefront already does. Requires `BLOB_READ_WRITE_TOKEN` (see
 [Environment setup](#setup)); with it unset, Upload stays visibly disabled
 with an honest reason instead of a fake success.
 

@@ -1,6 +1,4 @@
-import Image from 'next/image';
-import { OctagonAlert, Upload } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { OctagonAlert } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -10,15 +8,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type {
-  EditorSectionId,
-  ProductEditorFixture,
-} from '@/lib/seller-center/product-editor/types';
+import type { ProductEditorFixture } from '@/lib/seller-center/product-editor/types';
+import ProductPhotoManager from './ProductPhotoManager';
 import Sals3CategoryPicker, {
   type Sals3CategoryOption,
 } from './Sals3CategoryPicker';
 
 const PRODUCT_NAME_MAX = 120;
+const MAX_SELLER_PHOTOS = 12;
 
 const BRAND_OPTIONS = [
   'No brand / generic',
@@ -33,7 +30,11 @@ type BasicInformationSectionProps = {
   onSellerSkuChange: (value: string) => void;
   brandDeclaration: string;
   onBrandDeclarationChange: (value: string) => void;
-  onGoToSection: (section: EditorSectionId) => void;
+  onUploadPhoto?: (files: FileList) => void;
+  onDeletePhoto?: (id: string) => void;
+  onMakeCoverPhoto: (id: string) => void;
+  isUploadingPhoto: boolean;
+  deletingPhotoId: string | null;
   sals3CategoryOptions?: Sals3CategoryOption[];
   onDecideSals3Category?: (
     code: string,
@@ -44,11 +45,11 @@ type BasicInformationSectionProps = {
 
 /**
  * The prefilled listing essentials the seller can actually change here:
- * name, category, seller SKU, and brand declaration. The supplier evidence
- * they were derived from lives in the "Supplier Details" section below
- * instead, alongside the rest of the read-only supplier facts. "Product
- * Name" is the seller-facing term throughout - the internal field name is
- * never surfaced.
+ * photos, name, category, seller SKU, and brand declaration. The supplier
+ * evidence they were derived from lives in the "Supplier Details" section
+ * further down instead, alongside the rest of the read-only supplier facts.
+ * "Product Name" is the seller-facing term throughout - the internal field
+ * name is never surfaced.
  */
 export default function BasicInformationSection({
   fixture,
@@ -58,7 +59,11 @@ export default function BasicInformationSection({
   onSellerSkuChange,
   brandDeclaration,
   onBrandDeclarationChange,
-  onGoToSection,
+  onUploadPhoto,
+  onDeletePhoto,
+  onMakeCoverPhoto,
+  isUploadingPhoto,
+  deletingPhotoId,
   sals3CategoryOptions = [],
   onDecideSals3Category,
 }: BasicInformationSectionProps) {
@@ -66,92 +71,35 @@ export default function BasicInformationSection({
     (issue) => issue.reasonCode === 'COUNTERFEIT_HIGH_CONFIDENCE',
   );
 
-  // What the storefront actually shows (ADR-011's `SELLER_FIRST` default):
-  // the seller's own uploads when any exist, otherwise the supplier's
-  // original photos - never an invented placeholder. Detailed per-image
-  // evidence (rights check, storage state) is full detail that belongs in
-  // Media section / Supplier Details, not repeated here as a second copy
-  // that could drift from it.
-  const effectiveMedia =
-    fixture.media.length > 0 ? fixture.media : fixture.supplierMedia;
-
-  const rejectedMediaCount = effectiveMedia.filter(
-    (item) => item.rightsCheck === 'REJECTED',
-  ).length;
-
   return (
     <div className="flex flex-col gap-5">
       <div>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h3 className="text-[13px] font-semibold">Product media</h3>
           <span className="text-xs text-muted-foreground">
-            {effectiveMedia.length} images · minimum 3 · recommended 5
+            {fixture.media.length} of {MAX_SELLER_PHOTOS} photos
           </span>
         </div>
 
-        {/* The thumbnails carry the real address when there is one. They used
-            to be empty 44px squares in every case, so a product whose photo the
-            catalogue genuinely stored still showed nothing above this section. */}
-        <ul className="mt-2.5 flex list-none flex-wrap gap-1.5 p-0">
-          {effectiveMedia.map((item) => (
-            <li
-              key={item.id}
-              className={`relative flex size-11 items-center justify-center overflow-hidden rounded-md border text-center text-xs font-medium text-muted-foreground ${
-                item.rightsCheck === 'REJECTED'
-                  ? 'border-2 border-red-600 bg-danger-surface/40'
-                  : 'border-border bg-muted'
-              }`}
-            >
-              {item.sourceUrl === null ? (
-                <span aria-hidden="true">{item.isCover ? 'Cover' : ''}</span>
-              ) : (
-                <Image
-                  src={item.sourceUrl}
-                  alt={item.altText}
-                  width={44}
-                  height={44}
-                  loading="lazy"
-                  className="size-full object-cover"
-                />
-              )}
-            </li>
-          ))}
-        </ul>
+        <div className="mt-2.5">
+          <ProductPhotoManager
+            media={fixture.media}
+            onUpload={onUploadPhoto}
+            onDelete={onDeletePhoto}
+            onMakeCover={onMakeCoverPhoto}
+            isUploading={isUploadingPhoto}
+            deletingId={deletingPhotoId}
+            maxPhotos={MAX_SELLER_PHOTOS}
+          />
+        </div>
 
-        {effectiveMedia.length === 0 ? (
-          <p className="mt-2 text-xs text-muted-foreground">
-            No image address is recorded for this product yet, so there is
-            nothing to show. Nothing was fetched from the supplier to fill this
-            in.
-          </p>
-        ) : null}
-
-        {rejectedMediaCount > 0 ? (
-          <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-red-600">
-            <OctagonAlert aria-hidden="true" className="size-3.5 shrink-0" />
-            {rejectedMediaCount} image{rejectedMediaCount === 1 ? '' : 's'} need
-            attention — see Media section.
-          </p>
-        ) : (
-          <p className="mt-2 text-xs text-muted-foreground">
-            {fixture.media.length > 0
-              ? 'The first image is the storefront cover.'
-              : 'Shown from the supplier until you upload your own — the first image is the storefront cover.'}{' '}
-            Upload your own photos, reordering, and video are in the Media
-            section below.
-          </p>
-        )}
-
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="mt-2.5"
-          onClick={() => onGoToSection('media')}
-        >
-          <Upload aria-hidden="true" />
-          Upload your own photos
-        </Button>
+        <p className="mt-2 text-xs text-muted-foreground">
+          {fixture.media.length > 0
+            ? 'The star sets a photo as the storefront cover.'
+            : "Shown from the supplier's own photo until you upload one — see Supplier Details for the original."}{' '}
+          Max 2000 × 2000 px · JPG, PNG, or WebP, up to 5 MB each · compressed
+          automatically on upload.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 @2xl:grid-cols-2">

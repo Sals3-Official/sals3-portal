@@ -40,7 +40,6 @@ import EditorSectionNavigation from './EditorSectionNavigation';
 import EditorSheet from './EditorSheet';
 import EditorStateBanners from './EditorStateBanners';
 import ListingReadinessPanel from './ListingReadinessPanel';
-import MediaSection from './MediaSection';
 import ProductEditorHeader from './ProductEditorHeader';
 import ReviewPublishSection from './ReviewPublishSection';
 import SpecificationsSection from './SpecificationsSection';
@@ -118,9 +117,9 @@ type ProductEditorWorkspaceProps = {
   >;
   /**
    * Seller-photo upload boundary (Vercel Blob, owner decision 2026-08-17).
-   * Omitted for fixture/design-preview mode, so Media section's Upload
-   * control stays disabled with an honest "no real product to attach a
-   * photo to" reason instead of a fake success.
+   * Omitted for fixture/design-preview mode, so the Product media Upload
+   * tile stays disabled with an honest "no real product to attach a photo
+   * to" reason instead of a fake success.
    */
   uploadMediaAction?: (formData: FormData) => Promise<
     | {
@@ -130,10 +129,16 @@ type ProductEditorWorkspaceProps = {
           sourceUrl: string;
           contentType: string;
           byteSize: number;
+          widthPixels: number;
+          heightPixels: number;
         };
       }
     | { ok: false; reason: string; message: string }
   >;
+  /** Seller-photo delete boundary. Omitted for fixture/design-preview mode. */
+  deleteMediaAction?: (
+    input: unknown,
+  ) => Promise<{ ok: true } | { ok: false; reason: string; message: string }>;
 };
 
 const EXIT_HREF = '/products/pipeline?tab=ready';
@@ -236,6 +241,7 @@ export default function ProductEditorWorkspace({
   sals3CategoryOptions = [],
   decideCategoryAction,
   uploadMediaAction,
+  deleteMediaAction,
 }: ProductEditorWorkspaceProps) {
   const router = useRouter();
 
@@ -251,6 +257,7 @@ export default function ProductEditorWorkspace({
   const [variants, setVariants] = useState<VariantFixture[]>(fixture.variants);
   const [media, setMedia] = useState<MediaItemFixture[]>(fixture.media);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+  const [deletingMediaId, setDeletingMediaId] = useState<string | null>(null);
 
   const [isDirty, setIsDirty] = useState(false);
   const [lifecycle, setLifecycle] = useState<EditorLifecycle>(initialLifecycle);
@@ -259,6 +266,11 @@ export default function ProductEditorWorkspace({
     null,
   );
   const [readinessOpen, setReadinessOpen] = useState(false);
+  // Collapsed by default (owner decision 2026-08-17): Supplier Details is
+  // evidence a seller checks occasionally, not something read on every
+  // visit. Controlled, not just `defaultOpen`, so `goToSection` can expand
+  // it on the way to a blocker/warning that lives inside it.
+  const [specsOpen, setSpecsOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
   const [exitDialogOpen, setExitDialogOpen] = useState(false);
@@ -342,6 +354,9 @@ export default function ProductEditorWorkspace({
   const goToSection = useCallback((section: EditorSectionId) => {
     setActiveSection(section);
     setReadinessOpen(false);
+    // A collapsed Supplier Details must never hide the blocker/warning a
+    // reader was just sent to find.
+    if (section === 'specs') setSpecsOpen(true);
     document
       .getElementById(`sec-${section}`)
       ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -722,8 +737,8 @@ export default function ProductEditorWorkspace({
                   rightsCheck: 'VERIFIED',
                   storageState: 'SALS3_STORED',
                   sourceType: 'SELLER_UPLOAD',
-                  pixelWidth: 0,
-                  pixelHeight: 0,
+                  pixelWidth: result.media.widthPixels,
+                  pixelHeight: result.media.heightPixels,
                   note: null,
                   isCover: current.length === 0,
                 },
@@ -731,6 +746,49 @@ export default function ProductEditorWorkspace({
             }
           } finally {
             setIsUploadingMedia(false);
+          }
+        };
+
+  /**
+   * Only the product id and the target row - a delete is not a value
+   * anyone needs to compare-and-set against, and the domain module's own
+   * `WHERE sourceType = 'SELLER_UPLOAD'` is what actually protects a
+   * supplier's photo from this path, not anything client-side.
+   */
+  const handleDeleteMedia =
+    deleteMediaAction === undefined || optionMappingTarget === null
+      ? undefined
+      : async (mediaId: string) => {
+          setDeletingMediaId(mediaId);
+
+          try {
+            const result = await deleteMediaAction({
+              productId: optionMappingTarget.productId,
+              mediaId,
+            });
+
+            if (!result.ok) {
+              toast.error(result.message);
+
+              return;
+            }
+
+            setMedia((current) => {
+              const wasCover =
+                current.find((item) => item.id === mediaId)?.isCover ?? false;
+              const remaining = current.filter((item) => item.id !== mediaId);
+
+              // A deleted cover hands the role to whatever is now first,
+              // rather than leaving the product with no cover at all.
+              return wasCover && remaining.length > 0
+                ? remaining.map((item, index) => ({
+                    ...item,
+                    isCover: index === 0,
+                  }))
+                : remaining;
+            });
+          } finally {
+            setDeletingMediaId(null);
           }
         };
 
@@ -801,55 +859,21 @@ export default function ProductEditorWorkspace({
                 setBrandDeclaration(value);
                 touch();
               }}
-              onGoToSection={goToSection}
-              sals3CategoryOptions={sals3CategoryOptions}
-              onDecideSals3Category={handleDecideCategory}
-            />
-          </EditorSectionCard>
-
-          <EditorSectionCard
-            id="specs"
-            title="Supplier Details"
-            severity={sectionSeverity(currentIssues, 'specs')}
-            meta={
-              <span className="text-xs text-muted-foreground">
-                {filledSpecificationCount(specifications)} of{' '}
-                {specifications.length} attributes filled
-              </span>
-            }
-          >
-            <SpecificationsSection
-              source={fixture.source}
-              supplierProductName={fixture.supplierProductName}
-              supplierCategoryPath={fixture.supplierCategoryPath}
-              supplierMedia={fixture.supplierMedia}
-              onOpenSourceDrawer={() => setSourceDrawerOpen(true)}
-              specifications={specifications}
-              onSpecificationChange={(key, value) => {
-                // Never called for a locked field — `SpecificationField`
-                // only wires `onChange` to a genuinely seller-fillable one
-                // (SpecificationsSection.tsx). `source: 'SELLER'` records
-                // that this specific value came from the seller, not from
-                // re-deriving it as `SUPPLIER` on every keystroke.
-                setSpecifications((current) =>
-                  current.map((spec) =>
-                    spec.key === key
-                      ? {
-                          ...spec,
-                          value,
-                          source: 'SELLER',
-                          // A filled field is no longer unresolved — leaving
-                          // the flag stale kept the "hard blocker until a
-                          // value is entered" message under a field that
-                          // plainly had one. Clearing the value brings the
-                          // message back.
-                          unresolved: value.trim() === '',
-                        }
-                      : spec,
-                  ),
+              onUploadPhoto={handleUploadMedia}
+              onDeletePhoto={handleDeleteMedia}
+              onMakeCoverPhoto={(id) => {
+                setMedia((current) =>
+                  current.map((item) => ({
+                    ...item,
+                    isCover: item.id === id,
+                  })),
                 );
                 touch();
               }}
+              isUploadingPhoto={isUploadingMedia}
+              deletingPhotoId={deletingMediaId}
+              sals3CategoryOptions={sals3CategoryOptions}
+              onDecideSals3Category={handleDecideCategory}
             />
           </EditorSectionCard>
 
@@ -959,46 +983,61 @@ export default function ProductEditorWorkspace({
 
           {marketsSection}
 
+          {/*
+            Moved here, and collapsible (owner decision 2026-08-17): this is
+            supplier evidence a seller checks occasionally, not something
+            edited on every visit, so it no longer sits between Basic
+            Information and Description competing for the same attention.
+            The upload/delete/cover controls that used to live in a separate
+            Media section moved to Basic Information's own "Product media" -
+            there is no standalone Media section any more.
+          */}
           <EditorSectionCard
-            id="media"
-            title="Media"
-            severity={sectionSeverity(currentIssues, 'media')}
+            id="specs"
+            title="Supplier Details"
+            severity={sectionSeverity(currentIssues, 'specs')}
+            collapsible
+            open={specsOpen}
+            onOpenChange={setSpecsOpen}
             meta={
               <span className="text-xs text-muted-foreground">
-                {media.length} images · 0 videos
+                {filledSpecificationCount(specifications)} of{' '}
+                {specifications.length} attributes filled
               </span>
             }
           >
-            <MediaSection
-              media={media}
-              onMakeCover={(id) => {
-                setMedia((current) =>
-                  current.map((item) => ({
-                    ...item,
-                    isCover: item.id === id,
-                  })),
+            <SpecificationsSection
+              source={fixture.source}
+              supplierProductName={fixture.supplierProductName}
+              supplierCategoryPath={fixture.supplierCategoryPath}
+              supplierMedia={fixture.supplierMedia}
+              onOpenSourceDrawer={() => setSourceDrawerOpen(true)}
+              specifications={specifications}
+              onSpecificationChange={(key, value) => {
+                // Never called for a locked field — `SpecificationField`
+                // only wires `onChange` to a genuinely seller-fillable one
+                // (SpecificationsSection.tsx). `source: 'SELLER'` records
+                // that this specific value came from the seller, not from
+                // re-deriving it as `SUPPLIER` on every keystroke.
+                setSpecifications((current) =>
+                  current.map((spec) =>
+                    spec.key === key
+                      ? {
+                          ...spec,
+                          value,
+                          source: 'SELLER',
+                          // A filled field is no longer unresolved — leaving
+                          // the flag stale kept the "hard blocker until a
+                          // value is entered" message under a field that
+                          // plainly had one. Clearing the value brings the
+                          // message back.
+                          unresolved: value.trim() === '',
+                        }
+                      : spec,
+                  ),
                 );
                 touch();
               }}
-              onMove={(id, direction) => {
-                setMedia((current) => {
-                  const index = current.findIndex((item) => item.id === id);
-                  const target = index + direction;
-
-                  if (index < 0 || target < 0 || target >= current.length) {
-                    return current;
-                  }
-
-                  const next = [...current];
-
-                  [next[index], next[target]] = [next[target], next[index]];
-
-                  return next;
-                });
-                touch();
-              }}
-              onUpload={handleUploadMedia}
-              isUploading={isUploadingMedia}
             />
           </EditorSectionCard>
 

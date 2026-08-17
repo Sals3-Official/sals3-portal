@@ -1,23 +1,43 @@
 import Image from 'next/image';
-import { formatPixels } from '@/lib/seller-center/product-editor/format';
+import { CircleCheck, Clock, OctagonAlert } from 'lucide-react';
 import type { MediaItemFixture } from '@/lib/seller-center/product-editor/types';
-import EditorStatusPill from './EditorStatusPill';
-import {
-  MEDIA_RIGHTS_PRESENTATION,
-  MEDIA_STORAGE_LABELS,
-} from './presentation';
+import { formatPixels } from '@/lib/seller-center/product-editor/format';
 
 type SupplierMediaGalleryProps = {
   media: MediaItemFixture[];
 };
 
+const STATUS_ICON: Record<MediaItemFixture['rightsCheck'], typeof CircleCheck> =
+  {
+    VERIFIED: CircleCheck,
+    PENDING_VERIFICATION: Clock,
+    REJECTED: OctagonAlert,
+  };
+
+const STATUS_ICON_CLASS: Record<MediaItemFixture['rightsCheck'], string> = {
+  VERIFIED: 'text-green-600',
+  PENDING_VERIFICATION: 'text-muted-foreground',
+  REJECTED: 'text-red-600',
+};
+
+const STATUS_LABEL: Record<MediaItemFixture['rightsCheck'], string> = {
+  VERIFIED: 'Verified',
+  PENDING_VERIFICATION: 'Pending verification',
+  REJECTED: 'Rejected',
+};
+
 /**
- * The supplier's own photos, shown exactly as `MediaSection` renders a tile —
- * same rights/storage pills, same pixel line, same note — minus every control
- * that implies a seller decision: no reorder arrows, no "Make cover", no
- * "Replace". This is provenance (ADR-011), not something a seller edits, so
- * it lives in Supplier Details rather than beside Media section's own
- * (currently always-empty) upload controls.
+ * The supplier's own photos, kept small on purpose (owner decision
+ * 2026-08-17): this is provenance evidence, not a gallery a seller browses,
+ * so it gets the same compact 44px treatment as the Basic Information
+ * "Product media" thumbnail strip - never the larger per-image cards this
+ * used to render. No reorder arrows, no "Make cover", no "Replace": nothing
+ * here implies a seller decision (ADR-011).
+ *
+ * The full rights/storage detail (Verified/Rejected, dimensions, the
+ * rejection reason) survives as a small corner icon plus a native `title`
+ * tooltip rather than disappearing - a shrunk tile is still exact evidence,
+ * not a decorative thumbnail.
  */
 export default function SupplierMediaGallery({
   media,
@@ -31,62 +51,54 @@ export default function SupplierMediaGallery({
   }
 
   return (
-    <ul className="grid list-none grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-2.5 p-0">
+    <ul className="flex list-none flex-wrap gap-1.5 p-0">
       {media.map((item) => {
-        const isRejected = item.rightsCheck === 'REJECTED';
+        const StatusIcon = STATUS_ICON[item.rightsCheck];
+        const tooltip = [
+          item.label,
+          STATUS_LABEL[item.rightsCheck],
+          formatPixels(item.pixelWidth, item.pixelHeight),
+          item.note,
+        ]
+          .filter((part): part is string => part !== null)
+          .join(' — ');
 
         return (
-          <li
-            key={item.id}
-            className={`flex flex-col gap-1.5 rounded-lg border p-2 ${
-              isRejected
-                ? 'border-red-600 bg-danger-surface/30'
-                : 'border-border bg-card'
-            }`}
-          >
+          <li key={item.id} title={tooltip} className="relative">
             {item.sourceUrl === null ? (
               <span
                 aria-hidden="true"
-                className="flex aspect-square items-center justify-center rounded-md border border-border bg-muted font-mono text-xs text-muted-foreground"
+                className={`flex size-11 items-center justify-center overflow-hidden rounded-md border text-center text-[10px] leading-tight font-medium text-muted-foreground ${
+                  item.rightsCheck === 'REJECTED'
+                    ? 'border-2 border-red-600 bg-danger-surface/40'
+                    : 'border-border bg-muted'
+                }`}
               >
                 {item.label}
               </span>
             ) : (
-              <span className="block aspect-square overflow-hidden rounded-md border border-border bg-muted">
+              <span
+                className={`block size-11 overflow-hidden rounded-md border ${
+                  item.rightsCheck === 'REJECTED'
+                    ? 'border-2 border-red-600'
+                    : 'border-border'
+                } bg-muted`}
+              >
                 <Image
                   src={item.sourceUrl}
                   alt={item.altText}
-                  width={144}
-                  height={144}
+                  width={44}
+                  height={44}
                   loading="lazy"
-                  className="size-full object-contain"
+                  className="size-full object-cover"
                 />
               </span>
             )}
-
-            <div className="flex flex-wrap gap-1">
-              <EditorStatusPill
-                presentation={MEDIA_RIGHTS_PRESENTATION[item.rightsCheck]}
-              />
-            </div>
-            <span className="w-fit rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-ink-muted">
-              {MEDIA_STORAGE_LABELS[item.storageState]}
-            </span>
-
-            <p className="text-xs text-muted-foreground tabular-nums">
-              {formatPixels(item.pixelWidth, item.pixelHeight)}
-            </p>
-
-            {item.note === null ? null : (
-              <p
-                role={isRejected ? 'alert' : undefined}
-                className={`text-xs leading-relaxed ${
-                  isRejected ? 'text-red-600' : 'text-muted-foreground'
-                }`}
-              >
-                {item.note}
-              </p>
-            )}
+            <StatusIcon
+              aria-hidden="true"
+              className={`absolute -top-1 -right-1 size-3.5 rounded-full bg-card ${STATUS_ICON_CLASS[item.rightsCheck]}`}
+            />
+            <span className="sr-only">{tooltip}</span>
           </li>
         );
       })}

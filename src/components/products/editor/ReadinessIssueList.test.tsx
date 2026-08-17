@@ -116,13 +116,13 @@ describe('ReadinessIssueList - progressive disclosure', () => {
 
     render(
       <ReadinessIssueList
-        issues={[issue({ id: 'w1', section: 'media' })]}
+        issues={[issue({ id: 'w1', section: 'specs' })]}
         onGoToSection={onGoToSection}
       />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Go to section' }));
 
-    expect(onGoToSection).toHaveBeenCalledWith('media');
+    expect(onGoToSection).toHaveBeenCalledWith('specs');
   });
 });

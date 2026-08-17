@@ -45,6 +45,7 @@ vi.mock('@/app/(portal)/listings/category-mapping-actions', () => ({
 // and `@vercel/blob` too.
 vi.mock('@/app/(portal)/listings/media-actions', () => ({
   uploadSellerMediaAction: vi.fn(),
+  deleteSellerMediaAction: vi.fn(),
 }));
 
 function fixture(key: string): ProductEditorFixture {
@@ -438,7 +439,7 @@ describe('Product Editor - structure', () => {
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
   });
 
-  it('lets the seller re-cover and reorder their own uploaded media locally', () => {
+  it('lets the seller pick a new cover from their own uploaded photos, in Basic Information', () => {
     const resolved = fixture('pass');
     const media: MediaItemFixture[] = [
       sellerUploadItem({ id: 's1', label: 'Photo 1', isCover: true }),
@@ -452,60 +453,56 @@ describe('Product Editor - structure', () => {
       />,
     );
 
-    const mediaRegion = screen.getByRole('region', { name: 'Media' });
-    const items = within(mediaRegion).getAllByRole('listitem');
+    const basicInfo = screen.getByRole('region', {
+      name: 'Basic Information',
+    });
 
     // The cover badge starts on the first tile and only ever sits on one.
-    expect(within(items[0]).getByText('Cover')).toBeInTheDocument();
-    expect(within(mediaRegion).getAllByText('Cover')).toHaveLength(1);
+    expect(within(basicInfo).getByText('Cover')).toBeInTheDocument();
 
+    fireEvent.mouseEnter(
+      within(basicInfo).getByText('Photo 2').closest('li') as Element,
+    );
     fireEvent.click(
-      within(items[1]).getByRole('button', { name: 'Make cover' }),
+      within(basicInfo).getByRole('button', { name: 'Set Photo 2 as cover' }),
     );
 
-    expect(within(items[1]).getByText('Cover')).toBeInTheDocument();
-    expect(within(mediaRegion).getAllByText('Cover')).toHaveLength(1);
-    expect(
-      within(items[0]).getByRole('button', { name: 'Make cover' }),
-    ).toBeInTheDocument();
-
-    // Reordering is real and local: the first tile cannot move earlier.
-    expect(
-      within(items[0]).getByRole('button', { name: /Move .* earlier/ }),
-    ).toBeDisabled();
-    expect(
-      within(items[0]).getByRole('button', { name: /Move .* later/ }),
-    ).toBeEnabled();
+    expect(within(basicInfo).getAllByText('Cover')).toHaveLength(1);
   });
 
-  it('shows an honest empty state, with a disabled Upload, when no seller photo is uploaded yet', () => {
+  it('shows an honest fallback note, with a disabled Upload, when no seller photo is uploaded yet', () => {
     renderEditor('pass');
 
-    const mediaRegion = screen.getByRole('region', { name: 'Media' });
+    const basicInfo = screen.getByRole('region', {
+      name: 'Basic Information',
+    });
 
     expect(
-      within(mediaRegion).getByText(/no photos have been uploaded/i),
+      within(basicInfo).getByText(/shown from the supplier's own photo/i),
     ).toBeInTheDocument();
     expect(
-      within(mediaRegion).getByRole('button', { name: 'Upload image' }),
+      within(basicInfo).getByRole('button', { name: 'Upload' }),
     ).toBeDisabled();
-    expect(within(mediaRegion).queryAllByRole('listitem')).toHaveLength(0);
   });
 
-  it('never offers to reorder, cover, or replace a supplier photo - it is read-only evidence', () => {
+  it('never offers to delete or set a cover from a supplier photo - it is read-only evidence', () => {
     renderEditor('attention');
 
-    // The rejected watermarked image lives in Supplier Details now, not Media
-    // section, and nothing in this repo copies a supplier photo into
-    // something the seller can edit.
+    const specsSection = document.getElementById('sec-specs') as HTMLElement;
+
+    fireEvent.click(
+      within(specsSection).getByRole('button', { name: 'Supplier Details' }),
+    );
+
+    // The rejected watermarked image lives in Supplier Details, and nothing
+    // in this repo copies a supplier photo into something the seller can
+    // edit - there is no "Set as cover"/"Delete" control anywhere on the
+    // screen for it, unlike a real seller upload's hover controls.
     expect(
-      screen.queryByRole('button', { name: 'Make cover' }),
+      screen.queryByRole('button', { name: /Set Image 5 as cover/ }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /Move .* earlier/ }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: 'Replace' }),
+      screen.queryByRole('button', { name: 'Delete Image 5' }),
     ).not.toBeInTheDocument();
     expect(screen.getByText('Image 5')).toBeInTheDocument();
   });
@@ -534,14 +531,25 @@ describe('Product Editor - the photo a real product actually has', () => {
 
   function renderWithCover() {
     const resolved = withCoverAddress();
-
-    return render(
+    const result = render(
       <ProductEditor
         fixture={resolved}
         initialLifecycle="IDLE"
         dataMode="database"
       />,
     );
+
+    // Supplier Details is collapsed by default (owner decision 2026-08-17);
+    // its read-only gallery is not in the accessibility tree until opened.
+    // Scoped to the section itself - the jump nav has its own same-named
+    // button.
+    const specsSection = document.getElementById('sec-specs') as HTMLElement;
+
+    fireEvent.click(
+      within(specsSection).getByRole('button', { name: 'Supplier Details' }),
+    );
+
+    return result;
   }
 
   it('renders the recorded address in all three places the editor shows a photo', () => {
@@ -551,11 +559,11 @@ describe('Product Editor - the photo a real product actually has', () => {
       .getAllByRole('img')
       .filter((image) => image.getAttribute('src')?.includes('697a2372'));
 
-    // Four on purpose: header, Basic Information strip, Supplier Details'
-    // read-only gallery, and the Draft Storefront Preview cover. Media
-    // section itself shows none - it renders only seller uploads, and this
-    // fixture has none.
-    expect(rendered).toHaveLength(4);
+    // Three on purpose: header, Supplier Details' read-only gallery, and the
+    // Draft Storefront Preview cover. Basic Information's own photo manager
+    // shows none - it renders only the seller's own uploads, and this
+    // fixture has none, so it falls back to the disabled Upload tile.
+    expect(rendered).toHaveLength(3);
     rendered.forEach((image) => {
       expect(image).toHaveAccessibleName(/Supplier listing photo/);
     });
@@ -579,7 +587,7 @@ describe('Product Editor - the photo a real product actually has', () => {
       screen
         .getAllByRole('img')
         .filter((image) => image.getAttribute('src')?.includes('697a2372')),
-    ).toHaveLength(4);
+    ).toHaveLength(3);
     expect(screen.getByText('Image 3')).toBeInTheDocument();
   });
 

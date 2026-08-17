@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
 import type { ProductEditorFixture } from '@/lib/seller-center/product-editor/types';
@@ -13,13 +13,10 @@ function loadFixture(key: string): ProductEditorFixture {
   return resolved;
 }
 
-function renderSection(
-  overrides: Partial<ProductEditorFixture> = {},
-  onGoToSection = vi.fn(),
-) {
+function renderSection(overrides: Partial<ProductEditorFixture> = {}) {
   const fixture = { ...loadFixture('pass'), ...overrides };
 
-  const result = render(
+  return render(
     <BasicInformationSection
       fixture={fixture}
       productName={fixture.productName}
@@ -28,23 +25,39 @@ function renderSection(
       onSellerSkuChange={vi.fn()}
       brandDeclaration="No brand / generic"
       onBrandDeclarationChange={vi.fn()}
-      onGoToSection={onGoToSection}
+      onUploadPhoto={vi.fn()}
+      onDeletePhoto={vi.fn()}
+      onMakeCoverPhoto={vi.fn()}
+      isUploadingPhoto={false}
+      deletingPhotoId={null}
     />,
   );
-
-  return { ...result, onGoToSection };
 }
 
-describe('BasicInformationSection - Product media summary', () => {
-  it('falls back to the supplier photos when the seller has uploaded none', () => {
-    renderSection();
+describe('BasicInformationSection - Product media', () => {
+  it('shows the seller-uploaded photo count against the 12-photo cap', () => {
+    renderSection({ media: [] });
 
-    // BASE_MEDIA has 5 items; with no seller upload, the summary must show
-    // the supplier's photos rather than claim zero images exist.
-    expect(screen.getByText(/5 images/)).toBeInTheDocument();
+    expect(screen.getByText('0 of 12 photos')).toBeInTheDocument();
   });
 
-  it('prefers the seller-uploaded count once the seller has their own photos', () => {
+  it('tells the seller the storefront falls back to the supplier photo until they upload one', () => {
+    renderSection({ media: [] });
+
+    expect(
+      screen.getByText(/shown from the supplier's own photo/i),
+    ).toBeInTheDocument();
+  });
+
+  it('states the size/format/resolution guidance the upload pipeline actually enforces', () => {
+    renderSection({ media: [] });
+
+    expect(screen.getByText(/2000 × 2000 px/)).toBeInTheDocument();
+    expect(screen.getByText(/up to 5 MB/)).toBeInTheDocument();
+    expect(screen.getByText(/JPG, PNG, or WebP/)).toBeInTheDocument();
+  });
+
+  it('switches to the cover-photo hint once the seller has uploaded their own', () => {
     renderSection({
       media: [
         {
@@ -63,16 +76,9 @@ describe('BasicInformationSection - Product media summary', () => {
       ],
     });
 
-    expect(screen.getByText(/1 images/)).toBeInTheDocument();
-  });
-
-  it('jumps to Media section when "Upload your own photos" is pressed', () => {
-    const { onGoToSection } = renderSection();
-
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Upload your own photos' }),
-    );
-
-    expect(onGoToSection).toHaveBeenCalledWith('media');
+    expect(screen.getByText('1 of 12 photos')).toBeInTheDocument();
+    expect(
+      screen.getByText(/star sets a photo as the storefront cover/i),
+    ).toBeInTheDocument();
   });
 });
