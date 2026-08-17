@@ -136,4 +136,72 @@ describe('CjTokenManager', () => {
       reason: 'upstream-unavailable',
     });
   });
+
+  it('reuses a still-valid persisted token without calling CJ auth', async () => {
+    const futureExpiry = new Date(
+      Date.now() + 10 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const store = secretStore({
+      read: vi.fn().mockResolvedValue({
+        ...credentialBundle,
+        accessTokenExpiresAt: futureExpiry,
+      }),
+    });
+    const manager = new CjTokenManager(store);
+
+    await expect(manager.getAccessToken('connection-1')).resolves.toBe(
+      'old-access-token',
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    expect(store.write).not.toHaveBeenCalled();
+
+    // Second call served from the in-memory cache: no further store read.
+    await expect(manager.getAccessToken('connection-1')).resolves.toBe(
+      'old-access-token',
+    );
+    expect(store.read).toHaveBeenCalledOnce();
+  });
+
+  it('re-authenticates when the persisted token is expired', async () => {
+    const manager = new CjTokenManager(secretStore());
+
+    await expect(manager.getAccessToken('connection-1')).resolves.toBe(
+      'fresh-access-token',
+    );
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it('deduplicates concurrent refreshes into a single CJ auth call', async () => {
+    let resolveAuth: (response: Response) => void = () => undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveAuth = resolve;
+          }),
+      ),
+    );
+    const store = secretStore();
+    const manager = new CjTokenManager(store);
+
+    const tokens = Promise.all([
+      manager.getAccessToken('connection-1'),
+      manager.getAccessToken('connection-1'),
+      manager.getAccessToken('connection-1'),
+    ]);
+
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledOnce();
+    });
+    resolveAuth(accessTokenResponse());
+
+    await expect(tokens).resolves.toEqual([
+      'fresh-access-token',
+      'fresh-access-token',
+      'fresh-access-token',
+    ]);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(store.read).toHaveBeenCalledOnce();
+  });
 });

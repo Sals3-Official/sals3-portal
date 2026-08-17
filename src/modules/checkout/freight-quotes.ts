@@ -771,7 +771,21 @@ export async function quoteCheckoutFreight(
         throw new CjApiError('unexpected-response');
       }
 
-      return (parsed.data.data ?? [])
+      const rows = parsed.data.data ?? [];
+      const rejectedRows = rows.filter(
+        (row) => row.error !== '' || row.errorEn !== '',
+      );
+
+      if (rejectedRows.length > 0) {
+        // eslint-disable-next-line no-console
+        console.warn('[portal] CJ freight option rejected', {
+          originCountry: pkg.originCountry,
+          destinationCountry: pkg.destinationCountry,
+          errors: rejectedRows.map((row) => row.errorEn || row.error),
+        });
+      }
+
+      return rows
         .filter((row) => row.error === '' && row.errorEn === '')
         .map((row) => {
           const name =
@@ -816,6 +830,12 @@ export async function quoteCheckoutFreight(
   const quotes = quotesByPackage.flat();
 
   if (quotes.length === 0) {
+    // eslint-disable-next-line no-console
+    console.warn('[portal] CJ freight returned no usable options', {
+      destinationCountry: input.address.country,
+      packageCount: packages.length,
+      packageOrigins: packages.map((pkg) => pkg.originCountry),
+    });
     throw new CheckoutFreightQuoteError(
       'CJ returned no delivery methods for this cart and address.',
     );

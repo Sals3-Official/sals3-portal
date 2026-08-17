@@ -40,6 +40,12 @@ type ReauthResult = {
 
 const cache = new Map<string, CachedToken>();
 
+// Single-flight guard: on a cold instance the freight path fires several CJ
+// calls concurrently, each asking for a token. Without this, every caller
+// re-authenticated in parallel against CJ's 1-req/sec auth endpoint and the
+// losers surfaced as intermittent checkout 503s.
+const inFlightRefreshes = new Map<string, Promise<string>>();
+
 function expiryToMs(expiryDate: string): number {
   const parsed = Date.parse(expiryDate);
   return Number.isNaN(parsed) ? Date.now() + FALLBACK_LIFETIME_MS : parsed;
@@ -65,11 +71,16 @@ async function reauthenticate(apiKey: string): Promise<ReauthResult> {
       cache: 'no-store',
       signal: timeoutSignal(),
     });
-  } catch {
+  } catch (error) {
+    logCredentialFailure('[portal] CJ auth request failed', error);
     throw new CjApiError('upstream-unavailable');
   }
 
   if (!response.ok) {
+    logCredentialFailure(
+      '[portal] CJ auth failed',
+      `HTTP ${response.status} ${response.statusText}`,
+    );
     throw new CjApiError('upstream-unavailable');
   }
 
@@ -104,6 +115,23 @@ export default class CjTokenManager {
       return cached.token;
     }
 
+    const inFlight = inFlightRefreshes.get(connectionId);
+
+    if (inFlight !== undefined) {
+      return inFlight;
+    }
+
+    const refresh = this.loadOrRefreshToken(connectionId);
+    inFlightRefreshes.set(connectionId, refresh);
+
+    try {
+      return await refresh;
+    } finally {
+      inFlightRefreshes.delete(connectionId);
+    }
+  }
+
+  private async loadOrRefreshToken(connectionId: string): Promise<string> {
     // The pooled client, deliberately, not a caller's transaction: credential
     // reads/refresh persistence are their own units of work. A persistence
     // miss must not crash a seller page after CJ already returned a usable
@@ -121,6 +149,24 @@ export default class CjTokenManager {
     } catch (error) {
       logCredentialFailure('[portal] CJ credential read failed', error);
       throw new CjApiError('missing-credentials');
+    }
+
+    // Reuse the persisted token when it is still comfortably valid (CJ access
+    // tokens live ~15 days). A cold instance must not re-authenticate against
+    // CJ's 1-req/sec auth endpoint while a perfectly good token sits in the
+    // credential bundle - that stampede was the intermittent checkout outage.
+    const persistedExpiresAtMs = Date.parse(bundle.accessTokenExpiresAt);
+
+    if (
+      !Number.isNaN(persistedExpiresAtMs) &&
+      persistedExpiresAtMs - EXPIRY_MARGIN_MS > Date.now()
+    ) {
+      cache.set(connectionId, {
+        token: bundle.accessToken,
+        expiresAtMs: persistedExpiresAtMs,
+      });
+
+      return bundle.accessToken;
     }
 
     const fresh = await reauthenticate(bundle.apiKey);
@@ -171,9 +217,11 @@ export default class CjTokenManager {
   static resetCache(connectionId?: string): void {
     if (connectionId === undefined) {
       cache.clear();
+      inFlightRefreshes.clear();
       return;
     }
 
     cache.delete(connectionId);
+    inFlightRefreshes.delete(connectionId);
   }
 }
