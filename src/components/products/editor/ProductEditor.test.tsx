@@ -46,6 +46,10 @@ vi.mock('@/app/(portal)/listings/category-mapping-actions', () => ({
 
 // Same reasoning: `upload-seller-media.ts` reaches the server-only db client
 // and `@aws-sdk/client-s3` too.
+vi.mock('@/app/(portal)/listings/description-image-actions', () => ({
+  default: vi.fn(),
+}));
+
 vi.mock('@/app/(portal)/listings/media-actions', () => ({
   uploadSellerMediaAction: vi.fn(),
   deleteSellerMediaAction: vi.fn(),

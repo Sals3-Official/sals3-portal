@@ -26,6 +26,9 @@ export const MAX_BLOCKS = 60;
 export const MAX_TEXT_LENGTH = 4_000;
 export const MAX_LIST_ITEMS = 40;
 export const MAX_LABEL_LENGTH = 120;
+export const MAX_URL_LENGTH = 2_048;
+/** Alt text is a sentence, not an essay; the same ceiling the gallery uses. */
+export const MAX_ALT_LENGTH = 160;
 
 /** Matches `<div`, `</p`, `<!--`, `<?xml`. Does not match `a < b` or `5 <10`. */
 export const MARKUP_OPENER = /<[a-zA-Z/!?]/;
@@ -47,8 +50,34 @@ export type KeyValueListBlock = {
   entries: KeyValueEntry[];
 };
 
+/**
+ * An image inside the description, never a gallery photo.
+ *
+ * `url` is a Cloudflare R2 address, allow-listed at the write boundary
+ * against `CLOUDFLARE_R2_PUBLIC_BASE_URL` — a free-form URL field in a
+ * document whose whole posture is "an allow list, not a sanitiser" is the
+ * one addition that could undo that posture, so it is rejected rather than
+ * rewritten. Deliberately checked on write and not in this shape: a stored
+ * document must stay readable even if that environment variable is later
+ * renamed, or every description holding an image would vanish from the
+ * editor at once.
+ *
+ * `alt` is required and the seller's own words. The gallery defaults alt to
+ * the product title, which is a known weakness; it is not repeated here.
+ */
+export type ImageBlock = {
+  type: 'image';
+  url: string;
+  alt: string;
+  caption?: string;
+};
+
 export type DescriptionBlock =
-  ParagraphBlock | HeadingBlock | BulletListBlock | KeyValueListBlock;
+  | ParagraphBlock
+  | HeadingBlock
+  | BulletListBlock
+  | KeyValueListBlock
+  | ImageBlock;
 
 export type DescriptionBlockType = DescriptionBlock['type'];
 
@@ -57,14 +86,34 @@ export const DESCRIPTION_BLOCK_LABELS: Record<DescriptionBlockType, string> = {
   heading: 'Heading',
   bulletList: 'Bullet list',
   keyValueList: 'Detail list',
+  image: 'Image',
 };
 
+/**
+ * A switch rather than an if-chain with a fallthrough return: the chain
+ * silently handed back a detail list for any type it did not name, so
+ * adding `image` to the union produced detail lists from the image buttons
+ * and compiled cleanly. `never` in the default makes the next added block
+ * type a compile error instead.
+ */
 export function emptyBlockOfType(type: DescriptionBlockType): DescriptionBlock {
-  if (type === 'paragraph') return { type: 'paragraph', text: '' };
-  if (type === 'heading') return { type: 'heading', level: 3, text: '' };
-  if (type === 'bulletList') return { type: 'bulletList', items: [''] };
+  switch (type) {
+    case 'paragraph':
+      return { type: 'paragraph', text: '' };
+    case 'heading':
+      return { type: 'heading', level: 3, text: '' };
+    case 'bulletList':
+      return { type: 'bulletList', items: [''] };
+    case 'keyValueList':
+      return { type: 'keyValueList', entries: [{ label: '', value: '' }] };
+    case 'image':
+      return { type: 'image', url: '', alt: '' };
+    default: {
+      const unhandled: never = type;
 
-  return { type: 'keyValueList', entries: [{ label: '', value: '' }] };
+      throw new Error(`Unhandled description block type: ${String(unhandled)}`);
+    }
+  }
 }
 
 /**
@@ -76,6 +125,15 @@ export function emptyBlockOfType(type: DescriptionBlockType): DescriptionBlock {
 function textPartsOf(block: DescriptionBlock): string[] {
   if (block.type === 'paragraph' || block.type === 'heading') {
     return [block.text];
+  }
+
+  // An image's own text, not its address: `url` is machine data, and letting
+  // it into the plain-text projection would put a storage URL in the
+  // meta-description suggestion.
+  if (block.type === 'image') {
+    return block.caption === undefined
+      ? [block.alt]
+      : [block.alt, block.caption];
   }
 
   if (block.type === 'bulletList') return block.items;
@@ -96,6 +154,7 @@ export function descriptionBlocksToPlainText(
   blocks: readonly DescriptionBlock[],
 ): string {
   return blocks
+    .filter((block) => block.type !== 'image')
     .map((block) => {
       if (block.type === 'keyValueList') {
         return block.entries
@@ -108,9 +167,45 @@ export function descriptionBlocksToPlainText(
     .join('\n\n');
 }
 
-/** True when a block carries no text a buyer would ever see. */
+/**
+ * True when a block carries nothing a buyer would ever see.
+ *
+ * An image is empty when no file has been attached yet. One that has a file
+ * but no alt text is not empty — it is incomplete, which is a refusal
+ * (`describeBlockProblem`) rather than something to silently drop.
+ */
 export function isBlockEmpty(block: DescriptionBlock): boolean {
+  if (block.type === 'image') return block.url.trim() === '';
+
   return textPartsOf(block).every((part) => part.trim() === '');
+}
+
+/**
+ * How many images this block starts or continues a consecutive run of, and
+ * where it sits in that run.
+ *
+ * The storefront derives image layout from adjacency — one image alone is
+ * full width at 16:9, two or more pair into a grid at 4:3 — so the editor
+ * has to read the same adjacency to tell the seller what they will get. No
+ * grouping is stored: a "row of two" is two consecutive image blocks, which
+ * keeps reordering and deleting from ever leaving a half-empty container
+ * behind.
+ */
+export function imageRunAt(
+  blocks: readonly DescriptionBlock[],
+  index: number,
+): { position: number; length: number } | null {
+  if (blocks[index]?.type !== 'image') return null;
+
+  let start = index;
+
+  while (start > 0 && blocks[start - 1]?.type === 'image') start -= 1;
+
+  let end = index;
+
+  while (end + 1 < blocks.length && blocks[end + 1]?.type === 'image') end += 1;
+
+  return { position: index - start + 1, length: end - start + 1 };
 }
 
 /**
@@ -122,6 +217,18 @@ export function isBlockEmpty(block: DescriptionBlock): boolean {
  * would accept the block.
  */
 export function describeBlockProblem(block: DescriptionBlock): string | null {
+  if (block.type === 'image') {
+    if (block.url.trim() === '') return 'Upload an image for this block.';
+
+    if (block.alt.trim() === '') {
+      return 'Describe the image for shoppers using a screen reader. Alt text is required.';
+    }
+
+    if (block.alt.trim().length > MAX_ALT_LENGTH) {
+      return `Alt text is at most ${MAX_ALT_LENGTH} characters.`;
+    }
+  }
+
   const parts = textPartsOf(block).filter((part) => part.trim() !== '');
 
   if (parts.some((part) => MARKUP_OPENER.test(part))) {
@@ -172,6 +279,19 @@ export function prepareBlocksForSave(
     .map((block): DescriptionBlock => {
       if (block.type === 'paragraph' || block.type === 'heading') {
         return { ...block, text: block.text.trim() };
+      }
+
+      if (block.type === 'image') {
+        const caption = block.caption?.trim() ?? '';
+
+        return {
+          type: 'image',
+          url: block.url.trim(),
+          alt: block.alt.trim(),
+          // Dropped rather than stored blank: an empty `<figcaption>` is a
+          // gap under the image, and the field is optional by design.
+          ...(caption === '' ? {} : { caption }),
+        };
       }
 
       if (block.type === 'bulletList') {

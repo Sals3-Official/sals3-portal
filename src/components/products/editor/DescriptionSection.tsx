@@ -5,6 +5,7 @@ import {
   isBlockEmpty,
 } from '@/lib/products/description-blocks';
 import DescriptionBlockEditor, {
+  type DescriptionImageUpload,
   type KeyedDescriptionBlock,
 } from './DescriptionBlockEditor';
 import FieldSourceBadge from './FieldSourceBadge';
@@ -22,6 +23,8 @@ type DescriptionSectionProps = {
   /** True only while `metaDescription` still holds an unedited suggestion. */
   isMetaDescriptionSuggested: boolean;
   onSaveMetaDescription?: () => Promise<{ ok: boolean; message?: string }>;
+  uploadImage?: DescriptionImageUpload;
+  uploadDisabledReason?: string | null;
 };
 
 /**
@@ -44,6 +47,8 @@ export default function DescriptionSection({
   onMetaDescriptionChange,
   isMetaDescriptionSuggested,
   onSaveMetaDescription,
+  uploadImage,
+  uploadDisabledReason = null,
 }: DescriptionSectionProps) {
   const isEmpty = blocks.every((entry) => isBlockEmpty(entry.block));
 
@@ -82,7 +87,12 @@ export default function DescriptionSection({
 
       <div className="flex flex-col gap-1.5">
         <p className="text-sm font-medium">Product description</p>
-        <DescriptionBlockEditor blocks={blocks} onChange={onBlocksChange} />
+        <DescriptionBlockEditor
+          blocks={blocks}
+          onChange={onBlocksChange}
+          uploadImage={uploadImage}
+          uploadDisabledReason={uploadDisabledReason}
+        />
         {isEmpty ? (
           <p role="status" className="flex gap-1.5 text-xs text-amber-600">
             <TriangleAlert

@@ -7,10 +7,13 @@ import {
   MARKUP_OPENER,
   MAX_BLOCKS,
   MAX_LABEL_LENGTH,
+  MAX_ALT_LENGTH,
   MAX_LIST_ITEMS,
   MAX_TEXT_LENGTH,
+  MAX_URL_LENGTH,
   type BulletListBlock,
   type HeadingBlock,
+  type ImageBlock,
   type KeyValueListBlock,
   type ParagraphBlock,
 } from '@/lib/products/description-blocks';
@@ -22,8 +25,10 @@ import {
  * Rendering must not accept unsanitized supplier HTML."*).
  *
  * It is an allow list, not a sanitiser. There is no `html` block, no raw
- * string passthrough, and no link/image block, so there is nothing for a
- * renderer to interpret as markup even before escaping. That matters
+ * string passthrough, and no link block, so there is nothing for a renderer
+ * to interpret as markup even before escaping. The one `image` block carries
+ * an address the write boundary allow-lists against the Sals3 R2 bucket, not
+ * free-form markup. That matters
  * specifically because CJ's `description` **is** supplier HTML: it is fetched
  * and stored as evidence today but has no sanitiser (spec §26, and the
  * parked-with-unblock-condition entry that says sanitisation must be designed
@@ -91,11 +96,30 @@ const keyValueListBlockSchema = z.object({
     .max(MAX_LIST_ITEMS),
 }) satisfies z.ZodType<KeyValueListBlock>;
 
+/**
+ * A description image.
+ *
+ * `url` is shape-checked here and **allow-listed separately at the write
+ * boundary** (`assertDescriptionImagesAreStored`), not in this schema. This
+ * schema is also the read path: folding an environment-dependent host check
+ * into it would mean a renamed `CLOUDFLARE_R2_PUBLIC_BASE_URL` silently
+ * emptying every description that holds an image, in the editor and on the
+ * storefront at once. Refusing a bad address on the way in is the same
+ * protection without that failure mode.
+ */
+const imageBlockSchema = z.object({
+  type: z.literal('image'),
+  url: z.string().url().max(MAX_URL_LENGTH),
+  alt: plainText(MAX_ALT_LENGTH),
+  caption: plainText(MAX_TEXT_LENGTH).optional(),
+}) satisfies z.ZodType<ImageBlock>;
+
 export const descriptionBlockSchema = z.discriminatedUnion('type', [
   paragraphBlockSchema,
   headingBlockSchema,
   bulletListBlockSchema,
   keyValueListBlockSchema,
+  imageBlockSchema,
 ]);
 
 export { DESCRIPTION_DOCUMENT_VERSION };

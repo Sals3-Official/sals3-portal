@@ -3,6 +3,7 @@ import { descriptionDocumentSchema } from '@/modules/catalog/products/descriptio
 import {
   DESCRIPTION_DOCUMENT_VERSION,
   blocksMatchSaved,
+  imageRunAt,
   describeBlockProblem,
   descriptionBlocksToPlainText,
   emptyBlockOfType,
@@ -124,5 +125,112 @@ describe('description blocks', () => {
         AUTHORED,
       ),
     ).toBe(false);
+  });
+
+  it('keeps an image block through a save projection, dropping a blank caption', () => {
+    expect(
+      prepareBlocksForSave([
+        {
+          type: 'image',
+          url: 'https://cdn.example.com/a.webp',
+          alt: '  Chest measured flat  ',
+          caption: '   ',
+        },
+      ]),
+    ).toEqual([
+      {
+        type: 'image',
+        url: 'https://cdn.example.com/a.webp',
+        alt: 'Chest measured flat',
+      },
+    ]);
+  });
+
+  it('drops an image block with no file but keeps one missing only alt text', () => {
+    const prepared = prepareBlocksForSave([
+      { type: 'image', url: '', alt: '' },
+      { type: 'image', url: 'https://cdn.example.com/a.webp', alt: '' },
+    ]);
+
+    // The second survives so the seller is refused with a reason rather than
+    // watching their upload disappear.
+    expect(prepared).toEqual([
+      { type: 'image', url: 'https://cdn.example.com/a.webp', alt: '' },
+    ]);
+  });
+
+  it('requires alt text on an uploaded image', () => {
+    expect(
+      describeBlockProblem({
+        type: 'image',
+        url: 'https://cdn.example.com/a.webp',
+        alt: '',
+      }),
+    ).toMatch(/Alt text is required/);
+    expect(describeBlockProblem({ type: 'image', url: '', alt: '' })).toMatch(
+      /Upload an image/,
+    );
+  });
+
+  it('keeps image addresses out of the plain-text projection', () => {
+    const text = descriptionBlocksToPlainText([
+      { type: 'paragraph', text: 'Copy.' },
+      { type: 'image', url: 'https://cdn.example.com/a.webp', alt: 'A hat' },
+    ]);
+
+    expect(text).toBe('Copy.');
+  });
+
+  it('reads image layout from adjacency, the way the storefront does', () => {
+    const image = {
+      type: 'image',
+      url: 'https://cdn.example.com/a.webp',
+      alt: 'x',
+    } as const;
+    const blocks: DescriptionBlock[] = [
+      { type: 'paragraph', text: 'Intro.' },
+      image,
+      image,
+      image,
+      { type: 'paragraph', text: 'Outro.' },
+      image,
+    ];
+
+    expect(imageRunAt(blocks, 0)).toBeNull();
+    expect(imageRunAt(blocks, 1)).toEqual({ position: 1, length: 3 });
+    expect(imageRunAt(blocks, 3)).toEqual({ position: 3, length: 3 });
+    // The paragraph breaks the run, so the last image stands alone.
+    expect(imageRunAt(blocks, 5)).toEqual({ position: 1, length: 1 });
+  });
+
+  it('accepts an image document at the server schema', () => {
+    const parsed = descriptionDocumentSchema.safeParse({
+      version: DESCRIPTION_DOCUMENT_VERSION,
+      blocks: [
+        {
+          type: 'image',
+          url: 'https://cdn.example.com/a.webp',
+          alt: 'A hat',
+          caption: 'Front view',
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('refuses an image whose alt text is markup', () => {
+    const parsed = descriptionDocumentSchema.safeParse({
+      version: DESCRIPTION_DOCUMENT_VERSION,
+      blocks: [
+        {
+          type: 'image',
+          url: 'https://cdn.example.com/a.webp',
+          alt: '<img onerror=x>',
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(false);
   });
 });

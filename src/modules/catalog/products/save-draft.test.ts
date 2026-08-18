@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// `description-image-storage.ts`, reached through the save path's own
+// allow-list check, is `server-only`.
+vi.mock('server-only', () => ({}));
+
 vi.mock('@/lib/db/client', () => ({
   default: () => ({ marker: 'db' }),
   isDatabaseConfigured: () => true,
