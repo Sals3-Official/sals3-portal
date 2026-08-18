@@ -28,6 +28,7 @@
     "verify": "npm run lint && npm run format:check && npm run typecheck:clean && npm run build && npm run test:run && npm run test:e2e",
     "seed:taxonomy-v1": "tsx scripts/guard-remote-db.mts seed:taxonomy-v1 && tsx scripts/seed-sals3-taxonomy-v1.mts",
     "extract:attribute-controls": "tsx scripts/extract-category-attribute-controls.mts",
+    "extract:variation-families": "tsx scripts/extract-category-variation-families.mts",
     "seed:attribute-controls": "tsx scripts/guard-remote-db.mts seed:attribute-controls && tsx scripts/seed-category-attribute-controls.mts"
   },
   "dependencies": {

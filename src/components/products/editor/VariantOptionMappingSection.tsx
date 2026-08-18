@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -29,6 +29,25 @@ import { sectionBadge } from './presentation';
  * CJ label change is matched on the token, and renaming the display label can
  * never silently repoint a variant at another variant's price — and never
  * changes what CJ fulfillment matches on.
+ *
+ * The token is rendered as text rather than a disabled `Input`. It is data, not a
+ * field: an input-shaped box that can never be typed into invites the click
+ * anyway, doubles the row's visual weight against the one column that *is*
+ * editable, and makes a screen reader announce five more textboxes that lead
+ * nowhere.
+ *
+ * ## A suggestion, not a default
+ *
+ * The taxonomy workbook says what a *category* varies by, so it can suggest
+ * `Colour` and `Size`. It cannot know which supplier position holds which
+ * attribute — `deriveOptionSplit` proves there are two positions, but nothing in
+ * CJ's payload says position 0 is a colour, and on a lamp the same slot could be
+ * plug type. So the suggestion is offered as a button next to an empty field
+ * instead of pre-filling a saveable value: the seller sees the actual supplier
+ * values beside it and confirms in one press, and a suggestion that does not fit
+ * this product costs a glance rather than becoming a wrong buyer-facing
+ * attribute. The publish blocker stays until a person has named the axis, which
+ * is what makes that confirmation real.
  *
  * ## Order is a human decision too
  *
@@ -57,8 +76,12 @@ export type VariantOptionMappingSectionProps = {
   proposal: OptionMappingProposalAxis[];
   /** Present once mapped — the section then reports rather than edits. */
   mappedAxisNames?: string[];
-  /** Taxonomy preset names aligned to `proposal`; editable, never authoritative. */
-  suggestedAxisNames?: string[];
+  /**
+   * Category-derived names aligned index-for-index with `proposal`, `null` where
+   * the category offers none. Offered as a one-press suggestion, never pre-filled
+   * — see the "A suggestion, not a default" note above.
+   */
+  suggestedAxisNames?: (string | null)[];
   variantCount: number;
   onSave?: (
     axes: {
@@ -79,19 +102,29 @@ export type VariantOptionMappingSectionProps = {
 type ValueDraft = { raw: string; label: string };
 type AxisDraft = { name: string; values: ValueDraft[] };
 
-function initialDrafts(
-  proposal: OptionMappingProposalAxis[],
-  suggestedAxisNames: string[],
-): AxisDraft[] {
-  const usableNames =
-    suggestedAxisNames.length === proposal.length ? suggestedAxisNames : [];
-
-  return proposal.map((axis, axisIndex) => ({
-    name: usableNames[axisIndex] ?? '',
+function initialDrafts(proposal: OptionMappingProposalAxis[]): AxisDraft[] {
+  return proposal.map((axis) => ({
+    // Always empty. A category suggestion is offered beside the field, never
+    // written into it — see "A suggestion, not a default" above.
+    name: '',
     // Display label defaults to the supplier's own token: the honest starting
     // point, and often already correct.
     values: axis.values.map((raw) => ({ raw, label: raw })),
   }));
+}
+
+/**
+ * Identity of the proposal currently held in `axes`, used to notice that the
+ * server sent a different one.
+ *
+ * Includes each axis's position index, not just its values: a product whose
+ * constant position becomes varied changes which positions are offered without
+ * necessarily changing any token set.
+ */
+function proposalIdentity(proposal: OptionMappingProposalAxis[]): string {
+  // JSON, not a delimiter string: a token could contain any character, and a
+  // collision here would silently skip a resync.
+  return JSON.stringify(proposal.map((axis) => [axis.index, axis.values]));
 }
 
 /**
@@ -173,9 +206,33 @@ export default function VariantOptionMappingSection({
   unlabelledVariantCount = 0,
   onRecoverLabels,
 }: VariantOptionMappingSectionProps) {
-  const [axes, setAxes] = useState<AxisDraft[]>(() =>
-    initialDrafts(proposal, suggestedAxisNames),
-  );
+  const [axes, setAxes] = useState<AxisDraft[]>(() => initialDrafts(proposal));
+  /**
+   * Resync when the server sends a different proposal.
+   *
+   * `useState`'s initializer reads its argument on mount only, and this component
+   * is not keyed, so without this the drafts stay frozen at whatever the first
+   * render saw. "Recover supplier labels" makes that visible and costly: it calls
+   * `router.refresh()`, the refreshed `fixture` arrives with a real proposal where
+   * there was none, the `proposal.length === 0` branch below stops matching — and
+   * the form renders from an `axes` array that is still empty. Zero option cards,
+   * and because `[].every()` is vacuously `true` the Save button is *enabled* and
+   * submits nothing, which the action correctly refuses as `invalid_input`. The
+   * seller sees "Those variant options could not be read" right after a recovery
+   * that actually worked.
+   *
+   * Adjusted during render rather than in an effect — React's documented pattern
+   * for state derived from props. It re-renders immediately without committing the
+   * intermediate frame, so no flash of the stale form.
+   */
+  const identity = proposalIdentity(proposal);
+  const [syncedIdentity, setSyncedIdentity] = useState(identity);
+
+  if (syncedIdentity !== identity) {
+    setSyncedIdentity(identity);
+    setAxes(initialDrafts(proposal));
+  }
+
   const [touched, setTouched] = useState<Record<number, boolean>>({});
   const [state, setState] = useState<'IDLE' | 'SAVING' | 'SAVED' | 'FAILED'>(
     'IDLE',
@@ -294,7 +351,19 @@ export default function VariantOptionMappingSection({
     );
   }
 
-  const named = axes.every((axis) => axis.name.trim().length > 0);
+  const named =
+    axes.length > 0 && axes.every((axis) => axis.name.trim().length > 0);
+
+  function applyAxisName(axisIndex: number, name: string): void {
+    setAxes((current) =>
+      current.map((item, index) =>
+        index === axisIndex ? { ...item, name } : item,
+      ),
+    );
+    // Accepting a suggestion is a decision about this axis, so the field counts
+    // as visited - otherwise clearing it afterwards would show no error.
+    setTouched((current) => ({ ...current, [axisIndex]: true }));
+  }
 
   async function save() {
     if (!named || onSave === undefined) return;
@@ -329,12 +398,11 @@ export default function VariantOptionMappingSection({
       />
 
       <p className="text-sm text-muted-foreground">
-        Detected {proposal.length} buyer options across {variantCount} variants
-        from the supplier&rsquo;s own labels. Name each option and put its
-        values in the order a buyer should see them. The supplier column is
-        read-only — editing a buyer label only changes what shows on the
-        storefront; CJ fulfillment still matches variants by the
-        supplier&rsquo;s own value.
+        Found {proposal.length} buyer options across {variantCount} variants in
+        the supplier&rsquo;s own labels. Name each option, then order its values
+        the way buyers should see them. Supplier values are locked: renaming a
+        buyer label changes the storefront only, and CJ still fulfils by its own
+        value.
       </p>
 
       <div className="flex flex-col gap-4">
@@ -342,6 +410,7 @@ export default function VariantOptionMappingSection({
           const nameId = `variant-matrix-option-${axisIndex}`;
           const missingName =
             touched[axisIndex] === true && axis.name.trim() === '';
+          const suggestion = suggestedAxisNames[axisIndex] ?? null;
 
           return (
             <div
@@ -356,7 +425,7 @@ export default function VariantOptionMappingSection({
               <Input
                 id={nameId}
                 value={axis.name}
-                placeholder="e.g. Colour"
+                placeholder={axisIndex === 0 ? 'e.g. Colour' : 'e.g. Size'}
                 aria-invalid={missingName}
                 aria-describedby={missingName ? `${nameId}-error` : undefined}
                 className="mt-1 h-9 max-w-xs"
@@ -382,9 +451,39 @@ export default function VariantOptionMappingSection({
                 </p>
               ) : null}
 
+              {/*
+                Offered only while the field is empty. Once a name exists — typed
+                or accepted — repeating the suggestion beside it would read as a
+                correction of the seller's own choice.
+              */}
+              {suggestion !== null && axis.name.trim() === '' ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    Suggested for this category:
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => applyAxisName(axisIndex, suggestion)}
+                  >
+                    Use &ldquo;{suggestion}&rdquo;
+                  </Button>
+                </div>
+              ) : null}
+
               <div className="mt-3 flex flex-col gap-2">
                 <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 text-xs text-muted-foreground">
-                  <span>Supplier value</span>
+                  {/*
+                    Each header sits over its own column's alignment: the
+                    supplier ledger is right-aligned to the gutter, so its label
+                    is too.
+                  */}
+                  <span className="flex items-center justify-end gap-1 pr-3">
+                    <Lock aria-hidden="true" className="size-3" />
+                    Supplier value
+                  </span>
                   <span>Shown to buyers</span>
                   <span className="sr-only">Reorder</span>
                 </div>
@@ -393,12 +492,19 @@ export default function VariantOptionMappingSection({
                     key={value.raw}
                     className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2"
                   >
-                    <Input
-                      readOnly
-                      value={value.raw}
-                      aria-label={`Supplier value ${value.raw}`}
-                      className="h-9 bg-muted text-muted-foreground"
-                    />
+                    {/*
+                      A ledger cell, not a field. Text rather than a disabled
+                      input; recessed surface and mono so it reads as the
+                      supplier's own immutable token; and right-aligned so it
+                      meets the editable label at the gutter — the two halves of
+                      one mapping in visual contact, which is the whole point of
+                      this row. Same h-9 keeps the baselines level.
+                    */}
+                    <span className="flex h-9 min-w-0 items-center justify-end rounded-md bg-muted/40 px-3">
+                      <span className="truncate font-mono text-xs text-muted-foreground">
+                        {value.raw}
+                      </span>
+                    </span>
                     <Input
                       value={value.label}
                       aria-label={`Label shown to buyers for ${value.raw}`}

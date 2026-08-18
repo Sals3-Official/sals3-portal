@@ -13,15 +13,17 @@ const PROPOSAL = [
  * because reordering is the one flow here that must work without a mouse.
  */
 describe('VariantOptionMappingSection', () => {
-  it('pre-fills the supplier tokens read-only and defaults each buyer label to the token', () => {
+  it('shows the supplier token as text, not a field, and defaults each buyer label to it', () => {
     render(
       <VariantOptionMappingSection proposal={PROPOSAL} variantCount={6} />,
     );
 
-    const supplier = screen.getByLabelText('Supplier value Army Green');
-
-    expect(supplier).toHaveAttribute('readonly');
-    expect(supplier).toHaveValue('Army Green');
+    // Rendered as data. A disabled input-shaped box invites a click that can
+    // never do anything and announces a textbox that leads nowhere.
+    expect(screen.getByText('Army Green')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('textbox', { name: /^Supplier value/ }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByLabelText('Label shown to buyers for Army Green'),
     ).toHaveValue('Army Green');
@@ -159,47 +161,139 @@ describe('VariantOptionMappingSection', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  it('pre-fills group names from aligned taxonomy preset suggestions', async () => {
-    const onSave = vi.fn(async () => ({ ok: true }));
+  /**
+   * The workbook knows the category, not which supplier position holds which
+   * attribute, so a category suggestion must never arrive as a saveable value.
+   * It is offered; the seller commits it.
+   */
+  it('offers category suggestions without pre-filling them, leaving save blocked', () => {
+    const onSave = vi.fn();
 
     render(
       <VariantOptionMappingSection
         proposal={PROPOSAL}
-        suggestedAxisNames={['Color / Camo Pattern', 'Garment Size (S/M/L/XL)']}
+        suggestedAxisNames={['Colour', 'Size']}
         variantCount={6}
         onSave={onSave}
       />,
     );
 
-    expect(screen.getByLabelText('Option 1 name')).toHaveValue(
-      'Color / Camo Pattern',
-    );
-    expect(screen.getByLabelText('Option 2 name')).toHaveValue(
-      'Garment Size (S/M/L/XL)',
+    expect(screen.getByLabelText('Option 1 name')).toHaveValue('');
+    expect(screen.getByLabelText('Option 2 name')).toHaveValue('');
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save Variant Matrix' }),
     );
 
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('applies a suggestion when the seller accepts it, and then stops offering it', async () => {
+    const onSave = vi.fn(async () => ({ ok: true }));
+
+    render(
+      <VariantOptionMappingSection
+        proposal={PROPOSAL}
+        suggestedAxisNames={['Colour', 'Size']}
+        variantCount={6}
+        onSave={onSave}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use “Colour”' }));
+
+    expect(screen.getByLabelText('Option 1 name')).toHaveValue('Colour');
+    // Repeating it beside a filled field would read as correcting the seller.
+    expect(
+      screen.queryByRole('button', { name: 'Use “Colour”' }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use “Size”' }));
     fireEvent.click(
       screen.getByRole('button', { name: 'Save Variant Matrix' }),
     );
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     expect(onSave).toHaveBeenCalledWith([
-      expect.objectContaining({ name: 'Color / Camo Pattern' }),
-      expect.objectContaining({ name: 'Garment Size (S/M/L/XL)' }),
+      expect.objectContaining({ name: 'Colour' }),
+      expect.objectContaining({ name: 'Size' }),
     ]);
   });
 
-  it('ignores preset suggestions that do not align with the proposed groups', () => {
+  /**
+   * Regression: `axes` came from a `useState` initializer, which reads its
+   * argument on mount only, and this component is not keyed. "Recover supplier
+   * labels" calls `router.refresh()`, so the refreshed fixture arrives with a
+   * real proposal where there was none — and the form rendered from an `axes`
+   * array that was still empty. Zero option cards, and because `[].every()` is
+   * vacuously `true`, Save was *enabled* and submitted nothing, which the action
+   * refuses as `invalid_input`. The seller saw "could not be read" straight after
+   * a recovery that had worked.
+   */
+  it('rebuilds its drafts when the server sends a proposal it did not have before', () => {
+    const onSave = vi.fn();
+    const { rerender } = render(
+      <VariantOptionMappingSection
+        proposal={[]}
+        variantCount={6}
+        unlabelledVariantCount={6}
+        onSave={onSave}
+      />,
+    );
+
+    expect(screen.getByText('Labels missing')).toBeInTheDocument();
+
+    // What `router.refresh()` produces once the labels are recovered.
+    rerender(
+      <VariantOptionMappingSection
+        proposal={PROPOSAL}
+        variantCount={6}
+        unlabelledVariantCount={0}
+        onSave={onSave}
+      />,
+    );
+
+    expect(screen.getByLabelText('Option 1 name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Option 2 name')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('Label shown to buyers for Army Green'),
+    ).toBeInTheDocument();
+
+    // Never enabled while nothing is named - the old bug made this clickable.
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save Variant Matrix' }),
+    );
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("keeps the seller's typed names when the proposal itself has not changed", () => {
+    const { rerender } = render(
+      <VariantOptionMappingSection proposal={PROPOSAL} variantCount={6} />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Option 1 name'), {
+      target: { value: 'Shade' },
+    });
+    rerender(
+      <VariantOptionMappingSection proposal={PROPOSAL} variantCount={7} />,
+    );
+
+    expect(screen.getByLabelText('Option 1 name')).toHaveValue('Shade');
+  });
+
+  it('offers nothing for an axis the category has no family for', () => {
     render(
       <VariantOptionMappingSection
         proposal={PROPOSAL}
-        suggestedAxisNames={['Color only']}
+        suggestedAxisNames={['Colour', null]}
         variantCount={6}
       />,
     );
 
-    expect(screen.getByLabelText('Option 1 name')).toHaveValue('');
-    expect(screen.getByLabelText('Option 2 name')).toHaveValue('');
+    expect(
+      screen.getByRole('button', { name: 'Use “Colour”' }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('Suggested for this category:')).toHaveLength(1);
   });
 
   /**

@@ -178,6 +178,7 @@ queue delivery needs self-healing.
 | `npm run approve:portal-user -- --email seller@example.com --role seller_manager` | Approve/promote one verified portal user                                        |
 | `npm run seed:taxonomy`                                                           | Seed Sals3 Taxonomy v0 category identities (one-time, idempotent)               |
 | `npm run seed:taxonomy-presets`                                                   | Seed Sals3 Taxonomy v0 form presets (run after `seed:taxonomy`)                 |
+| `npm run extract:variation-families`                                              | Re-extract category variation families from the workbook (offline, no database) |
 | `npx tsx scripts/backfill-draft-supplier-media.mts --dry-run`                     | Record the supplier photo for products imported before drafts projected media   |
 
 ## Deployment and performance
@@ -681,6 +682,61 @@ token or CJ fulfillment matching, and mapping is still insert-only (no
 remap/unmap). `VariantPricingTable`'s Variant column now renders a mapped
 label's `Name: Value` pairs as small chips instead of one run-on string,
 for readability only.
+
+**Category-driven option-name suggestions in the Variant Matrix
+(2026-08-18).** Naming the two option axes was unassisted in every
+environment but a developer's own: the only suggestion source was
+`sals3_category_presets`, whose sole writer is a local
+`npm run seed:taxonomy-presets`, so production had the categories seeded but
+not the presets and every `Option name` field rendered blank with nothing
+reporting it. Suggestions now come from
+`src/lib/db/seed-data/sals3-category-variation-families-v1.json` — a
+committed, checksum-stamped extract of the workbook's
+`Tier 1/2 Attribute Families` columns — read through
+`modules/catalog/taxonomy/variation-families.ts`. **No migration and no seed
+are involved**: the file ships with the app and is keyed by the
+`sals3_categories.code` the editor already resolves, so the feature works in
+any environment the moment it deploys. The now-unused
+`sals3_category_presets` read was removed from `read-model.ts`, one fewer
+query per `/listings` load; `taxonomy/repository.ts` and `category-form.ts`
+still use that table for the Specification section.
+
+Coverage is 5,563 of 5,595 categories for tier 1 and 5,425 for tier 2. The
+eight family tokens map to `Colour`, `Size`, `Material`, `Capacity`,
+`Model`, `Pack size`, `Variant` (`FOOD_BEAUTY`, which spans flavour and
+cosmetic shade), and `Fitment`; a multi-token cell takes the first token, and
+an unknown token yields no suggestion rather than a guessed label.
+
+A suggestion is **offered, never pre-filled**. The workbook knows what a
+category varies by; it cannot know which supplier token position holds which
+attribute — `deriveOptionSplit` proves there are two positions, but nothing
+in CJ's payload says position 0 is a colour, and on a lamp the same slot
+could be plug type. So the field stays empty, the `OPTIONS_UNMAPPED` blocker
+stands until a person names the axis, and the category's suggestion sits
+beside it as a `Use "Colour"` button next to the actual supplier values. A
+suggestion that does not fit costs a glance instead of becoming a wrong
+buyer-facing attribute. The supplier column also renders as read-only text
+rather than a disabled `Input`: it is data, and an input-shaped box that can
+never be typed into invites the click anyway and announces extra textboxes
+that lead nowhere.
+
+Regenerate the extract only when the owner supplies a new workbook:
+
+```bash
+npm run extract:variation-families -- --discover-families  # print the distinct family tokens, write nothing
+npm run extract:variation-families -- --dry-run            # validate and report coverage without writing
+npm run extract:variation-families                         # write the frozen JSON
+```
+
+**Fixed in the same pass:** the Variant Matrix held its drafts in a
+`useState` initializer and was not keyed, so a proposal arriving from
+`router.refresh()` never reached it. After a successful **Recover supplier
+labels** the form rendered zero option cards, and because `[].every()` is
+vacuously `true` the Save button was enabled and submitted an empty array —
+the seller saw "Those variant options could not be read" immediately after a
+recovery that had worked. State is now resynced during render (React's
+adjusting-state-on-prop-change pattern), keyed on the proposal's own
+identity, with a regression test proven to fail without the fix.
 
 **Meta Description added to the Description section (2026-08-17), scoped
 narrowly.** A dedicated, seller-editable `products.meta_description`

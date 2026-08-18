@@ -259,13 +259,11 @@ describe('productToEditorFixture — option mapping projection', () => {
     ]);
   });
 
-  it('pre-fills option group names from the Taxonomy v1 preset by supplier-label position', () => {
+  it("suggests option names from the category's variation families, by supplier-label position", () => {
     const { fixture } = productToEditorFixture({
       ...CATALOGUE_PRODUCT,
-      categoryPresetVariationAttributes: [
-        'Color / Camo Pattern',
-        'Garment Size (S/M/L/XL)',
-      ],
+      // A COLOR / SIZE category in the committed taxonomy extract.
+      categoryCode: 'CAT-GGL-1057',
       variants: [
         catalogueVariant({
           id: 'black-s',
@@ -294,16 +292,18 @@ describe('productToEditorFixture — option mapping projection', () => {
       { index: 0, values: ['Black', 'Army Green'] },
       { index: 1, values: ['S', 'M'] },
     ]);
+    // Clean family-derived names, not the workbook's long guidance text: these
+    // are offered as a buyer-facing option name.
     expect(fixture.optionMapping.suggestedAxisNames).toEqual([
-      'Color / Camo Pattern',
-      'Garment Size (S/M/L/XL)',
+      'Colour',
+      'Size',
     ]);
   });
 
-  it('uses the matching preset tier when a constant supplier-label position was dropped', () => {
+  it('uses the matching family tier when a constant supplier-label position was dropped', () => {
     const { fixture } = productToEditorFixture({
       ...CATALOGUE_PRODUCT,
-      categoryPresetVariationAttributes: ['Color', 'Size'],
+      categoryCode: 'CAT-GGL-1057',
       variants: [
         catalogueVariant({
           id: 'khaki-s',

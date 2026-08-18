@@ -370,10 +370,17 @@ export type ProductEditorFixture = {
     proposal: { index: number; values: string[] }[];
     mappedAxisNames: string[];
     /**
-     * Taxonomy preset labels aligned to `proposal`. They pre-fill the editable
-     * group names only; the seller still owns the saved mapping.
+     * Category-derived axis names aligned index-for-index with `proposal`, from
+     * the taxonomy workbook's variation families.
+     *
+     * `null` at a position means the category offers no suggestion for that axis
+     * (no family recorded, or a third supplier position the two-tier taxonomy
+     * does not describe). They are *offered*, never pre-filled: the workbook
+     * knows the category but cannot know which supplier position holds which
+     * attribute, so a person accepts the suggestion and the saved mapping stays
+     * theirs. See `modules/catalog/taxonomy/variation-families.ts`.
      */
-    suggestedAxisNames: string[];
+    suggestedAxisNames: (string | null)[];
     variantCount: number;
     /**
      * Variants whose supplier label was never recorded.

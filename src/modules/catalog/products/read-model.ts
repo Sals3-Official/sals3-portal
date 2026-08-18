@@ -7,7 +7,6 @@ import getDb, { type Database } from '@/lib/db/client';
 import { cjImageUrl } from '@/lib/cj/primitives';
 import { r2PublicImageUrl } from '@/lib/storage/r2-url';
 import {
-  ACTIVE_TAXONOMY_VERSION,
   candidateEvaluations,
   categoryAttributeControls,
   offerSupplierBindings,
@@ -22,7 +21,6 @@ import {
   products,
   providerProductReferences,
   providerVariantReferences,
-  sals3CategoryPresets,
   sals3Categories,
   supplierCandidates,
   supplierConnections,
@@ -61,6 +59,7 @@ import type {
 import { feedSnapshotSchema } from '@/modules/catalog/candidates/rules/contracts';
 import type { CategoryAttributeContract } from '@/modules/catalog/taxonomy/attribute-types';
 import { validateCategoryAttributeSubmission } from '@/modules/catalog/taxonomy/attribute-contract';
+import { suggestedAxisNamesForCategory } from '@/modules/catalog/taxonomy/variation-families';
 import { descriptionDocumentSchema } from './description-document';
 import { deriveOptionSplit } from './option-split';
 import { deriveSourceChanges } from './source-changes';
@@ -443,33 +442,31 @@ function mappedOptionLabel(
     .join(', ');
 }
 
-function presetVariationAttributes(
-  preset:
-    | {
-        tier1Attribute: string | null;
-        tier2Attribute: string | null;
-      }
-    | undefined,
-): CatalogueProductFixture['categoryPresetVariationAttributes'] {
-  if (preset === undefined) return undefined;
-
-  return [preset.tier1Attribute, preset.tier2Attribute];
-}
-
+/**
+ * Category-derived axis-name suggestions, aligned to the supplier's own token
+ * positions.
+ *
+ * Tier 1 of the taxonomy corresponds to supplier position 0, tier 2 to position
+ * 1, so `axis.index` indexes the tier list directly. A third position, or a tier
+ * whose workbook family cell is empty, yields `null` for that axis only — the
+ * array stays the same length as `proposal` because index 0 means "the first
+ * proposed axis" to the editor.
+ *
+ * Read from the committed taxonomy extract rather than `sals3_category_presets`,
+ * for two reasons. The presets table only carries the workbook's long guidance
+ * text (`Color / Finish / Material (Stainless/...)`), which is unusable as a
+ * buyer-facing option name. And a suggestion that depends on seeded rows silently
+ * disappears in any environment where that seed never ran — which is exactly how
+ * this surfaced: production has the categories but not the presets, so every
+ * option name came back blank with nothing reporting it.
+ */
 function suggestedOptionAxisNames(
   proposal: { index: number }[],
-  presetAttributes:
-    CatalogueProductFixture['categoryPresetVariationAttributes'] | undefined,
-): string[] {
-  if (presetAttributes === undefined || proposal.length === 0) return [];
+  categoryCode: string | null,
+): (string | null)[] {
+  const byTier = suggestedAxisNamesForCategory(categoryCode);
 
-  const names = proposal.map((axis) => presetAttributes[axis.index]?.trim());
-
-  return names.every(
-    (name): name is string => name !== undefined && name !== '',
-  )
-    ? names
-    : [];
+  return proposal.map((axis) => byTier[axis.index] ?? null);
 }
 
 async function listCoreRows(executor: Executor, sellerAccountId: string) {
@@ -510,7 +507,6 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
       variantRows: [],
       referenceRows: [],
       optionRows: [],
-      presetRows: [],
       attributeControlRows: [],
       attributeValueRows: [],
       variantOptionRows: [],
@@ -537,7 +533,6 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
     revisionRows,
     mediaRows,
     optionRows,
-    presetRows,
     attributeControlRows,
     attributeValueRows,
   ] = await Promise.all([
@@ -575,21 +570,6 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
       .from(productOptions)
       .where(inArray(productOptions.productId, ids))
       .orderBy(asc(productOptions.productId), asc(productOptions.position)),
-    categoryIds.length === 0
-      ? Promise.resolve([])
-      : executor
-          .select({
-            categoryId: sals3CategoryPresets.categoryId,
-            tier1Attribute: sals3CategoryPresets.tier1Attribute,
-            tier2Attribute: sals3CategoryPresets.tier2Attribute,
-          })
-          .from(sals3CategoryPresets)
-          .where(
-            and(
-              inArray(sals3CategoryPresets.categoryId, categoryIds),
-              eq(sals3CategoryPresets.taxonomyVersion, ACTIVE_TAXONOMY_VERSION),
-            ),
-          ),
     categoryIds.length === 0
       ? Promise.resolve([])
       : executor
@@ -720,7 +700,6 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
     variantRows,
     referenceRows,
     optionRows,
-    presetRows,
     attributeControlRows,
     attributeValueRows,
     variantOptionRows,
@@ -770,9 +749,6 @@ function buildCatalogueProducts(
   const optionValuesByVariant = groupBy(
     rows.variantOptionRows,
     (option) => option.variantId,
-  );
-  const presetByCategory = new Map(
-    rows.presetRows.map((preset) => [preset.categoryId, preset]),
   );
   const attributeControlsByCategory = groupBy(
     rows.attributeControlRows,
@@ -997,11 +973,6 @@ function buildCatalogueProducts(
         currentRevisionVersion: revision?.version ?? null,
         optionAxisNames: (optionsByProduct.get(product.id) ?? []).map(
           (option) => option.name,
-        ),
-        categoryPresetVariationAttributes: presetVariationAttributes(
-          product.categoryId === null
-            ? undefined
-            : presetByCategory.get(product.categoryId),
         ),
         categoryAttributeControls: (
           (product.categoryId === null
@@ -1576,7 +1547,7 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
   );
   const suggestedAxisNames = suggestedOptionAxisNames(
     optionSplit?.positions ?? [],
-    product.categoryPresetVariationAttributes,
+    product.categoryCode ?? null,
   );
   const fixture: ProductEditorFixture = {
     fixtureKey: product.id,
