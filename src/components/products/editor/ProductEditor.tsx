@@ -6,6 +6,7 @@ import {
   uploadSellerMediaAction,
 } from '@/app/(portal)/listings/media-actions';
 import saveMetaDescriptionAction from '@/app/(portal)/listings/meta-description-actions';
+import saveShowSupplierPhotoAction from '@/app/(portal)/listings/show-supplier-photo-actions';
 import saveOptionMappingAction, {
   recoverSupplierLabelsAction,
 } from '@/app/(portal)/listings/option-mapping-actions';
@@ -107,6 +108,9 @@ export default function ProductEditor({
         }
         saveMetaDescriptionAction={
           isDatabaseBacked ? saveMetaDescriptionAction : undefined
+        }
+        saveShowSupplierPhotoAction={
+          isDatabaseBacked ? saveShowSupplierPhotoAction : undefined
         }
       />
     </div>

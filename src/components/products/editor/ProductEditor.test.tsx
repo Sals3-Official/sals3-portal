@@ -61,6 +61,11 @@ vi.mock('@/app/(portal)/listings/meta-description-actions', () => ({
   default: vi.fn(),
 }));
 
+// Same reasoning: `save-show-supplier-photo.ts` reaches the server-only db client too.
+vi.mock('@/app/(portal)/listings/show-supplier-photo-actions', () => ({
+  default: vi.fn(),
+}));
+
 function fixture(key: string): ProductEditorFixture {
   const resolved = resolveProductEditorFixture(key);
 
