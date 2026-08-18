@@ -381,6 +381,15 @@ export type ProductEditorFixture = {
      * theirs. See `modules/catalog/taxonomy/variation-families.ts`.
      */
     suggestedAxisNames: (string | null)[];
+    /**
+     * Whether leaving this unmapped actually blocks publication.
+     *
+     * True only for a concatenated label (two or more supplier token positions).
+     * A single-axis product is nameable but publishes either way, so the section
+     * must not claim a blocker the server would never raise. See
+     * `optionMappingRequiredButMissing` in `modules/catalog/products/publish.ts`.
+     */
+    mappingBlocksPublish: boolean;
     variantCount: number;
     /**
      * Variants whose supplier label was never recorded.

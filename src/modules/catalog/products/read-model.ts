@@ -1641,6 +1641,9 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
       proposal: optionSplit?.positions ?? [],
       mappedAxisNames: product.optionAxisNames ?? [],
       suggestedAxisNames,
+      // Mirrors `optionMappingRequiredButMissing`'s rule exactly, so the section
+      // never shows a blocker the publish gate would not actually raise.
+      mappingBlocksPublish: (optionSplit?.labelWidth ?? 0) >= 2,
       variantCount: product.variants.length,
       // Free: the raw column is already on every variant here, so telling a
       // missing label apart from a present one that simply does not form a grid

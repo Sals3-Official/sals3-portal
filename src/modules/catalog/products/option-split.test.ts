@@ -79,9 +79,34 @@ describe('deriveOptionSplit', () => {
     ).toBe(undefined);
   });
 
-  it('refuses a single-token label such as CJ’s "default"', () => {
+  /**
+   * The Outdoor Sports Face Mask, reported from UAT on 2026-08-18: five colours,
+   * one size, so CJ sends `Black`, `Blue`, ... with no delimiter at all. The old
+   * rule refused every product of this shape, which is why its Variant Matrix
+   * read "Not detected" and could never be named.
+   */
+  it('proposes one axis from single-token labels, the commonest colour-only shape', () => {
+    const split = deriveOptionSplit([
+      variant('a', 'Black'),
+      variant('b', 'Blue'),
+      variant('c', 'Green'),
+    ]);
+
+    expect(split?.positions).toEqual([
+      { index: 0, values: ['Black', 'Blue', 'Green'] },
+    ]);
+    // Recorded so the publish gate can stay strict about concatenated labels
+    // only - an unmapped `Black` is already a presentable value to a buyer.
+    expect(split?.labelWidth).toBe(1);
+  });
+
+  it('reports the label width so a caller can tell one axis from a concatenation', () => {
+    expect(deriveOptionSplit(REAL)?.labelWidth).toBe(2);
+  });
+
+  it('still refuses single-token labels that repeat, which would mis-price', () => {
     expect(
-      deriveOptionSplit([variant('a', 'default'), variant('b', 'other')]),
+      deriveOptionSplit([variant('a', 'Black'), variant('b', 'Black')]),
     ).toBe(undefined);
   });
 

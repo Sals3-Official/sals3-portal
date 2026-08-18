@@ -29,8 +29,9 @@
  * Splitting is only safe when the result is provably complete. Ten variants
  * yielding token sets of 2 and 5 means 2 × 5 = 10 — every combination present
  * exactly once, nothing left to infer. Anything less (ragged token counts, a
- * missing combination, a duplicate, or a single token) means the label is not
- * a clean encoding, and the seller must map it by hand.
+ * missing combination, or a duplicate) means the label is not a clean encoding,
+ * and the seller must map it by hand. A single un-delimited token is *not* a
+ * failure — see the width check below.
  *
  * ## A position that never varies is dropped, not disqualifying
  *
@@ -69,6 +70,15 @@ export type OptionSplitProposal = {
   positions: OptionSplitPosition[];
   /** Variant id per full combination, keyed by its tokens rejoined. */
   byCombination: Map<string, string>;
+  /**
+   * How many positions the supplier's label actually encodes, before constant
+   * positions are dropped.
+   *
+   * `1` means a single-axis product: five colours, no delimiter, nothing
+   * concatenated. That is nameable but not the case the publish gate exists for
+   * — see `optionMappingRequiredButMissing` in `publish.ts`.
+   */
+  labelWidth: number;
 };
 
 /** The supplier's tokens for one label, in its own order. */
@@ -114,8 +124,16 @@ export function deriveOptionSplit(
   );
   const width = tokenised[0]?.length ?? 0;
 
-  // One token carries no structure; a ragged set is not an encoding.
-  if (width < 2) return undefined;
+  // An empty label encodes nothing; a ragged set is not an encoding.
+  //
+  // A width of 1 *is* accepted, corrected 2026-08-18. Refusing it was wrong: a
+  // garment sold in five colours and one size arrives as `Black`, `Blue`, ...
+  // with no delimiter, which is a complete, exact single-axis grid. The original
+  // rationale ("one token carries no structure") confused "cannot be split" with
+  // "has no structure" — and a single token is in fact the case with nothing to
+  // guess at all, since the whole label is one axis value. The seller still
+  // supplies the axis name, exactly as with two positions.
+  if (width < 1) return undefined;
   if (tokenised.some((tokens) => tokens.length !== width)) return undefined;
 
   const values: string[][] = Array.from({ length: width }, () => []);
@@ -155,5 +173,5 @@ export function deriveOptionSplit(
     .map((bucket, index) => ({ index, values: bucket }))
     .filter((position) => position.values.length >= 2);
 
-  return { positions, byCombination };
+  return { positions, byCombination, labelWidth: width };
 }

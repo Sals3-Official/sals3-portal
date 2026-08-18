@@ -1186,6 +1186,9 @@ export default function ProductEditorWorkspace({
                 mappedAxisNames={fixture.optionMapping.mappedAxisNames}
                 suggestedAxisNames={fixture.optionMapping.suggestedAxisNames}
                 variantCount={fixture.optionMapping.variantCount}
+                mappingBlocksPublish={
+                  fixture.optionMapping.mappingBlocksPublish
+                }
                 unlabelledVariantCount={
                   fixture.optionMapping.unlabelledVariantCount
                 }

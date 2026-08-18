@@ -114,7 +114,23 @@ async function optionMappingRequiredButMissing(
     )
     .where(eq(productVariants.productId, productId));
 
-  if (deriveOptionSplit(labels) === undefined) return false;
+  const split = deriveOptionSplit(labels);
+
+  if (split === undefined) return false;
+
+  /**
+   * A single-axis product is nameable but does not gate publication (owner
+   * decision 2026-08-18).
+   *
+   * `deriveOptionSplit` accepts a one-token label set — five colours, no
+   * delimiter — so those products now get a Variant Matrix in the editor. Gating
+   * publication on them as well would have made every colour-only product in the
+   * catalogue unpublishable until a seller named its axis, which is a throughput
+   * decision, not a correctness one. The case this gate exists for is the
+   * concatenated label: an unmapped `Army Green-XL` reaches a buyer as one opaque
+   * string, while an unmapped `Black` is already a presentable value.
+   */
+  if (split.labelWidth < 2) return false;
 
   const mapped = await executor
     .select({ id: productOptions.id })

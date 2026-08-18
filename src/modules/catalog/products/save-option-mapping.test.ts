@@ -209,6 +209,32 @@ const KHAKI_AXES = [
   },
 ];
 
+/**
+ * The Outdoor Sports Face Mask, reported from UAT on 2026-08-18: five colours,
+ * no delimiter at all. `deriveOptionSplit` refused this shape until that day, so
+ * the editor never offered a Save for it and this write path was unreachable.
+ * Now that it is reachable, it is tested.
+ */
+function maskVariants() {
+  return ['Black', 'Blue', 'Green', 'Grey', 'Purple'].map((label, index) => ({
+    variantId: `variant-${index + 1}`,
+    label,
+  }));
+}
+
+const MASK_AXES = [
+  {
+    name: 'Colour',
+    values: [
+      { raw: 'Black', label: 'Black' },
+      { raw: 'Blue', label: 'Blue' },
+      { raw: 'Green', label: 'Green' },
+      { raw: 'Grey', label: 'Grey' },
+      { raw: 'Purple', label: 'Purple' },
+    ],
+  },
+];
+
 describe('saveOptionMapping', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -318,6 +344,40 @@ describe('saveOptionMapping', () => {
       ok: true,
       axisCount: 1,
       mappedVariantCount: 3,
+    });
+  });
+
+  it('maps a single-axis product, linking every variant to its one option', async () => {
+    const { db, writes } = transactionalDb({ variants: maskVariants() });
+
+    const result = await save(db, MASK_AXES);
+
+    expect(result).toMatchObject({
+      ok: true,
+      axisCount: 1,
+      mappedVariantCount: 5,
+    });
+
+    // One option at position 0, five values, one link per variant - a
+    // single-token label has exactly one position to key on.
+    const optionWrites = writes.filter(
+      (write) => write.table === productOptions,
+    );
+    expect(optionWrites.map((write) => write.values.position)).toEqual([0]);
+
+    const linkWrites = writes.filter(
+      (write) => write.table === productVariantOptionValues,
+    );
+    expect(linkWrites).toHaveLength(5);
+
+    // Every variant earns a combination key, so none is left unmapped with a
+    // mapping that reported success - the failure mode the Khaki case had.
+    const variantUpdates = writes.filter(
+      (write) => write.table === productVariants,
+    );
+    expect(variantUpdates).toHaveLength(5);
+    variantUpdates.forEach((write) => {
+      expect(write.values.optionCombinationKey).toEqual(expect.any(String));
     });
   });
 
