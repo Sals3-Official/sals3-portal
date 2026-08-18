@@ -84,6 +84,7 @@ type ProductEditorWorkspaceProps = {
           | 'not_configured'
           | 'not_found'
           | 'version_conflict'
+          | 'image_not_stored'
           | 'failed';
       }
   >;
@@ -183,6 +184,18 @@ type ProductEditorWorkspaceProps = {
     input: unknown,
   ) => Promise<
     | { ok: true; productVersion: number }
+    | { ok: false; reason: string; message: string }
+  >;
+  /**
+   * Description-image upload boundary. Separate from `uploadMediaAction`
+   * because a description image is not gallery media: it produces no
+   * `product_media_sources` row, is never a cover candidate, and is
+   * referenced only by the description document.
+   */
+  uploadDescriptionImageAction?: (
+    formData: FormData,
+  ) => Promise<
+    | { ok: true; url: string; widthPixels: number; heightPixels: number }
     | { ok: false; reason: string; message: string }
   >;
 };
@@ -321,6 +334,7 @@ export default function ProductEditorWorkspace({
   saveCategoryAttributesAction,
   saveMetaDescriptionAction,
   saveShowSupplierPhotoAction,
+  uploadDescriptionImageAction,
 }: ProductEditorWorkspaceProps) {
   const router = useRouter();
 
@@ -979,6 +993,36 @@ export default function ProductEditorWorkspace({
    * against. Each file is its own request and its own DB row, so one
    * rejected file (too large, wrong type) does not block the rest.
    */
+  /**
+   * One file, one request, and the URL handed straight back to the block —
+   * nothing is persisted until Save Draft writes the document that
+   * references it.
+   */
+  /**
+   * Anchored to the draft, not the publish target: a description image is
+   * written while the draft is being written, which is well before a product
+   * has anything to publish.
+   */
+  const descriptionImageProductId =
+    fixture.draftSaveTarget?.productId ?? fixture.publishTarget?.productId;
+
+  const handleUploadDescriptionImage =
+    uploadDescriptionImageAction === undefined ||
+    descriptionImageProductId === undefined
+      ? undefined
+      : async (file: File) => {
+          const formData = new FormData();
+
+          formData.set('productId', descriptionImageProductId);
+          formData.set('file', file);
+
+          const result = await uploadDescriptionImageAction(formData);
+
+          return result.ok
+            ? ({ ok: true, url: result.url } as const)
+            : ({ ok: false, message: result.message } as const);
+        };
+
   const handleUploadMedia =
     uploadMediaAction === undefined || optionMappingTarget === null
       ? undefined
@@ -1195,6 +1239,12 @@ export default function ProductEditorWorkspace({
               }}
               isMetaDescriptionSuggested={metaDescriptionIsSuggested}
               onSaveMetaDescription={handleSaveMetaDescription}
+              uploadImage={handleUploadDescriptionImage}
+              uploadDisabledReason={
+                handleUploadDescriptionImage === undefined
+                  ? 'Images can be uploaded once this draft is saved against a real product.'
+                  : null
+              }
             />
           </EditorSectionCard>
 

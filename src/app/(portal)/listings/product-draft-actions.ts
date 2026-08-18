@@ -306,6 +306,7 @@ export type SaveProductDraftActionResult =
         | 'not_configured'
         | 'not_found'
         | 'version_conflict'
+        | 'image_not_stored'
         | 'failed';
     };
 

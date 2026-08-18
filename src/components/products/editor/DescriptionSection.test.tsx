@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import uploadDescriptionImageAction from '@/app/(portal)/listings/description-image-actions';
 import { saveProductDraftAction } from '@/app/(portal)/listings/product-draft-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
 import type { ProductEditorFixture } from '@/lib/seller-center/product-editor/types';
@@ -44,6 +45,10 @@ vi.mock('@/app/(portal)/listings/meta-description-actions', () => ({
 }));
 
 vi.mock('@/app/(portal)/listings/show-supplier-photo-actions', () => ({
+  default: vi.fn(),
+}));
+
+vi.mock('@/app/(portal)/listings/description-image-actions', () => ({
   default: vi.fn(),
 }));
 
@@ -176,5 +181,88 @@ describe('Description section - block authoring', () => {
     expect(
       screen.getByText(/never copied into a Sals3 listing/),
     ).toBeInTheDocument();
+  });
+
+  it('adds two consecutive image blocks for the side-by-side preset', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 4,
+    });
+    vi.mocked(uploadDescriptionImageAction).mockResolvedValue({
+      ok: true,
+      url: 'https://media.example.com/description-media/p/a.webp',
+      widthPixels: 1200,
+      heightPixels: 900,
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Two images, side by side' }),
+    );
+
+    // The layout is adjacency, not a stored group: two plain image blocks,
+    // and the editor says what the storefront will do with them.
+    expect(screen.getAllByLabelText('Alt text')).toHaveLength(2);
+    expect(screen.getByText('1 of 2 side by side')).toBeInTheDocument();
+    expect(screen.getByText('2 of 2 side by side')).toBeInTheDocument();
+  });
+
+  it('uploads a file and saves the returned address in the block', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 4,
+    });
+    vi.mocked(uploadDescriptionImageAction).mockResolvedValue({
+      ok: true,
+      url: 'https://media.example.com/description-media/p/a.webp',
+      widthPixels: 1200,
+      heightPixels: 900,
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Image, full width' }));
+
+    const file = new File(['bytes'], 'chart.png', { type: 'image/png' });
+
+    // The file input is hidden from the accessibility tree — the Upload
+    // button is the control — so it is reached by test id rather than role.
+    fireEvent.change(screen.getByTestId(/-file$/), {
+      target: { files: [file] },
+    });
+
+    await waitFor(() =>
+      expect(uploadDescriptionImageAction).toHaveBeenCalled(),
+    );
+
+    fireEvent.change(screen.getByLabelText('Alt text'), {
+      target: { value: 'Size chart' },
+    });
+
+    const saved = await saveDraft();
+
+    expect(saved.blocks).toEqual([
+      {
+        type: 'image',
+        url: 'https://media.example.com/description-media/p/a.webp',
+        alt: 'Size chart',
+      },
+    ]);
+  });
+
+  it('asks for alt text before the image is publishable', () => {
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionBlocks: [
+        {
+          type: 'image',
+          url: 'https://media.example.com/description-media/p/a.webp',
+          alt: '',
+        },
+      ],
+    });
+
+    expect(screen.getByText(/Alt text is required/)).toBeInTheDocument();
   });
 });

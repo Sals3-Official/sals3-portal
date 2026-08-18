@@ -2,6 +2,7 @@ import getDb, { type Database } from '@/lib/db/client';
 import { appendAuditEvent } from '@/modules/catalog/candidates/repository';
 
 import { PRODUCT_AUDIT_ACTIONS, type SaveProductDraftInput } from './contracts';
+import { descriptionImagesAreStored } from './description-image-storage';
 import { checksumOfDescriptionDocument } from './description-document';
 import {
   findProductForSteward,
@@ -34,7 +35,10 @@ import {
 
 export type SaveProductDraftOutcome =
   | { ok: true; revisionVersion: number; contentChecksum: string }
-  | { ok: false; reason: 'not_found' | 'version_conflict' };
+  | {
+      ok: false;
+      reason: 'not_found' | 'version_conflict' | 'image_not_stored';
+    };
 
 export default async function saveProductDraft(input: {
   request: SaveProductDraftInput;
@@ -44,6 +48,16 @@ export default async function saveProductDraft(input: {
 }): Promise<SaveProductDraftOutcome> {
   const database = input.database ?? getDb();
   const { request } = input;
+
+  // Before anything is written: every description image must live in this
+  // deployment's own R2 bucket. The document schema checks the URL's shape,
+  // not its host, so this is the only place a foreign address is refused —
+  // see `description-image-storage.ts` for why the host check is a
+  // write-boundary rule rather than part of the stored shape.
+  if (!descriptionImagesAreStored(request.descriptionDocument)) {
+    return { ok: false, reason: 'image_not_stored' };
+  }
+
   const contentChecksum = checksumOfDescriptionDocument(
     request.descriptionDocument,
   );

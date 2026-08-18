@@ -10,6 +10,7 @@ import saveShowSupplierPhotoAction from '@/app/(portal)/listings/show-supplier-p
 import saveOptionMappingAction, {
   recoverSupplierLabelsAction,
 } from '@/app/(portal)/listings/option-mapping-actions';
+import uploadDescriptionImageAction from '@/app/(portal)/listings/description-image-actions';
 import { saveProductDraftAction } from '@/app/(portal)/listings/product-draft-actions';
 import { publishProductAction } from '@/app/(portal)/listings/publish-actions';
 import { sectionSeverity } from '@/lib/seller-center/product-editor/derive';
@@ -86,6 +87,9 @@ export default function ProductEditor({
           </EditorSectionCard>
         }
         saveDraftAction={isDatabaseBacked ? saveProductDraftAction : undefined}
+        uploadDescriptionImageAction={
+          isDatabaseBacked ? uploadDescriptionImageAction : undefined
+        }
         publishAction={isDatabaseBacked ? publishProductAction : undefined}
         optionMappingAction={
           isDatabaseBacked ? saveOptionMappingAction : undefined
