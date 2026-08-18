@@ -2,10 +2,11 @@
 
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { ChevronDown, ChevronUp, Lock } from 'lucide-react';
+import { ChevronDown, ChevronUp, Lock, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import type { MappedOptionAxis } from '@/lib/seller-center/product-catalogue/types';
 import type { IssueSeverity } from '@/lib/seller-center/product-editor/types';
 import EditorStatusPill from './EditorStatusPill';
 import { sectionBadge } from './presentation';
@@ -75,6 +76,21 @@ export type OptionMappingProposalAxis = {
 
 export type VariantOptionMappingSectionProps = {
   proposal: OptionMappingProposalAxis[];
+  /**
+   * The saved matrix, for renaming what buyers read. Empty until mapped.
+   */
+  mappedAxes?: MappedOptionAxis[];
+  /**
+   * Rename boundary. Omitted in fixture mode, where the summary has nothing
+   * real behind it to correct.
+   */
+  onRename?: (
+    axes: {
+      optionId: string;
+      name: string;
+      values: { valueId: string; label: string }[];
+    }[],
+  ) => Promise<{ ok: boolean; message: string }>;
   /** Present once mapped — the section then reports rather than edits. */
   mappedAxisNames?: string[];
   /**
@@ -205,6 +221,244 @@ function VariantMatrixHeader({
   );
 }
 
+/**
+ * The saved matrix, and the one edit it accepts.
+ *
+ * Structure is fixed once mapped — the axis count and which supplier token
+ * sits where are what variants, carts, and accepted orders depend on. The
+ * words are not: `option_combination_key` is built from the supplier's own
+ * token, so a display name carries no identity. Offering the rename and
+ * naming the limit in the same place is what keeps "cannot edit" from
+ * reading as "we lost it".
+ */
+function MappedMatrixSummary({
+  axisNames,
+  mappedAxes,
+  onRename,
+  onRenamed,
+}: {
+  axisNames: string[];
+  mappedAxes: MappedOptionAxis[];
+  onRename?: (
+    axes: {
+      optionId: string;
+      name: string;
+      values: { valueId: string; label: string }[];
+    }[],
+  ) => Promise<{ ok: boolean; message: string }>;
+  onRenamed: (axisNames: string[]) => void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [drafts, setDrafts] = useState<MappedOptionAxis[]>(mappedAxes);
+  const [state, setState] = useState<'IDLE' | 'SAVING' | 'FAILED'>('IDLE');
+  const [message, setMessage] = useState<string | null>(null);
+
+  const canEdit = onRename !== undefined && mappedAxes.length > 0;
+  const isComplete =
+    drafts.length > 0 &&
+    drafts.every(
+      (axis) =>
+        axis.name.trim() !== '' &&
+        axis.values.every((value) => value.label.trim() !== ''),
+    );
+
+  async function submit() {
+    if (onRename === undefined) return;
+
+    setState('SAVING');
+    setMessage(null);
+
+    const result = await onRename(
+      drafts.map((axis) => ({
+        optionId: axis.optionId,
+        name: axis.name.trim(),
+        values: axis.values.map((value) => ({
+          valueId: value.valueId,
+          label: value.label.trim(),
+        })),
+      })),
+    );
+
+    if (!result.ok) {
+      setState('FAILED');
+      setMessage(result.message);
+
+      return;
+    }
+
+    setState('IDLE');
+    setMessage(result.message);
+    setIsEditing(false);
+    onRenamed(drafts.map((axis) => axis.name.trim()));
+  }
+
+  if (!isEditing) {
+    return (
+      <div className="flex flex-col gap-3 border-b border-border pb-5">
+        <VariantMatrixHeader
+          meta={`${axisNames.length} options mapped`}
+          severity={null}
+        />
+        <p className="text-sm text-muted-foreground">
+          Mapped as {axisNames.join(' × ')}. Supplier labels stay as received
+          and are what CJ fulfillment still matches on; the display names above
+          are only what buyers see on the storefront.
+        </p>
+        {canEdit ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDrafts(mappedAxes);
+                setMessage(null);
+                setIsEditing(true);
+              }}
+            >
+              <Pencil aria-hidden="true" />
+              Edit names
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Names only. The number of options, and which supplier value sits
+              where, cannot change once variants exist.
+            </span>
+          </div>
+        ) : null}
+        {message === null ? null : (
+          <p className="text-sm text-ink-muted">{message}</p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3 border-b border-border pb-5">
+      <VariantMatrixHeader meta="Editing names" severity={null} />
+      <p className="text-sm text-muted-foreground">
+        Change what buyers read. Each supplier value stays as received beside
+        the name you give it.
+      </p>
+
+      <div className="flex flex-col gap-4">
+        {drafts.map((axis, axisIndex) => (
+          <div
+            key={axis.optionId}
+            className="flex flex-col gap-2 rounded-lg border border-border p-3"
+          >
+            <div className="flex flex-col gap-1">
+              <Label htmlFor={`rename-${axis.optionId}`} className="text-xs">
+                Option {axisIndex + 1} name
+              </Label>
+              <Input
+                id={`rename-${axis.optionId}`}
+                value={axis.name}
+                maxLength={60}
+                onChange={(event) =>
+                  setDrafts((current) =>
+                    current.map((item, index) =>
+                      index === axisIndex
+                        ? { ...item, name: event.target.value }
+                        : item,
+                    ),
+                  )
+                }
+              />
+            </div>
+
+            <ul className="flex list-none flex-col gap-2 p-0">
+              {axis.values.map((value, valueIndex) => (
+                <li
+                  key={value.valueId}
+                  className="grid grid-cols-1 items-center gap-2 @min-[32rem]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                >
+                  <span className="truncate text-xs text-muted-foreground">
+                    {value.supplierValue}
+                  </span>
+                  <div>
+                    <Label
+                      htmlFor={`rename-value-${value.valueId}`}
+                      className="sr-only"
+                    >
+                      Buyer label for {value.supplierValue}
+                    </Label>
+                    <Input
+                      id={`rename-value-${value.valueId}`}
+                      value={value.label}
+                      maxLength={120}
+                      onChange={(event) =>
+                        setDrafts((current) =>
+                          current.map((item, index) =>
+                            index === axisIndex
+                              ? {
+                                  ...item,
+                                  values: item.values.map(
+                                    (existing, position) =>
+                                      position === valueIndex
+                                        ? {
+                                            ...existing,
+                                            label: event.target.value,
+                                          }
+                                        : existing,
+                                  ),
+                                }
+                              : item,
+                          ),
+                        )
+                      }
+                    />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          type="button"
+          size="sm"
+          disabled={!isComplete || state === 'SAVING'}
+          onClick={() => {
+            submit().catch(() => {
+              setState('FAILED');
+              setMessage('The names could not be saved.');
+            });
+          }}
+        >
+          {state === 'SAVING' ? 'Saving…' : 'Save names'}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={state === 'SAVING'}
+          onClick={() => {
+            setDrafts(mappedAxes);
+            setIsEditing(false);
+            setMessage(null);
+          }}
+        >
+          Cancel
+        </Button>
+        {message === null ? null : (
+          <span
+            role="status"
+            className={
+              state === 'FAILED'
+                ? 'text-sm text-destructive'
+                : 'text-sm text-ink-muted'
+            }
+          >
+            {message}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function VariantOptionMappingSection({
   proposal,
   mappedAxisNames,
@@ -214,6 +468,8 @@ export default function VariantOptionMappingSection({
   onSave,
   unlabelledVariantCount = 0,
   onRecoverLabels,
+  mappedAxes = [],
+  onRename,
 }: VariantOptionMappingSectionProps) {
   const [axes, setAxes] = useState<AxisDraft[]>(() => initialDrafts(proposal));
   /**
@@ -283,17 +539,12 @@ export default function VariantOptionMappingSection({
     effectiveMappedAxisNames.length > 0
   ) {
     return (
-      <div className="flex flex-col gap-3 border-b border-border pb-5">
-        <VariantMatrixHeader
-          meta={`${effectiveMappedAxisNames.length} options mapped`}
-          severity={null}
-        />
-        <p className="text-sm text-muted-foreground">
-          Mapped as {effectiveMappedAxisNames.join(' × ')}. Supplier labels stay
-          as received and are what CJ fulfillment still matches on; the display
-          names above are only what buyers see on the storefront.
-        </p>
-      </div>
+      <MappedMatrixSummary
+        axisNames={effectiveMappedAxisNames}
+        mappedAxes={mappedAxes}
+        onRename={onRename}
+        onRenamed={(names) => setSavedAxisNames(names)}
+      />
     );
   }
 

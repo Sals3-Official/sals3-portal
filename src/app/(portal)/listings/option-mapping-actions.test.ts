@@ -37,6 +37,10 @@ vi.mock('next/cache', () => ({
   updateTag: vi.fn(),
 }));
 
+vi.mock('@/modules/catalog/products/rename-option-mapping', () => ({
+  default: vi.fn(),
+}));
+
 vi.mock('@/modules/catalog/products/save-option-mapping', () => ({
   default: vi.fn(),
 }));

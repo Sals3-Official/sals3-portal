@@ -251,6 +251,7 @@ export const PRODUCT_AUDIT_ACTIONS = {
   mediaDeleted: 'catalog_product_media.seller_deleted',
   metaDescriptionSaved: 'catalog_product.meta_description_saved',
   showSupplierPhotoSaved: 'catalog_product.show_supplier_photo_saved',
+  optionMappingRenamed: 'catalog_product_option.mapping_renamed',
 } as const;
 
 /** Operation name recorded on `idempotency_records.operation`. */

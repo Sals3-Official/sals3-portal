@@ -108,6 +108,17 @@ type ProductEditorWorkspaceProps = {
     | { ok: false; reason: string; message: string }
   >;
   /**
+   * Rename boundary for an already-saved Variant Matrix. Display words only —
+   * see `rename-option-mapping.ts` for why that is safe where a re-split is
+   * not.
+   */
+  renameOptionMappingAction?: (
+    input: unknown,
+  ) => Promise<
+    | { ok: true; axisCount: number; renamedValueCount: number }
+    | { ok: false; reason: string; message: string }
+  >;
+  /**
    * Recovery boundary for supplier labels a draft never recorded. Omitted for
    * fixture mode, which has no stored evidence to recover from.
    */
@@ -335,6 +346,7 @@ export default function ProductEditorWorkspace({
   saveMetaDescriptionAction,
   saveShowSupplierPhotoAction,
   uploadDescriptionImageAction,
+  renameOptionMappingAction,
 }: ProductEditorWorkspaceProps) {
   const router = useRouter();
 
@@ -821,6 +833,34 @@ export default function ProductEditorWorkspace({
         };
 
   /**
+   * Renaming the saved matrix. Display words only, so it needs no refresh of
+   * the proposal — but it does bump the product version, and the section
+   * mirrors the new names locally until the refreshed fixture confirms them.
+   */
+  const handleOptionMappingRename =
+    renameOptionMappingAction === undefined || optionMappingTarget === null
+      ? undefined
+      : async (
+          axes: {
+            optionId: string;
+            name: string;
+            values: { valueId: string; label: string }[];
+          }[],
+        ) => {
+          const result = await renameOptionMappingAction({
+            productId: optionMappingTarget.productId,
+            expectedProductVersion: optionMappingTarget.expectedProductVersion,
+            axes,
+          });
+
+          if (result.ok) router.refresh();
+
+          return result.ok
+            ? { ok: true, message: 'Names saved.' }
+            : { ok: false, message: result.message };
+        };
+
+  /**
    * Recovery needs only the product id — no version token, because it fills blank
    * columns rather than replacing a value anyone read. A concurrent write cannot
    * be lost: the `isNull` predicate means whoever writes first wins and the second
@@ -1279,6 +1319,8 @@ export default function ProductEditorWorkspace({
                 }
                 onSave={handleOptionMappingSave}
                 onRecoverLabels={handleRecoverLabels}
+                mappedAxes={fixture.mappedAxes}
+                onRename={handleOptionMappingRename}
               />
 
               <VariantPricingTable

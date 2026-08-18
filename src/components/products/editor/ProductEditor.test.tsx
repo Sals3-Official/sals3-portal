@@ -37,6 +37,7 @@ vi.mock('@/app/(portal)/listings/option-mapping-actions', () => ({
   // Named alongside the default: `ProductEditor` passes both down, and a missing
   // one arrives as `undefined` and fails the render rather than the assertion.
   recoverSupplierLabelsAction: vi.fn(),
+  renameOptionMappingAction: vi.fn(),
 }));
 
 // Same reasoning: `decide-category.ts` reaches the server-only db client too.

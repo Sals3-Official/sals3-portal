@@ -245,6 +245,13 @@ export type CatalogueVariantFixture = {
   manuallyPaused: boolean;
 };
 
+/** One mapped option axis, as stored. Display words plus their read-only source. */
+export type MappedOptionAxis = {
+  optionId: string;
+  name: string;
+  values: { valueId: string; label: string; supplierValue: string }[];
+};
+
 export type CatalogueProductFixture = {
   id: string;
   /** Canonical Sals3 catalog identity - never a CJ id. */
@@ -255,6 +262,11 @@ export type CatalogueProductFixture = {
    * editor loads and writes back. Absent on the illustrative fixtures.
    */
   descriptionBlocks?: DescriptionBlock[];
+  /**
+   * The stored Variant Matrix: axis names and the buyer-facing labels, each
+   * beside the supplier token it renames. Present only for a mapped product.
+   */
+  mappedAxes?: MappedOptionAxis[];
   /**
    * The lossy plain-text projection of `descriptionBlocks`, for the
    * meta-description suggestion and the content-readiness check. Never the

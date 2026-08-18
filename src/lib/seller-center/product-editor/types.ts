@@ -1,4 +1,5 @@
 import type { DescriptionBlock } from '@/lib/products/description-blocks';
+import type { MappedOptionAxis } from '@/lib/seller-center/product-catalogue/types';
 import type {
   EvaluationStatus,
   ReasonCode,
@@ -325,6 +326,11 @@ export type ProductEditorFixture = {
    * first time anyone opened the page.
    */
   descriptionBlocks: DescriptionBlock[];
+  /**
+   * The stored Variant Matrix, for renaming what a buyer reads. Empty until
+   * the product is mapped.
+   */
+  mappedAxes: MappedOptionAxis[];
   /** The lossy plain-text projection of `descriptionBlocks`. Never saved back. */
   descriptionText: string;
   /**
