@@ -190,16 +190,6 @@ export const products = pgTable(
      */
     metaDescription: text('meta_description'),
 
-    /**
-     * Whether the supplier's own photo is shown to buyers alongside a
-     * seller upload, not only as a fallback when none exists. Off hides the
-     * supplier's photo from every buyer-facing surface (header thumbnail,
-     * Draft Storefront Preview, publish) entirely - the seller's own
-     * uploads still show. The Supplier Details tab's read-only evidence
-     * gallery is unaffected either way; that is provenance, never buyer-facing.
-     */
-    showSupplierPhoto: boolean('show_supplier_photo').notNull().default(true),
-
     categoryId: uuid('category_id').references(() => sals3Categories.id, {
       onDelete: 'restrict',
     }),

@@ -8,7 +8,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import type { ProductEditorFixture } from '@/lib/seller-center/product-editor/types';
 import ProductPhotoManager from './ProductPhotoManager';
 import Sals3CategoryPicker, {
@@ -23,38 +22,6 @@ const BRAND_OPTIONS = [
   'Own brand — authorisation on file',
 ];
 
-function supplierPhotoCaption(
-  showSupplierPhoto: boolean,
-  hasOwnPhotos: boolean,
-): string {
-  if (showSupplierPhoto && hasOwnPhotos) {
-    return "Buyers see your photos and the supplier's photo together.";
-  }
-
-  if (showSupplierPhoto) {
-    return "Buyers see the supplier's photo until you upload your own.";
-  }
-
-  if (hasOwnPhotos) {
-    return "Buyers see only your photos — the supplier's is hidden.";
-  }
-
-  return 'Off with nothing uploaded yet — buyers see no photo at all.';
-}
-
-function photoManagerCaption(
-  hasOwnPhotos: boolean,
-  showSupplierPhoto: boolean,
-): string {
-  if (hasOwnPhotos) return 'The star sets a photo as the storefront cover.';
-
-  if (showSupplierPhoto) {
-    return "Shown from the supplier's own photo until you upload one — see Supplier Details for the original.";
-  }
-
-  return "No photo will show until you upload one — the supplier's photo is turned off above.";
-}
-
 type BasicInformationSectionProps = {
   fixture: ProductEditorFixture;
   productName: string;
@@ -68,10 +35,6 @@ type BasicInformationSectionProps = {
   onMakeCoverPhoto: (id: string) => void;
   isUploadingPhoto: boolean;
   deletingPhotoId: string | null;
-  /** Whether the supplier's own photo shows to buyers alongside any of the seller's own uploads. */
-  showSupplierPhoto: boolean;
-  onToggleSupplierPhoto?: (next: boolean) => void;
-  isTogglingSupplierPhoto?: boolean;
   sals3CategoryOptions?: Sals3CategoryOption[];
   onDecideSals3Category?: (
     code: string,
@@ -101,17 +64,12 @@ export default function BasicInformationSection({
   onMakeCoverPhoto,
   isUploadingPhoto,
   deletingPhotoId,
-  showSupplierPhoto,
-  onToggleSupplierPhoto,
-  isTogglingSupplierPhoto = false,
   sals3CategoryOptions = [],
   onDecideSals3Category,
 }: BasicInformationSectionProps) {
   const brandBlocker = fixture.issues.find(
     (issue) => issue.reasonCode === 'COUNTERFEIT_HIGH_CONFIDENCE',
   );
-
-  const hasOwnPhotos = fixture.media.length > 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -121,33 +79,6 @@ export default function BasicInformationSection({
           <span className="text-xs text-muted-foreground">
             {fixture.media.length} of {MAX_SELLER_PHOTOS} photos
           </span>
-        </div>
-
-        <div className="mt-2.5 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 px-3 py-2.5">
-          <div className="flex flex-col gap-0.5">
-            <Label
-              htmlFor="toggle-show-supplier-photo"
-              className="text-[13px] font-medium"
-            >
-              Show supplier photo
-            </Label>
-            <p className="text-xs text-muted-foreground">
-              {supplierPhotoCaption(showSupplierPhoto, hasOwnPhotos)}
-            </p>
-          </div>
-          <Switch
-            id="toggle-show-supplier-photo"
-            checked={showSupplierPhoto}
-            disabled={
-              onToggleSupplierPhoto === undefined || isTogglingSupplierPhoto
-            }
-            onCheckedChange={(next) => onToggleSupplierPhoto?.(next)}
-            // Sals3 brand blues (same pair as `VariantPricingTable`'s listing
-            // switch), as a gradient rather than solid — this is the one
-            // control on the screen that decides whether a real supplier
-            // photo reaches a buyer, so it earns a little more presence.
-            className="data-checked:border-transparent data-checked:bg-transparent data-checked:bg-gradient-to-r data-checked:from-[#018CC9] data-checked:to-[#002B53] data-checked:shadow-[0_0_10px_-2px_rgba(1,140,201,0.55)] data-unchecked:bg-[#002B53]/20"
-          />
         </div>
 
         <div className="mt-2.5">
@@ -163,9 +94,11 @@ export default function BasicInformationSection({
         </div>
 
         <p className="mt-2 text-xs text-muted-foreground">
-          {photoManagerCaption(hasOwnPhotos, showSupplierPhoto)} Max 2000 × 2000
-          px · JPG, PNG, or WebP, up to 5 MB each · compressed automatically on
-          upload.
+          {fixture.media.length > 0
+            ? 'The star sets a photo as the storefront cover.'
+            : "Shown from the supplier's own photo until you upload one — see Supplier Details for the original."}{' '}
+          Max 2000 × 2000 px · JPG, PNG, or WebP, up to 5 MB each · compressed
+          automatically on upload.
         </p>
       </div>
 

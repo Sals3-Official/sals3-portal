@@ -250,7 +250,6 @@ export const PRODUCT_AUDIT_ACTIONS = {
   mediaUploaded: 'catalog_product_media.seller_uploaded',
   mediaDeleted: 'catalog_product_media.seller_deleted',
   metaDescriptionSaved: 'catalog_product.meta_description_saved',
-  showSupplierPhotoSaved: 'catalog_product.show_supplier_photo_saved',
 } as const;
 
 /** Operation name recorded on `idempotency_records.operation`. */
