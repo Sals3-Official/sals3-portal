@@ -14,11 +14,14 @@ vi.mock('./handle-curated-lane', () => ({
 vi.mock('./handle-evaluate', () => ({ default: vi.fn() }));
 vi.mock('./handle-reconcile', () => ({ default: vi.fn() }));
 vi.mock('./handle-webhook-event', () => ({ default: vi.fn() }));
+vi.mock('@/modules/orders/fulfillment-worker', () => ({ default: vi.fn() }));
 vi.mock('./outbox-dispatch', () => ({ default: vi.fn() }));
 vi.mock('./failure-repository', () => ({ recordDiscoveryFailure: vi.fn() }));
 
 // eslint-disable-next-line import/first
 import { randomUUID } from 'crypto';
+// eslint-disable-next-line import/first
+import handleFulfillOrder from '@/modules/orders/fulfillment-worker';
 // eslint-disable-next-line import/first
 import handleCycleStart from './handle-cycle-start';
 // eslint-disable-next-line import/first
@@ -108,6 +111,23 @@ describe('handleQueueMessage', () => {
       META,
     );
 
+    expect(dispatchOutbox).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes accepted orders to the fulfillment worker', async () => {
+    await handleQueueMessage(
+      {
+        v: 1,
+        operation: 'FULFILL_ORDER',
+        idempotencyKey: 'fulfill-order:123',
+        orderId: CONNECTION_ID,
+      },
+      META,
+    );
+
+    expect(handleFulfillOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'FULFILL_ORDER' }),
+    );
     expect(dispatchOutbox).toHaveBeenCalledTimes(1);
   });
 });

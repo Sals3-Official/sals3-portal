@@ -1,4 +1,5 @@
 import getDb, { isDatabaseConfigured } from '@/lib/db/client';
+import handleFulfillOrder from '@/modules/orders/fulfillment-worker';
 import { MAX_QUEUE_DELIVERIES } from './config';
 import { queueMessageSchema } from './messages';
 import handleCycleStart from './handle-cycle-start';
@@ -82,6 +83,9 @@ export default async function handleQueueMessage(
       break;
     case 'WEBHOOK_EVENT':
       await handleWebhookEvent(message);
+      break;
+    case 'FULFILL_ORDER':
+      await handleFulfillOrder(message);
       break;
     case 'OUTBOX_DISPATCH':
       // Falls through to the drain below - the drain is the operation.
