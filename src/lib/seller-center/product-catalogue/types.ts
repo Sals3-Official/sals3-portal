@@ -276,6 +276,14 @@ export type CatalogueProductFixture = {
    * Empty today on every real product - no upload path writes this row yet.
    */
   sellerMediaUrls?: string[];
+  /**
+   * Whether the supplier's own photo (`supplierMediaUrls`) shows to buyers
+   * alongside a seller upload, not only as a fallback when none exists. Off
+   * hides it from every buyer-facing surface; seller uploads still show.
+   * Absent on the illustrative fixtures, which default to `true` in the
+   * editor fixture.
+   */
+  showSupplierPhoto?: boolean;
   status: ListingStatus;
   categoryPath: string;
   categoryCode?: string | null;
