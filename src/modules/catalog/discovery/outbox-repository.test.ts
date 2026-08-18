@@ -132,6 +132,10 @@ describe('claimDispatchableOutbox', () => {
     const orderByArgs = lastCallArgs(calls, 'orderBy') as SQL[];
     const rendered = dialect.sqlToQuery(orderByArgs[0]!);
 
+    expect(rendered.sql).toContain('FULFILL_ORDER');
+    expect(rendered.sql.indexOf('FULFILL_ORDER')).toBeLessThan(
+      rendered.sql.indexOf('EVALUATE_CANDIDATE'),
+    );
     expect(rendered.sql).toContain('CJ_TRENDING');
     expect(rendered.sql).toContain('CJ_MOST_LISTED');
     expect(rendered.sql).toContain('CJ_NEW_ARRIVALS');
@@ -145,5 +149,37 @@ describe('claimDispatchableOutbox', () => {
     expect(rendered.sql.indexOf('CJ_NEW_ARRIVALS')).toBeLessThan(
       rendered.sql.indexOf('DISCOVERY_PARTITION'),
     );
+  });
+
+  it('can claim only one requested idempotency key for order-critical dispatch', async () => {
+    const { db, calls } = fakeDb([[{ id: 'outbox-1' }], [{ id: 'outbox-1' }]]);
+
+    await claimDispatchableOutbox(db, {
+      leaseToken: 'lease-1',
+      batchSize: 1,
+      idempotencyKeys: ['fulfill-order:order-1'],
+    });
+
+    const whereArg = callsOf(calls, 'where')[0]!.args[0];
+    const rendered = dialect.sqlToQuery(whereArg as SQL);
+
+    expect(rendered.sql).toContain('"idempotency_key" in');
+    expect(rendered.params).toContain('fulfill-order:order-1');
+  });
+
+  it('can claim only requested operations for a fulfillment-only drain', async () => {
+    const { db, calls } = fakeDb([[{ id: 'outbox-1' }], [{ id: 'outbox-1' }]]);
+
+    await claimDispatchableOutbox(db, {
+      leaseToken: 'lease-1',
+      batchSize: 1,
+      operations: ['FULFILL_ORDER'],
+    });
+
+    const whereArg = callsOf(calls, 'where')[0]!.args[0];
+    const rendered = dialect.sqlToQuery(whereArg as SQL);
+
+    expect(rendered.sql).toContain('"operation" in');
+    expect(rendered.params).toContain('FULFILL_ORDER');
   });
 });
