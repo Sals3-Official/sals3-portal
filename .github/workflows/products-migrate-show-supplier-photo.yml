@@ -1,0 +1,49 @@
+# One-time, idempotent write — no schedule, manual trigger only.
+#
+# Runs the DDL adding products.show_supplier_photo. Same break-glass pattern as
+# products-migrate-meta-description.yml, taxonomy-migrate-attribute-controls.yml,
+# evaluate-tick.yml, and taxonomy-status.yml: a manual workflow_dispatch calling
+# an authenticated internal route with the shared CRON_SECRET — no Vercel access
+# or raw database credential required.
+#
+# Unlike the meta-description column, the catalogue read model SELECTs this
+# column, so this must be run as soon as the deployment carrying it is live —
+# until it runs, every catalogue read fails with
+# "column products.show_supplier_photo does not exist".
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin, e.g.
+#                                https://sals3-portal.example.com
+
+name: Products Migrate Show Supplier Photo
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the show-supplier-photo migration endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          status=$(curl -sS -o /tmp/migrate-response.json -w '%{http_code}' \
+            -X POST "$PORTAL_BASE_URL/api/internal/catalog/products/migrate-show-supplier-photo" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/migrate-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "show-supplier-photo migration returned HTTP $status" >&2
+            exit 1
+          fi
