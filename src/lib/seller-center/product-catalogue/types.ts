@@ -390,11 +390,6 @@ export type CatalogueProductFixture = {
    */
   optionAxisNames?: string[];
   /**
-   * Taxonomy v1 preset axis labels by supplier-label position. Used only to
-   * pre-fill option mapping; saved option rows remain the source of truth.
-   */
-  categoryPresetVariationAttributes?: [string | null, string | null];
-  /**
    * Category-driven attribute controls (dropdowns, multi-selects, text/
    * number/measurement/boolean/date fields) for this product's resolved
    * category, from `category_attribute_controls`. Empty when the category
