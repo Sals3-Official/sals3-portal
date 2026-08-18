@@ -42,12 +42,54 @@ const MIGRATION_0022_HASH =
 export const SHOW_SUPPLIER_PHOTO_DDL_STATEMENT =
   'ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "show_supplier_photo" boolean DEFAULT true NOT NULL';
 
+/**
+ * The real hazard in this migration is not the column, it is the lock.
+ * `ALTER TABLE` takes an `ACCESS EXCLUSIVE` lock on `products`; if any
+ * long-running query is holding the table, the ALTER queues *and every
+ * subsequent read queues behind it*, which takes the catalogue down exactly
+ * the way the missing column did - except mid-DDL there is nothing to roll
+ * back to.
+ *
+ * `SET LOCAL lock_timeout` bounds that: if the lock cannot be acquired in
+ * this window the statement aborts, the transaction rolls back, nothing has
+ * changed, and the run can simply be retried at a quieter moment. Failing
+ * fast is the rollback story for a DDL that otherwise has none.
+ *
+ * `SET LOCAL` rather than a session `SET` on purpose - this runs on a pooled
+ * serverless connection, and a session-level timeout would leak onto whatever
+ * unrelated query reuses that connection next.
+ */
+export const DDL_LOCK_TIMEOUT = '5s';
+
+/**
+ * Read-only. Whether the column is actually present, asked of the database
+ * rather than inferred from a migration ledger - the ledger records intent,
+ * this records reality, and the whole point of the 2026-08-18 incident is
+ * that those two can disagree.
+ */
+export async function hasShowSupplierPhotoColumn(
+  db: Database,
+): Promise<boolean> {
+  const rows = (await db.execute(
+    sql.raw(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'products' AND column_name = 'show_supplier_photo'
+       LIMIT 1`,
+    ),
+  )) as unknown as unknown[];
+
+  return rows.length > 0;
+}
+
 export type RunShowSupplierPhotoDdlResult = { statementsRun: number };
 
 export async function runShowSupplierPhotoDdl(
   db: Database,
 ): Promise<RunShowSupplierPhotoDdlResult> {
-  await db.execute(sql.raw(SHOW_SUPPLIER_PHOTO_DDL_STATEMENT));
+  await db.transaction(async (tx) => {
+    await tx.execute(sql.raw(`SET LOCAL lock_timeout = '${DDL_LOCK_TIMEOUT}'`));
+    await tx.execute(sql.raw(SHOW_SUPPLIER_PHOTO_DDL_STATEMENT));
+  });
 
   return { statementsRun: 1 };
 }
@@ -105,21 +147,43 @@ export async function markMigration0022Applied(
 
 export type MigrateShowSupplierPhotoResult = {
   ok: true;
+  /** The column's real state before this run - `true` means it was already a no-op. */
+  columnExistedBefore: boolean;
   ddl: RunShowSupplierPhotoDdlResult;
   migrationRecord: MarkMigration0022AppliedResult;
+  /**
+   * Re-read from `information_schema` *after* the DDL. This is the field the
+   * operator should actually trust: a 200 with `columnExistsAfter: false`
+   * would mean the run reported success without achieving anything, which is
+   * precisely the class of false confidence that caused the incident this
+   * endpoint exists to clean up.
+   */
+  columnExistsAfter: boolean;
 };
 
 /**
- * Orchestrates the full break-glass run: DDL, then marking `0022` applied.
- * Sequential `await`s with no swallowed errors in between - if either step
- * throws, this function throws too and the route handler reports a 500
- * rather than a false success.
+ * Orchestrates the full break-glass run: observe, DDL, mark `0022` applied,
+ * then re-observe. Sequential `await`s with no swallowed errors in between -
+ * if any step throws, this function throws too and the route handler reports
+ * a 500 rather than a false success.
+ *
+ * The before/after reads are what make this operation checkable rather than
+ * trusted. They cost two trivial catalog queries and turn "the workflow went
+ * green" into "the column is provably there".
  */
 export async function migrateShowSupplierPhoto(
   db: Database,
 ): Promise<MigrateShowSupplierPhotoResult> {
+  const columnExistedBefore = await hasShowSupplierPhotoColumn(db);
   const ddl = await runShowSupplierPhotoDdl(db);
   const migrationRecord = await markMigration0022Applied(db);
+  const columnExistsAfter = await hasShowSupplierPhotoColumn(db);
 
-  return { ok: true, ddl, migrationRecord };
+  return {
+    ok: true,
+    columnExistedBefore,
+    ddl,
+    migrationRecord,
+    columnExistsAfter,
+  };
 }

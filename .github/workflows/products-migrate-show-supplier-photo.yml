@@ -31,13 +31,23 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
         run: |
+          set -o pipefail
+
           if [ -z "$PORTAL_BASE_URL" ]; then
             echo "PORTAL_BASE_URL repository variable is not set" >&2
             exit 1
           fi
 
+          endpoint="$PORTAL_BASE_URL/api/internal/catalog/products/migrate-show-supplier-photo"
+
+          # Read-only first, so the log records the state this run started from.
+          echo "--- column state before ---"
+          curl -sS "$endpoint" -H "Authorization: Bearer $CRON_SECRET"
+          echo
+
+          echo "--- applying migration ---"
           status=$(curl -sS -o /tmp/migrate-response.json -w '%{http_code}' \
-            -X POST "$PORTAL_BASE_URL/api/internal/catalog/products/migrate-show-supplier-photo" \
+            -X POST "$endpoint" \
             -H "Authorization: Bearer $CRON_SECRET")
 
           cat /tmp/migrate-response.json
@@ -45,5 +55,19 @@ jobs:
 
           if [ "$status" -ge 300 ]; then
             echo "show-supplier-photo migration returned HTTP $status" >&2
+            echo "Nothing was changed: the DDL runs in a transaction with a" >&2
+            echo "lock_timeout, so a lock it could not acquire rolls back" >&2
+            echo "cleanly. Safe to re-run when the database is quieter." >&2
             exit 1
           fi
+
+          # A 200 is not proof. Assert the column is genuinely there, or fail
+          # the run — a migration that reports success without achieving
+          # anything is the exact failure this endpoint exists to undo.
+          echo "--- verifying column exists ---"
+          if ! grep -q '"columnExistsAfter":true' /tmp/migrate-response.json; then
+            echo "Migration returned HTTP $status but the column is still absent" >&2
+            exit 1
+          fi
+
+          echo "Verified: products.show_supplier_photo exists."
