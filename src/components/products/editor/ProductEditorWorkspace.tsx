@@ -165,6 +165,16 @@ type ProductEditorWorkspaceProps = {
     | { ok: true; productVersion: number }
     | { ok: false; reason: string; message: string }
   >;
+  /**
+   * "Show supplier photo" toggle save boundary. Omitted for fixture/
+   * design-preview mode, so the switch still renders but offers no save.
+   */
+  saveShowSupplierPhotoAction?: (
+    input: unknown,
+  ) => Promise<
+    | { ok: true; productVersion: number }
+    | { ok: false; reason: string; message: string }
+  >;
 };
 
 const EXIT_HREF = '/products/pipeline?tab=ready';
@@ -303,6 +313,7 @@ export default function ProductEditorWorkspace({
   deleteMediaAction,
   saveCategoryAttributesAction,
   saveMetaDescriptionAction,
+  saveShowSupplierPhotoAction,
 }: ProductEditorWorkspaceProps) {
   const router = useRouter();
 
@@ -380,6 +391,10 @@ export default function ProductEditorWorkspace({
   const [media, setMedia] = useState<MediaItemFixture[]>(fixture.media);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [deletingMediaId, setDeletingMediaId] = useState<string | null>(null);
+  const [showSupplierPhoto, setShowSupplierPhoto] = useState(
+    fixture.showSupplierPhoto,
+  );
+  const [isTogglingSupplierPhoto, setIsTogglingSupplierPhoto] = useState(false);
 
   const [isDirty, setIsDirty] = useState(false);
   const [lifecycle, setLifecycle] = useState<EditorLifecycle>(initialLifecycle);
@@ -705,13 +720,14 @@ export default function ProductEditorWorkspace({
     />
   );
 
-  // What the storefront will actually render (ADR-011's `SELLER_FIRST`
-  // default): the seller's own uploads when any exist, otherwise the
-  // supplier's original photos. `media` alone would show nothing for the
-  // (currently universal) case where no seller upload exists yet, even
-  // though a real buyer would still see the supplier's photo.
-  const effectivePreviewMedia =
-    media.length > 0 ? media : fixture.supplierMedia;
+  // What the storefront will actually render: the seller's own uploads,
+  // plus the supplier's original photos unless the seller has explicitly
+  // turned that off (Basic Information's "Show supplier photo" switch).
+  // Never either/or - a seller upload must not silently hide the
+  // supplier's photo; only the toggle should.
+  const effectivePreviewMedia = showSupplierPhoto
+    ? [...media, ...fixture.supplierMedia]
+    : media;
 
   const renderPreview = (showHeading: boolean) => (
     <DraftStorefrontPreview
@@ -895,6 +911,40 @@ export default function ProductEditorWorkspace({
         };
 
   /**
+   * Auto-saves the moment the switch flips rather than behind a separate
+   * Save button - a toggle is already the confirmation. Optimistic with a
+   * rollback: the seller sees the new state immediately, and a failed write
+   * puts it back and says why, so the switch never shows a state the
+   * database does not hold.
+   */
+  const handleToggleShowSupplierPhoto =
+    saveShowSupplierPhotoAction === undefined || optionMappingTarget === null
+      ? undefined
+      : async (next: boolean) => {
+          const previous = showSupplierPhoto;
+
+          setShowSupplierPhoto(next);
+          setIsTogglingSupplierPhoto(true);
+
+          const result = await saveShowSupplierPhotoAction({
+            productId: optionMappingTarget.productId,
+            expectedProductVersion: optionMappingTarget.expectedProductVersion,
+            showSupplierPhoto: next,
+          });
+
+          setIsTogglingSupplierPhoto(false);
+
+          if (!result.ok) {
+            setShowSupplierPhoto(previous);
+            toast.error(result.message);
+
+            return;
+          }
+
+          router.refresh();
+        };
+
+  /**
    * Only the product id, same reasoning as `handleRecoverLabels` — a photo
    * upload is additive, so there is no prior value to compare-and-set
    * against. Each file is its own request and its own DB row, so one
@@ -1068,6 +1118,9 @@ export default function ProductEditorWorkspace({
               }}
               isUploadingPhoto={isUploadingMedia}
               deletingPhotoId={deletingMediaId}
+              showSupplierPhoto={showSupplierPhoto}
+              onToggleSupplierPhoto={handleToggleShowSupplierPhoto}
+              isTogglingSupplierPhoto={isTogglingSupplierPhoto}
               sals3CategoryOptions={sals3CategoryOptions}
               onDecideSals3Category={handleDecideCategory}
             />

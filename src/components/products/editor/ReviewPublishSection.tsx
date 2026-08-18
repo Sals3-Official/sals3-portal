@@ -68,12 +68,13 @@ export default function ReviewPublishSection({
   const blockers = issuesOfSeverity(fixture.issues, 'BLOCKER');
   const listed = enabledVariants(variants);
   const retail = retailRange(variants);
-  // ADR-011's `SELLER_FIRST` default: what will actually publish is the
-  // seller's own uploads when any exist, otherwise the supplier's originals -
+  // What will actually publish: the seller's own uploads, plus the
+  // supplier's originals unless the seller has explicitly turned that off -
   // `fixture.media` alone reads as "0 of 0" for every product today, which
   // would misreport a product the supplier's photos already make publishable.
-  const effectiveMedia =
-    fixture.media.length > 0 ? fixture.media : fixture.supplierMedia;
+  const effectiveMedia = fixture.showSupplierPhoto
+    ? [...fixture.media, ...fixture.supplierMedia]
+    : fixture.media;
 
   return (
     <div className="flex flex-col gap-3.5">

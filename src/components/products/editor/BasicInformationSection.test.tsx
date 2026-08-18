@@ -30,6 +30,7 @@ function renderSection(overrides: Partial<ProductEditorFixture> = {}) {
       onMakeCoverPhoto={vi.fn()}
       isUploadingPhoto={false}
       deletingPhotoId={null}
+      showSupplierPhoto={fixture.showSupplierPhoto}
     />,
   );
 }
