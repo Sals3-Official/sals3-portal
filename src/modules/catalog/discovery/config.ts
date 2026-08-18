@@ -341,10 +341,22 @@ export const STORAGE_ALLOWANCE_BYTES = envInt(
 export const STORAGE_WARN_PERCENT = envInt('NEON_STORAGE_WARN_PERCENT', 70);
 export const STORAGE_PAUSE_PERCENT = envInt('NEON_STORAGE_PAUSE_PERCENT', 80);
 
-/** Queue transport topic; consumers are private Vercel Queue functions. */
+/**
+ * Queue transport topic; consumers are private Vercel Queue functions.
+ *
+ * The `-v2` suffix is load-bearing. A `queue/v2beta` subscription is created
+ * implicitly from `vercel.json`'s `experimentalTriggers` and stays bound to the
+ * deployment that declared it. On 2026-08-18 that deployment was deleted while
+ * holding the `catalog-discovery` subscription, and nothing reassigned it:
+ * three separate production deployments registered no consumer, the topic had
+ * no dashboard surface to repair, and every published message went nowhere.
+ * Renaming the topic is what forces a fresh subscription onto a live
+ * deployment. Keep this in step with `vercel.json` — a publisher and consumer
+ * on different topic names is silent message loss, not an error.
+ */
 export const QUEUE_TOPIC = envString(
   'CATALOG_QUEUE_TOPIC',
-  'catalog-discovery',
+  'catalog-discovery-v2',
 );
 
 /** Max at-least-once deliveries before a message is parked as a visible failure. */

@@ -158,6 +158,13 @@ Portal owns PostgreSQL order rows, CJ credentials, the supplier adapter, the
 outbox, and the queue worker. Ecommerce never stores CJ keys and cannot
 reconstruct supplier order payloads from Stripe metadata.
 
+The topic is `catalog-discovery-v2`. The `-v2` is not cosmetic: a
+`queue/v2beta` subscription binds to the deployment that declared it, and
+deleting that deployment orphans the topic with no way to reassign it and no
+dashboard surface to repair it. Renaming the topic is the documented recovery.
+`vercel.json` and `CATALOG_QUEUE_TOPIC` must always name the same topic — a
+mismatch loses messages silently rather than erroring.
+
 Accepted orders run through the queue on `CATALOG_QUEUE_TOPIC` and call CJ in
 this order: `createOrderV3`, `addCart`, `addCartConfirm`,
 `saveGenerateParentOrder`, then `payBalanceV2`. `CJ_ORDER_SANDBOX` defaults to

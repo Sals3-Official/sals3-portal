@@ -6,7 +6,7 @@
       "experimentalTriggers": [
         {
           "type": "queue/v2beta",
-          "topic": "catalog-discovery",
+          "topic": "catalog-discovery-v2",
           "retryAfterSeconds": 60
         }
       ]
