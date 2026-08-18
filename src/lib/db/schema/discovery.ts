@@ -376,6 +376,7 @@ export const queueOperationEnum = pgEnum('queue_operation', [
   'EVALUATE_CANDIDATE',
   'RECONCILE_PRODUCT',
   'WEBHOOK_EVENT',
+  'FULFILL_ORDER',
   'OUTBOX_DISPATCH',
 ]);
 

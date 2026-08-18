@@ -16,6 +16,7 @@ export const QUEUE_OPERATIONS = [
   'EVALUATE_CANDIDATE',
   'RECONCILE_PRODUCT',
   'WEBHOOK_EVENT',
+  'FULFILL_ORDER',
   'OUTBOX_DISPATCH',
 ] as const;
 
@@ -117,6 +118,12 @@ export const webhookEventMessageSchema = z.object({
   supplierConnectionId: z.uuid(),
 });
 
+export const fulfillOrderMessageSchema = z.object({
+  ...base,
+  operation: z.literal('FULFILL_ORDER'),
+  orderId: z.uuid(),
+});
+
 export const outboxDispatchMessageSchema = z.object({
   ...base,
   operation: z.literal('OUTBOX_DISPATCH'),
@@ -130,6 +137,7 @@ export const queueMessageSchema = z.discriminatedUnion('operation', [
   evaluateCandidateMessageSchema,
   reconcileProductMessageSchema,
   webhookEventMessageSchema,
+  fulfillOrderMessageSchema,
   outboxDispatchMessageSchema,
 ]);
 
@@ -152,5 +160,6 @@ export type ReconcileProductMessage = z.infer<
   typeof reconcileProductMessageSchema
 >;
 export type WebhookEventMessage = z.infer<typeof webhookEventMessageSchema>;
+export type FulfillOrderMessage = z.infer<typeof fulfillOrderMessageSchema>;
 export type OutboxDispatchMessage = z.infer<typeof outboxDispatchMessageSchema>;
 export type QueueMessage = z.infer<typeof queueMessageSchema>;

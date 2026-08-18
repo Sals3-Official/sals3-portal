@@ -79,7 +79,7 @@ export type CheckoutFreightQuoteResult = {
   quotedAt: string;
 };
 
-type QuoteLine = {
+export type QuoteLine = {
   slug: string;
   quantity: number;
   title: string;
@@ -103,7 +103,7 @@ type OfferMatch = Omit<QuoteLine, 'quantity' | 'slug' | 'priceMinor'> & {
   marketCode: string;
 };
 
-type PackageInput = {
+export type PackageInput = {
   packageId: string;
   connectionId: string;
   originCountry: string;
@@ -111,7 +111,7 @@ type PackageInput = {
   lines: QuoteLine[];
 };
 
-type PackageInputs = {
+export type PackageInputs = {
   packages: PackageInput[];
   detailsByLine: Map<string, ReturnType<typeof requireDetailVariant>>;
 };
@@ -311,7 +311,7 @@ export class CheckoutFreightQuoteError extends Error {
   }
 }
 
-async function loadQuoteLines(
+export async function loadQuoteLines(
   input: CheckoutFreightQuoteRequest,
   executor: DbExecutor,
 ): Promise<QuoteLine[]> {
@@ -562,7 +562,7 @@ function requireDetailVariant(detail: CjProductDetail, line: QuoteLine) {
   return { sku, productProps, weight, length, width, height, volume };
 }
 
-async function loadPackageInputs(
+export async function loadPackageInputs(
   lines: QuoteLine[],
   destinationCountry: string,
   fetcherForConnection: (connectionId: string) => typeof fetch,

@@ -145,6 +145,26 @@ completed delivery address, then Portal resolves the published product,
 supplier connection, encrypted CJ credentials, governed CJ limiter, and current
 stock/origin evidence before calling CJ.
 
+The same bearer token protects storefront order endpoints used by Stripe
+webhooks in `sals3-ecommerce`:
+
+- `POST /api/storefront/checkout/intents` stores the immutable pending cart,
+  address, freight, and supplier snapshot before Stripe payment.
+- `POST /api/storefront/checkout/orders/accept` accepts verified paid Stripe
+  Checkout data idempotently, creates the paid Sals3 order, and inserts a
+  durable `FULFILL_ORDER` outbox intent.
+
+Portal owns PostgreSQL order rows, CJ credentials, the supplier adapter, the
+outbox, and the queue worker. Ecommerce never stores CJ keys and cannot
+reconstruct supplier order payloads from Stripe metadata.
+
+Accepted orders run through the queue on `CATALOG_QUEUE_TOPIC` and call CJ in
+this order: `createOrderV3`, `addCart`, `addCartConfirm`,
+`saveGenerateParentOrder`, then `payBalanceV2`. `CJ_ORDER_SHOP_LOGISTICS_TYPE`
+optionally overrides the CJ logistics type; otherwise Portal uses the merchant
+logistics default from the current implementation. `CJ_ORDER_STORE_NAME` and
+`CJ_PLATFORM_TOKEN` are optional account-specific CJ fields.
+
 Set `DISCOVERY_CONTROL_SECRET` to a long random value so the discovery
 control routes (see
 [Continuous full-catalogue discovery](#continuous-full-catalogue-discovery))
@@ -221,7 +241,7 @@ Redis, KV, or paid cache service is used for this path.
 | `/auth/continue`                                           | Server-side post-auth continuation gate: checks session, verified email, TOTP, seller state, and safe `next` before redirecting                                                                                                                                                                                                                                                                                                                                                                |
 | `/auth/pending`                                            | Fallback for legacy or manually deactivated seller accounts that are signed in but not active/verified                                                                                                                                                                                                                                                                                                                                                                                         |
 | `/overview`                                                | Seller Center dashboard: needs-action tasks, money position, glance stats                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `/orders`                                                  | Batch fulfillment: filter, select, print (static), handoff                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `/orders`                                                  | Seller Center order screen shell. Real paid storefront orders now persist in PostgreSQL for fulfillment, but this UI remains a static/illustrative operations surface until the order-management views are wired to the new tables                                                                                                                                                                                                                                                             |
 | `/listings`                                                | Product Catalogue. Reads persisted Sals3 Product/Variant/Offer/provider-reference rows for the seller and maps them into the existing catalogue UI. No supplier API call is made. Imported rows remain Draft/Unpublished until the real publish gates can resolve category, media, price, variant options, and revision approval.                                                                                                                                                              |
 | `/listings/new`                                            | Add Product. No query: the blank essentials-first wizard (read-only fields, no save yet). `?fixture=<key>`: the supplier-prefilled Product Editor design preview — see [Product Editor](#product-editor-add-product-from-a-supplier-product). `?productId=<uuid>`: opens a persisted Product Catalogue draft, using supplier detail evidence saved during the Add to Product Catalogue / Customize & List action. `?supplierCandidateId=` remains reserved and does not render fictional data. |
 | `/inventory`                                               | Inline stock edits with undo and an audit record                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -250,6 +270,8 @@ Redis, KV, or paid cache service is used for this path.
 | `/api/storefront/products/[id]`                            | Protected single-product lookup by public slug for `sals3-ecommerce`'s PDP                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `/api/storefront/categories`                               | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `/api/storefront/checkout/freight-quotes`                  | Protected checkout freight quote endpoint for `sals3-ecommerce`: validates live published cart lines, resolves CJ origin/stock evidence through the governed supplier path, calls CJ `freightCalculateTip` per package, and returns buyer-safe shipping options only                                                                                                                                                                                                                           |
+| `/api/storefront/checkout/intents`                         | Protected checkout intent endpoint for `sals3-ecommerce`: validates the selected freight against the current quote path and persists an immutable pending checkout snapshot before Stripe payment                                                                                                                                                                                                                                                                                              |
+| `/api/storefront/checkout/orders/accept`                   | Protected Stripe-webhook handoff endpoint for `sals3-ecommerce`: idempotently creates one paid Sals3 order per Stripe Checkout Session and enqueues `FULFILL_ORDER` supplier fulfillment work                                                                                                                                                                                                                                                                                                  |
 
 ## Candidate detail drawer
 
@@ -2478,10 +2500,11 @@ These are real gaps, not oversights. Do not treat any screen as production ready
 - The portal is `robots: noindex` and publishes no structured data on purpose.
   It is an internal tool, so the SEO, GEO, and AEO work that applies to the
   storefront does not apply here.
-- **Seller Center is static data, real permissions.** All 7 Seller Center
-  screens are real routes with a real, server-enforced permission gate, but
-  every order, SKU, ledger line, and payout is illustrative placeholder data
-  — see [Seller Center screens](#seller-center-screens) above.
+- **Seller Center screens still use static order UI data.** All 7 Seller
+  Center screens are real routes with a real, server-enforced permission gate.
+  Paid storefront orders now have a real database/fulfillment backend, but the
+  visible `/orders`, ledger, and payout screens still show illustrative data
+  until those views are wired to the new tables.
 - **No error boundary.** There is no `error.tsx` or `not-found.tsx` anywhere
   in this app. A thrown `PermissionError` (e.g. visiting a route your role
   cannot use) surfaces as Next.js's default dev error overlay, not a plain
