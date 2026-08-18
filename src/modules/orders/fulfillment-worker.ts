@@ -73,6 +73,10 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function isSandboxOrderEnabled(): boolean {
+  return process.env.CJ_ORDER_SANDBOX !== '0';
+}
+
 async function postCjJson(
   connectionId: string,
   path: string,
@@ -226,6 +230,7 @@ function createOrderBody(input: {
     ...(process.env.CJ_ORDER_STORE_NAME === undefined
       ? {}
       : { storeName: process.env.CJ_ORDER_STORE_NAME }),
+    isSandbox: isSandboxOrderEnabled() ? 1 : 0,
     shopLogisticsType: envInt('CJ_ORDER_SHOP_LOGISTICS_TYPE', 2),
     orderFlow: 1,
     products: input.lines.map((line) => ({
