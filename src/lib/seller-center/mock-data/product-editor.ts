@@ -399,6 +399,7 @@ const BASE: ProductEditorFixture = {
   // (seller uploads) stays empty and `BASE_MEDIA` becomes `supplierMedia`.
   media: [],
   supplierMedia: BASE_MEDIA,
+  showSupplierPhoto: true,
   policyVersion: '2026.08.01',
   draftSaveTarget: null,
   publishTarget: null,

@@ -37,8 +37,6 @@ const FAILURE_MESSAGES: Record<PublishActionFailureReason, string> = {
     'No CJ category is on record for this product, so it cannot be categorised or priced.',
   OPTIONS_UNMAPPED:
     'Name this product’s Variant Matrix in Variants & Pricing before publishing.',
-  REQUIRED_SPECIFICATION_MISSING:
-    'Fill in every required specification for this product’s category before publishing.',
   NO_APPROVED_MEDIA: 'No approved product image is on file yet.',
   PRICING_UNRESOLVED: 'A price could not be resolved.',
   RETAIL_BELOW_SUPPLIER_COST:
