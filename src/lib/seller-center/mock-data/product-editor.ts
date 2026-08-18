@@ -1,3 +1,7 @@
+import {
+  descriptionBlocksToPlainText,
+  type DescriptionBlock,
+} from '@/lib/products/description-blocks';
 import type {
   MarketEvidenceFixture,
   MediaItemFixture,
@@ -277,18 +281,37 @@ const BASE_SPECIFICATIONS: SpecificationFixture[] = [
   },
 ];
 
-const DESCRIPTION = [
-  'A packable 20L daypack for day hikes and commuting. Folds into its own pocket.',
-  '',
-  'Key features',
-  '• 210D recycled polyester shell, water-repellent finish',
-  '• Padded laptop sleeve fits most 14" machines',
-  '• Two stretch side pockets',
-  '',
-  'Package contents',
-  '• 1 × daypack',
-  '• 1 × storage pouch',
-].join('\n');
+/**
+ * Real blocks rather than a string imitating them with bullet characters and
+ * bare lines standing in for headings. The document format has carried
+ * headings and lists since it was written; only the editor could not produce
+ * them, and a fixture faking the shape in prose kept hiding that.
+ */
+const DESCRIPTION_BLOCKS: DescriptionBlock[] = [
+  {
+    type: 'paragraph',
+    text: 'A packable 20L daypack for day hikes and commuting. Folds into its own pocket.',
+  },
+  { type: 'heading', level: 3, text: 'Key features' },
+  {
+    type: 'bulletList',
+    items: [
+      '210D recycled polyester shell, water-repellent finish',
+      'Padded laptop sleeve fits most 14" machines',
+      'Two stretch side pockets',
+    ],
+  },
+  { type: 'heading', level: 3, text: 'Package contents' },
+  {
+    type: 'keyValueList',
+    entries: [
+      { label: 'Daypack', value: '1' },
+      { label: 'Storage pouch', value: '1' },
+    ],
+  },
+];
+
+const DESCRIPTION = descriptionBlocksToPlainText(DESCRIPTION_BLOCKS);
 
 const SUGGESTION_OPTIONAL_ATTRIBUTES: ReadinessIssue = {
   id: 'suggestion-optional-attributes',
@@ -352,6 +375,7 @@ const BASE: ProductEditorFixture = {
   realSupplierCandidateId: null,
   sellerSku: 'S3-AUR-DP',
   brandDeclaration: 'No brand / generic',
+  descriptionBlocks: DESCRIPTION_BLOCKS,
   descriptionText: DESCRIPTION,
   // Nothing persists in a design-preview fixture (no `saveMetaDescriptionAction`
   // target either), so this starts unset the same way a real never-saved
@@ -502,6 +526,7 @@ const BLOCKED = withOverrides({
   productName: 'Aurelis "N-Tech" Pro Daypack',
   evaluationStatus: 'BLOCKED',
   completionPercent: 61,
+  descriptionBlocks: [],
   descriptionText: '',
   specifications: BLOCKED_SPECIFICATIONS,
   banner: {

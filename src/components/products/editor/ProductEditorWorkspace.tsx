@@ -14,6 +14,12 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
+  DESCRIPTION_DOCUMENT_VERSION,
+  blocksMatchSaved,
+  descriptionBlocksToPlainText,
+  prepareBlocksForSave,
+} from '@/lib/products/description-blocks';
+import {
   canBulkEnable,
   filledSpecificationCount,
   isCategoryAttributeUnresolved,
@@ -36,6 +42,10 @@ import { suggestMetaDescription } from '@/lib/seller-center/product-editor/sugge
 import BasicInformationSection from './BasicInformationSection';
 import BulkPricingDialog, { type BulkPricingMode } from './BulkPricingDialog';
 import CategoryAttributesSection from './category-attributes/CategoryAttributesSection';
+import {
+  keyDescriptionBlocks,
+  type KeyedDescriptionBlock,
+} from './DescriptionBlockEditor';
 import DescriptionSection from './DescriptionSection';
 import DraftStorefrontPreview from './DraftStorefrontPreview';
 import EditorActionBar from './EditorActionBar';
@@ -194,14 +204,11 @@ const PUBLISH_FAILURE_MESSAGES: Record<string, string> = {
   failed: 'No listing was published.',
 };
 
-function descriptionDocumentFromText(description: string) {
-  const blocks = description
-    .split(/\n{2,}/)
-    .map((text) => text.trim())
-    .filter((text) => text.length > 0)
-    .map((text) => ({ type: 'paragraph' as const, text }));
-
-  return { version: 1 as const, blocks };
+function descriptionDocumentFrom(blocks: KeyedDescriptionBlock[]) {
+  return {
+    version: DESCRIPTION_DOCUMENT_VERSION,
+    blocks: prepareBlocksForSave(blocks.map((entry) => entry.block)),
+  };
 }
 
 /** A bulk price change must never touch a variant policy has ruled out. */
@@ -322,7 +329,24 @@ export default function ProductEditorWorkspace({
   const [brandDeclaration, setBrandDeclaration] = useState(
     fixture.brandDeclaration,
   );
-  const [description, setDescription] = useState(fixture.descriptionText);
+  /**
+   * The description document's own blocks, not a flattened string. The
+   * editor used to be handed `descriptionText` and re-parse it into
+   * paragraphs on save, which rewrote a document's headings, bullet lists,
+   * and detail lists as prose the first time anyone opened the page.
+   */
+  const [descriptionBlocks, setDescriptionBlocks] = useState(() =>
+    keyDescriptionBlocks(fixture.descriptionBlocks),
+  );
+
+  /**
+   * Compared in prepared form, so a blank block someone added and abandoned
+   * does not make Revert look available when nothing would actually change.
+   */
+  const descriptionIsUnchanged = blocksMatchSaved(
+    descriptionBlocks.map((entry) => entry.block),
+    fixture.descriptionBlocks,
+  );
 
   /**
    * Seeded from the auto-suggestion seam (`suggest-meta-description.ts`,
@@ -611,7 +635,7 @@ export default function ProductEditorWorkspace({
         // is now a read-only pass-through of whatever value was already
         // stored, never a value this screen can change.
         sals3CategoryL1: fixture.sals3CategoryL1,
-        descriptionDocument: descriptionDocumentFromText(description),
+        descriptionDocument: descriptionDocumentFrom(descriptionBlocks),
         variantRetailPrices: variants
           .filter((variant) => UUID_PATTERN.test(variant.id))
           .map((variant) => ({
@@ -732,7 +756,12 @@ export default function ProductEditorWorkspace({
   const renderPreview = (showHeading: boolean) => (
     <DraftStorefrontPreview
       productName={productName}
-      description={description}
+      // The preview card shows a one-line summary, not the section itself,
+      // so the flattened projection is the right input here — the block
+      // structure it would ignore is what the storefront renders.
+      description={descriptionBlocksToPlainText(
+        descriptionBlocks.map((entry) => entry.block),
+      )}
       variants={variants}
       markets={fixture.markets}
       media={effectivePreviewMedia}
@@ -1145,10 +1174,16 @@ export default function ProductEditorWorkspace({
             severity={sectionSeverity(currentIssues, 'description')}
           >
             <DescriptionSection
-              description={description}
-              supplierDescription={fixture.descriptionText}
-              onDescriptionChange={(value) => {
-                setDescription(value);
+              blocks={descriptionBlocks}
+              onBlocksChange={(next) => {
+                setDescriptionBlocks(next);
+                touch();
+              }}
+              isUnchanged={descriptionIsUnchanged}
+              onRevert={() => {
+                setDescriptionBlocks(
+                  keyDescriptionBlocks(fixture.descriptionBlocks),
+                );
                 touch();
               }}
               productName={productName}
