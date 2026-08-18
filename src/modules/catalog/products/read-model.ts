@@ -1289,9 +1289,9 @@ function editorCategoryAttributes(product: CatalogueProductFixture): {
     ...validation.missingRequiredAttributes.map((name) =>
       catalogueIssue(
         `${product.id}-specification-${name}`,
-        'BLOCKER',
+        'WARNING',
         `${name} is required`,
-        `This category requires a value for "${name}" before publishing.`,
+        `This category requires a value for "${name}". Publishing is not blocked, but buyers may see this attribute blank.`,
         'specification',
       ),
     ),

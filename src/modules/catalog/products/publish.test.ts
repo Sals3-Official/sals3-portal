@@ -824,7 +824,7 @@ describe('publishProduct', () => {
   });
 });
 
-describe('publishProduct — required specification gate', () => {
+describe('publishProduct — category attribute specifications never gate publish', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findActiveProfileForSeller.mockResolvedValue(PROFILE);
@@ -873,30 +873,24 @@ describe('publishProduct — required specification gate', () => {
     expect(await publish(db)).toMatchObject({ ok: true });
   });
 
-  it('refuses to publish while a REQUIRED specification has no valid stored value', async () => {
+  it('publishes even while a REQUIRED specification has no valid stored value', async () => {
     const { db } = transactionalDb({
       attributeCategoryRow: CATEGORY_ROW,
       attributeControls: [REQUIRED_CONTROL],
       attributeValues: [],
     });
 
-    expect(await publish(db)).toEqual({
-      ok: false,
-      reason: 'REQUIRED_SPECIFICATION_MISSING',
-    });
+    expect(await publish(db)).toMatchObject({ ok: true });
   });
 
-  it('refuses when the stored value is blank, not only when it is absent', async () => {
+  it('publishes even when the stored value is blank, not only when it is absent', async () => {
     const { db } = transactionalDb({
       attributeCategoryRow: CATEGORY_ROW,
       attributeControls: [REQUIRED_CONTROL],
       attributeValues: [{ attributeName: 'Fabric Material', values: ['   '] }],
     });
 
-    expect(await publish(db)).toEqual({
-      ok: false,
-      reason: 'REQUIRED_SPECIFICATION_MISSING',
-    });
+    expect(await publish(db)).toMatchObject({ ok: true });
   });
 
   it('publishes once the REQUIRED specification has a valid stored value', async () => {

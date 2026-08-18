@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { OctagonAlert, TriangleAlert } from 'lucide-react';
+import { TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { isCategoryAttributeUnresolved } from '@/lib/seller-center/product-editor/derive';
@@ -30,12 +30,11 @@ type FieldRowProps = {
   onChange: (values: string[], isCustomValue: boolean) => void;
 };
 
-/** Never presented as a value, and never blocked, until a value is entered — same rule `severityForUnresolvedSpecification` already holds for Supplier Details. */
+/** Never presented as a value, and never blocks publishing, until a value is entered — same rule `severityForUnresolvedSpecification` already holds for Supplier Details. */
 function FieldRow({ field, onChange }: FieldRowProps) {
   const fieldId = `category-attr-${field.attributeName.replace(/\s+/g, '-').toLowerCase()}`;
   const errorId = `${fieldId}-message`;
   const unresolved = isCategoryAttributeUnresolved(field);
-  const isBlocker = unresolved && field.requirement === 'REQUIRED';
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -57,19 +56,12 @@ function FieldRow({ field, onChange }: FieldRowProps) {
         <p
           id={errorId}
           role="alert"
-          className={`flex gap-1.5 text-xs ${isBlocker ? 'text-red-600' : 'text-amber-600'}`}
+          className="flex gap-1.5 text-xs text-amber-600"
         >
-          {isBlocker ? (
-            <OctagonAlert
-              aria-hidden="true"
-              className="mt-0.5 size-3.5 shrink-0"
-            />
-          ) : (
-            <TriangleAlert
-              aria-hidden="true"
-              className="mt-0.5 size-3.5 shrink-0"
-            />
-          )}
+          <TriangleAlert
+            aria-hidden="true"
+            className="mt-0.5 size-3.5 shrink-0"
+          />
           {CATEGORY_ATTRIBUTE_UNRESOLVED_COPY[field.requirement]}
         </p>
       ) : null}
