@@ -28,16 +28,16 @@ const cjResponseSchema = z.object({
 });
 
 const createOrderDataSchema = z.object({
-  orderId: z.string().min(1).optional(),
-  shipmentOrderId: z.string().min(1).optional(),
+  orderId: z.string().min(1).nullish(),
+  shipmentOrderId: z.string().min(1).nullish(),
 });
 
 const addCartConfirmDataSchema = z.object({
-  shipmentsId: z.string().min(1).optional(),
+  shipmentsId: z.string().min(1).nullish(),
 });
 
 const parentOrderDataSchema = z.object({
-  payId: z.string().min(1).optional(),
+  payId: z.string().min(1).nullish(),
 });
 
 const addressSchema = z.object({
@@ -268,7 +268,7 @@ async function fulfillGroup(input: {
   const createData = createOrderDataSchema.parse(responseData(createResponse));
   const cjOrderId = createData.orderId ?? createData.shipmentOrderId;
 
-  if (cjOrderId === undefined) throw new CjApiError('unexpected-response');
+  if (cjOrderId == null) throw new CjApiError('unexpected-response');
 
   await db
     .update(fulfillmentGroups)
@@ -350,7 +350,7 @@ async function fulfillGroup(input: {
 
   const payRequest = {
     shipmentOrderId,
-    ...(parentData.payId === undefined ? {} : { payId: parentData.payId }),
+    ...(parentData.payId == null ? {} : { payId: parentData.payId }),
   };
 
   try {
