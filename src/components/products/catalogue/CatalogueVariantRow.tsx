@@ -151,7 +151,10 @@ export default function CatalogueVariantRow({
           )}
         </div>
       </TableCell>
-      <TableCell colSpan={2}>
+      {/* Availability + Media + Listing quality. Quality is a product-level
+          reading, so a variant row shows none of its own rather than repeating
+          the parent's. */}
+      <TableCell colSpan={3}>
         <div className="flex flex-col gap-1">
           <AvailabilityBadge availability={variant.availability} />
           <p className="text-xs text-muted-foreground">
