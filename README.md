@@ -160,10 +160,15 @@ reconstruct supplier order payloads from Stripe metadata.
 
 Accepted orders run through the queue on `CATALOG_QUEUE_TOPIC` and call CJ in
 this order: `createOrderV3`, `addCart`, `addCartConfirm`,
-`saveGenerateParentOrder`, then `payBalanceV2`. `CJ_ORDER_SHOP_LOGISTICS_TYPE`
-optionally overrides the CJ logistics type; otherwise Portal uses the merchant
-logistics default from the current implementation. `CJ_ORDER_STORE_NAME` and
-`CJ_PLATFORM_TOKEN` are optional account-specific CJ fields.
+`saveGenerateParentOrder`, then `payBalanceV2`. `CJ_ORDER_SANDBOX` defaults to
+enabled for the current testing phase; keep it set to `1` in every environment
+so Portal sends `isSandbox: 1` to `createOrderV3`. CJ then treats
+`payBalanceV2` as simulated sandbox payment and does not deduct real balance or
+generate real fulfillment. Set `CJ_ORDER_SANDBOX=0` only when production order
+payment is owner-approved. `CJ_ORDER_SHOP_LOGISTICS_TYPE` optionally overrides
+the CJ logistics type; otherwise Portal uses the merchant logistics default
+from the current implementation. `CJ_ORDER_STORE_NAME` and `CJ_PLATFORM_TOKEN`
+are optional account-specific CJ fields.
 
 Set `DISCOVERY_CONTROL_SECRET` to a long random value so the discovery
 control routes (see
