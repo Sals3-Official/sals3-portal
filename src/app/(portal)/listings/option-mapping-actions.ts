@@ -86,7 +86,7 @@ export type OptionMappingActionResult =
  */
 const REFUSAL_MESSAGES: Record<string, string> = {
   invalid_input:
-    'Those option groups could not be read. Give every group a name and at least two values.',
+    'Those variant options could not be read. Give every option a name and at least two values.',
   denied: 'Your account cannot edit this product.',
   rate_limited: 'Too many attempts. Wait a moment and try again.',
   not_configured: 'The catalogue database is not available right now.',
@@ -94,14 +94,14 @@ const REFUSAL_MESSAGES: Record<string, string> = {
   version_conflict:
     'This product changed in another tab or session. Reload the editor and map the options again.',
   ALREADY_MAPPED:
-    'This product already has option groups. Changing them is not supported yet, because existing variants and any carts holding them depend on the current mapping.',
+    'This product already has a saved Variant Matrix. Changing it is not supported yet, because existing variants and any carts holding them depend on the current mapping.',
   SPLIT_NOT_DERIVABLE:
     'The supplier labels on this product do not form a complete grid, so a mapping cannot be checked against them.',
   SHAPE_MISMATCH:
     'The option values submitted no longer match the supplier labels on this product. Reload the editor to pick up the current labels.',
   duplicate_combination:
     'Two variants would end up with the same combination of option values, so the mapping was not saved. This means the supplier labels themselves repeat a combination.',
-  failed: 'The option groups could not be saved.',
+  failed: 'The Variant Matrix could not be saved.',
 };
 
 function refuse(reason: string): OptionMappingActionResult {
@@ -193,7 +193,7 @@ export default async function saveOptionMappingAction(
 
   if (!result.ok) return refuse(result.reason);
 
-  // The editor reads option groups through the catalogue read-model, so the
+  // The editor reads the Variant Matrix through the catalogue read-model, so the
   // listing views must re-read rather than serve the pre-mapping render.
   revalidatePath('/listings');
 

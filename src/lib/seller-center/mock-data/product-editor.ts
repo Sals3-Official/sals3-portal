@@ -353,6 +353,11 @@ const BASE: ProductEditorFixture = {
   sellerSku: 'S3-AUR-DP',
   brandDeclaration: 'No brand / generic',
   descriptionText: DESCRIPTION,
+  // Nothing persists in a design-preview fixture (no `saveMetaDescriptionAction`
+  // target either), so this starts unset the same way a real never-saved
+  // product would - the editor's own suggestion seam fills the textarea on
+  // screen, never this fixture.
+  metaDescriptionText: '',
   source: SOURCE,
   evaluationStatus: 'PASS',
   listingState: 'DRAFT',

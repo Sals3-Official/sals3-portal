@@ -6,7 +6,7 @@ vi.mock('server-only', () => ({}));
 const mocks = vi.hoisted(() => ({
   findProductForSteward: vi.fn(),
   appendAuditEvent: vi.fn(),
-  put: vi.fn(),
+  send: vi.fn(),
   toBuffer: vi.fn(),
   metadata: vi.fn(),
 }));
@@ -17,7 +17,26 @@ vi.mock('./repository', () => ({
 vi.mock('@/modules/catalog/candidates/repository', () => ({
   appendAuditEvent: mocks.appendAuditEvent,
 }));
-vi.mock('@vercel/blob', () => ({ put: mocks.put }));
+// The real `PutObjectCommand` is used unmocked (it is a plain constructor
+// that just carries its input) so `mocks.send.mock.calls[0][0].input` below
+// reads the real shape the module actually sent.
+vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aws-sdk/client-s3')>();
+
+  // A real `function`, not an arrow, so `new S3Client(...)` (the module
+  // under test always constructs it that way) works at all - `vi.fn()`
+  // only supports being invoked with `new` when its implementation is a
+  // real function or class.
+  return {
+    ...actual,
+    // Must be a real function, not an arrow, so `new S3Client(...)` works
+    // under `vi.fn()`.
+    // eslint-disable-next-line prefer-arrow-callback
+    S3Client: vi.fn(function S3ClientMock() {
+      return { send: mocks.send };
+    }),
+  };
+});
 
 /**
  * A stand-in for the real `sharp` pipeline: real image decoding is
@@ -48,8 +67,8 @@ import { uploadSellerProductMedia } from './upload-seller-media';
 /* eslint-enable import/first */
 
 const PRODUCT = { id: 'product-1', stewardSellerAccountId: 'seller-1' };
-const BLOB_URL =
-  'https://abc123.public.blob.vercel-storage.com/seller-media/product-1/photo.jpg';
+const PUBLIC_BASE_URL = 'https://media.example-r2.dev';
+const OBJECT_KEY_PATTERN = /^seller-media\/product-1\/[0-9a-f-]{36}\.webp$/;
 
 // Only the magic number matters before `sharp` ever sees it - the pre-filter
 // this module runs is a cheap format check, not a real decode.
@@ -105,9 +124,14 @@ const BASE_INPUT = {
 describe('uploadSellerProductMedia', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.BLOB_READ_WRITE_TOKEN = 'test-token';
+    process.env.CLOUDFLARE_R2_ENDPOINT =
+      'https://test-account.r2.cloudflarestorage.com';
+    process.env.CLOUDFLARE_R2_ACCESS_KEY_ID = 'test-access-key';
+    process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY = 'test-secret-key';
+    process.env.CLOUDFLARE_R2_BUCKET = 'sals3-seller-media';
+    process.env.CLOUDFLARE_R2_PUBLIC_BASE_URL = PUBLIC_BASE_URL;
     mocks.findProductForSteward.mockResolvedValue(PRODUCT);
-    mocks.put.mockResolvedValue({ url: BLOB_URL });
+    mocks.send.mockResolvedValue({});
     mocks.metadata.mockResolvedValue({ width: 1800, height: 1200 });
     mocks.toBuffer.mockResolvedValue({
       data: PROCESSED_BUFFER,
@@ -116,14 +140,14 @@ describe('uploadSellerProductMedia', () => {
   });
 
   it('refuses when storage is not configured', async () => {
-    delete process.env.BLOB_READ_WRITE_TOKEN;
+    delete process.env.CLOUDFLARE_R2_BUCKET;
     const { db } = fakeDb();
 
     expect(await uploadSellerProductMedia({ ...BASE_INPUT, db })).toEqual({
       ok: false,
       reason: 'STORAGE_NOT_CONFIGURED',
     });
-    expect(mocks.put).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it('refuses an empty file before checking ownership', async () => {
@@ -157,7 +181,7 @@ describe('uploadSellerProductMedia', () => {
       maxBytes: 5 * 1024 * 1024,
     });
     expect(sharp).not.toHaveBeenCalled();
-    expect(mocks.put).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it('refuses a file whose real bytes are not an accepted image type, regardless of what it claims to be', async () => {
@@ -183,7 +207,7 @@ describe('uploadSellerProductMedia', () => {
 
     expect(result).toEqual({ ok: false, reason: 'PROCESSING_FAILED' });
     expect(mocks.findProductForSteward).not.toHaveBeenCalled();
-    expect(mocks.put).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it('refuses a file whose header cannot even be read for dimensions', async () => {
@@ -194,7 +218,7 @@ describe('uploadSellerProductMedia', () => {
 
     expect(result).toEqual({ ok: false, reason: 'PROCESSING_FAILED' });
     expect(mocks.findProductForSteward).not.toHaveBeenCalled();
-    expect(mocks.put).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it('refuses an image over 2000x2000 without resizing it down or uploading it', async () => {
@@ -210,7 +234,7 @@ describe('uploadSellerProductMedia', () => {
     });
     expect(mocks.toBuffer).not.toHaveBeenCalled();
     expect(mocks.findProductForSteward).not.toHaveBeenCalled();
-    expect(mocks.put).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it('refuses an image over the limit on only one axis', async () => {
@@ -224,7 +248,7 @@ describe('uploadSellerProductMedia', () => {
       reason: 'DIMENSIONS_TOO_LARGE',
       maxDimensionPx: 2000,
     });
-    expect(mocks.put).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it('allows an image at exactly 2000x2000', async () => {
@@ -248,7 +272,7 @@ describe('uploadSellerProductMedia', () => {
       ok: false,
       reason: 'NOT_FOUND',
     });
-    expect(mocks.put).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it('refuses once the product already has the maximum number of seller photos', async () => {
@@ -259,7 +283,7 @@ describe('uploadSellerProductMedia', () => {
       reason: 'LIMIT_REACHED',
       limit: 12,
     });
-    expect(mocks.put).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it('re-encodes to WebP, downscale-only, and records a SELLER_UPLOAD row with the real processed dimensions - never trusting the caller filename or path', async () => {
@@ -267,29 +291,33 @@ describe('uploadSellerProductMedia', () => {
 
     const result = await uploadSellerProductMedia({ ...BASE_INPUT, db });
 
+    const command = mocks.send.mock.calls[0]?.[0] as {
+      input: { Bucket: string; Key: string; Body: Buffer; ContentType: string };
+    };
+
+    expect(command.input.Bucket).toBe('sals3-seller-media');
+    expect(command.input.Key).toMatch(OBJECT_KEY_PATTERN);
+    expect(command.input.Body).toBe(PROCESSED_BUFFER);
+    expect(command.input.ContentType).toBe('image/webp');
+
+    const expectedUrl = `${PUBLIC_BASE_URL}/${command.input.Key}`;
+
     expect(result).toEqual({
       ok: true,
       media: {
         id: 'media-row-1',
-        sourceUrl: BLOB_URL,
+        sourceUrl: expectedUrl,
         contentType: 'image/webp',
         byteSize: PROCESSED_BUFFER.byteLength,
         widthPixels: 1800,
         heightPixels: 1200,
       },
     });
-
-    const [pathname, uploadedBuffer, uploadOptions] = mocks.put.mock
-      .calls[0] as [string, Buffer, { contentType: string }];
-
-    expect(pathname).toMatch(/^seller-media\/product-1\/[0-9a-f-]{36}\.webp$/);
-    expect(uploadedBuffer).toBe(PROCESSED_BUFFER);
-    expect(uploadOptions.contentType).toBe('image/webp');
     expect(inserted[0]).toEqual(
       expect.objectContaining({
         productId: 'product-1',
         sourceType: 'SELLER_UPLOAD',
-        sourceUrl: BLOB_URL,
+        sourceUrl: expectedUrl,
         contentType: 'image/webp',
         byteSize: PROCESSED_BUFFER.byteLength,
         widthPixels: 1800,
@@ -309,10 +337,19 @@ describe('uploadSellerProductMedia', () => {
     );
   });
 
-  it('refuses a non-Blob URL from `put` rather than writing an unverifiable row', async () => {
-    mocks.put.mockResolvedValue({
-      url: 'https://evil.example.com/not-really-blob.jpg',
+  it('refuses when the configured public base URL is not https, rather than writing an unverifiable row', async () => {
+    process.env.CLOUDFLARE_R2_PUBLIC_BASE_URL = 'http://insecure.example.com';
+    const { db, inserted } = fakeDb();
+
+    expect(await uploadSellerProductMedia({ ...BASE_INPUT, db })).toEqual({
+      ok: false,
+      reason: 'UPLOAD_FAILED',
     });
+    expect(inserted).toHaveLength(0);
+  });
+
+  it('refuses when the R2 upload itself fails, before writing any row', async () => {
+    mocks.send.mockRejectedValue(new Error('network error'));
     const { db, inserted } = fakeDb();
 
     expect(await uploadSellerProductMedia({ ...BASE_INPUT, db })).toEqual({

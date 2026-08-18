@@ -178,6 +178,18 @@ export const products = pgTable(
      */
     slug: text('slug'),
 
+    /**
+     * Seller-edited page meta description — hidden search/AI-discovery
+     * copy, distinct from the buyer-visible PDP body
+     * (`product_revisions.content_document`). Nullable: auto-suggested in
+     * the editor but never defaulted here, so an unset value means the
+     * seller has not decided one yet, not an empty string standing in for
+     * "no opinion." A later PDP/storefront task renders this as the page's
+     * `<meta name="description">`; this column only persists the seller's
+     * own edit.
+     */
+    metaDescription: text('meta_description'),
+
     categoryId: uuid('category_id').references(() => sals3Categories.id, {
       onDelete: 'restrict',
     }),

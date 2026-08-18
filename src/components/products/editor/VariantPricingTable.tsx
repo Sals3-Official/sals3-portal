@@ -42,6 +42,43 @@ const COLUMNS = [
   'Attention',
 ];
 
+/**
+ * `optionLabel` arrives pre-formatted by the read-model: `"Colour: Army
+ * Green, Size: XL"` once the Variant Matrix is mapped, or the supplier's raw
+ * concatenated token (`"Army Green-XL"`) when it is not. Splitting the mapped
+ * form into per-axis chips makes the buyer-facing identity easy to scan at a
+ * glance instead of reading one run-on string; an unmapped label has no
+ * `": "` pairs and renders as plain text, unchanged.
+ */
+function optionLabelParts(label: string): string[] | null {
+  const parts = label.split(', ').filter((part) => part.includes(': '));
+
+  return parts.length > 0 && parts.length === label.split(', ').length
+    ? parts
+    : null;
+}
+
+function VariantIdentity({ optionLabel }: { optionLabel: string }) {
+  const parts = optionLabelParts(optionLabel);
+
+  if (parts === null) {
+    return <span className="truncate">{optionLabel}</span>;
+  }
+
+  return (
+    <span className="flex flex-wrap gap-1">
+      {parts.map((part) => (
+        <span
+          key={part}
+          className="rounded bg-muted px-1.5 py-0.5 text-xs whitespace-nowrap text-ink-muted"
+        >
+          {part}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 type VariantEvidenceRowProps = {
   variant: VariantFixture;
 };
@@ -198,8 +235,8 @@ export default function VariantPricingTable({
                       </span>
                     )}
                   </TableCell>
-                  <TableCell className="max-w-44 truncate font-medium">
-                    {variant.optionLabel}
+                  <TableCell className="max-w-56 font-medium">
+                    <VariantIdentity optionLabel={variant.optionLabel} />
                   </TableCell>
                   <TableCell>
                     <Input

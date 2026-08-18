@@ -73,16 +73,14 @@ const nextConfig: NextConfig = {
         hostname: 'oss-cf.cjdropshipping.com',
         pathname: '/**',
       },
-      // Seller-uploaded photos (`upload-seller-media.ts`), stored in Vercel
-      // Blob. Store subdomains are per-project, hence the wildcard. Purely
-      // documentation while `loader: 'custom'` bypasses the optimizer this
-      // gates - `vercelBlobImageUrl` in `src/lib/storage/blob-url.ts` is the
-      // enforcing check, same relationship `cjImageUrl` has to the list above.
-      {
-        protocol: 'https',
-        hostname: '*.public.blob.vercel-storage.com',
-        pathname: '/**',
-      },
+      // Seller-uploaded photos (`upload-seller-media.ts`), stored in
+      // Cloudflare R2. The public host is whatever the owner configured as
+      // `CLOUDFLARE_R2_PUBLIC_BASE_URL` (an r2.dev subdomain or a custom
+      // domain), so there is no fixed pattern to allow-list here the way CJ's
+      // fixed hosts allow above - purely documentation while `loader:
+      // 'custom'` bypasses the optimizer this gates either way.
+      // `r2PublicImageUrl` in `src/lib/storage/r2-url.ts` is the enforcing
+      // check, same relationship `cjImageUrl` has to the list above.
     ],
   },
 };

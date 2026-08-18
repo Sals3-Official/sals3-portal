@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import getDb, { type Database } from '@/lib/db/client';
 import { cjImageUrl } from '@/lib/cj/primitives';
-import { vercelBlobImageUrl } from '@/lib/storage/blob-url';
+import { r2PublicImageUrl } from '@/lib/storage/r2-url';
 import {
   ACTIVE_TAXONOMY_VERSION,
   candidateEvaluations,
@@ -149,7 +149,7 @@ function allowedImageUrl(
 ): string | null {
   const parsed =
     sourceType === 'SELLER_UPLOAD'
-      ? vercelBlobImageUrl.safeParse(value)
+      ? r2PublicImageUrl.safeParse(value)
       : cjImageUrl.safeParse(value);
 
   return parsed.success ? parsed.data : null;
@@ -917,6 +917,7 @@ function buildCatalogueProducts(
         sals3ProductId: product.id,
         name: product.title,
         descriptionText: descriptionText(revision),
+        metaDescriptionText: product.metaDescription ?? '',
         hasImage: mediaImageUrls.length > 0,
         coverImageUrl: supplier.imageUrl,
         mediaImageUrls,
@@ -1603,6 +1604,7 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
     sellerSku: variants[0]?.sellerSku ?? product.sals3ProductId,
     brandDeclaration: 'No brand / generic',
     descriptionText: product.descriptionText ?? '',
+    metaDescriptionText: product.metaDescriptionText ?? '',
     source: {
       providerId: product.supplierProviderCode,
       providerCode: product.supplierProviderCode,

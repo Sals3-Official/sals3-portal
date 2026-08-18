@@ -32,6 +32,7 @@ import {
   type SpecificationFixture,
   type VariantFixture,
 } from '@/lib/seller-center/product-editor/types';
+import { suggestMetaDescription } from '@/lib/seller-center/product-editor/suggest-meta-description';
 import BasicInformationSection from './BasicInformationSection';
 import BulkPricingDialog, { type BulkPricingMode } from './BulkPricingDialog';
 import CategoryAttributesSection from './category-attributes/CategoryAttributesSection';
@@ -148,6 +149,17 @@ type ProductEditorWorkspaceProps = {
    * but offers no save.
    */
   saveCategoryAttributesAction?: (
+    input: unknown,
+  ) => Promise<
+    | { ok: true; productVersion: number }
+    | { ok: false; reason: string; message: string }
+  >;
+  /**
+   * Meta Description save boundary. Omitted for fixture/design-preview
+   * mode, so the field still renders, suggests, and previews but offers no
+   * save.
+   */
+  saveMetaDescriptionAction?: (
     input: unknown,
   ) => Promise<
     | { ok: true; productVersion: number }
@@ -286,6 +298,7 @@ export default function ProductEditorWorkspace({
   uploadMediaAction,
   deleteMediaAction,
   saveCategoryAttributesAction,
+  saveMetaDescriptionAction,
 }: ProductEditorWorkspaceProps) {
   const router = useRouter();
 
@@ -295,6 +308,37 @@ export default function ProductEditorWorkspace({
     fixture.brandDeclaration,
   );
   const [description, setDescription] = useState(fixture.descriptionText);
+
+  /**
+   * Seeded from the auto-suggestion seam (`suggest-meta-description.ts`,
+   * never an AI call) only when nothing has been saved yet — a product that
+   * already has one shows exactly what was saved, never a freshly
+   * re-derived suggestion overwriting it on every render.
+   * `metaDescriptionIsSuggested` tracks whether the field still holds that
+   * unedited suggestion so the field can label it as such; it clears the
+   * moment the seller types.
+   */
+  const [metaDescription, setMetaDescription] = useState(() =>
+    fixture.metaDescriptionText !== ''
+      ? fixture.metaDescriptionText
+      : suggestMetaDescription({
+          productName: fixture.productName,
+          categoryLabel:
+            fixture.sals3CategoryPath.split(' > ').pop()?.trim() ?? null,
+          brandDeclaration: fixture.brandDeclaration,
+          descriptionText: fixture.descriptionText,
+          specificationHighlights: fixture.specifications
+            .filter((spec) => spec.value.trim() !== '')
+            .slice(0, 3)
+            .map((spec) => spec.value),
+          variantHighlights: [
+            ...new Set(fixture.variants.map((variant) => variant.optionLabel)),
+          ].slice(0, 3),
+        }),
+  );
+  const [metaDescriptionIsSuggested, setMetaDescriptionIsSuggested] = useState(
+    fixture.metaDescriptionText === '',
+  );
   const [specifications, setSpecifications] = useState<SpecificationFixture[]>(
     fixture.specifications,
   );
@@ -746,7 +790,7 @@ export default function ProductEditorWorkspace({
 
           return {
             ok: true,
-            message: `Recovered ${result.recoveredCount} supplier label${result.recoveredCount === 1 ? '' : 's'}. Option groups can now be named.`,
+            message: `Recovered ${result.recoveredCount} supplier label${result.recoveredCount === 1 ? '' : 's'}. The Variant Matrix can now be named.`,
           };
         };
 
@@ -814,6 +858,28 @@ export default function ProductEditorWorkspace({
             productId: optionMappingTarget.productId,
             expectedProductVersion: optionMappingTarget.expectedProductVersion,
             attributes,
+          });
+
+          if (result.ok) router.refresh();
+
+          return result.ok
+            ? { ok: true }
+            : { ok: false, message: result.message };
+        };
+
+  /**
+   * Same compare-and-set token as the other product-level saves above —
+   * `products.metaDescription` is a plain column, not part of the
+   * revisioned draft body `saveDraftAction` writes.
+   */
+  const handleSaveMetaDescription =
+    saveMetaDescriptionAction === undefined || optionMappingTarget === null
+      ? undefined
+      : async () => {
+          const result = await saveMetaDescriptionAction({
+            productId: optionMappingTarget.productId,
+            expectedProductVersion: optionMappingTarget.expectedProductVersion,
+            metaDescription,
           });
 
           if (result.ok) router.refresh();
@@ -1027,27 +1093,17 @@ export default function ProductEditorWorkspace({
                 setDescription(value);
                 touch();
               }}
+              productName={productName}
+              metaDescription={metaDescription}
+              onMetaDescriptionChange={(value) => {
+                setMetaDescription(value);
+                setMetaDescriptionIsSuggested(false);
+                touch();
+              }}
+              isMetaDescriptionSuggested={metaDescriptionIsSuggested}
+              onSaveMetaDescription={handleSaveMetaDescription}
             />
           </EditorSectionCard>
-
-          {/*
-            Sits with Variants & Pricing because naming the axes is what makes
-            the variant rows below readable. It renders its own card rather than
-            nesting inside the one below: `EditorSectionCard` is a top-level
-            section shell, and a card inside a card would read as a subsection of
-            pricing, which this is not.
-          */}
-          <VariantOptionMappingSection
-            proposal={fixture.optionMapping.proposal}
-            mappedAxisNames={fixture.optionMapping.mappedAxisNames}
-            suggestedAxisNames={fixture.optionMapping.suggestedAxisNames}
-            variantCount={fixture.optionMapping.variantCount}
-            unlabelledVariantCount={
-              fixture.optionMapping.unlabelledVariantCount
-            }
-            onSave={handleOptionMappingSave}
-            onRecoverLabels={handleRecoverLabels}
-          />
 
           <EditorSectionCard
             id="variants"
@@ -1060,63 +1116,84 @@ export default function ProductEditorWorkspace({
               </span>
             }
           >
-            <VariantPricingTable
-              variants={variants}
-              expandedVariantId={expandedVariantId}
-              onToggleExpanded={(variantId) =>
-                setExpandedVariantId((current) =>
-                  current === variantId ? null : variantId,
-                )
-              }
-              onToggleEnabled={(variantId) => {
-                const target = variants.find((item) => item.id === variantId);
+            {/*
+              Naming the Variant Matrix is what makes the variant rows below
+              readable, so it renders as a presentational subsection here
+              rather than its own `EditorSectionCard` - a card inside a card
+              would read as a subsection of pricing, which this is not.
+            */}
+            <div className="flex flex-col gap-5">
+              <VariantOptionMappingSection
+                proposal={fixture.optionMapping.proposal}
+                mappedAxisNames={fixture.optionMapping.mappedAxisNames}
+                suggestedAxisNames={fixture.optionMapping.suggestedAxisNames}
+                variantCount={fixture.optionMapping.variantCount}
+                unlabelledVariantCount={
+                  fixture.optionMapping.unlabelledVariantCount
+                }
+                onSave={handleOptionMappingSave}
+                onRecoverLabels={handleRecoverLabels}
+              />
 
-                if (target === undefined) return;
+              <VariantPricingTable
+                variants={variants}
+                expandedVariantId={expandedVariantId}
+                onToggleExpanded={(variantId) =>
+                  setExpandedVariantId((current) =>
+                    current === variantId ? null : variantId,
+                  )
+                }
+                onToggleEnabled={(variantId) => {
+                  const target = variants.find((item) => item.id === variantId);
 
-                updateVariant(variantId, { enabled: !target.enabled });
-              }}
-              onRetailChange={(variantId, amountMinor) => {
-                const target = variants.find((item) => item.id === variantId);
+                  if (target === undefined) return;
 
-                if (target === undefined) return;
+                  updateVariant(variantId, { enabled: !target.enabled });
+                }}
+                onRetailChange={(variantId, amountMinor) => {
+                  const target = variants.find((item) => item.id === variantId);
 
-                updateVariant(variantId, {
-                  retailPrice: {
-                    amountMinor,
-                    currency: target.retailPrice.currency,
-                  },
-                  attention: amountMinor <= 0 ? 'Retail price required' : null,
-                });
-              }}
-              onSellerSkuChange={(variantId, value) =>
-                updateVariant(variantId, { sellerSku: value })
-              }
-              onBulkSetPrice={() => setBulkPricingMode('SET_PRICE')}
-              onBulkEnableInStock={() => {
-                setVariants((current) =>
-                  current.map((variant) =>
-                    canBulkEnable(variant)
-                      ? { ...variant, enabled: true }
-                      : variant,
-                  ),
-                );
-                touch();
-                toast('Blocked and paused variants were skipped.', {
-                  description:
-                    'A bulk action never re-enables a variant the supplier or policy has ruled out.',
-                });
-              }}
-              onBulkDisableUnavailable={() => {
-                setVariants((current) =>
-                  current.map((variant) =>
-                    variant.supplierStock === 0
-                      ? { ...variant, enabled: false }
-                      : variant,
-                  ),
-                );
-                touch();
-              }}
-            />
+                  if (target === undefined) return;
+
+                  updateVariant(variantId, {
+                    retailPrice: {
+                      amountMinor,
+                      currency: target.retailPrice.currency,
+                    },
+                    attention:
+                      amountMinor <= 0 ? 'Retail price required' : null,
+                  });
+                }}
+                onSellerSkuChange={(variantId, value) =>
+                  updateVariant(variantId, { sellerSku: value })
+                }
+                onBulkSetPrice={() => setBulkPricingMode('SET_PRICE')}
+                onBulkEnableInStock={() => {
+                  setVariants((current) =>
+                    current.map((variant) =>
+                      canBulkEnable(variant)
+                        ? { ...variant, enabled: true }
+                        : variant,
+                    ),
+                  );
+                  touch();
+                  toast('Blocked and paused variants were skipped.', {
+                    description:
+                      'A bulk action never re-enables a variant the supplier or policy has ruled out.',
+                  });
+                }}
+                onBulkDisableUnavailable={() => {
+                  setVariants((current) =>
+                    current.map((variant) =>
+                      variant.supplierStock === 0
+                        ? { ...variant, enabled: false }
+                        : variant,
+                    ),
+                  );
+                  touch();
+                }}
+              />
+            </div>
           </EditorSectionCard>
 
           {marketsSection}

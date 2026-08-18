@@ -18,6 +18,19 @@ type SingleSelectControlProps = {
   allowCustomValue: boolean;
   isCustomValue: boolean;
   onChange: (values: string[], isCustomValue: boolean) => void;
+  /**
+   * Maps a raw allowed value to what a seller/buyer reads for it (e.g. the
+   * workbook's `UNBRANDED` token displaying as `Generic`). The submitted
+   * `value` is always the raw token underneath — this only ever changes the
+   * rendered label. Defaults to the identity mapping.
+   */
+  getDisplayLabel?: (value: string) => string;
+  /**
+   * Shown while nothing is selected. A buyer-facing display default (e.g.
+   * `Generic`/`Others`) belongs here rather than in `allowedValues`, so it
+   * never looks like an actual, submittable selection.
+   */
+  placeholder?: string;
   'aria-invalid'?: boolean;
   'aria-describedby'?: string;
 };
@@ -30,6 +43,8 @@ export default function SingleSelectControl({
   allowCustomValue,
   isCustomValue,
   onChange,
+  getDisplayLabel = (value) => value,
+  placeholder = 'Select a value',
   'aria-invalid': ariaInvalid,
   'aria-describedby': ariaDescribedBy,
 }: SingleSelectControlProps) {
@@ -62,12 +77,25 @@ export default function SingleSelectControl({
           aria-invalid={ariaInvalid}
           aria-describedby={ariaDescribedBy}
         >
-          <SelectValue placeholder="Select a value" />
+          {/*
+            A children render-function, not the `placeholder` prop: base-ui's
+            `Select.Value` renders the raw selected value verbatim unless a
+            function is supplied to format it, and a `children` function
+            (once given) is what takes over the empty/placeholder case too -
+            see `SelectValue.d.ts`.
+          */}
+          <SelectValue>
+            {(value: unknown) =>
+              typeof value === 'string' && value !== ''
+                ? getDisplayLabel(value)
+                : placeholder
+            }
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           {allowedValues.map((value) => (
             <SelectItem key={value} value={value}>
-              {value}
+              {getDisplayLabel(value)}
             </SelectItem>
           ))}
           {allowCustomValue ? (

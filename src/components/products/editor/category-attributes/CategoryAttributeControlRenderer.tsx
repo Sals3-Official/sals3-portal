@@ -1,5 +1,9 @@
 'use client';
 
+import {
+  categoryAttributeUnresolvedPlaceholder,
+  categoryAttributeValueDisplayLabel,
+} from '@/lib/seller-center/product-editor/attribute-display-defaults';
 import type { CategoryAttributeFieldFixture } from '@/lib/seller-center/product-editor/types';
 import BooleanToggleControl from './BooleanToggleControl';
 import DatePickerControl from './DatePickerControl';
@@ -39,6 +43,12 @@ export default function CategoryAttributeControlRenderer({
           allowCustomValue={field.allowCustomValue}
           isCustomValue={field.isCustomValue}
           onChange={onChange}
+          getDisplayLabel={(value) =>
+            categoryAttributeValueDisplayLabel(field.attributeName, value)
+          }
+          placeholder={categoryAttributeUnresolvedPlaceholder(
+            field.attributeName,
+          )}
           aria-invalid={ariaInvalid}
           aria-describedby={ariaDescribedBy}
         />

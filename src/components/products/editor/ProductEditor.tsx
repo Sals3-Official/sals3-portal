@@ -5,6 +5,7 @@ import {
   deleteSellerMediaAction,
   uploadSellerMediaAction,
 } from '@/app/(portal)/listings/media-actions';
+import saveMetaDescriptionAction from '@/app/(portal)/listings/meta-description-actions';
 import saveOptionMappingAction, {
   recoverSupplierLabelsAction,
 } from '@/app/(portal)/listings/option-mapping-actions';
@@ -103,6 +104,9 @@ export default function ProductEditor({
         }
         saveCategoryAttributesAction={
           isDatabaseBacked ? saveCategoryAttributesAction : undefined
+        }
+        saveMetaDescriptionAction={
+          isDatabaseBacked ? saveMetaDescriptionAction : undefined
         }
       />
     </div>

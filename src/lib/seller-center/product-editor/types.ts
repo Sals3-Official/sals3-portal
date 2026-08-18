@@ -316,6 +316,13 @@ export type ProductEditorFixture = {
   sellerSku: string;
   brandDeclaration: string;
   descriptionText: string;
+  /**
+   * The seller-edited page meta description (`products.metaDescription`) —
+   * hidden search/AI-discovery copy, distinct from `descriptionText` above.
+   * `''` when nothing has been saved yet, the same "not set" convention
+   * `descriptionText` already uses.
+   */
+  metaDescriptionText: string;
   source: SupplierSourceIdentity;
   evaluationStatus: EvaluationStatus;
   listingState: ListingLifecycleState;

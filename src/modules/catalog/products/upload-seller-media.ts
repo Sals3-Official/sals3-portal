@@ -1,21 +1,23 @@
 import 'server-only';
 
 import { createHash, randomUUID } from 'node:crypto';
-import { put } from '@vercel/blob';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { and, eq } from 'drizzle-orm';
 import sharp from 'sharp';
 import getDb, { type Database } from '@/lib/db/client';
 import uniqueViolationConstraint from '@/lib/db/constraint-errors';
 import { productMediaSources } from '@/lib/db/schema';
-import { vercelBlobImageUrl } from '@/lib/storage/blob-url';
+import { getR2Client, readR2Config } from '@/lib/storage/r2-client';
+import { r2PublicImageUrl, r2PublicUrlForKey } from '@/lib/storage/r2-url';
 import { appendAuditEvent } from '@/modules/catalog/candidates/repository';
 import { PRODUCT_AUDIT_ACTIONS } from './contracts';
 import { findProductForSteward } from './repository';
 
 /**
  * Turns a seller's own file upload into a `product_media_sources` row
- * (ADR-011 §1 "Your pictures"), stored in Vercel Blob (owner decision
- * 2026-08-17).
+ * (ADR-011 §1 "Your pictures"), stored in Cloudflare R2 (owner decision
+ * 2026-08-17, superseding the earlier Vercel Blob backend — durable object
+ * storage was the explicit requirement).
  *
  * This is the seller-upload counterpart to `media-projection.ts`'s
  * `projectSupplierMediaForProduct`: same table, same rights-basis-required
@@ -200,7 +202,9 @@ export async function uploadSellerProductMedia(input: {
   fileBytes: ArrayBuffer;
   db?: Database;
 }): Promise<UploadSellerMediaResult> {
-  if (process.env.BLOB_READ_WRITE_TOKEN === undefined) {
+  const r2Config = readR2Config();
+
+  if (r2Config === null) {
     return { ok: false, reason: 'STORAGE_NOT_CONFIGURED' };
   }
 
@@ -269,36 +273,39 @@ export async function uploadSellerProductMedia(input: {
     };
   }
 
-  // Object storage (Vercel Blob), never the Postgres database - `put()`
-  // uploads the compressed bytes to Vercel's storage and returns a public
-  // HTTPS URL; only that URL, plus small metadata (checksum, dimensions,
-  // byte size), is what the `insert` below writes to `product_media_sources`.
-  // A random path, never the caller's own filename (rule 31: never trust a
-  // user-supplied filename or path). `addRandomSuffix` also protects against
-  // two concurrent uploads racing the same generated name.
-  const pathname = `seller-media/${product.id}/${randomUUID()}.webp`;
-
-  let blobUrl: string;
+  // Object storage (Cloudflare R2), never the Postgres database - only the
+  // resulting public URL, plus small metadata (checksum, dimensions, byte
+  // size), is what the `insert` below writes to `product_media_sources`. A
+  // random key, never the caller's own filename (rule 31: never trust a
+  // user-supplied filename or path) - `randomUUID()` alone is enough to
+  // avoid two concurrent uploads racing the same key, unlike Vercel Blob's
+  // `addRandomSuffix` this replaces, R2's `PutObjectCommand` has no such
+  // option because it needs none here.
+  const objectKey = `seller-media/${product.id}/${randomUUID()}.webp`;
 
   try {
-    const blob = await put(pathname, processed.buffer, {
-      access: 'public',
-      addRandomSuffix: true,
-      contentType: OUTPUT_CONTENT_TYPE,
-    });
-
-    blobUrl = blob.url;
+    await getR2Client(r2Config).send(
+      new PutObjectCommand({
+        Bucket: r2Config.bucket,
+        Key: objectKey,
+        Body: processed.buffer,
+        ContentType: OUTPUT_CONTENT_TYPE,
+      }),
+    );
   } catch {
     return { ok: false, reason: 'UPLOAD_FAILED' };
   }
 
-  const verifiedUrl = vercelBlobImageUrl.parse(blobUrl);
+  const verifiedUrl = r2PublicImageUrl.parse(
+    r2PublicUrlForKey(r2Config.publicBaseUrl, objectKey),
+  );
 
-  // Unreachable while Vercel Blob's own SDK returns its own host, kept as a
-  // hard refusal rather than a silent write: a row on this table with a
-  // non-Blob `SELLER_UPLOAD` address is exactly the confusion the read
-  // path's own host check (`read-model.ts`'s `allowedImageUrl`) exists to
-  // catch, and it must never originate from this side of that boundary.
+  // Unreachable while the URL is built from the same `publicBaseUrl` the
+  // check itself reads, kept as a hard refusal rather than a silent write:
+  // a row on this table with a non-R2 `SELLER_UPLOAD` address is exactly
+  // the confusion the read path's own host check (`read-model.ts`'s
+  // `allowedImageUrl`) exists to catch, and it must never originate from
+  // this side of that boundary.
   if (verifiedUrl === null) return { ok: false, reason: 'UPLOAD_FAILED' };
 
   // Checksummed after re-encoding: the same source photo re-uploaded twice
@@ -332,7 +339,7 @@ export async function uploadSellerProductMedia(input: {
       .returning({ id: productMediaSources.id });
   } catch (error) {
     // The exact re-encoded bytes were already uploaded for this product -
-    // the freshly-put blob above is now an orphan, an accepted cost of
+    // the freshly-put R2 object above is now an orphan, an accepted cost of
     // checking uniqueness with a real index rather than a read-then-write
     // race.
     if (

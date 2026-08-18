@@ -126,11 +126,16 @@ connection from `CJ_API_KEY` once:
 npm run bootstrap:cj
 ```
 
-Set `BLOB_READ_WRITE_TOKEN` for a seller's own product-photo uploads (see
-[Product Editor](#product-editor-add-product-from-a-supplier-product)) —
-Vercel injects it automatically once a Blob store is connected to the
-project, so `vercel env pull .env.local` above already covers it; nothing
-manual is needed in a deployed environment.
+Set `CLOUDFLARE_R2_ENDPOINT`, `CLOUDFLARE_R2_ACCESS_KEY_ID`,
+`CLOUDFLARE_R2_SECRET_ACCESS_KEY`, `CLOUDFLARE_R2_BUCKET`, and
+`CLOUDFLARE_R2_PUBLIC_BASE_URL` for a seller's own product-photo uploads (see
+[Product Editor](#product-editor-add-product-from-a-supplier-product)),
+stored in Cloudflare R2. Unlike the earlier Vercel Blob backend these are not
+auto-injected — create an R2 bucket and an API token scoped to it from the
+Cloudflare dashboard, and configure all five as deployment/GitHub/Vercel
+environment secrets. `CLOUDFLARE_R2_PUBLIC_BASE_URL` must be the bucket's
+public read URL or a custom domain bound to it, never the private
+S3-compatible endpoint.
 
 Set `SALS3_STOREFRONT_API_TOKEN` to a long random value if
 `sals3-ecommerce` will read products or request checkout freight quotes from
@@ -548,8 +553,10 @@ brand, variants, and publication controls remain local/editor-only until their
 dedicated persistence paths exist. The screen says which mode it loaded in the
 notice at the top.
 
-**A seller's own product photos persist for real (2026-08-17, Vercel Blob +
-sharp).** Basic Information's `Product media` is a real photo manager
+**A seller's own product photos persist for real (2026-08-17, Cloudflare R2 +
+sharp — migrated the same day from an initial Vercel Blob backend once
+durable object storage became the explicit requirement).** Basic
+Information's `Product media` is a real photo manager
 (`ProductPhotoManager`) - upload, delete, and set-cover, no separate Media
 section any more (removed the same day; its whole reason to exist moved
 here). `uploadSellerMediaAction` re-checks the file's own magic number
@@ -571,9 +578,9 @@ expands it first if a blocker/warning lives inside, so a collapsed section
 never hides one. Until a seller uploads at least one photo, the editor's
 previews (header thumbnail, Product media, Draft Storefront Preview) fall
 back to the supplier's photo automatically, matching what the live
-storefront already does. Requires `BLOB_READ_WRITE_TOKEN` (see
-[Environment setup](#setup)); with it unset, Upload stays visibly disabled
-with an honest reason instead of a fake success.
+storefront already does. Requires the five `CLOUDFLARE_R2_*` variables (see
+[Environment setup](#setup)); with any of them unset, Upload stays visibly
+disabled with an honest reason instead of a fake success.
 
 **A new `Specification` section sits between Basic Information and
 Description (2026-08-17)** — category-driven attribute controls
@@ -657,6 +664,58 @@ Layout responds to the editor's own **container** width, not the viewport,
 so the readiness and preview panels fold into drawers when the portal rail
 is expanded and there is no longer room for three columns. This route never
 collapses or overrides the seller's sidebar.
+
+**Variant setup redesigned as a "Variant Matrix" inside `Variants & Pricing`
+(2026-08-17).** The old `Option groups` screen rendered its own card and sat
+as a sibling immediately above the variant table — a nav-unreachable
+pseudo-section (`VariantOptionMappingSection.tsx`'s own `id="options"`).
+It is now a presentational subsection mounted inside the `variants`
+`EditorSectionCard`, directly above `VariantPricingTable`, with its own
+header row and status pill rather than a nested card. Seller-facing copy no
+longer says "Option groups" anywhere — the heading, button, and messages
+say `Variant Matrix` — but every backend name (`saveOptionMapping`,
+`product_options`, `optionMapping`, the `OPTIONS_UNMAPPED` publish gate)
+is unchanged. Functional behaviour is unchanged too: the supplier value
+column stays read-only, a buyer label edit never touches the supplier
+token or CJ fulfillment matching, and mapping is still insert-only (no
+remap/unmap). `VariantPricingTable`'s Variant column now renders a mapped
+label's `Name: Value` pairs as small chips instead of one run-on string,
+for readability only.
+
+**Meta Description added to the Description section (2026-08-17), scoped
+narrowly.** A dedicated, seller-editable `products.meta_description`
+column — hidden search/AI-discovery copy, persisted separately from the
+buyer-visible Product Description and from the future PDP body. The field
+sits directly below Product Description with a 140-160 character
+guideline (a warning, never a publish blocker), a Sals3-native search
+preview, and a local, non-AI auto-suggestion seeded from the product name,
+category, a few specification/variant highlights, and the description's
+opening sentence (`suggest-meta-description.ts`) — always editable, and
+only ever saved if the seller presses `Save Meta Description`
+(`meta-description-actions.ts`, `save-meta-description.ts`, its own
+compare-and-set column, independent of the revisioned draft body). No URL
+handle editing, no structured-data editing, and no call to an AI provider.
+Migration `0021_cultured_groot.sql` adds the nullable column; nothing reads
+or renders it on the storefront yet — that is later PDP/storefront work.
+Applied to the local database already. Production is never migrated from a
+laptop (`npm run db:migrate` only ever runs against `localhost` -
+`scripts/guard-remote-db.mts` refuses anything else): the same
+break-glass pattern `migrate-attribute-controls` established applies here
+too — trigger the `Products Migrate Meta Description` GitHub Actions
+workflow (`workflow_dispatch`, `CRON_SECRET`-authenticated), which calls
+`POST /api/internal/catalog/products/migrate-meta-description` on the
+deployed app itself. Idempotent; safe to run more than once.
+
+**Brand and Country of Origin show seller-friendly defaults, not raw
+workbook tokens (2026-08-17).** The Specification section's `Brand` /
+`Brand / Publisher` dropdown displays the workbook's own `UNBRANDED` token
+as `Generic`, and an unresolved Brand or Country of Origin field shows a
+`Generic` / `Others` placeholder instead of a blank one
+(`attribute-display-defaults.ts`). Display only: the value actually
+submitted and stored when a seller picks the no-brand option is still the
+raw `UNBRANDED` token, and an unresolved field is still unresolved for
+readiness/blocker purposes — nothing here touches CJ supplier identity,
+brand evidence, or order-fulfillment fields.
 
 ## Catalog database (Drizzle + PostgreSQL)
 
