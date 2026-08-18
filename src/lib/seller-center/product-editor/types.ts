@@ -398,15 +398,6 @@ export type ProductEditorFixture = {
    * Basic Information's Supplier Details, never in Media section.
    */
   supplierMedia: MediaItemFixture[];
-  /**
-   * Whether `supplierMedia` shows to buyers alongside `media`, not only as a
-   * fallback when `media` is empty. Off hides the supplier's photo from
-   * every buyer-facing surface (header thumbnail, Draft Storefront Preview,
-   * publish); `media` still shows regardless. Supplier Details' read-only
-   * evidence gallery is unaffected either way — that is provenance, never
-   * buyer-facing.
-   */
-  showSupplierPhoto: boolean;
   policyVersion: string;
   /** Present only for database-backed rows whose open draft can be saved. */
   draftSaveTarget: {

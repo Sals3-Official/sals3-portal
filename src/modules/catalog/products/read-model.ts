@@ -923,7 +923,6 @@ function buildCatalogueProducts(
         mediaImageUrls,
         supplierMediaUrls,
         sellerMediaUrls,
-        showSupplierPhoto: product.showSupplierPhoto,
         status,
         // The CJ category is the Sals3 category (owner decision 2026-08-14):
         // a row not yet carrying a mapped category shows the supplier's own
@@ -1290,9 +1289,9 @@ function editorCategoryAttributes(product: CatalogueProductFixture): {
     ...validation.missingRequiredAttributes.map((name) =>
       catalogueIssue(
         `${product.id}-specification-${name}`,
-        'WARNING',
+        'BLOCKER',
         `${name} is required`,
-        `This category requires a value for "${name}". Publishing is not blocked, but buyers may see this attribute blank.`,
+        `This category requires a value for "${name}" before publishing.`,
         'specification',
       ),
     ),
@@ -1687,7 +1686,6 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
     marketsNotEnabledCount: 0,
     media: editorSellerMedia(product),
     supplierMedia: editorSupplierMedia(product),
-    showSupplierPhoto: product.showSupplierPhoto ?? true,
     policyVersion: 'database',
     draftSaveTarget:
       product.currentRevisionId === undefined ||

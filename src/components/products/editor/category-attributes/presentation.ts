@@ -22,7 +22,7 @@ export const CATEGORY_ATTRIBUTE_UNRESOLVED_COPY: Record<
   string
 > = {
   REQUIRED:
-    'Required for this category. Publishing is not blocked, but buyers may see this attribute blank.',
+    'Publication requires this. It is a hard blocker until a value is entered.',
   RECOMMENDED:
     'Recommended for this category. Publishing is not blocked, but buyers may see this attribute blank.',
   OPTIONAL: 'Optional. Nothing is blocked and nothing is missing.',

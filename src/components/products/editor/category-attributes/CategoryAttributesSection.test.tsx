@@ -38,7 +38,7 @@ describe('CategoryAttributesSection', () => {
     ).toBeInTheDocument();
   });
 
-  it('marks a REQUIRED field with an asterisk and shows a non-blocking required message when unresolved', () => {
+  it('marks a REQUIRED field with an asterisk and shows the blocker message when unresolved', () => {
     render(
       <CategoryAttributesSection
         fields={[field({ attributeName: 'Brand', requirement: 'REQUIRED' })]}
@@ -49,9 +49,7 @@ describe('CategoryAttributesSection', () => {
 
     expect(screen.getByText('Brand *')).toBeInTheDocument();
     expect(
-      screen.getByText(
-        /Required for this category\. Publishing is not blocked/,
-      ),
+      screen.getByText(/Publication requires this\. It is a hard blocker/),
     ).toBeInTheDocument();
   });
 
@@ -126,7 +124,7 @@ describe('CategoryAttributesSection', () => {
    * already resolved; the server trims and rejects it as missing, so the
    * blocker must stay up until the custom text is non-blank.
    */
-  it('keeps a required custom single-select marked unresolved while its typed value is blank', () => {
+  it('keeps a required custom single-select blocking while its typed value is blank', () => {
     render(
       <CategoryAttributesSection
         fields={[
@@ -146,13 +144,11 @@ describe('CategoryAttributesSection', () => {
     );
 
     expect(
-      screen.getByText(
-        /Required for this category\. Publishing is not blocked/,
-      ),
+      screen.getByText(/Publication requires this\. It is a hard blocker/),
     ).toBeInTheDocument();
   });
 
-  it('clears the required message once the custom value is non-blank', () => {
+  it('clears the blocker once the custom value is non-blank', () => {
     render(
       <CategoryAttributesSection
         fields={[
@@ -172,9 +168,7 @@ describe('CategoryAttributesSection', () => {
     );
 
     expect(
-      screen.queryByText(
-        /Required for this category\. Publishing is not blocked/,
-      ),
+      screen.queryByText(/Publication requires this/),
     ).not.toBeInTheDocument();
   });
 
