@@ -1,3 +1,4 @@
+import type { DescriptionBlock } from '@/lib/products/description-blocks';
 import type {
   EvaluationStatus,
   ReasonCode,
@@ -315,6 +316,16 @@ export type ProductEditorFixture = {
   realSupplierCandidateId: string | null;
   sellerSku: string;
   brandDeclaration: string;
+  /**
+   * The stored description document's blocks, in render order.
+   *
+   * The editor edits these directly. It used to be handed `descriptionText`
+   * alone and re-parse it into paragraphs on save, which rewrote every
+   * heading, bullet list, and detail list a document held into prose the
+   * first time anyone opened the page.
+   */
+  descriptionBlocks: DescriptionBlock[];
+  /** The lossy plain-text projection of `descriptionBlocks`. Never saved back. */
   descriptionText: string;
   /**
    * The seller-edited page meta description (`products.metaDescription`) —

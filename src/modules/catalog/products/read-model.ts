@@ -5,6 +5,10 @@ import { z } from 'zod';
 
 import getDb, { type Database } from '@/lib/db/client';
 import { cjImageUrl } from '@/lib/cj/primitives';
+import {
+  descriptionBlocksToPlainText,
+  type DescriptionBlock,
+} from '@/lib/products/description-blocks';
 import { r2PublicImageUrl } from '@/lib/storage/r2-url';
 import {
   candidateEvaluations,
@@ -426,24 +430,22 @@ function attentionFromUnpublished(
   return reasons;
 }
 
-function descriptionText(revision: ProductRevisionRow | undefined): string {
+/**
+ * The stored blocks, or none when the revision has no readable document.
+ *
+ * The editor is given these rather than the flattened text it used to
+ * receive. Projecting a document down to a string and re-parsing that string
+ * into paragraphs is lossy in one direction only — a heading, a bullet list,
+ * or a detail list came back as prose, and the next Save Draft wrote that
+ * prose back as the document. Blocks the seller never touched were rewritten
+ * by opening the page.
+ */
+function descriptionBlocksOf(
+  revision: ProductRevisionRow | undefined,
+): DescriptionBlock[] {
   const parsed = descriptionDocumentSchema.safeParse(revision?.contentDocument);
 
-  if (!parsed.success) return '';
-
-  return parsed.data.blocks
-    .map((block) => {
-      if (block.type === 'paragraph' || block.type === 'heading') {
-        return block.text;
-      }
-
-      if (block.type === 'bulletList') return block.items.join('\n');
-
-      return block.entries
-        .map((entry) => `${entry.label}: ${entry.value}`)
-        .join('\n');
-    })
-    .join('\n\n');
+  return parsed.success ? parsed.data.blocks : [];
 }
 
 function variantOrderKey(variant: CatalogueVariantFixture): string {
@@ -929,11 +931,17 @@ function buildCatalogueProducts(
         })
         .sort(compareCatalogueVariants);
 
+      const descriptionBlocks = descriptionBlocksOf(revision);
+
       return {
         id: product.id,
         sals3ProductId: product.id,
         name: product.title,
-        descriptionText: descriptionText(revision),
+        descriptionBlocks,
+        // Derived, never stored twice: the plain-text projection is what the
+        // meta-description suggestion and the content-readiness check want,
+        // while `descriptionBlocks` above is what the editor writes back.
+        descriptionText: descriptionBlocksToPlainText(descriptionBlocks),
         metaDescriptionText: product.metaDescription ?? '',
         hasImage: mediaImageUrls.length > 0,
         coverImageUrl: supplier.imageUrl,
@@ -1001,9 +1009,7 @@ function buildCatalogueProducts(
         ),
         mediaStatus: mediaStatusOf(media, product.showSupplierPhoto ?? true),
         contentReadiness:
-          descriptionText(revision).trim() === ''
-            ? 'NEEDS_IMPROVEMENT'
-            : 'GOOD',
+          descriptionBlocks.length === 0 ? 'NEEDS_IMPROVEMENT' : 'GOOD',
         pauseReason: status === 'AUTO_PAUSED' ? 'Listing is paused.' : null,
         storefrontUrl: status === 'LIVE' ? product.slug : null,
         attentionReasons,
@@ -1616,6 +1622,7 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
     realSupplierCandidateId: product.sourceCandidateId ?? null,
     sellerSku: variants[0]?.sellerSku ?? product.sals3ProductId,
     brandDeclaration: 'No brand / generic',
+    descriptionBlocks: product.descriptionBlocks ?? [],
     descriptionText: product.descriptionText ?? '',
     metaDescriptionText: product.metaDescriptionText ?? '',
     source: {

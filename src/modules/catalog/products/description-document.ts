@@ -1,6 +1,20 @@
 import { createHash } from 'crypto';
 import { z } from 'zod';
 
+import {
+  DESCRIPTION_DOCUMENT_VERSION,
+  DISALLOWED_CONTROL,
+  MARKUP_OPENER,
+  MAX_BLOCKS,
+  MAX_LABEL_LENGTH,
+  MAX_LIST_ITEMS,
+  MAX_TEXT_LENGTH,
+  type BulletListBlock,
+  type HeadingBlock,
+  type KeyValueListBlock,
+  type ParagraphBlock,
+} from '@/lib/products/description-blocks';
+
 /**
  * The structured, allow-listed description format
  * (`cj-candidate-to-sals3-product-draft-implementation-spec.md` §5.1:
@@ -24,17 +38,14 @@ import { z } from 'zod';
  * tag, comment, or processing instruction immediately after the `<`.
  */
 
-const MAX_BLOCKS = 60;
-const MAX_TEXT_LENGTH = 4_000;
-const MAX_LIST_ITEMS = 40;
-const MAX_LABEL_LENGTH = 120;
-
-/** Matches `<div`, `</p`, `<!--`, `<?xml`. Does not match `a < b` or `5 <10`. */
-const MARKUP_OPENER = /<[a-zA-Z/!?]/;
-/** C0/C1 controls except tab (09) and newline (0A). */
-// eslint-disable-next-line no-control-regex
-const DISALLOWED_CONTROL = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/;
-
+/**
+ * The limits, the markup/control rules, and the block shapes themselves come
+ * from `@/lib/products/description-blocks`, which the seller-facing editor
+ * imports too — this module cannot be imported from a client component
+ * because of `node:crypto`. Each schema below is `satisfies
+ * z.ZodType<...>`-checked against the shared type, so an editor that learns
+ * to build a block this schema would refuse fails to compile.
+ */
 const plainText = (max: number) =>
   z
     .string()
@@ -52,19 +63,19 @@ const plainText = (max: number) =>
 const paragraphBlockSchema = z.object({
   type: z.literal('paragraph'),
   text: plainText(MAX_TEXT_LENGTH),
-});
+}) satisfies z.ZodType<ParagraphBlock>;
 
 const headingBlockSchema = z.object({
   type: z.literal('heading'),
   /** Only sub-headings: the product title owns the single `h1` on the page. */
   level: z.union([z.literal(2), z.literal(3)]),
   text: plainText(MAX_LABEL_LENGTH),
-});
+}) satisfies z.ZodType<HeadingBlock>;
 
 const bulletListBlockSchema = z.object({
   type: z.literal('bulletList'),
   items: z.array(plainText(MAX_TEXT_LENGTH)).min(1).max(MAX_LIST_ITEMS),
-});
+}) satisfies z.ZodType<BulletListBlock>;
 
 /** Materials, care instructions, and similar spec-style content (spec §9.4). */
 const keyValueListBlockSchema = z.object({
@@ -78,7 +89,7 @@ const keyValueListBlockSchema = z.object({
     )
     .min(1)
     .max(MAX_LIST_ITEMS),
-});
+}) satisfies z.ZodType<KeyValueListBlock>;
 
 export const descriptionBlockSchema = z.discriminatedUnion('type', [
   paragraphBlockSchema,
@@ -87,7 +98,7 @@ export const descriptionBlockSchema = z.discriminatedUnion('type', [
   keyValueListBlockSchema,
 ]);
 
-export const DESCRIPTION_DOCUMENT_VERSION = 1;
+export { DESCRIPTION_DOCUMENT_VERSION };
 
 export const descriptionDocumentSchema = z.object({
   version: z.literal(DESCRIPTION_DOCUMENT_VERSION),

@@ -1,3 +1,4 @@
+import type { DescriptionBlock } from '@/lib/products/description-blocks';
 import type { MoneyValue } from '@/lib/seller-center/product-editor/types';
 
 /**
@@ -249,7 +250,17 @@ export type CatalogueProductFixture = {
   /** Canonical Sals3 catalog identity - never a CJ id. */
   sals3ProductId: string;
   name: string;
-  /** Structured description rendered as plain text for the existing editor UI. */
+  /**
+   * The stored description document's blocks, in render order — what the
+   * editor loads and writes back. Absent on the illustrative fixtures.
+   */
+  descriptionBlocks?: DescriptionBlock[];
+  /**
+   * The lossy plain-text projection of `descriptionBlocks`, for the
+   * meta-description suggestion and the content-readiness check. Never the
+   * value an editor saves back: re-parsing it would flatten every heading,
+   * bullet list, and detail list into paragraphs.
+   */
   descriptionText?: string;
   /** The seller-edited page meta description, distinct from `descriptionText`. */
   metaDescriptionText?: string;
