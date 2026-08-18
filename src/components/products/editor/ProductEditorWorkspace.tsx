@@ -250,15 +250,19 @@ function categoryAttributeIssues(
   fixture: ProductEditorFixture,
   fields: CategoryAttributeFieldFixture[],
 ): ReadinessIssue[] {
+  // Never a BLOCKER: a category attribute control (however the workbook
+  // marks it) no longer gates publish server-side (`publish.ts`), so a
+  // locally-derived issue that still disabled the button here would
+  // disagree with what the server actually does.
   return fields
     .filter((field) => isCategoryAttributeUnresolved(field))
     .map((field) => ({
       id: `${fixture.fixtureKey}-specification-${field.attributeName}`,
-      severity: field.requirement === 'REQUIRED' ? 'BLOCKER' : 'WARNING',
+      severity: 'WARNING',
       title: `${field.attributeName} is ${field.requirement === 'REQUIRED' ? 'required' : 'recommended'}`,
       explanation:
         field.requirement === 'REQUIRED'
-          ? `This category requires a value for "${field.attributeName}" before publishing.`
+          ? `This category requires a value for "${field.attributeName}". Publishing is not blocked, but buyers may see this attribute blank.`
           : `This category recommends a value for "${field.attributeName}".`,
       affectedScope: 'Specification',
       source: 'AUTOMATED_VALIDATION',
@@ -327,10 +331,11 @@ export default function ProductEditorWorkspace({
             fixture.sals3CategoryPath.split(' > ').pop()?.trim() ?? null,
           brandDeclaration: fixture.brandDeclaration,
           descriptionText: fixture.descriptionText,
-          specificationHighlights: fixture.specifications
-            .filter((spec) => spec.value.trim() !== '')
-            .slice(0, 3)
-            .map((spec) => spec.value),
+          specificationHighlights: fixture.categoryAttributes
+            .flatMap((attribute) => attribute.values)
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0)
+            .slice(0, 3),
           variantHighlights: [
             ...new Set(fixture.variants.map((variant) => variant.optionLabel)),
           ].slice(0, 3),
