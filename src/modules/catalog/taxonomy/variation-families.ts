@@ -1,3 +1,15 @@
+/**
+ * Server-only because of what this module imports, not what it does.
+ *
+ * The mapping functions below are tiny and pure, but the extract they read is
+ * ~429KB. Nothing client-side imports this today — the editor receives resolved
+ * suggestions as props — and this repository has no client-bundle boundary test
+ * to notice if that ever changed. One import from a `'use client'` component
+ * would quietly ship the whole taxonomy to every browser; this makes that a
+ * build error instead.
+ */
+import 'server-only';
+
 import variationFamiliesExtract from '@/lib/db/seed-data/sals3-category-variation-families-v1.json';
 
 /**

@@ -1,10 +1,21 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment node
+import { describe, expect, it, vi } from 'vitest';
+
+// `variation-families.ts` is `server-only`, which throws on import outside a
+// Server Component — it carries a ~429KB extract that must never reach a
+// browser bundle. The guard is doing its job; these are pure functions inside
+// that module, so this test stands the guard down rather than weakening it.
+// Same convention as `read-model.editor-projection.test.ts`.
+vi.mock('server-only', () => ({}));
+
+/* eslint-disable import/first */
 import variationFamiliesExtract from '@/lib/db/seed-data/sals3-category-variation-families-v1.json';
 import {
   FAMILY_AXIS_NAMES,
   axisNameForFamilies,
   suggestedAxisNamesForCategory,
 } from './variation-families';
+/* eslint-enable import/first */
 
 /**
  * These assertions are about a *suggestion*, so the interesting cases are the
