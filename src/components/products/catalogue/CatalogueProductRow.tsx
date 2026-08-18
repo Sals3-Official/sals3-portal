@@ -27,6 +27,7 @@ import AttentionBadge from './AttentionBadge';
 import AvailabilityBadge from './AvailabilityBadge';
 import CatalogueVariantRow from './CatalogueVariantRow';
 import ContentScoreBadge from './ContentScoreBadge';
+import ListingQualityBadge from './ListingQualityBadge';
 import MediaStatusBadge from './MediaStatusBadge';
 import PublishProductButton from './PublishProductButton';
 import SupplierConnectionHealthBadge from './SupplierConnectionHealthBadge';
@@ -204,6 +205,9 @@ export default function CatalogueProductRow({
         </TableCell>
         <TableCell>
           <MediaStatusBadge mediaStatus={product.mediaStatus} />
+        </TableCell>
+        <TableCell>
+          <ListingQualityBadge product={product} />
         </TableCell>
         <TableCell>
           <AttentionBadge reasons={product.attentionReasons} />

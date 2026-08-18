@@ -89,4 +89,29 @@ describe('CatalogueProductRow', () => {
 
     expect(screen.getByText('No image')).toBeInTheDocument();
   });
+
+  it('shows how finished the listing is, next to what it is missing', () => {
+    renderRow({
+      ...PRODUCT,
+      sellingPrice: { amountMinor: 4500, currency: 'USD' },
+      mediaStatus: 'SUPPLIER_FALLBACK',
+      contentReadiness: 'GOOD',
+      metaDescriptionText: 'A written meta description.',
+      categoryCode: 'CAT-GGL-1057',
+      optionAxisNames: ['Colour'],
+      categoryAttributeControls: [],
+      categoryAttributeValues: [],
+    });
+
+    // Supplier pictures only, so it cannot read High however complete the
+    // text is - and the media column says why in the same row.
+    expect(screen.getByText('Medium')).toBeInTheDocument();
+    expect(screen.getByText('Supplier fallback')).toBeInTheDocument();
+  });
+
+  it('reads Low while a listing still cannot sell', () => {
+    renderRow({ ...PRODUCT, sellingPrice: null });
+
+    expect(screen.getByText('Low')).toBeInTheDocument();
+  });
 });

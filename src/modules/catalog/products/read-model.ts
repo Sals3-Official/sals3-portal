@@ -350,6 +350,47 @@ function editorListingState(
   return 'DRAFT';
 }
 
+/**
+ * Which pictures a listing actually resolves to, from the media rows' own
+ * `sourceType`.
+ *
+ * Corrected 2026-08-18. This read `media.length > 0 ? 'OWN_PICTURES' : ...`,
+ * which counted *any* row - and `create-draft.ts`/`publish.ts` project the
+ * supplier's own photo into `product_media_sources` as `SUPPLIER_ORIGINAL`. So
+ * every product carrying a supplier photo reported "Own pictures" while holding
+ * no seller upload at all: the catalogue told the seller their own photography
+ * was live when the supplier's was. Every draft in production read that way, and
+ * because one status was reachable, `MediaStatusBadge`'s other tones never
+ * appeared either.
+ *
+ * `SUPPLIER_FALLBACK` rather than `SUPPLIER_PICTURES` for the supplier-only case:
+ * the latter's own tooltip claims "the revision preference is supplier-only",
+ * and no such preference is stored on a revision today. Fallback is what is
+ * actually true - no eligible seller picture exists yet, so approved supplier
+ * pictures are used automatically (ADR-011).
+ *
+ * With `showSupplierPhoto` off and no seller upload there is nothing left to
+ * render, which is `NO_USABLE_PICTURES` and blocks publication - not a silent
+ * empty gallery.
+ */
+export function mediaStatusOf(
+  media: ProductMediaSourceRow[],
+  showSupplierPhoto: boolean,
+): CatalogueProductFixture['mediaStatus'] {
+  const own = media.filter((item) => item.sourceType === 'SELLER_UPLOAD');
+  const supplier = media.filter(
+    (item) => item.sourceType === 'SUPPLIER_ORIGINAL',
+  );
+
+  if (own.length > 0 && supplier.length > 0) return 'MIXED_PICTURES';
+  if (own.length > 0) return 'OWN_PICTURES';
+  if (supplier.length > 0) {
+    return showSupplierPhoto ? 'SUPPLIER_FALLBACK' : 'NO_USABLE_PICTURES';
+  }
+
+  return 'NEEDS_MEDIA_REVIEW';
+}
+
 function attentionFromUnpublished(
   product: ProductRow,
   hasUnpricedOffer: boolean,
@@ -958,7 +999,7 @@ function buildCatalogueProducts(
         evidenceFreshness: evidenceFreshness(
           firstOffer?.updatedAt ?? product.updatedAt,
         ),
-        mediaStatus: media.length > 0 ? 'OWN_PICTURES' : 'NEEDS_MEDIA_REVIEW',
+        mediaStatus: mediaStatusOf(media, product.showSupplierPhoto ?? true),
         contentReadiness:
           descriptionText(revision).trim() === ''
             ? 'NEEDS_IMPROVEMENT'
