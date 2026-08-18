@@ -38,7 +38,7 @@ describe('CategoryAttributesSection', () => {
     ).toBeInTheDocument();
   });
 
-  it('marks a REQUIRED field with an asterisk and shows a non-blocking required message when unresolved', () => {
+  it('shows a non-blocking note for an unresolved REQUIRED field', () => {
     render(
       <CategoryAttributesSection
         fields={[field({ attributeName: 'Brand', requirement: 'REQUIRED' })]}
@@ -47,12 +47,66 @@ describe('CategoryAttributesSection', () => {
       />,
     );
 
-    expect(screen.getByText('Brand *')).toBeInTheDocument();
+    expect(screen.getByLabelText('Brand')).toBeInTheDocument();
     expect(
       screen.getByText(
         /Required for this category\. Publishing is not blocked/,
       ),
     ).toBeInTheDocument();
+  });
+
+  /**
+   * These fields stopped gating publish, so dressing them as failed inputs
+   * lies twice: the red destructive outline to sighted users, and
+   * `aria-invalid` to assistive technology, which reserves that for a value
+   * that must be corrected. An empty attribute is permitted.
+   */
+  it('never marks an unresolved field invalid, however the workbook labels it', () => {
+    render(
+      <CategoryAttributesSection
+        fields={[
+          field({ attributeName: 'Brand', requirement: 'REQUIRED' }),
+          field({ attributeName: 'Life Stage', requirement: 'RECOMMENDED' }),
+        ]}
+        controlsVersion="sals3-attribute-controls-v1"
+        onFieldChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText('Brand')).not.toHaveAttribute('aria-invalid');
+    expect(screen.getByLabelText('Life Stage')).not.toHaveAttribute(
+      'aria-invalid',
+    );
+  });
+
+  /** The section's own group headings already say which are which. */
+  it('marks no field with an asterisk, since nothing here is mandatory', () => {
+    render(
+      <CategoryAttributesSection
+        fields={[field({ attributeName: 'Brand', requirement: 'REQUIRED' })]}
+        controlsVersion="sals3-attribute-controls-v1"
+        onFieldChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText('Brand *')).not.toBeInTheDocument();
+    expect(screen.getByText('Required specifications')).toBeInTheDocument();
+  });
+
+  /** Ambient guidance, not an interruption — `alert` is for something urgent. */
+  it('announces the hint as status, never as an alert', () => {
+    render(
+      <CategoryAttributesSection
+        fields={[field({ attributeName: 'Brand', requirement: 'REQUIRED' })]}
+        controlsVersion="sals3-attribute-controls-v1"
+        onFieldChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      /Publishing is not blocked/,
+    );
   });
 
   it('shows a non-blocking warning, not a blocker, for an unresolved RECOMMENDED field', () => {
@@ -69,8 +123,7 @@ describe('CategoryAttributesSection', () => {
       />,
     );
 
-    expect(screen.getByText('Life Stage')).toBeInTheDocument();
-    expect(screen.queryByText('Life Stage *')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Life Stage')).toBeInTheDocument();
     expect(
       screen.getByText(/Recommended for this category/),
     ).toBeInTheDocument();

@@ -30,18 +30,36 @@ type FieldRowProps = {
   onChange: (values: string[], isCustomValue: boolean) => void;
 };
 
-/** Never presented as a value, and never blocks publishing, until a value is entered — same rule `severityForUnresolvedSpecification` already holds for Supplier Details. */
+/**
+ * An empty category attribute is a hint, not an error.
+ *
+ * Nothing here blocks publishing (`publish.ts` stopped gating on these, and
+ * both issue derivations report them as `WARNING`), so the field must not be
+ * dressed as a failed one. Three things follow from that:
+ *
+ * - **No `aria-invalid`.** It means "this value is invalid and must be
+ *   corrected". An empty attribute is permitted, so the attribute was both
+ *   telling screen-reader users the field was in error and painting the
+ *   control with the destructive red outline. Neither was true.
+ * - **No `*`.** The section already groups fields under "Required
+ *   specifications" / "Recommended specifications" headings, so the asterisk
+ *   restated the grouping while reading as a hard obligation.
+ * - **`role="status"`, not `role="alert"`.** An alert interrupts a screen
+ *   reader for something urgent; this is ambient guidance about how complete
+ *   the listing looks to buyers.
+ *
+ * What stays is the amber note naming the attribute and saying plainly that
+ * publishing is not blocked — the seller still learns which fields buyers
+ * expect, without being told they have done something wrong.
+ */
 function FieldRow({ field, onChange }: FieldRowProps) {
   const fieldId = `category-attr-${field.attributeName.replace(/\s+/g, '-').toLowerCase()}`;
-  const errorId = `${fieldId}-message`;
+  const hintId = `${fieldId}-message`;
   const unresolved = isCategoryAttributeUnresolved(field);
 
   return (
     <div className="flex flex-col gap-1.5">
-      <Label htmlFor={fieldId}>
-        {field.attributeName}
-        {field.requirement === 'REQUIRED' ? ' *' : ''}
-      </Label>
+      <Label htmlFor={fieldId}>{field.attributeName}</Label>
       {field.sellerHelpText !== null ? (
         <p className="text-xs text-ink-muted">{field.sellerHelpText}</p>
       ) : null}
@@ -49,13 +67,12 @@ function FieldRow({ field, onChange }: FieldRowProps) {
         id={fieldId}
         field={field}
         onChange={onChange}
-        aria-invalid={unresolved ? true : undefined}
-        aria-describedby={unresolved ? errorId : undefined}
+        aria-describedby={unresolved ? hintId : undefined}
       />
       {unresolved ? (
         <p
-          id={errorId}
-          role="alert"
+          id={hintId}
+          role="status"
           className="flex gap-1.5 text-xs text-amber-600"
         >
           <TriangleAlert
