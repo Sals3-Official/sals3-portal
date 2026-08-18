@@ -402,8 +402,8 @@ describe('Product Editor - category-driven Specification section', () => {
       />,
     );
 
-    expect(screen.getByText('Brand *')).toBeInTheDocument();
-    expect(screen.queryByText('Screen Size *')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Brand')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Screen Size')).not.toBeInTheDocument();
 
     rerender(
       <ProductEditor
@@ -423,8 +423,8 @@ describe('Product Editor - category-driven Specification section', () => {
       />,
     );
 
-    expect(screen.getByText('Screen Size *')).toBeInTheDocument();
-    expect(screen.queryByText('Brand *')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Screen Size')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Brand')).not.toBeInTheDocument();
   });
 });
 
