@@ -4,6 +4,7 @@ import {
   acceptCheckoutOrderSchema,
   CheckoutOrderError,
 } from '@/modules/checkout/orders';
+import dispatchOutbox from '@/modules/catalog/discovery/outbox-dispatch';
 import {
   storefrontErrorResponse,
   STOREFRONT_HEADERS,
@@ -39,7 +40,22 @@ export async function POST(request: Request) {
   }
 
   try {
-    return Response.json(await acceptCheckoutOrder(parsed.data), {
+    const accepted = await acceptCheckoutOrder(parsed.data);
+
+    await dispatchOutbox({
+      batchSize: 1,
+      idempotencyKeys: [`fulfill-order:${accepted.orderId}`],
+      operations: ['FULFILL_ORDER'],
+    }).catch((error: unknown) => {
+      // eslint-disable-next-line no-console -- safe operational breadcrumb; never logs buyer, Stripe, address, or supplier payload data.
+      console.error('[portal] storefront order fulfillment dispatch failed', {
+        operation: 'FULFILL_ORDER',
+        orderId: accepted.orderId,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    });
+
+    return Response.json(accepted, {
       headers: STOREFRONT_HEADERS,
     });
   } catch (error) {

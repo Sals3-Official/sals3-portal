@@ -9,6 +9,13 @@ import {
   releaseOutboxAttempt,
 } from './outbox-repository';
 import { recordDiscoveryFailure } from './failure-repository';
+import type { QueueOperation } from './messages';
+
+export type DispatchOutboxOptions = {
+  batchSize?: number;
+  idempotencyKeys?: string[];
+  operations?: QueueOperation[];
+};
 
 /**
  * Drains a bounded batch of PENDING outbox rows to the queue transport.
@@ -22,11 +29,18 @@ import { recordDiscoveryFailure } from './failure-repository';
  * and every consumer is lease/CAS-guarded anyway.
  */
 export default async function dispatchOutbox(
-  batchSize: number = OUTBOX_DISPATCH_BATCH,
+  options: number | DispatchOutboxOptions = {},
 ): Promise<{ dispatched: number; failed: number }> {
   const db = getDb();
   const leaseToken = randomUUID();
-  const rows = await claimDispatchableOutbox(db, { leaseToken, batchSize });
+  const resolved =
+    typeof options === 'number' ? { batchSize: options } : options;
+  const rows = await claimDispatchableOutbox(db, {
+    leaseToken,
+    batchSize: resolved.batchSize ?? OUTBOX_DISPATCH_BATCH,
+    idempotencyKeys: resolved.idempotencyKeys,
+    operations: resolved.operations,
+  });
   const transport = getQueueTransport();
 
   let dispatched = 0;

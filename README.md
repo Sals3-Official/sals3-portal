@@ -152,7 +152,10 @@ webhooks in `sals3-ecommerce`:
   address, freight, and supplier snapshot before Stripe payment.
 - `POST /api/storefront/checkout/orders/accept` accepts verified paid Stripe
   Checkout data idempotently, creates the paid Sals3 order, and inserts a
-  durable `FULFILL_ORDER` outbox intent.
+  durable `FULFILL_ORDER` outbox intent. After the transaction commits, the
+  route immediately drains that exact outbox row so order-critical fulfillment
+  is not stuck behind catalogue discovery work; if publish fails, the paid order
+  remains accepted and the row stays visible for recovery.
 
 Portal owns PostgreSQL order rows, CJ credentials, the supplier adapter, the
 outbox, and the queue worker. Ecommerce never stores CJ keys and cannot

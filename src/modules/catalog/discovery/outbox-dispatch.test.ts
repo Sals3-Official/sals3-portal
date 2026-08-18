@@ -113,4 +113,23 @@ describe('dispatchOutbox', () => {
     expect(options.delaySeconds).toBeGreaterThan(550);
     expect(options.delaySeconds).toBeLessThanOrEqual(600);
   });
+
+  it('passes targeted claim filters through for order-critical drains', async () => {
+    asMock(claimDispatchableOutbox).mockResolvedValue([]);
+
+    await dispatchOutbox({
+      batchSize: 1,
+      idempotencyKeys: ['fulfill-order:order-1'],
+      operations: ['FULFILL_ORDER'],
+    });
+
+    expect(claimDispatchableOutbox).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        batchSize: 1,
+        idempotencyKeys: ['fulfill-order:order-1'],
+        operations: ['FULFILL_ORDER'],
+      }),
+    );
+  });
 });
