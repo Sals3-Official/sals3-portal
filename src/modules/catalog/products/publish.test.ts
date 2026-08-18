@@ -448,6 +448,32 @@ describe('publishProduct', () => {
     expect(mocks.resolveProductPricing).not.toHaveBeenCalled();
   });
 
+  /**
+   * The UAT face mask: five colours, no delimiter. `deriveOptionSplit` now
+   * proposes one axis for it, so the Variant Matrix is nameable - but owner
+   * decision 2026-08-18 keeps publication ungated for this shape. Gating it
+   * would have made every colour-only product in the catalogue unpublishable
+   * until a seller named its axis, and an unmapped `Black` already reads fine to
+   * a buyer, unlike an unmapped `Army Green-XL`.
+   */
+  function singleAxisVariants() {
+    return ['Black', 'Blue', 'Green'].map((label, index) =>
+      variantRow({ variantId: `variant-${index + 1}`, label }),
+    );
+  }
+
+  it('publishes a single-axis product whose option group is unnamed', async () => {
+    const { db } = transactionalDb({ variants: singleAxisVariants() });
+    const result = await publish(db);
+
+    expect(result).not.toEqual(
+      expect.objectContaining({ reason: 'OPTIONS_UNMAPPED' }),
+    );
+    // Proof it got past the option gate rather than failing earlier for an
+    // unrelated reason.
+    expect(mocks.resolveProductPricing).toHaveBeenCalled();
+  });
+
   it('publishes a grid with a dropped constant position once its surviving axis is named', async () => {
     const { db } = transactionalDb({
       variants: oneConstantPositionVariants(),

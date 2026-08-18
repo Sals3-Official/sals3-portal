@@ -281,6 +281,31 @@ describe('VariantOptionMappingSection', () => {
     expect(screen.getByLabelText('Option 1 name')).toHaveValue('Shade');
   });
 
+  it('calls an unnamed concatenated label a blocker, because publish refuses it', () => {
+    render(
+      <VariantOptionMappingSection proposal={PROPOSAL} variantCount={6} />,
+    );
+
+    expect(screen.getByText('Blocker')).toBeInTheDocument();
+  });
+
+  /**
+   * A single-axis product is nameable but publishes either way (owner decision
+   * 2026-08-18), so the pill must not borrow a word the server never acts on.
+   */
+  it('calls an unnamed single-axis product a warning, not a blocker', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[{ index: 0, values: ['Black', 'Blue', 'Green'] }]}
+        variantCount={3}
+        mappingBlocksPublish={false}
+      />,
+    );
+
+    expect(screen.getByText('Warning')).toBeInTheDocument();
+    expect(screen.queryByText('Blocker')).not.toBeInTheDocument();
+  });
+
   it('offers nothing for an axis the category has no family for', () => {
     render(
       <VariantOptionMappingSection

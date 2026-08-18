@@ -46,8 +46,9 @@ import { sectionBadge } from './presentation';
  * instead of pre-filling a saveable value: the seller sees the actual supplier
  * values beside it and confirms in one press, and a suggestion that does not fit
  * this product costs a glance rather than becoming a wrong buyer-facing
- * attribute. The publish blocker stays until a person has named the axis, which
- * is what makes that confirmation real.
+ * attribute. For a concatenated label the publish blocker stays until a person
+ * has named the axis, which is what makes that confirmation real; a single-axis
+ * product shows a warning instead, because publication is not gated on it.
  *
  * ## Order is a human decision too
  *
@@ -83,6 +84,13 @@ export type VariantOptionMappingSectionProps = {
    */
   suggestedAxisNames?: (string | null)[];
   variantCount: number;
+  /**
+   * Whether leaving this unmapped actually blocks publication — true only for a
+   * concatenated supplier label. A single-axis product is nameable but publishes
+   * either way, and a pill claiming otherwise would be a blocker the server never
+   * raises.
+   */
+  mappingBlocksPublish?: boolean;
   onSave?: (
     axes: {
       name: string;
@@ -202,6 +210,7 @@ export default function VariantOptionMappingSection({
   mappedAxisNames,
   suggestedAxisNames = [],
   variantCount,
+  mappingBlocksPublish = true,
   onSave,
   unlabelledVariantCount = 0,
   onRecoverLabels,
@@ -354,6 +363,16 @@ export default function VariantOptionMappingSection({
   const named =
     axes.length > 0 && axes.every((axis) => axis.name.trim().length > 0);
 
+  /**
+   * Unmapped blocks publication for a concatenated label, so the badge says so
+   * rather than reading as an optional nicety. A single-axis product is a real
+   * improvement but not a gate, and must not borrow the word.
+   */
+  const unnamedBadge: IssueSeverity = mappingBlocksPublish
+    ? 'BLOCKER'
+    : 'WARNING';
+  const unnamedSeverity = named ? null : unnamedBadge;
+
   function applyAxisName(axisIndex: number, name: string): void {
     setAxes((current) =>
       current.map((item, index) =>
@@ -391,18 +410,17 @@ export default function VariantOptionMappingSection({
   return (
     <div className="flex flex-col gap-4 border-b border-border pb-5">
       <VariantMatrixHeader
-        meta={`${proposal.length} options detected`}
-        // Unmapped blocks publication by owner decision, so the badge says so
-        // rather than reading as an optional nicety.
-        severity={named ? null : 'BLOCKER'}
+        meta={`${proposal.length} ${proposal.length === 1 ? 'option' : 'options'} detected`}
+        severity={unnamedSeverity}
       />
 
       <p className="text-sm text-muted-foreground">
-        Found {proposal.length} buyer options across {variantCount} variants in
-        the supplier&rsquo;s own labels. Name each option, then order its values
-        the way buyers should see them. Supplier values are locked: renaming a
-        buyer label changes the storefront only, and CJ still fulfils by its own
-        value.
+        Found {proposal.length} buyer{' '}
+        {proposal.length === 1 ? 'option' : 'options'} across {variantCount}{' '}
+        variants in the supplier&rsquo;s own labels. Name each option, then
+        order its values the way buyers should see them. Supplier values are
+        locked: renaming a buyer label changes the storefront only, and CJ still
+        fulfils by its own value.
       </p>
 
       <div className="flex flex-col gap-4">

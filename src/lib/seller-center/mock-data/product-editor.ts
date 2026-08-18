@@ -379,6 +379,8 @@ const BASE: ProductEditorFixture = {
     proposal: [],
     mappedAxisNames: [],
     suggestedAxisNames: [],
+    // No proposal on the illustrative fixtures, so nothing is gated on one.
+    mappingBlocksPublish: false,
     variantCount: BASE_VARIANTS.length,
     // Zero, not the variant count: these fixtures have no supplier evidence
     // behind them, so nothing could be recovered and the section must not offer

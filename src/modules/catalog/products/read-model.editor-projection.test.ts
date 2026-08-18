@@ -300,6 +300,48 @@ describe('productToEditorFixture — option mapping projection', () => {
     ]);
   });
 
+  /**
+   * The Outdoor Sports Face Mask, reported from UAT on 2026-08-18: five colours,
+   * no delimiter, so the editor said "Not detected" and the Variant Matrix could
+   * never be named. One axis is now proposed, and the section is told publication
+   * is not gated on it.
+   */
+  it('proposes one axis for a colour-only product, without claiming publish is blocked', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      categoryCode: 'CAT-GGL-1057',
+      variants: ['Black', 'Blue', 'Green', 'Grey', 'Purple'].map((label) =>
+        catalogueVariant({
+          id: label.toLowerCase(),
+          optionLabel: label,
+          supplierOptionLabel: label,
+        }),
+      ),
+    });
+
+    expect(fixture.optionMapping.proposal).toEqual([
+      { index: 0, values: ['Black', 'Blue', 'Green', 'Grey', 'Purple'] },
+    ]);
+    expect(fixture.optionMapping.suggestedAxisNames).toEqual(['Colour']);
+    expect(fixture.optionMapping.mappingBlocksPublish).toBe(false);
+  });
+
+  it('reports that a concatenated label does gate publication', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      categoryCode: 'CAT-GGL-1057',
+      variants: ['Black-S', 'Black-M', 'Green-S', 'Green-M'].map((label) =>
+        catalogueVariant({
+          id: label.toLowerCase(),
+          optionLabel: label,
+          supplierOptionLabel: label,
+        }),
+      ),
+    });
+
+    expect(fixture.optionMapping.mappingBlocksPublish).toBe(true);
+  });
+
   it('uses the matching family tier when a constant supplier-label position was dropped', () => {
     const { fixture } = productToEditorFixture({
       ...CATALOGUE_PRODUCT,
