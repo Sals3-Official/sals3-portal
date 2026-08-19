@@ -112,10 +112,7 @@ export default function predictPublishBlockers(
     blockers.push(issue(fixture, 'OPTIONS_UNMAPPED', 'Variant Matrix'));
   }
 
-  if (
-    fixture.variants.length > 0 &&
-    fixture.variants.every((v) => !v.enabled)
-  ) {
+  if (variants.length > 0 && variants.every((v) => !v.enabled)) {
     blockers.push(issue(fixture, 'NO_ACTIVE_VARIANT', 'Variants & Pricing'));
   }
 
