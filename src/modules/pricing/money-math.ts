@@ -134,6 +134,28 @@ export function suggestedPriceMinor(
   return roundHalfUpDiv(effectiveCostMinor * RATE_SCALE, denominatorScaled);
 }
 
+/**
+ * ADR-015 §1's "minimum contribution profit": the suggested price is
+ * `max(marginPrice, cost + floor)`. A percentage margin scales with cost,
+ * so on a cheap item it can suggest a price whose absolute contribution
+ * cannot cover fixed per-order costs; the floor is the absolute backstop.
+ * Returns the winning amount — the caller compares against the input to
+ * know whether the floor fired.
+ */
+export function applyContributionFloor(
+  suggestedMinor: bigint,
+  effectiveCostMinor: bigint,
+  minContributionMinor: bigint,
+): bigint {
+  if (minContributionMinor < BigInt(0)) {
+    throw new RangeError('minimum contribution must not be negative');
+  }
+
+  const floorMinor = effectiveCostMinor + minContributionMinor;
+
+  return suggestedMinor >= floorMinor ? suggestedMinor : floorMinor;
+}
+
 export type RoundingRule = 'NONE' | 'NEAREST_0_99';
 
 /**
