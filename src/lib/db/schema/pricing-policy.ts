@@ -1,4 +1,5 @@
 import {
+  bigint,
   index,
   integer,
   numeric,
@@ -271,6 +272,67 @@ export const pricingFxAdjustmentPolicies = pgTable(
   ],
 );
 
+/**
+ * Store-wide default pricing (ADR-015 §3's "seller/store default" layer,
+ * built 2026-08-19). The base of the resolution chain: a product whose
+ * category chain carries no policy prices from this row instead of failing
+ * `CATEGORY_POLICY_REQUIRED` — 21 department policies plus one of these can
+ * cover the whole 5,595-row taxonomy without per-category fan-out.
+ *
+ * `minContributionMinor` is ADR-015 §1's named-but-previously-unbuilt
+ * "minimum contribution profit": an absolute per-item floor above effective
+ * cost, in minor units of `minContributionCurrency`. The resolver takes
+ * `max(marginPrice, cost + floor)` — a percentage alone loses money on
+ * cheap items where fixed per-order costs dominate, and a floor alone
+ * undercharges expensive ones. Zero means "no floor", a real, deliberate
+ * value distinct from no row at all.
+ *
+ * Same append-only-by-edit versioning discipline as every policy table in
+ * this module — see the module doc comment.
+ */
+export const pricingStoreDefaults = pgTable(
+  'pricing_store_defaults',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sellerAccountId: uuid('seller_account_id')
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: 'restrict' }),
+    targetMarginRate: numeric('target_margin_rate', {
+      precision: 8,
+      scale: 6,
+    }).notNull(),
+    /** Absolute per-item contribution floor in minor units; 0 = no floor. */
+    minContributionMinor: bigint('min_contribution_minor', {
+      mode: 'bigint',
+    })
+      .notNull()
+      .default(sql`0`),
+    /** Currency the floor is denominated in — explicit per ADR-015 §1, never inferred. */
+    minContributionCurrency: text('min_contribution_currency')
+      .notNull()
+      .default('USD'),
+    roundingRule: roundingRuleEnum('rounding_rule').notNull().default('NONE'),
+    status: pricingPolicyStatusEnum('status').notNull().default('ACTIVE'),
+    version: integer('version').notNull().default(1),
+    supersedesId: uuid('supersedes_id'),
+    reason: text('reason').notNull(),
+    actorId: text('actor_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    // Deterministic selection: at most one ACTIVE store default per seller.
+    uniqueIndex('pricing_store_defaults_active_key')
+      .on(table.sellerAccountId)
+      .where(sql`${table.status} = 'ACTIVE'`),
+    index('pricing_store_defaults_seller_idx').on(table.sellerAccountId),
+  ],
+);
+
 export type RoundingRule = (typeof roundingRuleEnum.enumValues)[number];
 
 export type Sals3CategoryRow = typeof sals3Categories.$inferSelect;
@@ -291,3 +353,6 @@ export type PricingFxAdjustmentPolicyRow =
   typeof pricingFxAdjustmentPolicies.$inferSelect;
 export type NewPricingFxAdjustmentPolicyRow =
   typeof pricingFxAdjustmentPolicies.$inferInsert;
+export type PricingStoreDefaultRow = typeof pricingStoreDefaults.$inferSelect;
+export type NewPricingStoreDefaultRow =
+  typeof pricingStoreDefaults.$inferInsert;
