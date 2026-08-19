@@ -91,7 +91,7 @@ describe('StoreDefaultCard — first run (no default yet)', () => {
       screen.getByLabelText('Minimum profit per item in US dollars'),
       { target: { value: '2.50' } },
     );
-    fireEvent.change(screen.getByPlaceholderText(/Reason/), {
+    fireEvent.change(screen.getByPlaceholderText(/Why did you change this/), {
       target: { value: 'Initial default while the roster is small.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Set the default' }));
@@ -117,7 +117,7 @@ describe('StoreDefaultCard — first run (no default yet)', () => {
     fireEvent.change(screen.getByLabelText('Default margin percent'), {
       target: { value: '30' },
     });
-    fireEvent.change(screen.getByPlaceholderText(/Reason/), {
+    fireEvent.change(screen.getByPlaceholderText(/Why did you change this/), {
       target: { value: 'Margin only, no floor for now.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Set the default' }));
@@ -129,10 +129,11 @@ describe('StoreDefaultCard — first run (no default yet)', () => {
     );
   });
 
-  it('shows an inline error and keeps the form on a refused save', async () => {
+  it('shows the failure against the field that caused it, not a vague banner', async () => {
     mocks.saveStoreDefaultAction.mockResolvedValue({
       ok: false,
       reason: 'invalid_input',
+      fieldErrors: { targetMarginRate: 'Enter a margin between 0 and 1.' },
     });
 
     render(
@@ -142,15 +143,43 @@ describe('StoreDefaultCard — first run (no default yet)', () => {
     fireEvent.change(screen.getByLabelText('Default margin percent'), {
       target: { value: '35' },
     });
-    fireEvent.change(screen.getByPlaceholderText(/Reason/), {
+    fireEvent.change(screen.getByPlaceholderText(/Why did you change this/), {
       target: { value: 'A perfectly valid reason.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Set the default' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      /Check the highlighted fields/,
+      /Enter a margin between 0 and 1/,
+    );
+    // The input itself is marked, so the message is not an orphan claim.
+    expect(screen.getByLabelText('Default margin percent')).toHaveAttribute(
+      'aria-invalid',
+      'true',
     );
     expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+
+  it('refuses to submit a reason the server is certain to reject', () => {
+    render(
+      <StoreDefaultCard policy={null} sellerAccountId="seller-1" canManage />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Default margin percent'), {
+      target: { value: '35' },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/Why did you change this/), {
+      target: { value: 'short' },
+    });
+
+    // The old form let this through and reported "check the highlighted
+    // fields" after a round trip, with nothing highlighted.
+    expect(
+      screen.getByRole('button', { name: 'Set the default' }),
+    ).toBeDisabled();
+    // And it says how far off the reason is, before the attempt.
+    expect(
+      screen.getByText(/Use 10 characters or more\. You have 5\./),
+    ).toBeInTheDocument();
   });
 });
 

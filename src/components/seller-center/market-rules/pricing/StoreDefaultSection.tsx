@@ -59,10 +59,10 @@ export default async function StoreDefaultSection({
             Store default pricing
           </h2>
           <p className="max-w-[78ch] text-sm text-muted-foreground">
-            Two numbers that work out a selling price from whatever the supplier
-            charges, so you don&rsquo;t price products one at a time. Every
-            category uses these until you give a department its own margin
-            below.
+            These two numbers make the selling price. The system starts with the
+            supplier cost. Then it adds your margin. You do not set a price for
+            each product. Every category uses these numbers. A department can
+            use its own margin. Set that in the list below.
           </p>
         </div>
       </div>

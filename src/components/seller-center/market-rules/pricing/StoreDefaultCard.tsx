@@ -30,6 +30,24 @@ type StoreDefaultCardProps = {
   canManage: boolean;
 };
 
+/** Mirrors `MIN_REASON_LENGTH` in `pricing-actions.ts`. */
+const MIN_REASON_CHARS = 10;
+
+/**
+ * One field's error, wired to the input by id so a screen reader reads the
+ * two together. Before this the page said "check the highlighted fields"
+ * and highlighted nothing.
+ */
+function FieldError({ id, message }: { id: string; message?: string }) {
+  if (message === undefined) return null;
+
+  return (
+    <span id={id} role="alert" className="text-xs font-medium text-destructive">
+      {message}
+    </span>
+  );
+}
+
 function saveButtonLabel(isPending: boolean, hasPolicy: boolean): string {
   if (isPending) return 'Saving…';
   return hasPolicy ? 'Save default' : 'Set the default';
@@ -68,14 +86,27 @@ export default function StoreDefaultCard({
   );
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const fieldId = useId();
 
   // First-run state: nothing to toggle away from, the form is the card.
   const showForm = canManage && (policy === null || isEditing);
 
+  /**
+   * Client-side check, so the button can refuse a submit that the server is
+   * certain to reject. The server still validates everything — this only
+   * stops a person from being told "no" after a round trip for a rule the
+   * form could have stated up front.
+   */
+  const reasonTooShort =
+    reason.trim().length > 0 && reason.trim().length < MIN_REASON_CHARS;
+  const canSubmit =
+    marginPercent.trim() !== '' && reason.trim().length >= MIN_REASON_CHARS;
+
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setFieldErrors({});
 
     const targetMarginRate = (Number(marginPercent) / 100).toString();
 
@@ -88,7 +119,18 @@ export default function StoreDefaultCard({
       });
 
       if (!result.ok) {
-        setError('Check the highlighted fields and try again.');
+        // Per-field messages when the server has them; a single line only
+        // when it does not, so the page never claims to highlight a field it
+        // has not highlighted.
+        const errors =
+          'fieldErrors' in result ? (result.fieldErrors ?? {}) : {};
+
+        setFieldErrors(errors);
+        setError(
+          Object.keys(errors).length > 0
+            ? null
+            : 'The system could not save this. Try again.',
+        );
         return;
       }
 
@@ -99,6 +141,7 @@ export default function StoreDefaultCard({
       setMarginPercent('');
       setFloorDollars('');
       setReason('');
+      setFieldErrors({});
       router.refresh();
     });
   }
@@ -224,13 +267,19 @@ export default function StoreDefaultCard({
                 value={marginPercent}
                 onChange={(event) => setMarginPercent(event.target.value)}
                 aria-label="Default margin percent"
+                aria-invalid={fieldErrors.targetMarginRate !== undefined}
+                aria-describedby={`${fieldId}-margin-error`}
                 className="w-24 text-right"
               />
               <span className="text-sm text-muted-foreground">%</span>
             </div>
             <span className="text-xs text-ink-faint">
-              Your share of the selling price
+              This is your part of the selling price.
             </span>
+            <FieldError
+              id={`${fieldId}-margin-error`}
+              message={fieldErrors.targetMarginRate}
+            />
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor={`${fieldId}-floor`}>Minimum profit per item</Label>
@@ -245,12 +294,18 @@ export default function StoreDefaultCard({
                 value={floorDollars}
                 onChange={(event) => setFloorDollars(event.target.value)}
                 aria-label="Minimum profit per item in US dollars"
+                aria-invalid={fieldErrors.minContribution !== undefined}
+                aria-describedby={`${fieldId}-floor-error`}
                 className="w-24 text-right"
               />
             </div>
             <span className="text-xs text-ink-faint">
-              Covers costs that stay the same on a cheap item
+              This is your smallest profit for one item.
             </span>
+            <FieldError
+              id={`${fieldId}-floor-error`}
+              message={fieldErrors.minContribution}
+            />
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor={`${fieldId}-rounding`}>Rounding</Label>
@@ -278,14 +333,30 @@ export default function StoreDefaultCard({
             <Input
               id={`${fieldId}-reason`}
               required
-              minLength={10}
+              minLength={MIN_REASON_CHARS}
               maxLength={500}
               value={reason}
               onChange={(event) => setReason(event.target.value)}
-              placeholder="Reason (min 10 characters)"
+              placeholder="Why did you change this?"
+              aria-invalid={fieldErrors.reason !== undefined || reasonTooShort}
+              aria-describedby={`${fieldId}-reason-hint`}
+            />
+            <span
+              id={`${fieldId}-reason-hint`}
+              className={
+                reasonTooShort
+                  ? 'text-xs font-medium text-destructive'
+                  : 'text-xs text-ink-faint'
+              }
+            >
+              {`Use ${MIN_REASON_CHARS} characters or more. You have ${reason.trim().length}.`}
+            </span>
+            <FieldError
+              id={`${fieldId}-reason-error`}
+              message={fieldErrors.reason}
             />
           </div>
-          <Button type="submit" disabled={isPending}>
+          <Button type="submit" disabled={isPending || !canSubmit}>
             {saveButtonLabel(isPending, policy !== null)}
           </Button>
           <StoreDefaultPreview
@@ -294,7 +365,8 @@ export default function StoreDefaultCard({
             roundingRule={roundingRule}
           />
           <span className="w-full text-xs text-muted-foreground">
-            This is margin, not markup: a 30% markup is the same as 23.08% here.
+            This is margin. It is not markup. A markup of 30% gives the same
+            price as a margin of 23.08%.
           </span>
         </form>
       ) : null}

@@ -146,7 +146,7 @@ export default function StoreDefaultPreview({
   if (rows === null) {
     return (
       <p className="w-full text-xs text-ink-faint">
-        Type a margin above and this will show what it does to real prices.
+        Type a margin above. Then you can see the effect on real prices.
       </p>
     );
   }
@@ -154,7 +154,7 @@ export default function StoreDefaultPreview({
   return (
     <div className="w-full">
       <p className="mb-1.5 text-xs font-semibold text-ink-muted">
-        What these numbers do
+        What these two numbers do
       </p>
       <div className="overflow-x-auto">
         <table className="w-full max-w-xl text-xs">
@@ -208,11 +208,11 @@ export default function StoreDefaultPreview({
         </table>
       </div>
       <p className="mt-1.5 text-xs text-ink-faint">
-        Whichever of the two gives the higher price wins.
+        The system uses the higher of the two prices.
         {crossover === null
           ? ''
-          : ` Below about ${formatUsd(crossover)} supplier cost, the minimum takes over.`}{' '}
-        Your funding buffer is applied on top of this separately.
+          : ` The minimum gives the higher price below a supplier cost of ${formatUsd(crossover)}.`}{' '}
+        The system adds your funding buffer after this.
       </p>
     </div>
   );
