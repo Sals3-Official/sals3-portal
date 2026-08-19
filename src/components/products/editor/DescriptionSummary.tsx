@@ -95,16 +95,13 @@ export default function DescriptionSummary({
         </p>
       ) : null}
 
-      {written.length === 0 ? (
-        <p role="status" className="flex gap-1.5 text-xs text-amber-700">
-          <TriangleAlert
-            aria-hidden="true"
-            className="mt-0.5 size-3.5 shrink-0"
-          />
-          Empty description. The listing can publish without one, but the
-          product page will show only specifications.
-        </p>
-      ) : (
+      {/*
+       * The empty-description warning belongs to the section, which renders it
+       * for both modes. Saying it here too printed it twice on one screen, in
+       * two different wordings — "product page" and "storefront" — which reads
+       * like two different findings rather than one repeated.
+       */}
+      {written.length === 0 ? null : (
         <p className="text-xs text-muted-foreground">
           Blocks publish in the order set in the full editor. The description
           saves there, separately from this page.

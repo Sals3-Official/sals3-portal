@@ -47,7 +47,7 @@ const OPTIONS: {
   {
     mode: 'simple',
     label: 'Simple text',
-    hint: 'One box. Type the description, attach photos.',
+    hint: 'One box. Type the description; it publishes as plain paragraphs.',
     icon: Type,
   },
   {
