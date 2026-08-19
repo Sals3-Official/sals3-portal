@@ -18,6 +18,10 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # Backstop. A green run takes about 6 minutes; the default ceiling is 6
+    # hours, which is how a hung apt step sat for 22 minutes on 2026-08-19
+    # before a human noticed and cancelled it by hand.
+    timeout-minutes: 25
 
     steps:
       - name: Check out repository
@@ -55,11 +59,32 @@ jobs:
       # download. On a miss we do both, exactly as before.
       - name: Install Playwright browser and system dependencies
         if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 8
         run: npx playwright install --with-deps chromium
 
+      # `install-deps` is an `apt-get` against Ubuntu's mirrors, and it is the
+      # only network-dependent apt call in this pipeline. It normally takes
+      # 13-19 seconds. Twice on 2026-08-19 it hung instead — once for 22
+      # minutes — blocking a PR that was otherwise ready and costing a manual
+      # cancel-and-rerun each time. Both retries then passed untouched, so the
+      # failure is the mirror, not this repository.
+      #
+      # One bounded retry turns a hang into a ~90-second blip. The step still
+      # fails if apt is genuinely broken twice, rather than pretending the
+      # libraries are present.
       - name: Install Playwright system dependencies
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+        timeout-minutes: 5
+        run: |
+          for attempt in 1 2; do
+            if timeout 90 npx playwright install-deps chromium; then
+              exit 0
+            fi
+            echo "::warning::playwright install-deps attempt $attempt hung or failed; retrying"
+            sleep 5
+          done
+          echo "::error::playwright install-deps failed twice — apt mirrors are unreachable" >&2
+          exit 1
 
       # `next build` reuses this to skip recompiling unchanged modules. The
       # restore-keys fall back to the newest cache for the same lockfile, so a
