@@ -23,19 +23,50 @@ const PATH_SEPARATOR = ' > ';
  * yet (same discipline as `resolveFixtureVariantGuidance` — a missing
  * table is an operational condition, not a bug to surface as a 500).
  */
-async function readCategoryPricing(sellerAccountId: string): Promise<{
-  rows: CategoryMarginLeafRow[];
-  storeDefault: StoreDefaultSummary | null;
-} | null> {
+async function readCategoryRows(
+  sellerAccountId: string,
+): Promise<CategoryMarginLeafRow[] | null> {
   try {
-    const db = getDb();
-    const [rows, storeDefault] = await Promise.all([
-      listCategoryMarginOverview(db, sellerAccountId),
-      findActiveStoreDefault(db, sellerAccountId),
-    ]);
+    return await listCategoryMarginOverview(getDb(), sellerAccountId);
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] failed to read category margin rows', {
+      sellerAccountId,
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+    return null;
+  }
+}
+
+/**
+ * Deliberately its own read with its own failure state, NOT bundled into
+ * the taxonomy read above.
+ *
+ * These two answer different questions and fail for different reasons, and
+ * one of them is the whole screen. When they shared a `Promise.all` inside
+ * one `try`, a `pricing_store_defaults` table that did not exist yet took
+ * the entire category tree down with it — a screen that had rendered 220
+ * groups the day before showed only "not available", which is exactly the
+ * silent, wider-than-necessary degradation this codebase keeps being bitten
+ * by. Observed live on 2026-08-19 between the feature deploy and the
+ * migration run.
+ *
+ * Three states, kept distinct: rows (a real default), `null` (read fine,
+ * none configured — the ordinary first-run case), and `unavailable` (the
+ * backend could not answer). Only the last is an error worth a banner; the
+ * middle one is normal and the tree already renders it honestly.
+ */
+async function readStoreDefault(
+  sellerAccountId: string,
+): Promise<
+  | { state: 'ok'; storeDefault: StoreDefaultSummary | null }
+  | { state: 'unavailable' }
+> {
+  try {
+    const storeDefault = await findActiveStoreDefault(getDb(), sellerAccountId);
 
     return {
-      rows,
+      state: 'ok',
       storeDefault:
         storeDefault === null
           ? null
@@ -46,11 +77,11 @@ async function readCategoryPricing(sellerAccountId: string): Promise<{
     };
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.error('[portal] failed to read category pricing', {
+    console.error('[portal] failed to read the store default for the tree', {
       sellerAccountId,
       error: error instanceof Error ? error.message : 'unknown',
     });
-    return null;
+    return { state: 'unavailable' };
   }
 }
 
@@ -113,7 +144,14 @@ export default async function CategoryPricingSection({
   sellerAccountId,
   canManage,
 }: CategoryPricingSectionProps) {
-  const data = await readCategoryPricing(sellerAccountId);
+  // Independent reads: a store-default failure must never hide the tree.
+  const [rows, storeDefaultResult] = await Promise.all([
+    readCategoryRows(sellerAccountId),
+    readStoreDefault(sellerAccountId),
+  ]);
+
+  const storeDefault =
+    storeDefaultResult.state === 'ok' ? storeDefaultResult.storeDefault : null;
 
   return (
     <section
@@ -131,14 +169,22 @@ export default async function CategoryPricingSection({
           Editor.
         </p>
       </div>
-      {data === null ? (
+      {rows === null ? (
         <DisclosureBanner tone="warning">
           Category pricing is not available right now. Your saved margins are
           safe. Try again shortly, or contact support if this keeps happening.
         </DisclosureBanner>
       ) : (
         <>
-          {data.storeDefault === null ? (
+          {storeDefaultResult.state === 'unavailable' ? (
+            <DisclosureBanner tone="warning">
+              Your store default could not be read, so the inherited rates below
+              are incomplete — a category with no margin of its own may still be
+              covered by a default this page cannot see right now. Margins set
+              on a category are unaffected.
+            </DisclosureBanner>
+          ) : null}
+          {storeDefaultResult.state === 'ok' && storeDefault === null ? (
             <DisclosureBanner tone="warning">
               No store default exists yet, so a category shown as &quot;Not
               set&quot; cannot price at all — its products need a manual retail
@@ -146,8 +192,8 @@ export default async function CategoryPricingSection({
             </DisclosureBanner>
           ) : null}
           <CategoryMarginTree
-            nodes={toNodeViewModels(data.rows)}
-            storeDefault={data.storeDefault}
+            nodes={toNodeViewModels(rows)}
+            storeDefault={storeDefault}
             sellerAccountId={sellerAccountId}
             canManage={canManage}
           />
