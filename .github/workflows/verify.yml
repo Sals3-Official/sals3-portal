@@ -62,28 +62,37 @@ jobs:
         timeout-minutes: 8
         run: npx playwright install --with-deps chromium
 
-      # `install-deps` is an `apt-get` against Ubuntu's mirrors, and it is the
-      # only network-dependent apt call in this pipeline. It normally takes
-      # 13-19 seconds. Twice on 2026-08-19 it hung instead — once for 22
-      # minutes — blocking a PR that was otherwise ready and costing a manual
-      # cancel-and-rerun each time. Both retries then passed untouched, so the
-      # failure is the mirror, not this repository.
+      # `install-deps` shells out to `apt-get`, and the runner image runs its
+      # own apt job at boot (unattended-upgrades). When the two collide this
+      # step blocks on the lock:
       #
-      # One bounded retry turns a hang into a ~90-second blip. The step still
-      # fails if apt is genuinely broken twice, rather than pretending the
-      # libraries are present.
+      #   E: Could not get lock /var/lib/apt/lists/lock.
+      #      It is held by process NNNN (apt-get)
+      #
+      # That is contention, not an unreachable mirror — the step normally
+      # finishes in 13-19 seconds, but on 2026-08-19 it sat for 22 minutes
+      # three times running and had to be cancelled by hand each time.
+      #
+      # `DPkg::Lock::Timeout` makes apt WAIT for the lock and then proceed,
+      # which is the actual remedy; killing it mid-wait (the first attempt at
+      # this fix) just guaranteed the retry hit the same held lock. The
+      # retries below cover the case where the boot job outlasts even that.
       - name: Install Playwright system dependencies
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        timeout-minutes: 5
+        timeout-minutes: 8
         run: |
-          for attempt in 1 2; do
-            if timeout 90 npx playwright install-deps chromium; then
+          echo 'DPkg::Lock::Timeout "180";' \
+            | sudo tee /etc/apt/apt.conf.d/99lock-timeout > /dev/null
+
+          for attempt in 1 2 3; do
+            if npx playwright install-deps chromium; then
               exit 0
             fi
-            echo "::warning::playwright install-deps attempt $attempt hung or failed; retrying"
-            sleep 5
+            echo "::warning::install-deps attempt $attempt failed; the runner's own apt job may still hold the lock"
+            sleep 30
           done
-          echo "::error::playwright install-deps failed twice — apt mirrors are unreachable" >&2
+
+          echo "::error::playwright install-deps failed three times — see the apt output above for whether this is a held lock or a real package failure" >&2
           exit 1
 
       # `next build` reuses this to skip recompiling unchanged modules. The
