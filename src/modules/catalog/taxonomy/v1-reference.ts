@@ -18,7 +18,21 @@ import type { Executor } from '@/modules/catalog/candidates/repository';
  * `src/lib/db/seed-data/sals3-taxonomy-v1.json` — every one of its 5,595
  * rows is `CAT-GGL-<google product category id>`).
  */
-const TAXONOMY_V1_CODE_PREFIX = 'CAT-GGL-';
+export const TAXONOMY_V1_CODE_PREFIX = 'CAT-GGL-';
+
+/**
+ * Whether a category code is a real Sals3 Taxonomy v1 row, as opposed to a
+ * `CJ-<uuid>` mirror that `cj-mirror.ts` auto-creates from a supplier
+ * category.
+ *
+ * A mirror is a perfectly good DRAFT default — a new product has to sit
+ * somewhere before a person has looked at it, and the supplier's own
+ * category is the best guess available. It is not a Sals3 category, and by
+ * owner decision (2026-08-20) publication requires one.
+ */
+export function isSals3TaxonomyCode(code: string | null): boolean {
+  return code !== null && code.startsWith(TAXONOMY_V1_CODE_PREFIX);
+}
 
 /**
  * Every Sals3 Taxonomy v1 category, as `{ code, path }` pairs, for a
