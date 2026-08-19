@@ -5,6 +5,7 @@ import {
   deleteSellerMediaAction,
   uploadSellerMediaAction,
 } from '@/app/(portal)/listings/media-actions';
+import saveDescriptionAction from '@/app/(portal)/listings/description-actions';
 import saveMetaDescriptionAction from '@/app/(portal)/listings/meta-description-actions';
 import saveShowSupplierPhotoAction from '@/app/(portal)/listings/show-supplier-photo-actions';
 import saveOptionMappingAction, {
@@ -88,6 +89,9 @@ export default function ProductEditor({
           </EditorSectionCard>
         }
         saveDraftAction={isDatabaseBacked ? saveProductDraftAction : undefined}
+        saveDescriptionAction={
+          isDatabaseBacked ? saveDescriptionAction : undefined
+        }
         uploadDescriptionImageAction={
           isDatabaseBacked ? uploadDescriptionImageAction : undefined
         }

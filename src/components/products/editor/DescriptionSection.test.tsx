@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import saveDescriptionAction from '@/app/(portal)/listings/description-actions';
 import { renameOptionMappingAction } from '@/app/(portal)/listings/option-mapping-actions';
 import { saveProductDraftAction } from '@/app/(portal)/listings/product-draft-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
@@ -46,6 +47,10 @@ vi.mock('@/app/(portal)/listings/meta-description-actions', () => ({
 }));
 
 vi.mock('@/app/(portal)/listings/show-supplier-photo-actions', () => ({
+  default: vi.fn(),
+}));
+
+vi.mock('@/app/(portal)/listings/description-actions', () => ({
   default: vi.fn(),
 }));
 
@@ -550,5 +555,162 @@ describe('Description section - simple text and designed layout', () => {
       screen.queryByRole('button', { name: /Add images/i }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/Recommended input/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Two ways this editor used to leave a seller guessing whether a save landed.
+ */
+describe('Product editor - telling the seller a save landed', () => {
+  it('shows renamed option labels without a manual page refresh', () => {
+    // `router.refresh()` re-renders this client component with a fresh fixture
+    // but never remounts it, and `variants` was seeded by `useState` on mount.
+    // So "Save names" reported success while every row underneath kept the old
+    // label, and refreshing by hand was the only way to find out it had worked.
+    const base = databaseBackedFixture();
+    const before: ProductEditorFixture = {
+      ...base,
+      variants: base.variants.map((variant, index) =>
+        index === 0 ? { ...variant, optionLabel: 'Colr: army green' } : variant,
+      ),
+    };
+
+    const { rerender } = renderEditor(before);
+
+    expect(
+      screen.getByRole('switch', { name: 'List Colr: army green' }),
+    ).toBeInTheDocument();
+
+    const after: ProductEditorFixture = {
+      ...before,
+      variants: before.variants.map((variant, index) =>
+        index === 0
+          ? { ...variant, optionLabel: 'Colour: Army Green' }
+          : variant,
+      ),
+    };
+
+    rerender(
+      <ProductEditor
+        fixture={after}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    expect(
+      screen.getByRole('switch', { name: 'List Colour: Army Green' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('switch', { name: 'List Colr: army green' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps an unsaved retail price while adopting a renamed label', () => {
+    // The reason only the label field is copied across. Replacing the whole row
+    // would discard a price the seller typed and had not saved yet — a worse
+    // bug than the one being fixed.
+    const base = databaseBackedFixture();
+    const priced = base.variants[0];
+
+    if (priced === undefined) throw new Error('fixture has no variants');
+
+    const { rerender } = renderEditor(base);
+
+    const priceField = screen.getAllByLabelText(/Retail price/i)[0];
+
+    if (priceField === undefined) throw new Error('no retail price field');
+
+    fireEvent.change(priceField, { target: { value: '42.50' } });
+
+    rerender(
+      <ProductEditor
+        fixture={{
+          ...base,
+          variants: base.variants.map((variant, index) =>
+            index === 0
+              ? { ...variant, optionLabel: 'Colour: Army Green' }
+              : variant,
+          ),
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    expect(screen.getAllByLabelText(/Retail price/i)[0]).toHaveValue('42.50');
+  });
+
+  it('saves the description from its own section, in both modes', async () => {
+    vi.mocked(saveDescriptionAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 5,
+      contentChecksum: 'abc',
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'Soft cotton twill.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save description/ }));
+
+    await waitFor(() => expect(saveDescriptionAction).toHaveBeenCalled());
+
+    const [input] = vi.mocked(saveDescriptionAction).mock.calls.at(-1) ?? [];
+    const sent = input as {
+      descriptionDocument: { mode: string; blocks: unknown[] };
+    };
+
+    expect(sent.descriptionDocument.blocks).toEqual([
+      { type: 'paragraph', text: 'Soft cotton twill.' },
+    ]);
+    expect(sent.descriptionDocument.mode).toBe('simple');
+    expect(await screen.findByText('Description saved.')).toBeInTheDocument();
+  });
+
+  it('stops offering to revert once the description has saved', async () => {
+    vi.mocked(saveDescriptionAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 5,
+      contentChecksum: 'abc',
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'Soft cotton twill.' },
+    });
+
+    expect(
+      screen.getByRole('button', { name: /Revert to last saved/ }),
+    ).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Save description/ }));
+    await screen.findByText('Description saved.');
+
+    // Saved work must not keep reading as unsaved.
+    expect(
+      screen.getByRole('button', { name: /Revert to last saved/ }),
+    ).toBeDisabled();
+  });
+
+  it('says so when the description save is refused', async () => {
+    vi.mocked(saveDescriptionAction).mockResolvedValue({
+      ok: false,
+      reason: 'version_conflict',
+      message: 'This description changed in another tab or session.',
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'Soft cotton twill.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save description/ }));
+
+    expect(
+      await screen.findByText(/changed in another tab or session/),
+    ).toBeInTheDocument();
   });
 });

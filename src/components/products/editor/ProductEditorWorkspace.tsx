@@ -18,6 +18,7 @@ import {
   blocksMatchSaved,
   descriptionBlocksToPlainText,
   prepareBlocksForSave,
+  type DescriptionBlock,
 } from '@/lib/products/description-blocks';
 import {
   canBulkEnable,
@@ -91,6 +92,16 @@ type ProductEditorWorkspaceProps = {
           | 'image_not_stored'
           | 'failed';
       }
+  >;
+  /**
+   * The narrow description save, so its own section can save without committing
+   * a retail price the seller was still deciding on.
+   */
+  saveDescriptionAction?: (
+    input: unknown,
+  ) => Promise<
+    | { ok: true; revisionVersion: number; contentChecksum: string }
+    | { ok: false; reason: string; message: string }
   >;
   publishAction?: (input: unknown) => Promise<
     | {
@@ -345,6 +356,7 @@ export default function ProductEditorWorkspace({
   marketsSection,
   initialLifecycle,
   saveDraftAction,
+  saveDescriptionAction,
   publishAction,
   optionMappingAction,
   recoverLabelsAction,
@@ -379,12 +391,24 @@ export default function ProductEditorWorkspace({
   );
 
   /**
+   * What the description was last *saved* as, which stops being the value the
+   * page was rendered with the moment this section saves on its own.
+   *
+   * Without it, `Revert to last saved` would offer to restore the pre-save
+   * document and `Save description` would stay lit after succeeding — both
+   * telling the seller their saved work is unsaved.
+   */
+  const [savedDescriptionBlocks, setSavedDescriptionBlocks] = useState<
+    DescriptionBlock[]
+  >(fixture.descriptionBlocks);
+
+  /**
    * Compared in prepared form, so a blank block someone added and abandoned
    * does not make Revert look available when nothing would actually change.
    */
   const descriptionIsUnchanged = blocksMatchSaved(
     descriptionBlocks.map((entry) => entry.block),
-    fixture.descriptionBlocks,
+    savedDescriptionBlocks,
   );
 
   /**
@@ -451,6 +475,44 @@ export default function ProductEditorWorkspace({
     setCategoryAttributes(fixture.categoryAttributes);
   }
   const [variants, setVariants] = useState<VariantFixture[]>(fixture.variants);
+
+  /**
+   * Option labels come back from the server after a rename; everything else in
+   * `variants` stays the seller's.
+   *
+   * Same defect as the category-attribute resync below, in a second place.
+   * `useState(fixture.variants)` reads its argument only on mount, and
+   * `handleRenameOptionMapping` calls `router.refresh()`, which re-renders this
+   * already-mounted client component with a fresh `fixture` but never remounts
+   * it. So "Save names" reported success while every row underneath — and the
+   * storefront preview beside them — kept showing the old label until a full
+   * page reload. The seller's only way to find out whether the save worked was
+   * to refresh and look, which is exactly the "did it save?" state a save button
+   * exists to remove.
+   *
+   * Only the label fields are copied across. Replacing the whole row would throw
+   * away retail prices and list toggles the seller has typed but not saved yet —
+   * a far worse bug than the one being fixed, and the reason this is keyed on a
+   * signature of the labels rather than on the fixture identity.
+   */
+  const optionLabelSignature = fixture.variants
+    .map((variant) => `${variant.id}:${variant.optionLabel}`)
+    .join('|');
+  const [prevOptionLabelSignature, setPrevOptionLabelSignature] =
+    useState(optionLabelSignature);
+
+  if (optionLabelSignature !== prevOptionLabelSignature) {
+    setPrevOptionLabelSignature(optionLabelSignature);
+    setVariants((current) =>
+      current.map((variant) => {
+        const fresh = fixture.variants.find((row) => row.id === variant.id);
+
+        return fresh === undefined
+          ? variant
+          : { ...variant, optionLabel: fresh.optionLabel };
+      }),
+    );
+  }
   const [media, setMedia] = useState<MediaItemFixture[]>(fixture.media);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [deletingMediaId, setDeletingMediaId] = useState<string | null>(null);
@@ -869,11 +931,61 @@ export default function ProductEditorWorkspace({
             axes,
           });
 
-          if (result.ok) router.refresh();
+          if (result.ok) {
+            // Same confirmation shape as `Draft saved.`: the inline message
+            // alone sat in a section the seller had usually scrolled past.
+            toast('Names saved.');
+            router.refresh();
+          }
 
           return result.ok
             ? { ok: true, message: 'Names saved.' }
             : { ok: false, message: result.message };
+        };
+
+  /**
+   * Saves the description on its own, from its own section.
+   *
+   * The narrow `saveDescriptionAction` rather than the whole-draft save: this
+   * button says "Save description" and must not also commit a retail price the
+   * seller was still deciding on. Same single-concern shape as the meta
+   * description's own save beside it.
+   *
+   * `setDraftRevisionVersion` on success is what keeps `Save Draft` working
+   * afterwards. That action compare-and-sets the revision version this screen
+   * last read, and a description save moves it — so without adopting the new
+   * one, the next `Save Draft` would be refused as stale against a change this
+   * very screen had just made.
+   */
+  const handleSaveDescription =
+    saveDescriptionAction === undefined ||
+    fixture.draftSaveTarget === null ||
+    draftRevisionVersion === null
+      ? undefined
+      : async () => {
+          const target = fixture.draftSaveTarget;
+
+          if (target === null) return { ok: false, message: 'No open draft.' };
+
+          const result = await saveDescriptionAction({
+            productId: target.productId,
+            revisionId: target.revisionId,
+            expectedRevisionVersion: draftRevisionVersion,
+            descriptionDocument: descriptionDocumentFrom(
+              descriptionBlocks,
+              descriptionMode,
+            ),
+          });
+
+          if (!result.ok) return { ok: false, message: result.message };
+
+          setDraftRevisionVersion(result.revisionVersion);
+          setSavedDescriptionBlocks(
+            descriptionBlocks.map((entry) => entry.block),
+          );
+          toast('Description saved.');
+
+          return { ok: true, message: 'Description saved.' };
         };
 
   /**
@@ -1282,7 +1394,7 @@ export default function ProductEditorWorkspace({
               isUnchanged={descriptionIsUnchanged}
               onRevert={() => {
                 setDescriptionBlocks(
-                  keyDescriptionBlocks(fixture.descriptionBlocks),
+                  keyDescriptionBlocks(savedDescriptionBlocks),
                 );
                 touch();
               }}
@@ -1310,6 +1422,7 @@ export default function ProductEditorWorkspace({
                */
               mode={descriptionMode}
               onModeChange={setDescriptionMode}
+              onSave={handleSaveDescription}
               fullEditorHref={
                 fixture.draftSaveTarget === null
                   ? null

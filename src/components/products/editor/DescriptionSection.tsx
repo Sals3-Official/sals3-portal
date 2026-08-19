@@ -1,6 +1,7 @@
 'use client';
 
 import { RotateCcw, TriangleAlert } from 'lucide-react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   descriptionBlocksToPlainText,
@@ -43,6 +44,11 @@ type DescriptionSectionProps = {
   /** Which editor the seller chose. Owned by the workspace so it saves with the draft. */
   mode: DescriptionMode;
   onModeChange: (mode: DescriptionMode) => void;
+  /**
+   * Saves this section alone. Absent for a fixture preview, which has no
+   * revision to write to.
+   */
+  onSave?: () => Promise<{ ok: boolean; message: string }>;
 };
 
 /**
@@ -70,7 +76,13 @@ export default function DescriptionSection({
   fullEditorHref = null,
   mode,
   onModeChange,
+  onSave,
 }: DescriptionSectionProps) {
+  const [isSaving, setIsSaving] = useState(false);
+  const [status, setStatus] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
   const isEmpty = blocks.every((entry) => isBlockEmpty(entry.block));
   const plainBlocks = blocks.map((entry) => entry.block);
   const isTypingHere = mode === 'simple' || fullEditorHref === null;
@@ -120,22 +132,71 @@ export default function DescriptionSection({
          * copy it never wrote.
          */}
         <FieldSourceBadge source="SELLER" />
-        {/* Revert restores this screen's own unsaved edits. In summary mode
+
+        <div className="flex items-center gap-2">
+          {/* Revert restores this screen's own unsaved edits. In summary mode
             there are none to restore — the full editor saves its own work — so
             the control is absent rather than permanently disabled. */}
-        {isTypingHere ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={isUnchanged}
-            onClick={onRevert}
-          >
-            <RotateCcw aria-hidden="true" />
-            Revert to last saved
-          </Button>
-        ) : null}
+          {isTypingHere ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isUnchanged || isSaving}
+              onClick={onRevert}
+            >
+              <RotateCcw aria-hidden="true" />
+              Revert to last saved
+            </Button>
+          ) : null}
+
+          {/*
+           * Present in both modes, because both can hold unsaved work: simple
+           * text holds what was typed, and the designed layout holds the mode
+           * choice itself, which is stored on the document.
+           *
+           * Saves the description alone. `Save Draft` at the foot of the page
+           * still saves everything, and this leaves the title and the prices
+           * exactly where the seller left them.
+           */}
+          {onSave === undefined ? null : (
+            <Button
+              type="button"
+              size="sm"
+              disabled={isSaving}
+              onClick={() => {
+                setIsSaving(true);
+                setStatus(null);
+                onSave()
+                  .then((result) => setStatus(result))
+                  .catch(() =>
+                    setStatus({
+                      ok: false,
+                      message: 'The description could not be saved.',
+                    }),
+                  )
+                  .finally(() => setIsSaving(false));
+              }}
+            >
+              {isSaving ? 'Saving…' : 'Save description'}
+            </Button>
+          )}
+        </div>
       </div>
+
+      {status === null ? null : (
+        <p
+          role="status"
+          aria-live="polite"
+          className={
+            status.ok
+              ? 'text-xs text-green-700'
+              : 'text-xs font-medium text-red-700'
+          }
+        >
+          {status.message}
+        </p>
+      )}
 
       {isTypingHere ? (
         <p className="flex items-start gap-2 rounded-lg border border-amber-600/30 bg-warning-surface/50 px-3 py-2.5 text-xs text-ink-muted">
