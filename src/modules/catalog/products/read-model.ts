@@ -441,25 +441,23 @@ function attentionFromUnpublished(
  * prose back as the document. Blocks the seller never touched were rewritten
  * by opening the page.
  */
-function descriptionBlocksOf(
-  revision: ProductRevisionRow | undefined,
-): DescriptionBlock[] {
+function descriptionOf(revision: ProductRevisionRow | undefined): {
+  blocks: DescriptionBlock[];
+  /**
+   * Which editor the seller last chose, or `undefined` for a document written
+   * before the field existed. The editor infers a mode for those rather than
+   * this function assuming one.
+   */
+  mode: DescriptionMode | undefined;
+} {
+  // One parse, both values. This runs per product while the catalogue list is
+  // built, so parsing the same JSONB document twice to read two of its fields
+  // would double that cost for every row on the page.
   const parsed = descriptionDocumentSchema.safeParse(revision?.contentDocument);
 
-  return parsed.success ? parsed.data.blocks : [];
-}
+  if (!parsed.success) return { blocks: [], mode: undefined };
 
-/**
- * Which editor the seller last chose, or `undefined` for a document written
- * before the field existed. The editor infers a mode for those rather than
- * assuming one here.
- */
-function descriptionModeOf(
-  revision: ProductRevisionRow | undefined,
-): DescriptionMode | undefined {
-  const parsed = descriptionDocumentSchema.safeParse(revision?.contentDocument);
-
-  return parsed.success ? parsed.data.mode : undefined;
+  return { blocks: parsed.data.blocks, mode: parsed.data.mode };
 }
 
 function variantOrderKey(variant: CatalogueVariantFixture): string {
@@ -975,18 +973,18 @@ function buildCatalogueProducts(
         })
         .sort(compareCatalogueVariants);
 
-      const descriptionBlocks = descriptionBlocksOf(revision);
+      const description = descriptionOf(revision);
 
       return {
         id: product.id,
         sals3ProductId: product.id,
         name: product.title,
-        descriptionBlocks,
-        descriptionMode: descriptionModeOf(revision),
+        descriptionBlocks: description.blocks,
+        descriptionMode: description.mode,
         // Derived, never stored twice: the plain-text projection is what the
         // meta-description suggestion and the content-readiness check want,
         // while `descriptionBlocks` above is what the editor writes back.
-        descriptionText: descriptionBlocksToPlainText(descriptionBlocks),
+        descriptionText: descriptionBlocksToPlainText(description.blocks),
         metaDescriptionText: product.metaDescription ?? '',
         hasImage: mediaImageUrls.length > 0,
         coverImageUrl: supplier.imageUrl,
@@ -1054,7 +1052,7 @@ function buildCatalogueProducts(
         ),
         mediaStatus: mediaStatusOf(media, product.showSupplierPhoto ?? true),
         contentReadiness:
-          descriptionBlocks.length === 0 ? 'NEEDS_IMPROVEMENT' : 'GOOD',
+          description.blocks.length === 0 ? 'NEEDS_IMPROVEMENT' : 'GOOD',
         pauseReason: status === 'AUTO_PAUSED' ? 'Listing is paused.' : null,
         storefrontUrl: status === 'LIVE' ? product.slug : null,
         attentionReasons,
