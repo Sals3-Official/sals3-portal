@@ -43,7 +43,13 @@ const PATH_SEPARATOR = ' > ';
 
 type TreeNode = {
   name: string;
-  /** Set only on the node a full path actually ends at — every option is a leaf, so this is never set on a node that also has children. */
+  /**
+   * Set on the node a full path actually ends at. Taxonomy v1 stores a row
+   * for every node — branches included — so a node can carry an `option`
+   * AND children (e.g. "Apparel & Accessories" is its own `CAT-GGL-` row and
+   * the parent of over a thousand more). Never read `option !== null` as
+   * "leaf"; `children.size === 0` is the only leaf test.
+   */
   option: Sals3CategoryOption | null;
   children: Map<string, TreeNode>;
 };
@@ -156,6 +162,28 @@ export default function Sals3CategoryPicker({
       .filter((option) => option.path.toLowerCase().includes(trimmed))
       .slice(0, MAX_RESULTS);
   }, [options, query]);
+
+  /**
+   * Every path that is a strict prefix of some other path — i.e. a branch.
+   * Search results consult this so the two modes agree on one rule: a
+   * branch NAVIGATES (as it always has in browse mode), only a true leaf
+   * is selectable. Before this set existed, searching "Apparel &
+   * Accessories" let a seller select the department itself while browsing
+   * to it could not — two different taxonomies depending on which box you
+   * typed in.
+   */
+  const branchPaths = useMemo(() => {
+    const set = new Set<string>();
+
+    options.forEach((option) => {
+      const segments = option.path.split(PATH_SEPARATOR);
+      for (let depth = 1; depth < segments.length; depth += 1) {
+        set.add(segments.slice(0, depth).join(PATH_SEPARATOR));
+      }
+    });
+
+    return set;
+  }, [options]);
 
   const currentNode = useMemo(() => nodeAt(tree, stack), [tree, stack]);
   const currentEntries = useMemo(
@@ -349,20 +377,36 @@ export default function Sals3CategoryPicker({
                       No category matches &quot;{query}&quot;.
                     </li>
                   ) : (
-                    matches.map((option) => (
-                      <li key={option.code}>
-                        <button
-                          type="button"
-                          className="block w-full px-2.5 py-2 text-left text-sm hover:bg-muted"
-                          onClick={() => {
-                            setSelected(option);
-                            setQuery('');
-                          }}
-                        >
-                          {option.path}
-                        </button>
-                      </li>
-                    ))
+                    matches.map((option) => {
+                      const isBranch = branchPaths.has(option.path);
+                      return (
+                        <li key={option.code}>
+                          <button
+                            type="button"
+                            className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-sm hover:bg-muted"
+                            onClick={() => {
+                              if (isBranch) {
+                                // Same rule as browse mode: a branch is a
+                                // place to go, not a category to assign.
+                                setStack(option.path.split(PATH_SEPARATOR));
+                                setQuery('');
+                                return;
+                              }
+                              setSelected(option);
+                              setQuery('');
+                            }}
+                          >
+                            {option.path}
+                            {isBranch ? (
+                              <ChevronRight
+                                aria-hidden="true"
+                                className="size-3.5 shrink-0 text-muted-foreground"
+                              />
+                            ) : null}
+                          </button>
+                        </li>
+                      );
+                    })
                   )}
                 </ul>
               )}
