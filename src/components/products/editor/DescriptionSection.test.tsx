@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import uploadDescriptionImageAction from '@/app/(portal)/listings/description-image-actions';
 import { renameOptionMappingAction } from '@/app/(portal)/listings/option-mapping-actions';
 import { saveProductDraftAction } from '@/app/(portal)/listings/product-draft-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
@@ -129,13 +130,16 @@ describe('Description section - block authoring', () => {
     expect(screen.queryByLabelText('Paragraph text')).not.toBeInTheDocument();
   });
 
-  it('names the empty state as writing rather than editing', () => {
+  it('opens an empty description in the simple box, ready to type', () => {
+    // A new product should not need a click before the first keystroke. The mode
+    // is derived from content, and an empty document is simple-representable.
     renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
 
-    expect(
-      screen.getByRole('link', { name: /Write description/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Product description')).toBeInTheDocument();
     expect(screen.getByText(/Empty description/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: /full editor/i }),
+    ).not.toBeInTheDocument();
   });
 
   it('keeps the blocks inline when there is no draft to save against', () => {
@@ -309,5 +313,212 @@ describe('Variant Matrix - renaming a saved mapping', () => {
       ).toBeInTheDocument(),
     );
     expect(screen.queryByText(/Mapped as Colour/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Two editors over one stored document.
+ *
+ * The mode is derived from the content rather than stored, so these cases are
+ * about which surface a given document opens in — and about the one conversion
+ * that can change content, which must never happen without being named first.
+ */
+describe('Description section - simple text and designed layout', () => {
+  const RICH = [
+    { type: 'heading' as const, level: 2 as const, text: 'Fit and sizing' },
+    { type: 'bulletList' as const, items: ['Six pockets'] },
+  ];
+
+  it('opens a plain-paragraph document in simple text', () => {
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionBlocks: [{ type: 'paragraph', text: 'Soft cotton twill.' }],
+    });
+
+    expect(screen.getByLabelText('Product description')).toHaveValue(
+      'Soft cotton twill.',
+    );
+    expect(screen.getByRole('button', { name: /Simple text/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('opens a document with structure in the designed layout', () => {
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: RICH });
+
+    expect(
+      screen.getByRole('button', { name: /Designed layout/ }),
+    ).toHaveAttribute('aria-pressed', 'true');
+    expect(
+      screen.getByRole('link', { name: /Open full editor/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('saves what was typed in the simple box as paragraph blocks', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 4,
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'Features:\nSix pockets\n\nCare:\nCold wash' },
+    });
+
+    // A blank line starts a paragraph; a single newline stays inside one.
+    expect((await saveDraft()).blocks).toEqual([
+      { type: 'paragraph', text: 'Features:\nSix pockets' },
+      { type: 'paragraph', text: 'Care:\nCold wash' },
+    ]);
+  });
+
+  it('switching to the designed layout needs no warning and loses nothing', () => {
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionBlocks: [{ type: 'paragraph', text: 'Soft cotton twill.' }],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Designed layout/ }));
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Open full editor/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('refuses to flatten a designed document without naming what it costs', () => {
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: RICH });
+
+    fireEvent.click(screen.getByRole('button', { name: /Simple text/ }));
+
+    const dialog = screen.getByRole('alertdialog');
+
+    expect(dialog).toHaveTextContent('1 heading');
+    expect(dialog).toHaveTextContent('1 bullet list');
+    // The modal correctly takes the background out of the accessibility tree,
+    // so "still designed" is asserted by the cancel case below rather than by
+    // reaching for a control the dialog is deliberately hiding.
+  });
+
+  it('cancelling the warning keeps the designed layout untouched', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 4,
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: RICH });
+
+    fireEvent.click(screen.getByRole('button', { name: /Simple text/ }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Keep the designed layout/ }),
+    );
+
+    expect((await saveDraft()).blocks).toEqual(RICH);
+  });
+
+  it('confirming keeps every word and drops only the structure', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 4,
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: RICH });
+
+    fireEvent.click(screen.getByRole('button', { name: /Simple text/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Switch and flatten/ }));
+
+    expect((await saveDraft()).blocks).toEqual([
+      { type: 'paragraph', text: 'Fit and sizing' },
+      { type: 'paragraph', text: 'Six pockets' },
+    ]);
+  });
+
+  it('lets a trailing space be typed, and keeps it', () => {
+    // Storing trims each paragraph, so deriving the field's value from the
+    // document made a trailing space impossible to type — it round-tripped away
+    // in the same keystroke that produced it. The field holds its own text and
+    // reconciles against its projection instead.
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionBlocks: [{ type: 'paragraph', text: 'Soft cotton' }],
+    });
+
+    const field = screen.getByLabelText('Product description');
+
+    fireEvent.change(field, { target: { value: 'Soft cotton ' } });
+
+    expect(field).toHaveValue('Soft cotton ');
+  });
+
+  it('saves the trimmed text even though the field keeps the space', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 4,
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: '  Soft cotton  ' },
+    });
+
+    expect((await saveDraft()).blocks).toEqual([
+      { type: 'paragraph', text: 'Soft cotton' },
+    ]);
+  });
+
+  it('attaches an uploaded photo after the text, needing alt text before publish', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 4,
+    });
+    vi.mocked(uploadDescriptionImageAction).mockResolvedValue({
+      ok: true,
+      url: 'https://media.example.com/description-media/p/a.webp',
+      widthPixels: 1200,
+      heightPixels: 900,
+    });
+
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionBlocks: [{ type: 'paragraph', text: 'Soft cotton twill.' }],
+    });
+
+    fireEvent.change(screen.getByTestId('simple-description-file'), {
+      target: {
+        files: [new File(['bytes'], 'a.png', { type: 'image/png' })],
+      },
+    });
+
+    await waitFor(() =>
+      expect(uploadDescriptionImageAction).toHaveBeenCalled(),
+    );
+
+    expect(screen.getByText(/still needs a description/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Alt text for photo 1'), {
+      target: { value: 'Pocket detail' },
+    });
+
+    expect((await saveDraft()).blocks).toEqual([
+      { type: 'paragraph', text: 'Soft cotton twill.' },
+      {
+        type: 'image',
+        url: 'https://media.example.com/description-media/p/a.webp',
+        alt: 'Pocket detail',
+      },
+    ]);
+  });
+
+  it('a recommended-input chip adds the label and never the answer', () => {
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    // Sourced from the product's own category, the same data the Variant Matrix
+    // suggests axis names from.
+    fireEvent.click(screen.getByRole('button', { name: /Care/ }));
+
+    expect(screen.getByLabelText('Product description')).toHaveValue('Care: ');
   });
 });
