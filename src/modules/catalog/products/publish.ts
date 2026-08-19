@@ -24,7 +24,7 @@ import {
 } from '@/modules/market-config/capabilities';
 import { findActiveProfileForSeller } from '@/modules/market-config/repository';
 import { resolveProductPricing } from '@/modules/pricing/resolver';
-import { ensureProductCjCategory } from './category-mirror';
+import { isSals3TaxonomyCode } from '@/modules/catalog/taxonomy/v1-reference';
 import { deriveOptionSplit } from './option-split';
 import {
   projectSupplierMediaForProduct,
@@ -143,7 +143,8 @@ async function optionMappingRequiredButMissing(
 
 export type PublishRefusal =
   | 'NO_ACTIVE_VARIANT'
-  | 'CATEGORY_UNMAPPED'
+  /** Replaces `CATEGORY_UNMAPPED` (2026-08-20): a CJ mirror is no longer accepted in its place. */
+  | 'SALS3_CATEGORY_REQUIRED'
   | 'OPTIONS_UNMAPPED'
   | 'NO_APPROVED_MEDIA'
   | 'PRICING_UNRESOLVED'
@@ -459,44 +460,35 @@ export default async function publishProduct(input: {
       return { ok: false, reason: 'NO_ACTIVE_VARIANT' };
     }
 
-    let { categoryCode } = product;
-    let categoryConfidence = product.confidence;
-    let productVersion = input.expectedProductVersion;
+    const { categoryCode } = product;
+    const categoryConfidence = product.confidence;
+    const productVersion = input.expectedProductVersion;
 
+    /**
+     * Publication requires a real Sals3 Taxonomy v1 category, chosen by a
+     * person (owner decision 2026-08-20).
+     *
+     * This reverses the 2026-08-14 decision that "the CJ category is the
+     * Sals3 category", which this branch implemented by calling
+     * `ensureProductCjCategory` to mint a `CJ-<uuid>` mirror row and carry
+     * on. The mirror keeps the place it earns — a DRAFT default, so a new
+     * product has somewhere to sit before anyone has looked at it. What it
+     * must not do is reach a live listing: `CJ-976399B4-534B-46F0-B18A-…`
+     * is the supplier's filing system, not Sals3's, and once published it
+     * becomes the category a buyer browses and the node the pricing chain
+     * resolves a margin from.
+     *
+     * `UNMAPPED`/`AMBIGUOUS` are refused for the reason they always were.
+     * What changed is that a mirrored code is refused too, instead of being
+     * manufactured on the way past.
+     */
     if (
       categoryCode === null ||
       categoryConfidence === 'UNMAPPED' ||
-      categoryConfidence === 'AMBIGUOUS'
+      categoryConfidence === 'AMBIGUOUS' ||
+      !isSals3TaxonomyCode(categoryCode)
     ) {
-      // The CJ category is the Sals3 category (owner decision 2026-08-14).
-      // A product still `UNMAPPED` here predates that decision, so it is
-      // categorised now, from the same persisted supplier facts a new draft
-      // would use — inside this transaction, so a later refusal undoes it.
-      const candidateId =
-        variants.find((variant) => variant.supplierCandidateId !== null)
-          ?.supplierCandidateId ?? null;
-      const mirrored =
-        candidateId === null
-          ? null
-          : await ensureProductCjCategory(tx, {
-              productId: input.productId,
-              stewardSellerAccountId: input.sellerAccountId,
-              expectedProductVersion: input.expectedProductVersion,
-              candidateId,
-              actorId: input.actorId,
-            });
-
-      // Still a real refusal: this candidate has no CJ category on record,
-      // so there is nothing to categorise or price the product with.
-      if (mirrored === null) {
-        return { ok: false, reason: 'CATEGORY_UNMAPPED' };
-      }
-
-      categoryCode = mirrored.categoryCode;
-      categoryConfidence = mirrored.categoryMappingConfidence;
-      // The assignment bumped `products.version`; every later write must
-      // compare against the bumped value, not the one the screen read.
-      productVersion = mirrored.productVersion;
+      return { ok: false, reason: 'SALS3_CATEGORY_REQUIRED' };
     }
 
     if (await optionMappingRequiredButMissing(tx, input.productId)) {

@@ -70,8 +70,9 @@ const NO_REVIEWS_LINE = 'No reviews yet';
 const DELIVERY_AT_CHECKOUT_LINE = 'Delivery quoted at checkout';
 
 /**
- * Every published product has a mapped category — `publishProduct` refuses
- * `CATEGORY_UNMAPPED`. This exists because the consumer's key is required and
+ * Every published product has a real Sals3 category — `publishProduct`
+ * refuses `SALS3_CATEGORY_REQUIRED`, which since 2026-08-20 also rejects a
+ * CJ mirror code. This exists because the consumer's key is required and
  * a null would fail its regex, so a category-less row still renders instead of
  * taking the page down. It names the absence rather than guessing a category.
  */
