@@ -1,6 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import uploadDescriptionImageAction from '@/app/(portal)/listings/description-image-actions';
 import { renameOptionMappingAction } from '@/app/(portal)/listings/option-mapping-actions';
 import { saveProductDraftAction } from '@/app/(portal)/listings/product-draft-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
@@ -469,56 +468,39 @@ describe('Description section - simple text and designed layout', () => {
     ]);
   });
 
-  it('attaches an uploaded photo after the text, needing alt text before publish', async () => {
-    vi.mocked(saveProductDraftAction).mockResolvedValue({
-      ok: true,
-      revisionVersion: 4,
-    });
-    vi.mocked(uploadDescriptionImageAction).mockResolvedValue({
-      ok: true,
-      url: 'https://media.example.com/description-media/p/a.webp',
-      widthPixels: 1200,
-      heightPixels: 900,
-    });
-
+  it('shows photos the document already holds, with no way to upload here', () => {
+    // Photos are added in the designed layout. They still have to be *visible*
+    // here: they are stored content that publishes to the product page, and a
+    // screen holding something the seller cannot see is the defect this codebase
+    // has met three times.
     renderEditor({
       ...databaseBackedFixture(),
-      descriptionBlocks: [{ type: 'paragraph', text: 'Soft cotton twill.' }],
+      descriptionBlocks: [
+        { type: 'paragraph', text: 'Soft cotton twill.' },
+        {
+          type: 'image',
+          url: 'https://media.example.com/description-media/p/a.webp',
+          alt: '',
+        },
+      ],
     });
 
-    fireEvent.change(screen.getByTestId('simple-description-file'), {
-      target: {
-        files: [new File(['bytes'], 'a.png', { type: 'image/png' })],
-      },
-    });
-
-    await waitFor(() =>
-      expect(uploadDescriptionImageAction).toHaveBeenCalled(),
-    );
-
+    expect(screen.getByLabelText('Alt text for photo 1')).toBeInTheDocument();
     expect(screen.getByText(/still needs a description/)).toBeInTheDocument();
-
-    fireEvent.change(screen.getByLabelText('Alt text for photo 1'), {
-      target: { value: 'Pocket detail' },
-    });
-
-    expect((await saveDraft()).blocks).toEqual([
-      { type: 'paragraph', text: 'Soft cotton twill.' },
-      {
-        type: 'image',
-        url: 'https://media.example.com/description-media/p/a.webp',
-        alt: 'Pocket detail',
-      },
-    ]);
+    expect(
+      screen.queryByTestId('simple-description-file'),
+    ).not.toBeInTheDocument();
   });
 
-  it('a recommended-input chip adds the label and never the answer', () => {
+  it('keeps the simple box free of an upload button and prompt chips', () => {
+    // Both were removed on purpose. A toolbar here could only produce a worse
+    // version of what the designed layout does properly, and a row of
+    // suggestions around an empty box is furniture rather than help.
     renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
 
-    // Sourced from the product's own category, the same data the Variant Matrix
-    // suggests axis names from.
-    fireEvent.click(screen.getByRole('button', { name: /Care/ }));
-
-    expect(screen.getByLabelText('Product description')).toHaveValue('Care: ');
+    expect(
+      screen.queryByRole('button', { name: /Add images/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Recommended input/i)).not.toBeInTheDocument();
   });
 });

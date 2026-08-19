@@ -1297,12 +1297,6 @@ export default function ProductEditorWorkspace({
                   ? null
                   : `/listings/${fixture.draftSaveTarget.productId}/description`
               }
-              /*
-               * The same category-derived axis names the Variant Matrix offers,
-               * reused rather than re-derived: simple mode turns them into
-               * prompts for the facts buyers ask about this kind of product.
-               */
-              categoryAxisNames={fixture.optionMapping.suggestedAxisNames}
             />
           </EditorSectionCard>
 

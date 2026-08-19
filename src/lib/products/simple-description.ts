@@ -35,9 +35,6 @@ import type { DescriptionBlock } from './description-blocks';
  */
 export const SIMPLE_TEXT_SOFT_MAX = 3_000;
 
-/** Matches the count the image strip shows, and well under `MAX_BLOCKS`. */
-export const SIMPLE_MAX_IMAGES = 12;
-
 export type DescriptionMode = 'simple' | 'design';
 
 type ImageBlock = Extract<DescriptionBlock, { type: 'image' }>;

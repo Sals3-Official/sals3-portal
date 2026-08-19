@@ -44,12 +44,6 @@ type DescriptionSectionProps = {
    * quietly reverts the other.
    */
   fullEditorHref?: string | null;
-  /**
-   * Tier-1/tier-2 axis names for this product's Sals3 category, positionally
-   * aligned. Simple mode offers them as prompts; an unmapped product gets the
-   * two universal ones only.
-   */
-  categoryAxisNames?: readonly (string | null)[];
 };
 
 /**
@@ -75,7 +69,6 @@ export default function DescriptionSection({
   uploadImage,
   uploadDisabledReason = null,
   fullEditorHref = null,
-  categoryAxisNames = [],
 }: DescriptionSectionProps) {
   const isEmpty = blocks.every((entry) => isBlockEmpty(entry.block));
   const plainBlocks = blocks.map((entry) => entry.block);
@@ -102,9 +95,6 @@ export default function DescriptionSection({
       <SimpleDescriptionEditor
         blocks={plainBlocks}
         onBlocksChange={(next) => onBlocksChange(keyDescriptionBlocks(next))}
-        categoryAxisNames={categoryAxisNames}
-        uploadImage={uploadImage}
-        uploadDisabledReason={uploadDisabledReason}
       />
     );
   } else if (fullEditorHref === null) {

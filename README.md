@@ -815,10 +815,10 @@ brand evidence, or order-fulfillment fields.
 
 The Description section offers two editors and the seller picks with a toggle.
 
-| Mode                | Surface                                                  | Where it saves                                    |
-| ------------------- | -------------------------------------------------------- | ------------------------------------------------- |
-| **Simple text**     | One box on the listing page, plus a photo strip after it | `Save Draft`, like every other field on that form |
-| **Designed layout** | A summary card linking to the full-screen editor         | That screen's own narrow description save         |
+| Mode                | Surface                                          | Where it saves                                    |
+| ------------------- | ------------------------------------------------ | ------------------------------------------------- |
+| **Simple text**     | One box on the listing page                      | `Save Draft`, like every other field on that form |
+| **Designed layout** | A summary card linking to the full-screen editor | That screen's own narrow description save         |
 
 **Both write the same stored document.** Simple text is a _view_ over the
 allow-listed block format, not a second schema: paragraphs split on blank lines,
@@ -864,15 +864,19 @@ bullets, and detail lists into paragraphs". Naming the loss before it happens is
 the difference between a conversion the seller chose and one that happened to
 them.
 
-### Recommended input chips
+### Simple text is only the box
 
-The prompts under the box (`+ Colour`, `+ Size`, `+ Care`…) come from the
-product's own category, reusing `fixture.optionMapping.suggestedAxisNames` — the
-same owner-authored workbook families the Variant Matrix suggests option names
-from. A chip inserts a labelled line and never a value, for the same reason the
-Variant Matrix offers an axis name behind a button instead of pre-filling it: the
-workbook knows what a category is usually described by and cannot know this
-product's answer.
+No upload button and no prompt chips, by owner decision. An upload here could
+only ever produce "the photos you uploaded, in that order, after the text", a
+worse version of what the designed layout does properly — placement is that
+mode's whole point. A row of suggestions around an empty box is furniture rather
+than help.
+
+Photos a document already holds **are still shown** in simple mode, with their
+alt-text field and a way to remove one. They are stored content that publishes to
+the product page, and a screen holding something the seller cannot see is the
+defect this codebase has met three times. Adding one means switching to the
+designed layout.
 
 ### The character counter is guidance, never a limit
 
