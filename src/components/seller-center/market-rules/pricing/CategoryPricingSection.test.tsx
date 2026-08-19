@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   listCategoryMarginOverview: vi.fn(),
   findActiveStoreDefault: vi.fn(),
+  countDescendantsByPath: vi.fn(),
 }));
 
 vi.mock('@/lib/db/client', () => ({ default: () => ({ __db: true }) }));
@@ -11,6 +12,7 @@ vi.mock('@/lib/db/client', () => ({ default: () => ({ __db: true }) }));
 vi.mock('@/modules/pricing/repository', () => ({
   listCategoryMarginOverview: mocks.listCategoryMarginOverview,
   findActiveStoreDefault: mocks.findActiveStoreDefault,
+  countDescendantsByPath: mocks.countDescendantsByPath,
 }));
 
 /* eslint-disable import/first */
@@ -50,6 +52,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.listCategoryMarginOverview.mockResolvedValue(ROWS);
   mocks.findActiveStoreDefault.mockResolvedValue(null);
+  mocks.countDescendantsByPath.mockResolvedValue(new Map());
 });
 
 describe('CategoryPricingSection — read isolation', () => {
@@ -111,5 +114,31 @@ describe('CategoryPricingSection — read isolation', () => {
 
     expect(output).toContain('Category pricing is not available');
     expect(output).not.toContain(TREE_MARKER);
+  });
+});
+
+describe('CategoryPricingSection — descendant counts', () => {
+  /**
+   * The count tells a seller how much a department margin will cover, so it
+   * has to come from the whole taxonomy, not from the depth-capped rows this
+   * view renders. Deriving it from the rows shipped once and turned
+   * "Home & Garden — 1,034 categories" into "21".
+   */
+  it('uses the full-taxonomy count, not the number of visible rows', async () => {
+    mocks.countDescendantsByPath.mockResolvedValue(
+      new Map([['Animals & Pet Supplies', 1034]]),
+    );
+
+    const output = await renderToTree();
+
+    expect(output).toContain('"subtreeCount":1034');
+  });
+
+  it('falls back to zero for a node the count map does not mention, never to a row-derived guess', async () => {
+    mocks.countDescendantsByPath.mockResolvedValue(new Map());
+
+    const output = await renderToTree();
+
+    expect(output).toContain('"subtreeCount":0');
   });
 });
