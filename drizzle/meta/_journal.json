@@ -169,6 +169,13 @@
       "when": 1787034030000,
       "tag": "0023_order_fulfillment",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1787143758012,
+      "tag": "0024_spicy_nemesis",
+      "breakpoints": true
     }
   ]
 }
