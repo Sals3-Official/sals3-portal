@@ -4,6 +4,7 @@ import MarketRolesExplainerPanel from '@/components/seller-center/market-rules/M
 import MarketProfileSection from '@/components/seller-center/market-rules/profile/MarketProfileSection';
 import CategoryPricingSection from '@/components/seller-center/market-rules/pricing/CategoryPricingSection';
 import FundingBufferSection from '@/components/seller-center/market-rules/pricing/FundingBufferSection';
+import StoreDefaultSection from '@/components/seller-center/market-rules/pricing/StoreDefaultSection';
 import { can } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 
@@ -49,6 +50,10 @@ export default async function MarketRulesPage() {
       <MarketRolesExplainerPanel />
       {canReadPricing ? (
         <>
+          <StoreDefaultSection
+            sellerAccountId={session.sellerId}
+            canManage={canManagePricing}
+          />
           <CategoryPricingSection
             sellerAccountId={session.sellerId}
             canManage={canManagePricing}
