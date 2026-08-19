@@ -811,6 +811,94 @@ raw `UNBRANDED` token, and an unresolved field is still unresolved for
 readiness/blocker purposes — nothing here touches CJ supplier identity,
 brand evidence, or order-fulfillment fields.
 
+## Description: simple text or a designed layout
+
+The Description section offers two editors and the seller picks with a toggle.
+
+| Mode                | Surface                                                  | Where it saves                                    |
+| ------------------- | -------------------------------------------------------- | ------------------------------------------------- |
+| **Simple text**     | One box on the listing page, plus a photo strip after it | `Save Draft`, like every other field on that form |
+| **Designed layout** | A summary card linking to the full-screen editor         | That screen's own narrow description save         |
+
+**Both write the same stored document.** Simple text is a _view_ over the
+allow-listed block format, not a second schema: paragraphs split on blank lines,
+images appended after them. One stored format means one renderer, one validator,
+and no mode flag that can disagree with the content it describes.
+
+The shape simple text can hold is `[paragraph…][image…]`. Paragraphs because
+blank lines separate them — a single newline stays _inside_ a paragraph, which is
+how sellers actually write a features list in a plain box. Images trail because a
+textarea cannot express interleaved order; there is nowhere in a string to say
+"and here, between these two paragraphs, a photo". That is what designed mode is
+for.
+
+### The mode is derived, not stored
+
+There is no `description_mode` column and no migration. A document simple text
+can hold opens simple; anything else opens designed. An empty document is
+simple-representable, so a new product starts in the box most sellers want,
+ready to type with no click first.
+
+`canUseSimpleMode` is deliberately strict. A heading, bullet list, or detail list
+fails it. **Emphasis fails it too** — a paragraph carrying `runs` would come back
+plain, and losing a seller's bold silently is the same class of defect as losing
+a heading. An image sitting _between_ paragraphs also fails, because the round
+trip would move it to the end and quietly rearrange the page.
+
+### Switching to simple text names what it costs, first
+
+Simple → designed is lossless and silent: every paragraph and image is already a
+valid block, so that direction adds capability without touching content.
+
+Designed → simple is a real conversion, and it asks. `describeSimpleModeLoss`
+counts what will flatten and says so in the seller's words ("Simple text cannot
+hold 2 headings and 1 bullet list…"), then `flattenToSimpleMode` runs only on
+confirmation. **Every word survives** — a heading becomes its own paragraph, a
+bullet list and a detail list become one line per entry, emphasis is dropped, and
+images move to the end. Nothing is deleted, so a mistake is recoverable by
+retyping rather than by restoring a revision.
+
+This is not politeness. `descriptionBlocksToPlainText` carries a comment
+recording that this exact round trip once "silently downgraded headings,
+bullets, and detail lists into paragraphs". Naming the loss before it happens is
+the difference between a conversion the seller chose and one that happened to
+them.
+
+### Recommended input chips
+
+The prompts under the box (`+ Colour`, `+ Size`, `+ Care`…) come from the
+product's own category, reusing `fixture.optionMapping.suggestedAxisNames` — the
+same owner-authored workbook families the Variant Matrix suggests option names
+from. A chip inserts a labelled line and never a value, for the same reason the
+Variant Matrix offers an axis name behind a button instead of pre-filling it: the
+workbook knows what a category is usually described by and cannot know this
+product's answer.
+
+### The character counter is guidance, never a limit
+
+`SIMPLE_TEXT_SOFT_MAX` (3,000) turns the counter amber and explains itself. It
+cannot refuse a save and never truncates — a seller who arrives over it by
+switching from a long designed document keeps every word. Truncating a seller's
+copy to satisfy a counter would be the worst possible reading of "guidance".
+
+### One bug worth recording
+
+The field holds its own text in state rather than deriving it from the document
+each render. Deriving it made **a trailing space impossible to type**: storing
+trims each paragraph, so a space at the end round-tripped away in the same
+keystroke that produced it and the seller watched it vanish. The reconciliation
+compares the incoming document against the field's _own projection_
+(`normalizeSimpleText`), never against its raw value, so the parent's faithful
+echo is not mistaken for a change made elsewhere. The trim belongs at save time,
+where `prepareBlocksForSave` already does it.
+
+### Not built: AI Polish
+
+A "polish this description" action needs an AI provider, a per-call cost, and a
+decision about rewriting a seller's own words on their behalf. None of those are
+approved, so there is no button — a control that cannot work is worse than its
+absence.
+
 ## Description full editor
 
 `/listings/[productId]/description` is the description editor on its own

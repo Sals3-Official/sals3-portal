@@ -1,16 +1,26 @@
+'use client';
+
 import { RotateCcw, TriangleAlert } from 'lucide-react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   descriptionBlocksToPlainText,
   isBlockEmpty,
 } from '@/lib/products/description-blocks';
+import { keyDescriptionBlocks } from '@/lib/products/keyed-blocks';
+import {
+  initialDescriptionMode,
+  type DescriptionMode,
+} from '@/lib/products/simple-description';
 import DescriptionBlockEditor, {
   type DescriptionImageUpload,
   type KeyedDescriptionBlock,
 } from './DescriptionBlockEditor';
+import DescriptionModeToggle from './DescriptionModeToggle';
 import DescriptionSummary from './DescriptionSummary';
 import FieldSourceBadge from './FieldSourceBadge';
 import MetaDescriptionField from './MetaDescriptionField';
+import SimpleDescriptionEditor from './SimpleDescriptionEditor';
 
 type DescriptionSectionProps = {
   blocks: KeyedDescriptionBlock[];
@@ -34,6 +44,12 @@ type DescriptionSectionProps = {
    * quietly reverts the other.
    */
   fullEditorHref?: string | null;
+  /**
+   * Tier-1/tier-2 axis names for this product's Sals3 category, positionally
+   * aligned. Simple mode offers them as prompts; an unmapped product gets the
+   * two universal ones only.
+   */
+  categoryAxisNames?: readonly (string | null)[];
 };
 
 /**
@@ -59,8 +75,58 @@ export default function DescriptionSection({
   uploadImage,
   uploadDisabledReason = null,
   fullEditorHref = null,
+  categoryAxisNames = [],
 }: DescriptionSectionProps) {
   const isEmpty = blocks.every((entry) => isBlockEmpty(entry.block));
+  const plainBlocks = blocks.map((entry) => entry.block);
+  /**
+   * Derived from the content, not stored: a document simple text can hold opens
+   * simple, anything else opens designed. That keeps a mode column — and the
+   * migration to add it — out of a decision the content already answers, and it
+   * means a brand-new product starts in the box most sellers want.
+   */
+  const [mode, setMode] = useState<DescriptionMode>(() =>
+    initialDescriptionMode(plainBlocks),
+  );
+  const isTypingHere = mode === 'simple' || fullEditorHref === null;
+
+  /**
+   * Three surfaces over one document, named rather than nested inline: which
+   * editor renders depends both on the seller's mode choice and on whether a
+   * saveable revision exists behind the screen, and a nested ternary hides that.
+   */
+  let descriptionEditor;
+
+  if (mode === 'simple') {
+    descriptionEditor = (
+      <SimpleDescriptionEditor
+        blocks={plainBlocks}
+        onBlocksChange={(next) => onBlocksChange(keyDescriptionBlocks(next))}
+        categoryAxisNames={categoryAxisNames}
+        uploadImage={uploadImage}
+        uploadDisabledReason={uploadDisabledReason}
+      />
+    );
+  } else if (fullEditorHref === null) {
+    // Designed layout with no saveable revision behind it: a fixture preview, so
+    // the blocks are edited in place here rather than on a screen whose save
+    // could never succeed.
+    descriptionEditor = (
+      <DescriptionBlockEditor
+        blocks={blocks}
+        onChange={onBlocksChange}
+        uploadImage={uploadImage}
+        uploadDisabledReason={uploadDisabledReason}
+      />
+    );
+  } else {
+    descriptionEditor = (
+      <DescriptionSummary
+        blocks={plainBlocks}
+        fullEditorHref={fullEditorHref}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -75,7 +141,7 @@ export default function DescriptionSection({
         {/* Revert restores this screen's own unsaved edits. In summary mode
             there are none to restore — the full editor saves its own work — so
             the control is absent rather than permanently disabled. */}
-        {fullEditorHref === null ? (
+        {isTypingHere ? (
           <Button
             type="button"
             variant="outline"
@@ -89,7 +155,7 @@ export default function DescriptionSection({
         ) : null}
       </div>
 
-      {fullEditorHref === null ? (
+      {isTypingHere ? (
         <p className="flex items-start gap-2 rounded-lg border border-amber-600/30 bg-warning-surface/50 px-3 py-2.5 text-xs text-ink-muted">
           <TriangleAlert
             aria-hidden="true"
@@ -102,38 +168,30 @@ export default function DescriptionSection({
         </p>
       ) : null}
 
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-2.5">
         <p className="text-sm font-medium">Product description</p>
-        {fullEditorHref === null ? (
-          <>
-            <DescriptionBlockEditor
-              blocks={blocks}
-              onChange={onBlocksChange}
-              uploadImage={uploadImage}
-              uploadDisabledReason={uploadDisabledReason}
+
+        <DescriptionModeToggle
+          mode={mode}
+          blocks={plainBlocks}
+          onModeChange={setMode}
+          onFlatten={(flattened) =>
+            onBlocksChange(keyDescriptionBlocks(flattened))
+          }
+        />
+
+        {descriptionEditor}
+
+        {isEmpty ? (
+          <p role="status" className="flex gap-1.5 text-xs text-amber-600">
+            <TriangleAlert
+              aria-hidden="true"
+              className="mt-0.5 size-3.5 shrink-0"
             />
-            {isEmpty ? (
-              <p role="status" className="flex gap-1.5 text-xs text-amber-600">
-                <TriangleAlert
-                  aria-hidden="true"
-                  className="mt-0.5 size-3.5 shrink-0"
-                />
-                Empty description. The listing can publish without one, but the
-                storefront will show only specifications.
-              </p>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Recommended order: summary, key features, materials, sizing,
-                package contents, care. Blocks publish in the order shown here.
-              </p>
-            )}
-          </>
-        ) : (
-          <DescriptionSummary
-            blocks={blocks.map((entry) => entry.block)}
-            fullEditorHref={fullEditorHref}
-          />
-        )}
+            Empty description. The listing can publish without one, but the
+            storefront will show only specifications.
+          </p>
+        ) : null}
       </div>
 
       <MetaDescriptionField
@@ -141,9 +199,7 @@ export default function DescriptionSection({
         onChange={onMetaDescriptionChange}
         isSuggested={isMetaDescriptionSuggested}
         productName={productName}
-        fallbackDescription={descriptionBlocksToPlainText(
-          blocks.map((entry) => entry.block),
-        )}
+        fallbackDescription={descriptionBlocksToPlainText(plainBlocks)}
         onSave={onSaveMetaDescription}
       />
     </div>
