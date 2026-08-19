@@ -1,10 +1,11 @@
 import 'server-only';
 
-import { and, eq, isNotNull, type SQL } from 'drizzle-orm';
+import { and, eq, isNotNull, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import getDb, { type DbExecutor } from '@/lib/db/client';
 import {
   offerSupplierBindings,
+  productMediaSources,
   productOffers,
   productVariants,
   products,
@@ -98,6 +99,14 @@ export type QuoteLine = {
    * never joined live afterwards (ADR-007).
    */
   variantLabel: string | null;
+  /**
+   * The line's thumbnail, frozen with the same rules the storefront feed
+   * applies to a public image (ADR-011 §6): `APPROVED` review state and a
+   * known rights basis, preferring an image recorded for this exact variant
+   * over the product's primary. Captured here so the order shows what the
+   * buyer saw even if media is later re-reviewed or the product unpublished.
+   */
+  imageUrl: string | null;
   weightGrams: number | null;
   lengthMillimeters: number | null;
   widthMillimeters: number | null;
@@ -318,6 +327,27 @@ export class CheckoutFreightQuoteError extends Error {
   }
 }
 
+/**
+ * Mirrors `read-model.ts`'s `primaryImageUrl` gating — approved, rights known —
+ * with one difference: a row recorded for the line's own variant wins over the
+ * product-level primary, because the thumbnail sits beside a variant label.
+ */
+const lineImageUrl = sql<string | null>`(
+  select ${productMediaSources.sourceUrl}
+  from ${productMediaSources}
+  where ${productMediaSources.productId} = ${products.id}
+    and (${productMediaSources.variantId} = ${productVariants.id}
+      or ${productMediaSources.variantId} is null)
+    and ${productMediaSources.reviewState} = 'APPROVED'
+    and ${productMediaSources.rightsBasis} <> 'UNKNOWN'
+    and ${productMediaSources.sourceUrl} is not null
+  order by (${productMediaSources.variantId} = ${productVariants.id}) desc,
+           (${productMediaSources.variantId} is null) desc,
+           ${productMediaSources.observedAt} asc,
+           ${productMediaSources.id} asc
+  limit 1
+)`;
+
 export async function loadQuoteLines(
   input: CheckoutFreightQuoteRequest,
   executor: DbExecutor,
@@ -356,6 +386,7 @@ export async function loadQuoteLines(
           externalSku: providerVariantReferences.externalSku,
           sals3Sku: productVariants.sals3Sku,
           variantLabel: providerVariantReferences.sourceOptionLabel,
+          imageUrl: lineImageUrl,
           weightGrams: productVariants.weightGrams,
           lengthMillimeters: productVariants.lengthMillimeters,
           widthMillimeters: productVariants.widthMillimeters,
@@ -415,6 +446,7 @@ export async function loadQuoteLines(
                 externalSku: providerVariantReferences.externalSku,
                 sals3Sku: productVariants.sals3Sku,
                 variantLabel: providerVariantReferences.sourceOptionLabel,
+                imageUrl: lineImageUrl,
                 weightGrams: productVariants.weightGrams,
                 lengthMillimeters: productVariants.lengthMillimeters,
                 widthMillimeters: productVariants.widthMillimeters,
@@ -491,6 +523,7 @@ export async function loadQuoteLines(
         externalSku: row.externalSku,
         sals3Sku: row.sals3Sku,
         variantLabel: row.variantLabel,
+        imageUrl: row.imageUrl,
         weightGrams: row.weightGrams,
         lengthMillimeters: row.lengthMillimeters,
         widthMillimeters: row.widthMillimeters,
