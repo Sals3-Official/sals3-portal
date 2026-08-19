@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   bigint,
+  boolean,
   check,
   index,
   integer,
@@ -152,6 +153,13 @@ export const sals3OrderLines = pgTable(
     externalVariantId: text('external_variant_id').notNull(),
     externalSku: text('external_sku'),
     sals3Sku: text('sals3_sku').notNull(),
+    /**
+     * The option label the buyer saw, frozen at acceptance (ADR-007). Read
+     * from the provider variant reference at intent creation, never joined
+     * live: a supplier renaming "Warm white / EU plug" must not rewrite what
+     * an old order says was bought. Null on rows accepted before 0024.
+     */
+    variantLabel: text('variant_label'),
     imageUrl: text('image_url'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
@@ -196,6 +204,29 @@ export const fulfillmentGroups = pgTable(
     cjShipmentOrderId: text('cj_shipment_order_id'),
     cjPayId: text('cj_pay_id'),
     lastErrorCode: text('last_error_code'),
+    /**
+     * ADR-004 §2 lifecycle state, written only by the status sync
+     * (`modules/orders/status-sync.ts`), which is also the only place that
+     * translates CJ vocabulary. Text rather than a pgEnum: the 21-state list
+     * already lives in `modules/orders/contracts.ts`, and an enum would make
+     * every future state a migration; the sync validates against the list
+     * before writing. Null means the sync has never seen this group, and the
+     * reader falls back to a mapping of `status`.
+     */
+    parcelState: text('parcel_state'),
+    /** Carrier waybill from CJ `getOrderDetail.trackNumber`. Null until shipped. */
+    trackingNumber: text('tracking_number'),
+    /** CJ's own status word, kept verbatim for audit — never rendered. */
+    supplierStatusRaw: text('supplier_status_raw'),
+    /**
+     * When the carrier's own feed said delivered. Kept separately from CJ's
+     * DELIVERED so `reconcileDelivery` can hold a `TRACKING_CONFLICT` instead
+     * of letting either source win (ADR-004 §5).
+     */
+    carrierDeliveredAt: timestamp('carrier_delivered_at', {
+      withTimezone: true,
+    }),
+    lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -244,6 +275,49 @@ export const supplierOrderSteps = pgTable(
   ],
 );
 
+/**
+ * The carrier's and the supplier's own scans, one row per event, append-only.
+ *
+ * Deliberately unmerged: ADR-004 §5 sets a source priority but forbids the UI
+ * from resolving disagreement, so the two feeds are stored as they arrived and
+ * attributed. `dedupeKey` (source + occurred_at + label, hashed by the sync)
+ * makes re-syncing idempotent — CJ's trackInfo returns the full history every
+ * call, and without the key every sync would duplicate every event.
+ */
+export const parcelTrackingEvents = pgTable(
+  'parcel_tracking_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    fulfillmentGroupId: uuid('fulfillment_group_id')
+      .notNull()
+      .references(() => fulfillmentGroups.id, { onDelete: 'restrict' }),
+    source: text('source').notNull(),
+    label: text('label').notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    isException: boolean('is_exception').notNull().default(false),
+    dedupeKey: text('dedupe_key').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('parcel_tracking_events_group_dedupe_key').on(
+      table.fulfillmentGroupId,
+      table.dedupeKey,
+    ),
+    index('parcel_tracking_events_group_time_idx').on(
+      table.fulfillmentGroupId,
+      table.occurredAt,
+    ),
+    check(
+      'parcel_tracking_events_source_known',
+      sql`${table.source} in ('CARRIER', 'SUPPLIER', 'OPERATIONS')`,
+    ),
+  ],
+);
+
 export type CheckoutIntentRow = typeof checkoutIntents.$inferSelect;
 export type Sals3OrderRow = typeof sals3Orders.$inferSelect;
 export type FulfillmentGroupRow = typeof fulfillmentGroups.$inferSelect;
+export type Sals3OrderLineRow = typeof sals3OrderLines.$inferSelect;
+export type ParcelTrackingEventRow = typeof parcelTrackingEvents.$inferSelect;

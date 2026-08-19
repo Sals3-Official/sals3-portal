@@ -2633,6 +2633,53 @@ publication flip are one statement, because
 `products_public_slug_key` is a partial index over `PUBLISHED` rows and a
 separately written slug could not conflict.
 
+## Buyer orders API and status sync
+
+The storefront's `/orders` pages read these two endpoints, added 2026-08-19:
+
+```text
+GET /api/storefront/orders                       # every order on one buyer account
+GET /api/storefront/orders/S3-YYYYMMDD-XXXXXXXXXX  # one order, if that buyer owns it
+```
+
+Both take the same `Authorization: Bearer <SALS3_STOREFRONT_API_TOKEN>` as the
+product feed, plus `X-Buyer-Email: <verified email>` — the storefront server
+puts its **session-verified** email there, never anything a request supplied,
+because that header is the authorisation. The detail endpoint answers the same
+404 for an unknown number and for a number another buyer owns, so whether a
+number exists is not learnable from it. The payload (assembled in
+`src/modules/orders/buyer-read.ts`) carries minor amounts + currency —
+formatting is the storefront's job — and deliberately never includes supplier
+connection ids, CJ order/shipment/pay ids, or `supplier_status_raw`.
+
+### Where the status and tracking come from
+
+`src/modules/orders/status-sync.ts` pulls each in-flight fulfillment group's
+CJ order detail (`/shopping/order/getOrderDetail`) and carrier scans
+(`/logistic/getTrackInfo`), translates them through the ADR-004 state machine
+(`parcelStateFromCj` + `reconcileDelivery` — a carrier "delivered" CJ disputes
+becomes `TRACKING_CONFLICT`, never a silent downgrade), and persists:
+
+- `fulfillment_groups.parcel_state`, `.tracking_number`,
+  `.supplier_status_raw`, `.carrier_delivered_at`, `.last_synced_at`
+- `parcel_tracking_events` — append-only, deduped by a hash of
+  (source, occurred-at, label), so re-syncing is idempotent
+
+The sync runs as a bounded batch (25 stale groups, terminal parcels skipped)
+behind `POST /api/internal/orders/status-sync`, `CRON_SECRET`-gated, called
+every 30 minutes by `.github/workflows/orders-status-sync.yml`
+(`workflow_dispatch` for a manual kick). Buyer reads never call CJ.
+
+Migration `0025` adds the columns above, the events table, and
+`sals3_order_lines.variant_label` — the option label frozen at intent
+creation from the provider variant reference, so a supplier rename never
+rewrites what an old order says was bought. **0025 is hand-edited to be
+idempotent**: it was applied to production on 2026-08-19 under an earlier
+number before `0024_spicy_nemesis` took that slot on `develop`, so its journal
+`when` is pinned to the production row and every statement is guarded.
+Production migrations remain manual: run `npm run db:migrate` against
+production **before** deploying code that reads these columns.
+
 ## Image delivery
 
 Every `next/image` in the portal is resolved by a custom loader,
