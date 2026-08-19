@@ -5,4 +5,8 @@ if [ "$branch" = "develop" ] || [ "$branch" = "main" ]; then
   exit 1
 fi
 
+# The single full gate before anything leaves this machine: lint, format,
+# typecheck, build, unit, e2e. Pre-commit deliberately runs only the fast
+# checks, so this is the one place the whole suite has to pass — do not
+# reduce it without moving the coverage somewhere that runs before a push.
 npm run verify
