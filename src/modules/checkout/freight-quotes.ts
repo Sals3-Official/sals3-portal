@@ -91,6 +91,13 @@ export type QuoteLine = {
   externalVariantId: string;
   externalSku: string | null;
   sals3Sku: string;
+  /**
+   * The supplier's own variant label, verbatim (`Black-1XL`) — the same string
+   * the PDP's variant selector shows, so the order says what the buyer saw.
+   * Frozen into the cart snapshot here and onto the order line at acceptance;
+   * never joined live afterwards (ADR-007).
+   */
+  variantLabel: string | null;
   weightGrams: number | null;
   lengthMillimeters: number | null;
   widthMillimeters: number | null;
@@ -348,6 +355,7 @@ export async function loadQuoteLines(
           externalVariantId: providerVariantReferences.externalVariantId,
           externalSku: providerVariantReferences.externalSku,
           sals3Sku: productVariants.sals3Sku,
+          variantLabel: providerVariantReferences.sourceOptionLabel,
           weightGrams: productVariants.weightGrams,
           lengthMillimeters: productVariants.lengthMillimeters,
           widthMillimeters: productVariants.widthMillimeters,
@@ -406,6 +414,7 @@ export async function loadQuoteLines(
                 externalVariantId: providerVariantReferences.externalVariantId,
                 externalSku: providerVariantReferences.externalSku,
                 sals3Sku: productVariants.sals3Sku,
+                variantLabel: providerVariantReferences.sourceOptionLabel,
                 weightGrams: productVariants.weightGrams,
                 lengthMillimeters: productVariants.lengthMillimeters,
                 widthMillimeters: productVariants.widthMillimeters,
@@ -481,6 +490,7 @@ export async function loadQuoteLines(
         externalVariantId: row.externalVariantId,
         externalSku: row.externalSku,
         sals3Sku: row.sals3Sku,
+        variantLabel: row.variantLabel,
         weightGrams: row.weightGrams,
         lengthMillimeters: row.lengthMillimeters,
         widthMillimeters: row.widthMillimeters,
