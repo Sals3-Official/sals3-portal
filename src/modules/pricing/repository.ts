@@ -241,6 +241,45 @@ export type CategoryMarginLeafRow = {
  * driven FROM `sals3Categories`, not from the policy table. One query, no
  * N+1 — the settings page's whole initial render comes from this fetch.
  */
+/**
+ * How many categories sit under each node, counted across the WHOLE
+ * taxonomy — not just the rows `listCategoryMarginOverview` returns.
+ *
+ * This exists because deriving the count from those rows is wrong the
+ * moment they are depth-capped, and it shipped wrong: "Home & Garden —
+ * 1,034 categories" rendered as "21", and the editor told a seller a
+ * department margin covered 21 categories when it covered 1,034. A number
+ * that understates the blast radius of a pricing change by 50x is worse
+ * than no number.
+ *
+ * Reads one column. The 5,602 short strings stay on the server — only the
+ * 213 aggregated counts reach the browser — so this is cheaper than it
+ * looks and needs no recursive CTE.
+ */
+export async function countDescendantsByPath(
+  executor: Executor,
+): Promise<Map<string, number>> {
+  const rows = await executor
+    .select({ path: sals3Categories.path })
+    .from(sals3Categories);
+
+  const counts = new Map<string, number>();
+
+  rows.forEach((row) => {
+    const segments = row.path.split(CATEGORY_PATH_SEPARATOR);
+
+    // Every strict ancestor of this row gains one descendant.
+    for (let depth = 1; depth < segments.length; depth += 1) {
+      const ancestorPath = segments
+        .slice(0, depth)
+        .join(CATEGORY_PATH_SEPARATOR);
+      counts.set(ancestorPath, (counts.get(ancestorPath) ?? 0) + 1);
+    }
+  });
+
+  return counts;
+}
+
 export async function listCategoryMarginOverview(
   executor: Executor,
   sellerAccountId: string,

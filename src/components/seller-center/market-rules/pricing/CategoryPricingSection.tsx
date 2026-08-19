@@ -1,5 +1,6 @@
 import getDb from '@/lib/db/client';
 import {
+  countDescendantsByPath,
   findActiveStoreDefault,
   listCategoryMarginOverview,
   type CategoryMarginLeafRow,
@@ -24,11 +25,18 @@ const PATH_SEPARATOR = ' > ';
  * yet (same discipline as `resolveFixtureVariantGuidance` — a missing
  * table is an operational condition, not a bug to surface as a 500).
  */
-async function readCategoryRows(
-  sellerAccountId: string,
-): Promise<CategoryMarginLeafRow[] | null> {
+async function readCategoryRows(sellerAccountId: string): Promise<{
+  rows: CategoryMarginLeafRow[];
+  descendantCounts: Map<string, number>;
+} | null> {
   try {
-    return await listCategoryMarginOverview(getDb(), sellerAccountId);
+    const db = getDb();
+    const [rows, descendantCounts] = await Promise.all([
+      listCategoryMarginOverview(db, sellerAccountId),
+      countDescendantsByPath(db),
+    ]);
+
+    return { rows, descendantCounts };
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('[portal] failed to read category margin rows', {
@@ -93,9 +101,14 @@ async function readStoreDefault(
  */
 function toNodeViewModels(
   rows: CategoryMarginLeafRow[],
+  descendantCounts: Map<string, number>,
 ): CategoryMarginNodeViewModel[] {
+  // `childCount` is derived from the ROWS — it drives the expand chevron, so
+  // it must describe what this view can actually render. `subtreeCount` is
+  // taken from the full-taxonomy counts instead, because it describes what a
+  // margin set here will really cover; deriving it from depth-capped rows is
+  // what made "Home & Garden — 1,034 categories" render as "21".
   const childCounts = new Map<string, number>();
-  const subtreeCounts = new Map<string, number>();
 
   rows.forEach((row) => {
     const segments = row.path.split(PATH_SEPARATOR);
@@ -104,15 +117,6 @@ function toNodeViewModels(
 
     if (parentPath !== null) {
       childCounts.set(parentPath, (childCounts.get(parentPath) ?? 0) + 1);
-    }
-
-    // Every strict ancestor gains one descendant.
-    for (let depth = 1; depth < segments.length; depth += 1) {
-      const ancestorPath = segments.slice(0, depth).join(PATH_SEPARATOR);
-      subtreeCounts.set(
-        ancestorPath,
-        (subtreeCounts.get(ancestorPath) ?? 0) + 1,
-      );
     }
   });
 
@@ -128,7 +132,7 @@ function toNodeViewModels(
       parentPath:
         segments.length > 1 ? segments.slice(0, -1).join(PATH_SEPARATOR) : null,
       childCount: childCounts.get(row.path) ?? 0,
-      subtreeCount: subtreeCounts.get(row.path) ?? 0,
+      subtreeCount: descendantCounts.get(row.path) ?? 0,
       policy: row.policy,
     };
   });
@@ -146,7 +150,7 @@ export default async function CategoryPricingSection({
   canManage,
 }: CategoryPricingSectionProps) {
   // Independent reads: a store-default failure must never hide the tree.
-  const [rows, storeDefaultResult] = await Promise.all([
+  const [categoryData, storeDefaultResult] = await Promise.all([
     readCategoryRows(sellerAccountId),
     readStoreDefault(sellerAccountId),
   ]);
@@ -170,7 +174,7 @@ export default async function CategoryPricingSection({
           Editor.
         </p>
       </div>
-      {rows === null ? (
+      {categoryData === null ? (
         <DisclosureBanner tone="warning">
           Category pricing is not available right now. Your saved margins are
           safe. Try again shortly, or contact support if this keeps happening.
@@ -193,7 +197,10 @@ export default async function CategoryPricingSection({
             </DisclosureBanner>
           ) : null}
           <CategoryMarginTree
-            nodes={toNodeViewModels(rows)}
+            nodes={toNodeViewModels(
+              categoryData.rows,
+              categoryData.descendantCounts,
+            )}
             storeDefault={storeDefault}
             sellerAccountId={sellerAccountId}
             canManage={canManage}
