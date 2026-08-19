@@ -1,4 +1,5 @@
 import type { DescriptionBlock } from '@/lib/products/description-blocks';
+import type { DescriptionMode } from '@/lib/products/simple-description';
 import type { MappedOptionAxis } from '@/lib/seller-center/product-catalogue/types';
 import type {
   EvaluationStatus,
@@ -326,6 +327,11 @@ export type ProductEditorFixture = {
    * first time anyone opened the page.
    */
   descriptionBlocks: DescriptionBlock[];
+  /**
+   * Which description editor the seller last chose. `undefined` for a document
+   * written before the field existed, which the editor infers from content.
+   */
+  descriptionMode?: DescriptionMode;
   /**
    * The stored Variant Matrix, for renaming what a buyer reads. Empty until
    * the product is mapped.

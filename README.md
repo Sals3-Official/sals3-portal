@@ -815,10 +815,10 @@ brand evidence, or order-fulfillment fields.
 
 The Description section offers two editors and the seller picks with a toggle.
 
-| Mode                | Surface                                                  | Where it saves                                    |
-| ------------------- | -------------------------------------------------------- | ------------------------------------------------- |
-| **Simple text**     | One box on the listing page, plus a photo strip after it | `Save Draft`, like every other field on that form |
-| **Designed layout** | A summary card linking to the full-screen editor         | That screen's own narrow description save         |
+| Mode                | Surface                                          | Where it saves                                    |
+| ------------------- | ------------------------------------------------ | ------------------------------------------------- |
+| **Simple text**     | One box on the listing page                      | `Save Draft`, like every other field on that form |
+| **Designed layout** | A summary card linking to the full-screen editor | That screen's own narrow description save         |
 
 **Both write the same stored document.** Simple text is a _view_ over the
 allow-listed block format, not a second schema: paragraphs split on blank lines,
@@ -832,31 +832,62 @@ textarea cannot express interleaved order; there is nowhere in a string to say
 "and here, between these two paragraphs, a photo". That is what designed mode is
 for.
 
-### The mode is derived, not stored
+### The mode is stored on the document, but still needs no migration
 
-There is no `description_mode` column and no migration. A document simple text
-can hold opens simple; anything else opens designed. An empty document is
-simple-representable, so a new product starts in the box most sellers want,
-ready to type with no click first.
+`descriptionDocumentSchema` carries an optional `mode: 'simple' | 'design'`. It
+lives in the same JSONB column as the blocks, so adding it was a code-only
+change — the same non-event `runs` was.
 
-`canUseSimpleMode` is deliberately strict. A heading, bullet list, or detail list
-fails it. **Emphasis fails it too** — a paragraph carrying `runs` would come back
-plain, and losing a seller's bold silently is the same class of defect as losing
-a heading. An image sitting _between_ paragraphs also fails, because the round
-trip would move it to the end and quietly rearrange the page.
+It is stored rather than derived because **the content can no longer answer the
+question.** Simple text publishes only its paragraphs but _retains_ photos saved
+in the designed layout, so a simple document holding photos is indistinguishable
+by content from a designed one. That ambiguity is the whole reason the field
+exists.
+
+This is a flag that could in principle disagree with the content, which earlier
+versions of this feature avoided on purpose. The trade is deliberate: a flag that
+decides _what publishes_ records a seller's stated intent, and honouring it costs
+less than deleting photos they spent time uploading.
+
+A document with no `mode` predates the field. `initialDescriptionMode` infers one
+for those — text-only opens simple, anything holding a photo opens designed,
+which is where that photo is visible — so no stored description changes what it
+publishes.
+
+### Photos are retained across a switch, never deleted
+
+Owner decision, and it is the point of the stored mode:
+
+| Seller does                          | What happens                                                      |
+| ------------------------------------ | ----------------------------------------------------------------- |
+| Uses simple text                     | Only the paragraphs reach the product page                        |
+| Switches to simple with photos saved | Photos stay in the document, unpublished, and are named on screen |
+| Switches back to the designed layout | Photos come back whole, in order                                  |
+
+`publishableBlocks(blocks, mode)` is the **only** place the mode changes an
+outcome, and the storefront read model is its only caller — so the rule lives
+once instead of being re-derived by every consumer that renders a description.
+
+Simple mode states what it is holding (_"One photo from the designed layout is
+saved with this description…"_) rather than showing a strip it cannot let the
+seller place. A photo that is neither visible nor mentioned reads as one that was
+thrown away.
 
 ### Switching to simple text names what it costs, first
 
 Simple → designed is lossless and silent: every paragraph and image is already a
 valid block, so that direction adds capability without touching content.
 
-Designed → simple is a real conversion, and it asks. `describeSimpleModeLoss`
-counts what will flatten and says so in the seller's words ("Simple text cannot
-hold 2 headings and 1 bullet list…"), then `flattenToSimpleMode` runs only on
-confirmation. **Every word survives** — a heading becomes its own paragraph, a
-bullet list and a detail list become one line per entry, emphasis is dropped, and
-images move to the end. Nothing is deleted, so a mistake is recoverable by
-retyping rather than by restoring a revision.
+Designed → simple asks only when text _structure_ would change.
+`describeSimpleModeLoss` counts what will flatten and says so in the seller's
+words ("Simple text cannot hold 2 headings and 1 bullet list…"), and
+`flattenToSimpleMode` runs only on confirmation. **Every word survives** — a
+heading becomes its own paragraph, lists become one line per entry, emphasis is
+dropped. Photos are not listed as a loss because they are not one: they are
+carried through untouched, and the message says so.
+
+A document that is already plain paragraphs plus photos switches with no dialog
+at all, because nothing about it changes.
 
 This is not politeness. `descriptionBlocksToPlainText` carries a comment
 recording that this exact round trip once "silently downgraded headings,
@@ -864,15 +895,17 @@ bullets, and detail lists into paragraphs". Naming the loss before it happens is
 the difference between a conversion the seller chose and one that happened to
 them.
 
-### Recommended input chips
+### Simple text is only the box
 
-The prompts under the box (`+ Colour`, `+ Size`, `+ Care`…) come from the
-product's own category, reusing `fixture.optionMapping.suggestedAxisNames` — the
-same owner-authored workbook families the Variant Matrix suggests option names
-from. A chip inserts a labelled line and never a value, for the same reason the
-Variant Matrix offers an axis name behind a button instead of pre-filling it: the
-workbook knows what a category is usually described by and cannot know this
-product's answer.
+No upload button and no prompt chips, by owner decision. An upload here could
+only ever produce "the photos you uploaded, in that order, after the text", a
+worse version of what the designed layout does properly — placement is that
+mode's whole point. A row of suggestions around an empty box is furniture rather
+than help.
+
+Photos a document already holds are **named** in simple mode rather than shown as
+an editable strip, because simple mode cannot place one and does not publish one.
+Adding or placing a photo means switching to the designed layout.
 
 ### The character counter is guidance, never a limit
 

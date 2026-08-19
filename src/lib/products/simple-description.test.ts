@@ -9,6 +9,7 @@ import {
   flattenToSimpleMode,
   imagesOf,
   initialDescriptionMode,
+  publishableBlocks,
   simpleDescriptionToBlocks,
 } from './simple-description';
 
@@ -58,7 +59,7 @@ describe('the simple-text round trip', () => {
     expect(blocksToSimpleText(descriptionTextToBlocks(text))).toBe(text);
   });
 
-  it('keeps images out of the text and in the strip', () => {
+  it('keeps images out of the text but still in the document', () => {
     const blocks = simpleDescriptionToBlocks('Soft cotton.', [
       image('a'),
       image('b'),
@@ -80,7 +81,7 @@ describe('the simple-text round trip', () => {
 });
 
 describe('canUseSimpleMode', () => {
-  it('accepts plain paragraphs followed by images', () => {
+  it('accepts plain paragraphs alongside retained photos', () => {
     expect(
       canUseSimpleMode([
         { type: 'paragraph', text: 'One.' },
@@ -121,21 +122,16 @@ describe('canUseSimpleMode', () => {
     ).toBe(false);
   });
 
-  it('refuses an image sitting between paragraphs, which the round trip would move', () => {
+  it('accepts a photo anywhere, because switching keeps it', () => {
+    // Photos are retained across a switch and restored on switching back, so
+    // there is nothing for the seller to agree to.
     expect(
       canUseSimpleMode([
         { type: 'paragraph', text: 'One.' },
         image('a'),
         { type: 'paragraph', text: 'Two.' },
       ]),
-    ).toBe(false);
-    expect(
-      initialDescriptionMode([
-        { type: 'paragraph', text: 'One.' },
-        image('a'),
-        { type: 'paragraph', text: 'Two.' },
-      ]),
-    ).toBe('design');
+    ).toBe(true);
   });
 });
 
@@ -157,19 +153,21 @@ describe('describeSimpleModeLoss', () => {
     expect(message).toContain('1 bullet list');
   });
 
-  it('names emphasis and a displaced image', () => {
+  it('names emphasis and promises the photos are safe', () => {
     const message = describeSimpleModeLoss([
+      { type: 'heading', level: 2, text: 'Fit' },
       {
         type: 'paragraph',
         text: 'Soft',
         runs: [{ text: 'Soft', marks: ['em'] }],
       },
       image('a'),
-      { type: 'paragraph', text: 'After.' },
     ]);
 
     expect(message).toContain('bold or italic in 1 paragraph');
-    expect(message).toContain('1 image that sit');
+    // The photo is not a loss and must not be listed as one.
+    expect(message).not.toContain('photo');
+    expect(message).toContain('Photos are not affected');
   });
 });
 
@@ -201,11 +199,11 @@ describe('flattenToSimpleMode', () => {
     ].forEach((word) => expect(text).toContain(word));
   });
 
-  it('keeps the image and moves it after the text', () => {
+  it('carries the photo through untouched — the seller keeps their upload', () => {
     const flattened = flattenToSimpleMode(rich);
 
     expect(imagesOf(flattened)).toHaveLength(1);
-    expect(flattened[flattened.length - 1]?.type).toBe('image');
+    expect(imagesOf(flattened)[0]).toEqual(image('detail'));
   });
 
   it('drops the emphasis it warned about', () => {
@@ -232,5 +230,56 @@ describe('flattenToSimpleMode', () => {
     const once = flattenToSimpleMode(rich);
 
     expect(flattenToSimpleMode(once)).toEqual(once);
+  });
+});
+
+describe('publishableBlocks', () => {
+  const withPhoto = [
+    { type: 'paragraph' as const, text: 'Soft cotton twill.' },
+    image('detail'),
+  ];
+
+  it('publishes only the paragraphs in simple mode', () => {
+    expect(publishableBlocks(withPhoto, 'simple')).toEqual([
+      { type: 'paragraph', text: 'Soft cotton twill.' },
+    ]);
+  });
+
+  it('publishes everything in the designed layout', () => {
+    expect(publishableBlocks(withPhoto, 'design')).toEqual(withPhoto);
+  });
+
+  it('never mutates the document it was given', () => {
+    const before = structuredClone(withPhoto);
+
+    publishableBlocks(withPhoto, 'simple');
+
+    expect(withPhoto).toEqual(before);
+  });
+});
+
+describe('initialDescriptionMode', () => {
+  const withPhoto = [
+    { type: 'paragraph' as const, text: 'Soft cotton twill.' },
+    image('detail'),
+  ];
+
+  it('trusts the stored mode over the content', () => {
+    // The whole reason the field exists: a simple document holding a retained
+    // photo is indistinguishable from a designed one by content alone.
+    expect(initialDescriptionMode(withPhoto, 'simple')).toBe('simple');
+    expect(initialDescriptionMode(withPhoto, 'design')).toBe('design');
+  });
+
+  it('infers designed for a legacy document holding a photo', () => {
+    // Written before the field existed, so its photo was published. Opening it
+    // designed is where that photo is visible, and nothing it publishes changes.
+    expect(initialDescriptionMode(withPhoto)).toBe('design');
+  });
+
+  it('infers simple for a legacy text-only document', () => {
+    expect(
+      initialDescriptionMode([{ type: 'paragraph', text: 'Soft cotton.' }]),
+    ).toBe('simple');
   });
 });

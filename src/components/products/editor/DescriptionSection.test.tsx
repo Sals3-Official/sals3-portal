@@ -1,6 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import uploadDescriptionImageAction from '@/app/(portal)/listings/description-image-actions';
 import { renameOptionMappingAction } from '@/app/(portal)/listings/option-mapping-actions';
 import { saveProductDraftAction } from '@/app/(portal)/listings/product-draft-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
@@ -53,6 +52,8 @@ vi.mock('@/app/(portal)/listings/show-supplier-photo-actions', () => ({
 vi.mock('@/app/(portal)/listings/description-image-actions', () => ({
   default: vi.fn(),
 }));
+
+const PHOTO_URL = 'https://media.example.com/description-media/p/a.webp';
 
 const DRAFT_TARGET = {
   productId: '11111111-1111-4111-8111-111111111111',
@@ -469,56 +470,85 @@ describe('Description section - simple text and designed layout', () => {
     ]);
   });
 
-  it('attaches an uploaded photo after the text, needing alt text before publish', async () => {
+  it('opens a legacy photo-bearing document in the designed layout', () => {
+    // No stored mode means it predates the field, so its photo was published.
+    // Designed is where that photo is visible, and nothing it publishes changes.
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: undefined,
+      descriptionBlocks: [
+        { type: 'paragraph', text: 'Soft cotton twill.' },
+        { type: 'image', url: PHOTO_URL, alt: 'Pocket detail' },
+      ],
+    });
+
+    expect(
+      screen.getByRole('button', { name: /Designed layout/ }),
+    ).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('says a retained photo is kept and not published, rather than showing nothing', () => {
+    // The seller chose simple text. The photo stays in the document so switching
+    // layout again restores it, and simple text does not publish it — so it has
+    // to be *mentioned*, or it reads as a photo that was thrown away.
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: 'simple',
+      descriptionBlocks: [
+        { type: 'paragraph', text: 'Soft cotton twill.' },
+        { type: 'image', url: PHOTO_URL, alt: 'Pocket detail' },
+      ],
+    });
+
+    expect(screen.getByLabelText('Product description')).toHaveValue(
+      'Soft cotton twill.',
+    );
+    expect(
+      screen.getByText(/One photo from the designed layout is saved/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId('simple-description-file'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps a retained photo through an edit and a save', async () => {
     vi.mocked(saveProductDraftAction).mockResolvedValue({
       ok: true,
       revisionVersion: 4,
     });
-    vi.mocked(uploadDescriptionImageAction).mockResolvedValue({
-      ok: true,
-      url: 'https://media.example.com/description-media/p/a.webp',
-      widthPixels: 1200,
-      heightPixels: 900,
-    });
 
     renderEditor({
       ...databaseBackedFixture(),
-      descriptionBlocks: [{ type: 'paragraph', text: 'Soft cotton twill.' }],
+      descriptionMode: 'simple',
+      descriptionBlocks: [
+        { type: 'paragraph', text: 'Soft cotton twill.' },
+        { type: 'image', url: PHOTO_URL, alt: 'Pocket detail' },
+      ],
     });
 
-    fireEvent.change(screen.getByTestId('simple-description-file'), {
-      target: {
-        files: [new File(['bytes'], 'a.png', { type: 'image/png' })],
-      },
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'Rewritten entirely.' },
     });
 
-    await waitFor(() =>
-      expect(uploadDescriptionImageAction).toHaveBeenCalled(),
-    );
+    const document = await saveDraft();
 
-    expect(screen.getByText(/still needs a description/)).toBeInTheDocument();
-
-    fireEvent.change(screen.getByLabelText('Alt text for photo 1'), {
-      target: { value: 'Pocket detail' },
-    });
-
-    expect((await saveDraft()).blocks).toEqual([
-      { type: 'paragraph', text: 'Soft cotton twill.' },
-      {
-        type: 'image',
-        url: 'https://media.example.com/description-media/p/a.webp',
-        alt: 'Pocket detail',
-      },
+    // Typing in the box must never be the thing that drops an upload.
+    expect(document.blocks).toEqual([
+      { type: 'paragraph', text: 'Rewritten entirely.' },
+      { type: 'image', url: PHOTO_URL, alt: 'Pocket detail' },
     ]);
+    expect(document.mode).toBe('simple');
   });
 
-  it('a recommended-input chip adds the label and never the answer', () => {
+  it('keeps the simple box free of an upload button and prompt chips', () => {
+    // Both were removed on purpose. A toolbar here could only produce a worse
+    // version of what the designed layout does properly, and a row of
+    // suggestions around an empty box is furniture rather than help.
     renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
 
-    // Sourced from the product's own category, the same data the Variant Matrix
-    // suggests axis names from.
-    fireEvent.click(screen.getByRole('button', { name: /Care/ }));
-
-    expect(screen.getByLabelText('Product description')).toHaveValue('Care: ');
+    expect(
+      screen.queryByRole('button', { name: /Add images/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Recommended input/i)).not.toBeInTheDocument();
   });
 });
