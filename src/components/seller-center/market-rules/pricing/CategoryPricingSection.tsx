@@ -5,10 +5,11 @@ import {
   type CategoryMarginLeafRow,
 } from '@/modules/pricing/repository';
 import DisclosureBanner from '@/components/seller-center/shared/DisclosureBanner';
-import CategoryMarginTree, {
-  type CategoryMarginNodeViewModel,
-  type StoreDefaultSummary,
-} from './CategoryMarginTree';
+import CategoryMarginTree from './CategoryMarginTree';
+import type {
+  CategoryMarginNodeViewModel,
+  StoreDefaultSummary,
+} from './category-margin-model';
 
 type CategoryPricingSectionProps = {
   sellerAccountId: string;

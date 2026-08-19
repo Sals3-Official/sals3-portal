@@ -3,83 +3,15 @@
 import { useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import type { RoundingRule } from '@/modules/pricing/money-math';
 import CategoryMarginNodeRow from './CategoryMarginNodeRow';
+import {
+  effectiveMarginFor,
+  ROW_GRID,
+  type CategoryMarginNodeViewModel,
+  type StoreDefaultSummary,
+} from './category-margin-model';
 
-export type CategoryMarginNodeViewModel = {
-  categoryId: string;
-  code: string;
-  /** Full denormalized path, e.g. "Apparel & Accessories > Clothing". */
-  path: string;
-  /** Last path segment — the display name at this depth. */
-  name: string;
-  /** 1-based; departments are depth 1. */
-  depth: number;
-  parentPath: string | null;
-  /** Direct children — drives the expand chevron. */
-  childCount: number;
-  /** All descendants — the "N categories" count on a branch. */
-  subtreeCount: number;
-  policy: {
-    id: string;
-    targetMarginRate: string;
-    roundingRule: RoundingRule;
-    version: number;
-    updatedAt: Date;
-  } | null;
-};
-
-export type StoreDefaultSummary = {
-  targetMarginRate: string;
-  roundingRule: RoundingRule;
-};
-
-/** Where a node's effective margin actually comes from. */
-export type EffectiveMargin =
-  | { source: 'SELF'; rate: string }
-  | { source: 'ANCESTOR'; rate: string; ancestorName: string }
-  | { source: 'STORE_DEFAULT'; rate: string }
-  | { source: 'NONE' };
-
-const PATH_SEPARATOR = ' > ';
 const SEARCH_RESULT_CAP = 50;
-
-/**
- * Mirrors the resolver's `findNearestActiveCategoryPolicy` walk: self,
- * then each ancestor by path prefix, then the store default. Display-only —
- * the server-side resolver is the authority; this exists so the tree can
- * say where a rate would come from without a round trip per row.
- */
-export function effectiveMarginFor(
-  node: CategoryMarginNodeViewModel,
-  nodesByPath: Map<string, CategoryMarginNodeViewModel>,
-  storeDefault: StoreDefaultSummary | null,
-): EffectiveMargin {
-  if (node.policy !== null) {
-    return { source: 'SELF', rate: node.policy.targetMarginRate };
-  }
-
-  const segments = node.path.split(PATH_SEPARATOR);
-
-  for (let depth = segments.length - 1; depth >= 1; depth -= 1) {
-    const ancestorPath = segments.slice(0, depth).join(PATH_SEPARATOR);
-    const ancestor = nodesByPath.get(ancestorPath);
-
-    if (ancestor !== undefined && ancestor.policy !== null) {
-      return {
-        source: 'ANCESTOR',
-        rate: ancestor.policy.targetMarginRate,
-        ancestorName: ancestor.name,
-      };
-    }
-  }
-
-  if (storeDefault !== null) {
-    return { source: 'STORE_DEFAULT', rate: storeDefault.targetMarginRate };
-  }
-
-  return { source: 'NONE' };
-}
 
 type CategoryMarginTreeProps = {
   nodes: CategoryMarginNodeViewModel[];
@@ -202,7 +134,7 @@ export default function CategoryMarginTree({
       >
         <div
           role="row"
-          className="grid grid-cols-[minmax(0,1fr)_130px_minmax(140px,210px)_auto] items-center gap-3 border-b border-border bg-surface px-3 py-2"
+          className={`${ROW_GRID} border-b border-border bg-surface px-3 py-1.5`}
         >
           <span
             role="columnheader"

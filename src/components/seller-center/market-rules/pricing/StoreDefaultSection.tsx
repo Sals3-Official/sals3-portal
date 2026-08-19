@@ -59,9 +59,10 @@ export default async function StoreDefaultSection({
             Store default pricing
           </h2>
           <p className="max-w-[78ch] text-sm text-muted-foreground">
-            Applies to every category without its own margin. The minimum
-            contribution protects cheap items, where a percentage alone can
-            price below what an order really costs to serve.
+            Two numbers that work out a selling price from whatever the supplier
+            charges, so you don&rsquo;t price products one at a time. Every
+            category uses these until you give a department its own margin
+            below.
           </p>
         </div>
       </div>
