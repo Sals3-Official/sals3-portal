@@ -33,6 +33,29 @@ export function canBulkEnable(variant: VariantFixture): boolean {
 }
 
 /**
+ * What each variant's listing switch should read when the editor opens.
+ *
+ * The two bulk buttons this replaces — `Enable eligible in-stock variants` and
+ * `Disable unavailable variants` — asked the seller to press a button to reach a
+ * state the data already determined. Owner decision: it happens on its own.
+ *
+ * The invariant those buttons carried in their own copy survives unchanged:
+ * **a blocked or paused variant is never switched on silently.** Those keep
+ * whatever the server said, because the supplier or a policy ruled them out and
+ * an editor opening is not new information about either.
+ *
+ * A variant with no stock is switched off, in stock and unblocked is switched on,
+ * and everything else is left alone.
+ */
+export function autoListVariants(variants: VariantFixture[]): VariantFixture[] {
+  return variants.map((variant) => {
+    if (variant.supplierStock === 0) return { ...variant, enabled: false };
+
+    return canBulkEnable(variant) ? { ...variant, enabled: true } : variant;
+  });
+}
+
+/**
  * Retail spread across the variants that will actually be listed. `null`
  * when nothing will list, or when the enabled variants do not share one
  * currency - a "$8 – ¥1,200" range would be meaningless.

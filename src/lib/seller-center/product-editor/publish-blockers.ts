@@ -80,10 +80,27 @@ function needsOptionNames(fixture: ProductEditorFixture): boolean {
   );
 }
 
+/**
+ * The parts of the product a seller edits without saving.
+ *
+ * Passed in rather than read off `fixture`, because `fixture` is the server's
+ * snapshot from page load and these three change under the seller's hands. Read
+ * from the snapshot, a gate reports the state the page opened in: switching a
+ * variant on left `No variant is listed` standing, which reads as a toggle that
+ * does not work rather than a panel that is not listening.
+ */
+export type EditorLiveState = {
+  variants: ProductEditorFixture['variants'];
+  media: ProductEditorFixture['media'];
+  showSupplierPhoto: boolean;
+};
+
 export default function predictPublishBlockers(
   fixture: ProductEditorFixture,
+  live: EditorLiveState,
 ): ReadinessIssue[] {
   const blockers: ReadinessIssue[] = [];
+  const { variants, media, showSupplierPhoto } = live;
 
   if (needsSals3Category(fixture)) {
     blockers.push(
@@ -103,17 +120,17 @@ export default function predictPublishBlockers(
   }
 
   if (
-    fixture.variants.length > 0 &&
-    fixture.variants.every((v) => v.supplierCost.amountMinor <= 0)
+    variants.length > 0 &&
+    variants.every((v) => v.supplierCost.amountMinor <= 0)
   ) {
     blockers.push(issue(fixture, 'NO_SUPPLIER_COST', 'Variants & Pricing'));
   }
 
-  if (fixture.media.length === 0 && !fixture.showSupplierPhoto) {
+  if (media.length === 0 && !showSupplierPhoto) {
     blockers.push(issue(fixture, 'NO_APPROVED_MEDIA', 'Product media'));
   }
 
-  const belowCost = fixture.variants.filter(
+  const belowCost = variants.filter(
     (variant) =>
       variant.enabled &&
       variant.retailPrice.currency === variant.supplierCost.currency &&

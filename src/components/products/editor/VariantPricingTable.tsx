@@ -26,8 +26,6 @@ type VariantPricingTableProps = {
   onToggleEnabled: (variantId: string) => void;
   onRetailChange: (variantId: string, amountMinor: number) => void;
   onSellerSkuChange: (variantId: string, value: string) => void;
-  onBulkEnableInStock: () => void;
-  onBulkDisableUnavailable: () => void;
   onBulkSetPrice: () => void;
 };
 
@@ -136,8 +134,6 @@ export default function VariantPricingTable({
   onToggleEnabled,
   onRetailChange,
   onSellerSkuChange,
-  onBulkEnableInStock,
-  onBulkDisableUnavailable,
   onBulkSetPrice,
 }: VariantPricingTableProps) {
   return (
@@ -155,25 +151,9 @@ export default function VariantPricingTable({
           <Tag aria-hidden="true" />
           Set retail price…
         </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onBulkEnableInStock}
-        >
-          Enable eligible in-stock variants
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onBulkDisableUnavailable}
-        >
-          Disable unavailable variants
-        </Button>
         <span className="text-xs text-muted-foreground">
-          Bulk actions skip blocked and paused variants — they are never
-          re-enabled silently.
+          Variants with stock are listed automatically. Blocked and paused ones
+          are never switched on for you.
         </span>
       </div>
 

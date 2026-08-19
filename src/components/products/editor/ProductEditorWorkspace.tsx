@@ -21,7 +21,7 @@ import {
   type DescriptionBlock,
 } from '@/lib/products/description-blocks';
 import {
-  canBulkEnable,
+  autoListVariants,
   filledSpecificationCount,
   isCategoryAttributeUnresolved,
   issuesOfSeverity,
@@ -485,7 +485,13 @@ export default function ProductEditorWorkspace({
     setPrevCategoryCode(fixture.sals3CategoryCode);
     setCategoryAttributes(fixture.categoryAttributes);
   }
-  const [variants, setVariants] = useState<VariantFixture[]>(fixture.variants);
+  /**
+   * Seeded through `autoListVariants`, which replaces the two bulk buttons that
+   * used to ask the seller to press for a state the data already settled.
+   */
+  const [variants, setVariants] = useState<VariantFixture[]>(() =>
+    autoListVariants(fixture.variants),
+  );
 
   /**
    * Option labels come back from the server after a rename; everything else in
@@ -665,13 +671,20 @@ export default function ProductEditorWorkspace({
       // Every publication gate the editor can decide for itself, from one shared
       // catalogue with `publish.ts`. The panel used to know three of eleven, so
       // a seller could read Ready and be refused for a reason never shown.
-      ...predictPublishBlockers(fixture),
+      // Live state, not `fixture`: these three change under the seller's hands,
+      // and a gate reading the page-load snapshot reports a state they have
+      // already left.
+      ...predictPublishBlockers(fixture, {
+        variants,
+        media,
+        showSupplierPhoto,
+      }),
       ...(hasMissingRetailPrice ? [retailPriceIssue(fixture)] : []),
       ...categoryAttributeIssues(fixture, categoryAttributes),
     ];
 
     return [...withoutLocalIssues, ...localIssues];
-  }, [fixture, variants, categoryAttributes]);
+  }, [fixture, variants, media, showSupplierPhoto, categoryAttributes]);
 
   const currentFixture = useMemo(
     () => ({
@@ -1520,30 +1533,6 @@ export default function ProductEditorWorkspace({
                   updateVariant(variantId, { sellerSku: value })
                 }
                 onBulkSetPrice={() => setBulkPricingMode('SET_PRICE')}
-                onBulkEnableInStock={() => {
-                  setVariants((current) =>
-                    current.map((variant) =>
-                      canBulkEnable(variant)
-                        ? { ...variant, enabled: true }
-                        : variant,
-                    ),
-                  );
-                  touch();
-                  toast('Blocked and paused variants were skipped.', {
-                    description:
-                      'A bulk action never re-enables a variant the supplier or policy has ruled out.',
-                  });
-                }}
-                onBulkDisableUnavailable={() => {
-                  setVariants((current) =>
-                    current.map((variant) =>
-                      variant.supplierStock === 0
-                        ? { ...variant, enabled: false }
-                        : variant,
-                    ),
-                  );
-                  touch();
-                }}
               />
             </div>
           </EditorSectionCard>
