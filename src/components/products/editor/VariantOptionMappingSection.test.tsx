@@ -172,7 +172,7 @@ describe('VariantOptionMappingSection', () => {
     render(
       <VariantOptionMappingSection
         proposal={PROPOSAL}
-        suggestedAxisNames={['Colour', 'Size']}
+        suggestedAxisNames={[['Colour'], ['Size']]}
         variantCount={6}
         onSave={onSave}
       />,
@@ -194,7 +194,7 @@ describe('VariantOptionMappingSection', () => {
     render(
       <VariantOptionMappingSection
         proposal={PROPOSAL}
-        suggestedAxisNames={['Colour', 'Size']}
+        suggestedAxisNames={[['Colour'], ['Size']]}
         variantCount={6}
         onSave={onSave}
       />,
@@ -310,7 +310,7 @@ describe('VariantOptionMappingSection', () => {
     render(
       <VariantOptionMappingSection
         proposal={PROPOSAL}
-        suggestedAxisNames={['Colour', null]}
+        suggestedAxisNames={[['Colour'], []]}
         variantCount={6}
       />,
     );
@@ -500,5 +500,45 @@ describe('Variant Matrix copy for a single variant', () => {
 
     expect(intro).toContain('across 2 variants');
     expect(intro).toContain('order its values');
+  });
+});
+
+describe('every workbook suggestion is offered', () => {
+  it('renders one button per name and applies the one clicked', () => {
+    // The workbook says this category varies by colour or material. Showing only
+    // the first was a half-report, and it put "Colour" beside a bamboo organizer.
+    render(
+      <VariantOptionMappingSection
+        proposal={[{ index: 0, values: ['Storage box'] }]}
+        suggestedAxisNames={[['Colour', 'Material']]}
+        variantCount={1}
+      />,
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Use “Colour”' }),
+    ).toBeInTheDocument();
+
+    const material = screen.getByRole('button', {
+      name: 'Use “Material”',
+    });
+
+    fireEvent.click(material);
+
+    expect(screen.getByLabelText('Option 1 name')).toHaveValue('Material');
+  });
+
+  it('says pick one only when there is more than one to pick', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[{ index: 0, values: ['Black', 'Army Green'] }]}
+        suggestedAxisNames={[['Colour']]}
+        variantCount={2}
+      />,
+    );
+
+    expect(
+      screen.getByText('Suggested for this category:'),
+    ).toBeInTheDocument();
   });
 });

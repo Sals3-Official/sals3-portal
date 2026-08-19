@@ -403,7 +403,8 @@ export type ProductEditorFixture = {
      * attribute, so a person accepts the suggestion and the saved mapping stays
      * theirs. See `modules/catalog/taxonomy/variation-families.ts`.
      */
-    suggestedAxisNames: (string | null)[];
+    /** Every name the workbook offers per axis, not only the first. */
+    suggestedAxisNames: string[][];
     /**
      * Whether leaving this unmapped actually blocks publication.
      *

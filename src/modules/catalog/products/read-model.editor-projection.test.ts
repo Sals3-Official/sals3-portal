@@ -295,8 +295,8 @@ describe('productToEditorFixture — option mapping projection', () => {
     // Clean family-derived names, not the workbook's long guidance text: these
     // are offered as a buyer-facing option name.
     expect(fixture.optionMapping.suggestedAxisNames).toEqual([
-      'Colour',
-      'Size',
+      ['Colour'],
+      ['Size'],
     ]);
   });
 
@@ -322,7 +322,9 @@ describe('productToEditorFixture — option mapping projection', () => {
     expect(fixture.optionMapping.proposal).toEqual([
       { index: 0, values: ['Black', 'Blue', 'Green', 'Grey', 'Purple'] },
     ]);
-    expect(fixture.optionMapping.suggestedAxisNames).toEqual(['Colour']);
+    // One array per axis now: the workbook may name more than one family for a
+    // tier, and offering only the first was a half-report.
+    expect(fixture.optionMapping.suggestedAxisNames).toEqual([['Colour']]);
     expect(fixture.optionMapping.mappingBlocksPublish).toBe(false);
   });
 
@@ -363,7 +365,7 @@ describe('productToEditorFixture — option mapping projection', () => {
     expect(fixture.optionMapping.proposal).toEqual([
       { index: 1, values: ['S', 'M'] },
     ]);
-    expect(fixture.optionMapping.suggestedAxisNames).toEqual(['Size']);
+    expect(fixture.optionMapping.suggestedAxisNames).toEqual([['Size']]);
   });
 });
 
