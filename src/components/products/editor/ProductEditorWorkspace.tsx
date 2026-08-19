@@ -406,10 +406,28 @@ export default function ProductEditorWorkspace({
    * Compared in prepared form, so a blank block someone added and abandoned
    * does not make Revert look available when nothing would actually change.
    */
-  const descriptionIsUnchanged = blocksMatchSaved(
-    descriptionBlocks.map((entry) => entry.block),
-    savedDescriptionBlocks,
-  );
+  /**
+   * The mode is part of the saved document, so it is part of "unchanged".
+   *
+   * Comparing blocks alone left the foot of the page reading `No unsaved
+   * changes` after a seller switched editor — the stored `mode` differed from
+   * the one on screen and nothing said so, which is a screen asserting
+   * something it had not checked.
+   */
+  const [savedDescriptionMode, setSavedDescriptionMode] =
+    useState<DescriptionMode>(() =>
+      initialDescriptionMode(
+        fixture.descriptionBlocks,
+        fixture.descriptionMode,
+      ),
+    );
+
+  const descriptionIsUnchanged =
+    descriptionMode === savedDescriptionMode &&
+    blocksMatchSaved(
+      descriptionBlocks.map((entry) => entry.block),
+      savedDescriptionBlocks,
+    );
 
   /**
    * Seeded from the auto-suggestion seam (`suggest-meta-description.ts`,
@@ -751,6 +769,10 @@ export default function ProductEditorWorkspace({
 
       if (result.ok) {
         setDraftRevisionVersion(result.revisionVersion);
+        setSavedDescriptionBlocks(
+          descriptionBlocks.map((entry) => entry.block),
+        );
+        setSavedDescriptionMode(descriptionMode);
         setLifecycle('SAVED');
         setIsDirty(false);
         toast('Draft saved.');
@@ -983,6 +1005,7 @@ export default function ProductEditorWorkspace({
           setSavedDescriptionBlocks(
             descriptionBlocks.map((entry) => entry.block),
           );
+          setSavedDescriptionMode(descriptionMode);
           toast('Description saved.');
 
           return { ok: true, message: 'Description saved.' };
@@ -1396,6 +1419,7 @@ export default function ProductEditorWorkspace({
                 setDescriptionBlocks(
                   keyDescriptionBlocks(savedDescriptionBlocks),
                 );
+                setDescriptionMode(savedDescriptionMode);
                 touch();
               }}
               productName={productName}
@@ -1421,7 +1445,12 @@ export default function ProductEditorWorkspace({
                * not a feature the seller is missing.
                */
               mode={descriptionMode}
-              onModeChange={setDescriptionMode}
+              onModeChange={(next) => {
+                setDescriptionMode(next);
+                // Stored on the document, so switching is an unsaved change
+                // like any other edit in this section.
+                touch();
+              }}
               onSave={handleSaveDescription}
               fullEditorHref={
                 fixture.draftSaveTarget === null

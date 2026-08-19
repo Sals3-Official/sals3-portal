@@ -714,3 +714,61 @@ describe('Product editor - telling the seller a save landed', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('Product editor - a mode switch is an unsaved change', () => {
+  it('offers to revert after switching editor, and restores the mode', () => {
+    // The mode is stored on the document, so the page must not claim there is
+    // nothing to save just because the blocks happen to match.
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: 'simple',
+      descriptionBlocks: [{ type: 'paragraph', text: 'Soft cotton twill.' }],
+    });
+
+    expect(
+      screen.getByRole('button', { name: /Revert to last saved/ }),
+    ).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Designed layout/ }));
+
+    const revert = screen.getByRole('button', { name: /Revert to last saved/ });
+
+    expect(revert).toBeEnabled();
+
+    fireEvent.click(revert);
+
+    expect(screen.getByRole('button', { name: /Simple text/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('saves the switched mode and then reads as saved', async () => {
+    vi.mocked(saveDescriptionAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 5,
+      contentChecksum: 'abc',
+    });
+
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: 'simple',
+      descriptionBlocks: [{ type: 'paragraph', text: 'Soft cotton twill.' }],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Designed layout/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Save description/ }));
+
+    await screen.findByText('Description saved.');
+
+    const [input] = vi.mocked(saveDescriptionAction).mock.calls.at(-1) ?? [];
+
+    expect(
+      (input as { descriptionDocument: { mode: string } }).descriptionDocument
+        .mode,
+    ).toBe('design');
+    expect(
+      screen.getByRole('button', { name: /Revert to last saved/ }),
+    ).toBeDisabled();
+  });
+});

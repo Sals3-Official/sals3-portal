@@ -137,18 +137,24 @@ export default function DescriptionSection({
           {/* Revert restores this screen's own unsaved edits. In summary mode
             there are none to restore — the full editor saves its own work — so
             the control is absent rather than permanently disabled. */}
-          {isTypingHere ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={isUnchanged || isSaving}
-              onClick={onRevert}
-            >
-              <RotateCcw aria-hidden="true" />
-              Revert to last saved
-            </Button>
-          ) : null}
+          {/*
+           * Shown in both modes. It used to be hidden in the designed layout on
+           * the grounds that the full editor saved its own work and there was
+           * nothing here to restore — which stopped being true once the mode
+           * itself became part of the stored document. Switching editor is a
+           * revertible change made on this screen, so the control that undoes it
+           * has to be reachable from both sides of the switch.
+           */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isUnchanged || isSaving}
+            onClick={onRevert}
+          >
+            <RotateCcw aria-hidden="true" />
+            Revert to last saved
+          </Button>
 
           {/*
            * Present in both modes, because both can hold unsaved work: simple
