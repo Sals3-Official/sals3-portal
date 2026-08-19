@@ -1,0 +1,48 @@
+# Scheduled pull of CJ order status + tracking into the portal database, so
+# the buyer orders API (/api/storefront/orders*) answers from the database
+# and never calls CJ on a page view.
+#
+# This IS a schedule, unlike evaluate-tick: ADR-013 §12's no-cron rule is
+# scoped to the catalog evaluation pipeline, which has a durable queue chain.
+# Order status has no push source that can be relied on alone (CJ disables a
+# webhook after two hours below 80% success), so a bounded periodic pull is
+# the floor. Every 30 minutes; each run syncs at most 25 stale groups and
+# skips terminal parcels, so a quiet shop costs one no-op request.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin.
+
+name: Orders Status Sync
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the orders status-sync endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          status=$(curl -sS -o /tmp/sync-response.json -w '%{http_code}' \
+            -X POST "$PORTAL_BASE_URL/api/internal/orders/status-sync" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/sync-response.json
+          echo
+
+          if [ "$status" != "200" ]; then
+            echo "status-sync endpoint returned HTTP $status" >&2
+            exit 1
+          fi
