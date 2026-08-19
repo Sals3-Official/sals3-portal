@@ -98,7 +98,8 @@ export type VariantOptionMappingSectionProps = {
    * the category offers none. Offered as a one-press suggestion, never pre-filled
    * — see the "A suggestion, not a default" note above.
    */
-  suggestedAxisNames?: (string | null)[];
+  /** Every name the workbook offers for each axis, in the sheet's own order. */
+  suggestedAxisNames?: string[][];
   variantCount: number;
   /**
    * Whether leaving this unmapped actually blocks publication — true only for a
@@ -679,7 +680,7 @@ export default function VariantOptionMappingSection({
           const nameId = `variant-matrix-option-${axisIndex}`;
           const missingName =
             touched[axisIndex] === true && axis.name.trim() === '';
-          const suggestion = suggestedAxisNames[axisIndex] ?? null;
+          const suggestions = suggestedAxisNames[axisIndex] ?? [];
 
           return (
             <div
@@ -725,20 +726,25 @@ export default function VariantOptionMappingSection({
                 or accepted — repeating the suggestion beside it would read as a
                 correction of the seller's own choice.
               */}
-              {suggestion !== null && axis.name.trim() === '' ? (
+              {suggestions.length > 0 && axis.name.trim() === '' ? (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="text-xs text-muted-foreground">
-                    Suggested for this category:
+                    {suggestions.length === 1
+                      ? 'Suggested for this category:'
+                      : 'Suggested for this category — pick one:'}
                   </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-6 px-2 text-xs"
-                    onClick={() => applyAxisName(axisIndex, suggestion)}
-                  >
-                    Use &ldquo;{suggestion}&rdquo;
-                  </Button>
+                  {suggestions.map((suggestion) => (
+                    <Button
+                      key={suggestion}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => applyAxisName(axisIndex, suggestion)}
+                    >
+                      Use &ldquo;{suggestion}&rdquo;
+                    </Button>
+                  ))}
                 </div>
               ) : null}
 

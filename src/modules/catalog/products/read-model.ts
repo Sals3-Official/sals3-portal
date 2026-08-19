@@ -63,7 +63,7 @@ import type {
 import { feedSnapshotSchema } from '@/modules/catalog/candidates/rules/contracts';
 import type { CategoryAttributeContract } from '@/modules/catalog/taxonomy/attribute-types';
 import { validateCategoryAttributeSubmission } from '@/modules/catalog/taxonomy/attribute-contract';
-import { suggestedAxisNamesForCategory } from '@/modules/catalog/taxonomy/variation-families';
+import { suggestedAxisNameOptionsForCategory } from '@/modules/catalog/taxonomy/variation-families';
 import type { DescriptionMode } from '@/lib/products/simple-description';
 import { descriptionDocumentSchema } from './description-document';
 import { deriveOptionSplit } from './option-split';
@@ -518,10 +518,10 @@ function mappedOptionLabel(
 function suggestedOptionAxisNames(
   proposal: { index: number }[],
   categoryCode: string | null,
-): (string | null)[] {
-  const byTier = suggestedAxisNamesForCategory(categoryCode);
+): string[][] {
+  const byTier = suggestedAxisNameOptionsForCategory(categoryCode);
 
-  return proposal.map((axis) => byTier[axis.index] ?? null);
+  return proposal.map((axis) => byTier[axis.index] ?? []);
 }
 
 async function listCoreRows(executor: Executor, sellerAccountId: string) {
