@@ -189,12 +189,38 @@ describe('Product Editor - publication outcomes', () => {
     const button = publishButton();
 
     expect(button).toBeDisabled();
-    expect(button).toHaveAttribute('title', '3 hard blockers must clear first');
+    // Four, not three: the shared publish-gate predictor adds `No variant is
+    // listed`, which is true of this fixture and which `publish.ts` would have
+    // refused on. Asserted by name below so the number is not a magic constant.
+    expect(button).toHaveAttribute('title', '4 hard blockers must clear first');
     // The reason is on screen too, not only in a tooltip.
     expect(
-      screen.getAllByText('3 hard blockers must clear first').length,
+      screen.getAllByText('4 hard blockers must clear first').length,
     ).toBeGreaterThan(0);
     expect(screen.getByText('Publishing is disabled')).toBeInTheDocument();
+    expect(screen.getAllByText('No variant is listed').length).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it('predicts no gate for a product publication would accept', () => {
+    // The safety property of the predictor. A missing warning costs one refused
+    // Publish; a false blocker stops a listing that could have gone live, and no
+    // wording makes that acceptable. So the clean fixtures must predict nothing.
+    renderEditor('pass');
+
+    expect(publishButton()).toBeEnabled();
+
+    [
+      'Sals3 category is required',
+      'No variant is listed',
+      'No supplier cost on any listable variant',
+      'No approved photo is on file',
+      'A retail price is below supplier cost',
+      'Variant Matrix needs its option names',
+    ].forEach((title) =>
+      expect(screen.queryByText(title)).not.toBeInTheDocument(),
+    );
   });
 });
 
