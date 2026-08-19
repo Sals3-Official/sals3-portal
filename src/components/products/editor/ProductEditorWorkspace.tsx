@@ -40,7 +40,8 @@ import {
   type VariantFixture,
 } from '@/lib/seller-center/product-editor/types';
 import { suggestMetaDescription } from '@/lib/seller-center/product-editor/suggest-meta-description';
-import { isSals3TaxonomyCode } from '@/lib/products/sals3-category-code';
+import { PUBLISH_GATES } from '@/lib/products/publish-gates';
+import predictPublishBlockers from '@/lib/seller-center/product-editor/publish-blockers';
 import {
   initialDescriptionMode,
   type DescriptionMode,
@@ -228,6 +229,12 @@ type ProductEditorWorkspaceProps = {
 };
 
 const EXIT_HREF = '/products/pipeline?tab=ready';
+/** Titles the local gate predictor owns, so a server copy of one is dropped. */
+const PREDICTED_GATE_TITLES = new Set([
+  ...Object.values(PUBLISH_GATES).map((gate) => gate.title),
+  'No Sals3 category has been decided yet',
+]);
+
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -287,47 +294,6 @@ function retailPriceIssue(fixture: ProductEditorFixture): ReadinessIssue {
  * have ever gone through this picker; a warning still surfaces the reminder
  * without that disruption.
  */
-/**
- * A blocker, because publication refuses it.
- *
- * This said `WARNING` and explained that "Publishing without one is allowed",
- * while `publish.ts` answered `SALS3_CATEGORY_REQUIRED` for the same product.
- * The screen was contradicting the server, and the seller only found out by
- * pressing Publish and being refused.
- *
- * The condition is now the server's own, rather than a different test that
- * happened to be near it. `publish.ts` refuses a null code, an `UNMAPPED` or
- * `AMBIGUOUS` mapping, and — the part that matters here — a `CJ-<uuid>` mirror
- * code, which `cj-mirror.ts` auto-creates for almost every CJ-sourced product.
- * A mirror resolves `EXACT` confidence, so confidence alone never caught it.
- */
-function sals3CategoryIssue(fixture: ProductEditorFixture): ReadinessIssue {
-  return {
-    id: `${fixture.fixtureKey}-sals3-category`,
-    severity: 'BLOCKER',
-    title: 'Sals3 category is required',
-    explanation:
-      "This product sits under the supplier's own category, which is a starting point rather than a Sals3 one. Choose a Sals3 category in Basic Information — it is what buyers browse and what the price rules read.",
-    affectedScope: 'Basic Information',
-    source: 'AUTOMATED_VALIDATION',
-    section: 'basic',
-    reasonCode: null,
-    resolution: 'Choose a Sals3 category.',
-  };
-}
-
-/**
- * The same test `publish.ts` applies, so the panel and the server cannot
- * disagree about whether this product may publish.
- */
-function needsSals3Category(fixture: ProductEditorFixture): boolean {
-  return (
-    !isSals3TaxonomyCode(fixture.sals3CategoryCode) ||
-    fixture.categoryMappingConfidence === 'UNMAPPED' ||
-    fixture.categoryMappingConfidence === 'AMBIGUOUS'
-  );
-}
-
 /**
  * Locally re-derived, the same way `retailPriceIssue` is: a lightweight
  * "is it filled" check the seller sees update as they type, not a re-run of
@@ -685,24 +651,22 @@ export default function ProductEditorWorkspace({
     const hasMissingRetailPrice = variants.some(
       (variant) => variant.retailPrice.amountMinor <= 0,
     );
-    // The mirror test, not `sals3CategoryDeclaredBySeller`. A real v1 category
-    // applied by an approved mapping is one publication accepts, so treating
-    // "not declared by this seller" as missing raised a blocker the server
-    // would not have raised. `isSals3TaxonomyCode` catches the case that
-    // actually matters — a `CJ-<uuid>` mirror, which resolves EXACT confidence
-    // and so slipped past a confidence-only check.
-    const hasMissingSals3Category = needsSals3Category(fixture);
+
     const withoutLocalIssues = fixture.issues.filter(
       (issue) =>
         issue.title !== 'Selling price is not resolved' &&
         issue.title !== 'Retail price is required' &&
-        issue.title !== 'No Sals3 category has been decided yet' &&
-        issue.title !== 'Sals3 category is required' &&
+        // Locally re-derived gates replace any server copy of the same title,
+        // so one condition never renders twice.
+        !PREDICTED_GATE_TITLES.has(issue.title) &&
         issue.section !== 'specification',
     );
     const localIssues = [
+      // Every publication gate the editor can decide for itself, from one shared
+      // catalogue with `publish.ts`. The panel used to know three of eleven, so
+      // a seller could read Ready and be refused for a reason never shown.
+      ...predictPublishBlockers(fixture),
       ...(hasMissingRetailPrice ? [retailPriceIssue(fixture)] : []),
-      ...(hasMissingSals3Category ? [sals3CategoryIssue(fixture)] : []),
       ...categoryAttributeIssues(fixture, categoryAttributes),
     ];
 

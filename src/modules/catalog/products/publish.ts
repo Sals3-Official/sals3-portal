@@ -24,6 +24,7 @@ import {
 } from '@/modules/market-config/capabilities';
 import { findActiveProfileForSeller } from '@/modules/market-config/repository';
 import { resolveProductPricing } from '@/modules/pricing/resolver';
+import type { PublishGateReason } from '@/lib/products/publish-gates';
 import { isSals3TaxonomyCode } from '@/modules/catalog/taxonomy/v1-reference';
 import { deriveOptionSplit } from './option-split';
 import {
@@ -141,20 +142,23 @@ async function optionMappingRequiredButMissing(
   return mapped.length === 0;
 }
 
-export type PublishRefusal =
-  | 'NO_ACTIVE_VARIANT'
-  /** Replaces `CATEGORY_UNMAPPED` (2026-08-20): a CJ mirror is no longer accepted in its place. */
-  | 'SALS3_CATEGORY_REQUIRED'
-  | 'OPTIONS_UNMAPPED'
-  | 'NO_APPROVED_MEDIA'
-  | 'PRICING_UNRESOLVED'
-  | 'RETAIL_BELOW_SUPPLIER_COST'
-  | 'NO_ACTIVE_MARKET_PROFILE'
-  | 'CURRENCY_NOT_AUTHORIZED'
-  | 'NO_SUPPLIER_COST'
-  | 'NO_ACTIVE_SUPPLIER_BINDING'
-  | 'NO_PUBLISHABLE_REVISION'
-  | 'SLUG_UNAVAILABLE';
+/**
+ * Every reason this module may refuse, derived from the gate catalogue in
+ * `@/lib/products/publish-gates` rather than listed again here.
+ *
+ * That indirection is the point. The catalogue carries each gate's seller-facing
+ * copy and the editor section it belongs to, so a gate this module learns to
+ * refuse without copy over there does not compile — which is what stops the
+ * readiness panel from silently knowing about fewer gates than the server, as it
+ * did for eight of eleven. `SALS3_CATEGORY_REQUIRED` replaced
+ * `CATEGORY_UNMAPPED` on 2026-08-20: a CJ mirror is no longer accepted in its
+ * place.
+ *
+ * Note what has *not* moved: every condition below is still evaluated here,
+ * inside the transaction, against the pricing resolver and the market capability
+ * boundary. Only the vocabulary is shared.
+ */
+export type PublishRefusal = PublishGateReason;
 
 export type PublishProductResult =
   | {
