@@ -203,6 +203,60 @@ describe('Product Editor - publication outcomes', () => {
     );
   });
 
+  it('clears a gate when the seller changes the thing it is about', () => {
+    // The bug this exists to catch: the predictor read `fixture`, the page-load
+    // snapshot, so switching a variant on left `No variant is listed` standing
+    // over a listed variant. It read as a broken toggle. Every other test in this
+    // file seeds state and renders once, so none of them exercised *change* —
+    // which is why a green suite shipped it.
+    const resolved = fixture('pass');
+    const first = resolved.variants[0];
+
+    if (first === undefined) throw new Error('fixture has no variants');
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          variants: [
+            {
+              ...first,
+              enabled: false,
+              supplierStock: 20_000,
+              listingState: 'NOT_LISTED',
+            },
+          ],
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    // `autoListVariants` switches an in-stock, unblocked variant on at load, so
+    // the gate must already be absent.
+    expect(screen.queryByText('No variant is listed')).not.toBeInTheDocument();
+
+    const listSwitch = screen
+      .getAllByRole('switch')
+      .find((element) =>
+        /^List /.test(element.getAttribute('aria-label') ?? ''),
+      );
+
+    if (listSwitch === undefined) throw new Error('no list switch');
+
+    fireEvent.click(listSwitch);
+
+    // Switched off by hand: the gate has to come back, or the panel is not
+    // watching either.
+    expect(screen.getAllByText('No variant is listed').length).toBeGreaterThan(
+      0,
+    );
+
+    fireEvent.click(listSwitch);
+
+    expect(screen.queryByText('No variant is listed')).not.toBeInTheDocument();
+  });
+
   it('predicts no gate for a product publication would accept', () => {
     // The safety property of the predictor. A missing warning costs one refused
     // Publish; a false blocker stops a listing that could have gone live, and no
