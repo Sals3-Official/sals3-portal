@@ -49,6 +49,23 @@ export async function findCategoryByCode(
   return rows[0] ?? null;
 }
 
+/**
+ * Resolve many category codes in one statement — the bulk-import path needs
+ * every code in an uploaded file, and one query per row would turn a 213-row
+ * spreadsheet into 213 round trips inside a transaction.
+ */
+export async function findCategoriesByCodes(
+  executor: Executor,
+  codes: string[],
+): Promise<Sals3CategoryRow[]> {
+  if (codes.length === 0) return [];
+
+  return executor
+    .select()
+    .from(sals3Categories)
+    .where(inArray(sals3Categories.code, codes));
+}
+
 export async function findCategoryById(
   executor: Executor,
   categoryId: string,

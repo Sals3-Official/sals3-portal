@@ -53,6 +53,7 @@ const pricingRepositoryMocks = vi.hoisted(() => ({
   deactivateCategoryPolicy: vi.fn(),
   findCategoryById: vi.fn(),
   findActiveStoreDefault: vi.fn(),
+  findCategoriesByCodes: vi.fn(),
   createStoreDefault: vi.fn(),
   reviseStoreDefault: vi.fn(),
   deactivateStoreDefault: vi.fn(),
@@ -78,6 +79,7 @@ vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 /* eslint-disable import/first */
 import { PermissionError } from '@/lib/auth/permissions';
 import {
+  applyMarginCsvAction,
   deactivateCategoryPolicyAction,
   deactivateFundingBufferPolicyAction,
   deactivateStoreDefaultAction,
@@ -995,5 +997,184 @@ describe('field-level validation messages', () => {
 
     if (result.ok) throw new Error('expected a refusal');
     expect(result.fieldErrors?.reason).toMatch(/10 characters or more/);
+  });
+});
+
+describe('applyMarginCsvAction', () => {
+  const HEADER = 'category_code,category_path,margin_percent,rounding';
+  const REASON = 'Bulk repricing after the supplier cost review.';
+
+  function category(code: string, id: string) {
+    return { id, code, path: `Path ${code}` };
+  }
+
+  beforeEach(() => {
+    pricingRepositoryMocks.findCategoriesByCodes.mockResolvedValue([
+      category('CAT-GGL-1', 'cat-1'),
+      category('CAT-GGL-2', 'cat-2'),
+    ]);
+    pricingRepositoryMocks.findActiveCategoryPolicy.mockResolvedValue(null);
+    pricingRepositoryMocks.createCategoryPolicy.mockResolvedValue({
+      id: 'policy-new',
+      version: 1,
+      supersedesId: null,
+    });
+  });
+
+  it('denies a caller without pricing_policy:manage', async () => {
+    requirePermissionMock.mockRejectedValue(new PermissionError());
+
+    const result = await applyMarginCsvAction({
+      csv: `${HEADER}\nCAT-GGL-1,Anything,35,NONE`,
+      reason: REASON,
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'denied' });
+    expect(pricingRepositoryMocks.createCategoryPolicy).not.toHaveBeenCalled();
+  });
+
+  it('writes every row inside one transaction, with one audit event each', async () => {
+    const result = await applyMarginCsvAction({
+      csv: [
+        HEADER,
+        'CAT-GGL-1,Anything,35,NONE',
+        'CAT-GGL-2,Anything,40,NONE',
+      ].join('\n'),
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(transactionMock).toHaveBeenCalledTimes(1);
+    expect(pricingRepositoryMocks.createCategoryPolicy).toHaveBeenCalledTimes(
+      2,
+    );
+    // Bulk is another door into the same writer, not a shortcut past the
+    // audit trail.
+    expect(appendAuditEventMock).toHaveBeenCalledTimes(2);
+    expect(appendAuditEventMock).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({
+        action: 'category_pricing_policy.created',
+        payload: expect.objectContaining({ source: 'csv-import' }),
+      }),
+    );
+  });
+
+  /**
+   * All-or-nothing. A half-applied price change leaves the catalogue priced
+   * by two different decisions with nothing on screen saying which rows took.
+   */
+  it('writes nothing at all when one line is malformed', async () => {
+    const result = await applyMarginCsvAction({
+      csv: [
+        HEADER,
+        'CAT-GGL-1,Anything,35,NONE',
+        'CAT-GGL-2,Anything,zzz,NONE',
+      ].join('\n'),
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.rowErrors?.[0]).toMatch(/Line 3/);
+    expect(transactionMock).not.toHaveBeenCalled();
+    expect(pricingRepositoryMocks.createCategoryPolicy).not.toHaveBeenCalled();
+  });
+
+  it('names an unknown category by line, and writes nothing', async () => {
+    pricingRepositoryMocks.findCategoriesByCodes.mockResolvedValue([
+      category('CAT-GGL-1', 'cat-1'),
+    ]);
+
+    const result = await applyMarginCsvAction({
+      csv: [
+        HEADER,
+        'CAT-GGL-1,Anything,35,NONE',
+        'CAT-GGL-9,Anything,40,NONE',
+      ].join('\n'),
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'not_found' });
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.rowErrors?.[0]).toMatch(/CAT-GGL-9 is not a Sals3 category/);
+    expect(transactionMock).not.toHaveBeenCalled();
+  });
+
+  it('an empty margin cell deactivates that category rather than writing zero', async () => {
+    pricingRepositoryMocks.findActiveCategoryPolicy.mockResolvedValue({
+      id: 'policy-1',
+      targetMarginRate: '0.350000',
+      roundingRule: 'NONE',
+      version: 1,
+    });
+    pricingRepositoryMocks.deactivateCategoryPolicy.mockResolvedValue({
+      id: 'policy-1',
+      version: 1,
+    });
+
+    const result = await applyMarginCsvAction({
+      csv: `${HEADER}\nCAT-GGL-1,Anything,,`,
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({ ok: true, data: { cleared: 1 } });
+    expect(pricingRepositoryMocks.deactivateCategoryPolicy).toHaveBeenCalled();
+    expect(pricingRepositoryMocks.createCategoryPolicy).not.toHaveBeenCalled();
+  });
+
+  it('skips a row that already matches, so no version or audit event records a non-change', async () => {
+    pricingRepositoryMocks.findActiveCategoryPolicy.mockResolvedValue({
+      id: 'policy-1',
+      targetMarginRate: '0.350000',
+      roundingRule: 'NONE',
+      version: 1,
+    });
+
+    const result = await applyMarginCsvAction({
+      csv: `${HEADER}\nCAT-GGL-1,Anything,35,NONE`,
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: { unchanged: 1, written: 0 },
+    });
+    expect(pricingRepositoryMocks.reviseCategoryPolicy).not.toHaveBeenCalled();
+    expect(appendAuditEventMock).not.toHaveBeenCalled();
+  });
+
+  it('revises rather than duplicating when the category already has a different rate', async () => {
+    pricingRepositoryMocks.findActiveCategoryPolicy.mockResolvedValue({
+      id: 'policy-1',
+      targetMarginRate: '0.200000',
+      roundingRule: 'NONE',
+      version: 1,
+    });
+    pricingRepositoryMocks.reviseCategoryPolicy.mockResolvedValue({
+      id: 'policy-2',
+      version: 2,
+      supersedesId: 'policy-1',
+    });
+
+    const result = await applyMarginCsvAction({
+      csv: `${HEADER}\nCAT-GGL-1,Anything,35,NONE`,
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({ ok: true, data: { written: 1 } });
+    expect(pricingRepositoryMocks.reviseCategoryPolicy).toHaveBeenCalled();
+    expect(pricingRepositoryMocks.createCategoryPolicy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a reason too short to explain a bulk change', async () => {
+    const result = await applyMarginCsvAction({
+      csv: `${HEADER}\nCAT-GGL-1,Anything,35,NONE`,
+      reason: 'nope',
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.fieldErrors?.reason).toBeDefined();
   });
 });
