@@ -31,8 +31,6 @@ describe('VariantPricingTable', () => {
         onToggleEnabled={vi.fn()}
         onRetailChange={vi.fn()}
         onSellerSkuChange={vi.fn()}
-        onBulkEnableInStock={vi.fn()}
-        onBulkDisableUnavailable={vi.fn()}
         onBulkSetPrice={vi.fn()}
       />,
     );
@@ -56,8 +54,6 @@ describe('VariantPricingTable', () => {
         onToggleEnabled={vi.fn()}
         onRetailChange={vi.fn()}
         onSellerSkuChange={vi.fn()}
-        onBulkEnableInStock={vi.fn()}
-        onBulkDisableUnavailable={vi.fn()}
         onBulkSetPrice={vi.fn()}
       />,
     );
@@ -82,8 +78,6 @@ describe('VariantPricingTable', () => {
         onToggleEnabled={onToggleEnabled}
         onRetailChange={vi.fn()}
         onSellerSkuChange={vi.fn()}
-        onBulkEnableInStock={vi.fn()}
-        onBulkDisableUnavailable={vi.fn()}
         onBulkSetPrice={vi.fn()}
       />,
     );
@@ -104,8 +98,6 @@ describe('VariantPricingTable', () => {
         onToggleEnabled={vi.fn()}
         onRetailChange={vi.fn()}
         onSellerSkuChange={vi.fn()}
-        onBulkEnableInStock={vi.fn()}
-        onBulkDisableUnavailable={vi.fn()}
         onBulkSetPrice={vi.fn()}
       />,
     );
@@ -123,8 +115,6 @@ describe('VariantPricingTable', () => {
         onToggleEnabled={vi.fn()}
         onRetailChange={vi.fn()}
         onSellerSkuChange={vi.fn()}
-        onBulkEnableInStock={vi.fn()}
-        onBulkDisableUnavailable={vi.fn()}
         onBulkSetPrice={vi.fn()}
       />,
     );
