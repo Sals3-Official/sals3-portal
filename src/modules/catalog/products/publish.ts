@@ -133,6 +133,19 @@ async function optionMappingRequiredButMissing(
    */
   if (split.labelWidth < 2) return false;
 
+  /**
+   * A single-variant product never gates publication either, whatever its label
+   * width (2026-08-19).
+   *
+   * `deriveOptionSplit` now accepts one variant so the seller can name what a
+   * buyer reads. Letting that reach this gate would newly refuse every live
+   * one-variant product carrying a concatenated label until somebody named its
+   * axes — a listing already selling, stopped by a change meant to give the
+   * seller a naming control. With one variant a buyer has no choice to make, so
+   * there is no opaque option string to protect them from.
+   */
+  if (labels.length < 2) return false;
+
   const mapped = await executor
     .select({ id: productOptions.id })
     .from(productOptions)
