@@ -9,6 +9,7 @@ import uniqueViolationConstraint from '@/lib/db/constraint-errors';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { STOREFRONT_CATALOG_TAG } from '@/lib/storefront/catalog-cache';
 import { recoverSupplierLabels } from '@/modules/catalog/products/recover-supplier-labels';
+import renameOptionMapping from '@/modules/catalog/products/rename-option-mapping';
 import saveOptionMapping from '@/modules/catalog/products/save-option-mapping';
 
 /**
@@ -72,6 +73,31 @@ const optionMappingInputSchema = z.object({
     .min(1),
 });
 
+const renameMappingInputSchema = z.object({
+  productId: z.string().uuid(),
+  expectedProductVersion: z.number().int().positive(),
+  axes: z
+    .array(
+      z.object({
+        optionId: z.string().uuid(),
+        name: z.string().trim().min(1).max(60),
+        values: z
+          .array(
+            z.object({
+              valueId: z.string().uuid(),
+              label: z.string().trim().min(1).max(120),
+            }),
+          )
+          .min(1),
+      }),
+    )
+    .min(1),
+});
+
+export type RenameOptionMappingActionResult =
+  | { ok: true; axisCount: number; renamedValueCount: number }
+  | { ok: false; reason: string; message: string };
+
 export type OptionMappingActionResult =
   | { ok: true; axisCount: number; mappedVariantCount: number }
   | { ok: false; reason: string; message: string };
@@ -94,7 +120,12 @@ const REFUSAL_MESSAGES: Record<string, string> = {
   version_conflict:
     'This product changed in another tab or session. Reload the editor and map the options again.',
   ALREADY_MAPPED:
-    'This product already has a saved Variant Matrix. Changing it is not supported yet, because existing variants and any carts holding them depend on the current mapping.',
+    'This product already has a saved Variant Matrix. Its structure cannot be re-split, but the names buyers read can be edited.',
+  NOT_MAPPED: 'This product has no saved Variant Matrix to rename yet.',
+  UNKNOWN_AXIS:
+    'Those options no longer match the saved Variant Matrix. Reload the editor and try again.',
+  DUPLICATE_AXIS_NAME:
+    'Two options would end up with the same name. Give each option its own name.',
   SPLIT_NOT_DERIVABLE:
     'The supplier labels on this product do not form a complete grid, so a mapping cannot be checked against them.',
   SHAPE_MISMATCH:
@@ -104,7 +135,10 @@ const REFUSAL_MESSAGES: Record<string, string> = {
   failed: 'The Variant Matrix could not be saved.',
 };
 
-function refuse(reason: string): OptionMappingActionResult {
+/** The failure arm both action results share. */
+type ActionRefusal = { ok: false; reason: string; message: string };
+
+function refuse(reason: string): ActionRefusal {
   return {
     ok: false,
     reason,
@@ -307,5 +341,46 @@ export async function recoverSupplierLabelsAction(
     ok: true,
     recoveredCount: result.recoveredCount,
     alreadyLabelledCount: result.alreadyLabelledCount,
+  };
+}
+
+/**
+ * Rename an existing Variant Matrix.
+ *
+ * The words a buyer reads, and nothing else. `renameOptionMapping` explains
+ * why that is safe where a full remap is not: the option-combination key is
+ * built from the supplier's own token, so a display label carries no
+ * identity and can be corrected without touching a variant, a cart, or an
+ * accepted order.
+ */
+export async function renameOptionMappingAction(
+  input: unknown,
+): Promise<RenameOptionMappingActionResult> {
+  const parsed = renameMappingInputSchema.safeParse(input);
+
+  if (!parsed.success) return refuse('invalid_input');
+
+  const authorization = await authorize();
+
+  if (!authorization.ok) return refuse(authorization.reason);
+
+  const result = await renameOptionMapping({
+    productId: parsed.data.productId,
+    sellerAccountId: authorization.sellerAccountId,
+    actorId: authorization.actorId,
+    expectedProductVersion: parsed.data.expectedProductVersion,
+    axes: parsed.data.axes,
+  });
+
+  if (!result.ok) return refuse(result.reason);
+
+  // Same reasoning as the mapping save: the editor reads the matrix through
+  // the catalogue read-model, so the listing views must re-read.
+  revalidatePath('/listings');
+
+  return {
+    ok: true,
+    axisCount: result.axisCount,
+    renamedValueCount: result.renamedValueCount,
   };
 }

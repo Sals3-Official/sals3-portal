@@ -9,6 +9,7 @@ import saveMetaDescriptionAction from '@/app/(portal)/listings/meta-description-
 import saveShowSupplierPhotoAction from '@/app/(portal)/listings/show-supplier-photo-actions';
 import saveOptionMappingAction, {
   recoverSupplierLabelsAction,
+  renameOptionMappingAction,
 } from '@/app/(portal)/listings/option-mapping-actions';
 import uploadDescriptionImageAction from '@/app/(portal)/listings/description-image-actions';
 import { saveProductDraftAction } from '@/app/(portal)/listings/product-draft-actions';
@@ -89,6 +90,9 @@ export default function ProductEditor({
         saveDraftAction={isDatabaseBacked ? saveProductDraftAction : undefined}
         uploadDescriptionImageAction={
           isDatabaseBacked ? uploadDescriptionImageAction : undefined
+        }
+        renameOptionMappingAction={
+          isDatabaseBacked ? renameOptionMappingAction : undefined
         }
         publishAction={isDatabaseBacked ? publishProductAction : undefined}
         optionMappingAction={

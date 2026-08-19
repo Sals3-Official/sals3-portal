@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import uploadDescriptionImageAction from '@/app/(portal)/listings/description-image-actions';
+import { renameOptionMappingAction } from '@/app/(portal)/listings/option-mapping-actions';
 import { saveProductDraftAction } from '@/app/(portal)/listings/product-draft-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
 import type { ProductEditorFixture } from '@/lib/seller-center/product-editor/types';
@@ -25,6 +26,7 @@ vi.mock('@/app/(portal)/listings/publish-actions', () => ({
 vi.mock('@/app/(portal)/listings/option-mapping-actions', () => ({
   default: vi.fn(),
   recoverSupplierLabelsAction: vi.fn(),
+  renameOptionMappingAction: vi.fn(),
 }));
 
 vi.mock('@/app/(portal)/listings/category-mapping-actions', () => ({
@@ -264,5 +266,146 @@ describe('Description section - block authoring', () => {
     });
 
     expect(screen.getByText(/Alt text is required/)).toBeInTheDocument();
+  });
+});
+
+describe('Variant Matrix - renaming a saved mapping', () => {
+  const MAPPED_AXES = [
+    {
+      optionId: '33333333-3333-4333-8333-333333333333',
+      name: 'Colr',
+      values: [
+        {
+          valueId: '44444444-4444-4444-8444-444444444444',
+          label: 'Army Green',
+          supplierValue: 'army green',
+        },
+      ],
+    },
+  ];
+
+  function mappedFixture(): ProductEditorFixture {
+    const base = databaseBackedFixture();
+
+    return {
+      ...base,
+      mappedAxes: MAPPED_AXES,
+      publishTarget: {
+        productId: '11111111-1111-4111-8111-111111111111',
+        expectedProductVersion: 7,
+      },
+      optionMapping: {
+        ...base.optionMapping,
+        mappedAxisNames: ['Colr'],
+      },
+    };
+  }
+
+  it('offers an edit path instead of leaving a typo permanent', () => {
+    // The reported defect: after saving, the matrix could only be read.
+    renderEditor(mappedFixture());
+
+    expect(screen.getByRole('button', { name: 'Edit names' })).toBeEnabled();
+  });
+
+  it('says plainly what still cannot change', () => {
+    renderEditor(mappedFixture());
+
+    expect(
+      screen.getByText(
+        /number of options, and which supplier value sits where/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('sends only the display words, keyed by the stored ids', async () => {
+    vi.mocked(renameOptionMappingAction).mockResolvedValue({
+      ok: true,
+      axisCount: 1,
+      renamedValueCount: 1,
+    });
+
+    renderEditor(mappedFixture());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit names' }));
+    fireEvent.change(screen.getByLabelText('Option 1 name'), {
+      target: { value: 'Colour' },
+    });
+    fireEvent.change(screen.getByLabelText('Buyer label for army green'), {
+      target: { value: 'Olive' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save names' }));
+
+    await waitFor(() => expect(renameOptionMappingAction).toHaveBeenCalled());
+
+    expect(renameOptionMappingAction).toHaveBeenCalledWith({
+      productId: '11111111-1111-4111-8111-111111111111',
+      expectedProductVersion: 7,
+      axes: [
+        {
+          optionId: MAPPED_AXES[0].optionId,
+          name: 'Colour',
+          values: [
+            { valueId: MAPPED_AXES[0].values[0].valueId, label: 'Olive' },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('shows the supplier value beside the name, read-only', () => {
+    renderEditor(mappedFixture());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit names' }));
+
+    // The supplier token is what CJ fulfilment matches on. It is shown so the
+    // seller knows what they are renaming, and it is not an input.
+    expect(screen.getByText('army green')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('army green')).not.toBeInTheDocument();
+  });
+
+  it('keeps the new names on screen after the save resolves', async () => {
+    vi.mocked(renameOptionMappingAction).mockResolvedValue({
+      ok: true,
+      axisCount: 1,
+      renamedValueCount: 1,
+    });
+
+    renderEditor(mappedFixture());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit names' }));
+    fireEvent.change(screen.getByLabelText('Option 1 name'), {
+      target: { value: 'Colour' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save names' }));
+
+    // `router.refresh()` is mocked, so without the local mirror the card
+    // would snap back to the old name the moment editing closed.
+    await waitFor(() =>
+      expect(screen.getByText(/Mapped as Colour/)).toBeInTheDocument(),
+    );
+  });
+
+  it('reports a refusal instead of pretending the rename landed', async () => {
+    vi.mocked(renameOptionMappingAction).mockResolvedValue({
+      ok: false,
+      reason: 'version_conflict',
+      message: 'This product changed in another tab or session.',
+    });
+
+    renderEditor(mappedFixture());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit names' }));
+    fireEvent.change(screen.getByLabelText('Option 1 name'), {
+      target: { value: 'Colour' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save names' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/changed in another tab or session/),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/Mapped as Colour/)).not.toBeInTheDocument();
   });
 });

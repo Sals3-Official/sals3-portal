@@ -550,6 +550,7 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
       variantRows: [],
       referenceRows: [],
       optionRows: [],
+      optionValueRows: [],
       attributeControlRows: [],
       attributeValueRows: [],
       variantOptionRows: [],
@@ -606,6 +607,7 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
     // Colour`.
     executor
       .select({
+        id: productOptions.id,
         productId: productOptions.productId,
         position: productOptions.position,
         name: productOptions.name,
@@ -729,6 +731,29 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
             ),
     ]);
 
+  // The stored buyer-facing words, so the editor can offer to rename them.
+  // `normalized_value` rides along read-only: it is the supplier's own token
+  // and what makes a rename safe, so the screen can show what is being
+  // renamed without ever offering to change it.
+  const optionIds = optionRows.map((row) => row.id);
+  const optionValueRows =
+    optionIds.length === 0
+      ? []
+      : await executor
+          .select({
+            id: productOptionValues.id,
+            optionId: productOptionValues.optionId,
+            label: productOptionValues.label,
+            normalizedValue: productOptionValues.normalizedValue,
+            position: productOptionValues.position,
+          })
+          .from(productOptionValues)
+          .where(inArray(productOptionValues.optionId, optionIds))
+          .orderBy(
+            asc(productOptionValues.optionId),
+            asc(productOptionValues.position),
+          );
+
   const offerIds = offerRows.map((row) => row.id);
   const bindingRows =
     offerIds.length === 0
@@ -739,6 +764,7 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
           .where(inArray(offerSupplierBindings.offerId, offerIds));
 
   return {
+    optionValueRows,
     productRows,
     variantRows,
     referenceRows,
@@ -775,6 +801,10 @@ function buildCatalogueProducts(
   const optionsByProduct = groupBy(
     rows.optionRows,
     (option) => option.productId,
+  );
+  const optionValuesByOption = groupBy(
+    rows.optionValueRows,
+    (value) => value.optionId,
   );
   const offersByVariant = groupBy(rows.offerRows, (offer) => offer.variantId);
   const bindingsByOffer = groupBy(
@@ -1021,6 +1051,15 @@ function buildCatalogueProducts(
         optionAxisNames: (optionsByProduct.get(product.id) ?? []).map(
           (option) => option.name,
         ),
+        mappedAxes: (optionsByProduct.get(product.id) ?? []).map((option) => ({
+          optionId: option.id,
+          name: option.name,
+          values: (optionValuesByOption.get(option.id) ?? []).map((value) => ({
+            valueId: value.id,
+            label: value.label,
+            supplierValue: value.normalizedValue,
+          })),
+        })),
         categoryAttributeControls: (
           (product.categoryId === null
             ? undefined
@@ -1623,6 +1662,7 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
     sellerSku: variants[0]?.sellerSku ?? product.sals3ProductId,
     brandDeclaration: 'No brand / generic',
     descriptionBlocks: product.descriptionBlocks ?? [],
+    mappedAxes: product.mappedAxes ?? [],
     descriptionText: product.descriptionText ?? '',
     metaDescriptionText: product.metaDescriptionText ?? '',
     source: {

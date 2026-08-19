@@ -376,6 +376,9 @@ const BASE: ProductEditorFixture = {
   sellerSku: 'S3-AUR-DP',
   brandDeclaration: 'No brand / generic',
   descriptionBlocks: DESCRIPTION_BLOCKS,
+  // Unmapped in every design-preview fixture: no real option rows exist to
+  // rename, so the section shows its mapping form rather than a summary.
+  mappedAxes: [],
   descriptionText: DESCRIPTION,
   // Nothing persists in a design-preview fixture (no `saveMetaDescriptionAction`
   // target either), so this starts unset the same way a real never-saved
