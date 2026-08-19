@@ -137,35 +137,33 @@ export default function DescriptionSection({
           {/* Revert restores this screen's own unsaved edits. In summary mode
             there are none to restore — the full editor saves its own work — so
             the control is absent rather than permanently disabled. */}
-          {/*
-           * Shown in both modes. It used to be hidden in the designed layout on
-           * the grounds that the full editor saved its own work and there was
-           * nothing here to restore — which stopped being true once the mode
-           * itself became part of the stored document. Switching editor is a
-           * revertible change made on this screen, so the control that undoes it
-           * has to be reachable from both sides of the switch.
-           */}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={isUnchanged || isSaving}
-            onClick={onRevert}
-          >
-            <RotateCcw aria-hidden="true" />
-            Revert to last saved
-          </Button>
+          {isTypingHere ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isUnchanged || isSaving}
+              onClick={onRevert}
+            >
+              <RotateCcw aria-hidden="true" />
+              Revert to last saved
+            </Button>
+          ) : null}
 
           {/*
-           * Present in both modes, because both can hold unsaved work: simple
-           * text holds what was typed, and the designed layout holds the mode
-           * choice itself, which is stored on the document.
+           * Only where this screen is the one being typed into.
            *
-           * Saves the description alone. `Save Draft` at the foot of the page
-           * still saves everything, and this leaves the title and the prices
-           * exactly where the seller left them.
+           * In the designed layout the editing happens on the full editor, which
+           * saves its own work, so a save button here could only ever commit the
+           * mode choice — a control with nothing visible to act on. Switching
+           * editor is still persisted: by `Save Draft` at the foot of the page,
+           * or by the full editor itself, which records the designed layout when
+           * it saves.
+           *
+           * In simple text it earns its place: it saves the description alone and
+           * leaves the title and the prices exactly where the seller left them.
            */}
-          {onSave === undefined ? null : (
+          {onSave === undefined || !isTypingHere ? null : (
             <Button
               type="button"
               size="sm"

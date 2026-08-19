@@ -716,9 +716,9 @@ describe('Product editor - telling the seller a save landed', () => {
 });
 
 describe('Product editor - a mode switch is an unsaved change', () => {
-  it('offers to revert after switching editor, and restores the mode', () => {
-    // The mode is stored on the document, so the page must not claim there is
-    // nothing to save just because the blocks happen to match.
+  it('marks the page unsaved after switching editor', () => {
+    // The mode is stored on the document, so changing it changes the document.
+    // The page must not claim there is nothing to save.
     renderEditor({
       ...databaseBackedFixture(),
       descriptionMode: 'simple',
@@ -731,23 +731,36 @@ describe('Product editor - a mode switch is an unsaved change', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Designed layout/ }));
 
-    const revert = screen.getByRole('button', { name: /Revert to last saved/ });
-
-    expect(revert).toBeEnabled();
-
-    fireEvent.click(revert);
-
-    expect(screen.getByRole('button', { name: /Simple text/ })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    expect(
+      screen.getByRole('button', { name: /Designed layout/ }),
+    ).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('saves the switched mode and then reads as saved', async () => {
-    vi.mocked(saveDescriptionAction).mockResolvedValue({
+  it('offers no save or revert in the designed layout, where they act on nothing', () => {
+    // Editing happens on the full editor, which saves its own work. A save
+    // button here could only commit the mode choice — a control with nothing
+    // visible to act on. `Save Draft` and the full editor both persist it.
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: 'design',
+      descriptionBlocks: [{ type: 'heading', level: 2, text: 'Fit' }],
+    });
+
+    expect(
+      screen.queryByRole('button', { name: /Save description/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Revert to last saved/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Open full editor/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('carries the switched mode through Save Draft', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
       ok: true,
-      revisionVersion: 5,
-      contentChecksum: 'abc',
+      revisionVersion: 4,
     });
 
     renderEditor({
@@ -757,18 +770,19 @@ describe('Product editor - a mode switch is an unsaved change', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: /Designed layout/ }));
-    fireEvent.click(screen.getByRole('button', { name: /Save description/ }));
 
-    await screen.findByText('Description saved.');
+    expect((await saveDraft()).mode).toBe('design');
+  });
 
-    const [input] = vi.mocked(saveDescriptionAction).mock.calls.at(-1) ?? [];
+  it('shows the empty-description warning once, not twice', () => {
+    // The section owns that message for both modes. The summary said it too,
+    // in different words, so one finding read as two.
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: 'design',
+      descriptionBlocks: [],
+    });
 
-    expect(
-      (input as { descriptionDocument: { mode: string } }).descriptionDocument
-        .mode,
-    ).toBe('design');
-    expect(
-      screen.getByRole('button', { name: /Revert to last saved/ }),
-    ).toBeDisabled();
+    expect(screen.getAllByText(/Empty description/)).toHaveLength(1);
   });
 });
