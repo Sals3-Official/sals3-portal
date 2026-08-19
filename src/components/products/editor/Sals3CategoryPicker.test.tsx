@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import Sals3CategoryPicker from './Sals3CategoryPicker';
 
 const OPTIONS = [
+  // Taxonomy v1 stores a row for every node, branches included — the two
+  // branch rows below are what the branch-vs-leaf search tests rely on.
+  { code: 'CAT-GGL-166', path: 'Apparel & Accessories' },
+  { code: 'CAT-GGL-1604', path: 'Apparel & Accessories > Clothing' },
   {
     code: 'CAT-GGL-100230',
     path: 'Apparel & Accessories > Clothing > Outerwear > Jackets',
@@ -137,6 +141,31 @@ describe('Sals3CategoryPicker', () => {
     ).toBeInTheDocument();
     expect(screen.queryByText('Luggage & Bags > Backpacks')).toBeNull();
     expect(screen.queryByText('Health & Beauty > Personal Care')).toBeNull();
+  });
+
+  it('navigates into a branch search match instead of selecting it — the same rule browse mode enforces', () => {
+    renderPicker();
+
+    openPicker();
+    fireEvent.change(searchInput(), { target: { value: 'clothing' } });
+    fireEvent.click(screen.getByText('Apparel & Accessories > Clothing'));
+
+    // Not a confirm step: no Save button appears for a branch.
+    expect(
+      screen.queryByRole('button', { name: /^Save category$/ }),
+    ).toBeNull();
+    // Instead the browser is now inside the branch, showing its children.
+    expect(screen.getByText('Outerwear')).toBeInTheDocument();
+    // And the search box is back to browse mode, cleared.
+    expect(searchInput().value).toBe('');
+  });
+
+  it('still selects a true leaf from search, even when branch rows exist for its ancestors', () => {
+    renderPicker();
+
+    pickJacketsBySearch();
+
+    expect(saveButton()).toBeEnabled();
   });
 
   it('says plainly when a search matches nothing, instead of an empty list', () => {
