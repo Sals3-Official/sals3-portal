@@ -1,6 +1,7 @@
 import { asc, like, not, sql } from 'drizzle-orm';
 import { sals3Categories } from '@/lib/db/schema';
 import type { Executor } from '@/modules/catalog/candidates/repository';
+import { TAXONOMY_V1_CODE_PREFIX } from '@/lib/products/sals3-category-code';
 
 /**
  * Read-only Sals3 Taxonomy v1 reference data — deliberately its own file,
@@ -14,25 +15,16 @@ import type { Executor } from '@/modules/catalog/candidates/repository';
  */
 
 /**
- * The v1 seed's own code convention (`scripts/seed-sals3-taxonomy-v1.mts`,
- * `src/lib/db/seed-data/sals3-taxonomy-v1.json` — every one of its 5,595
- * rows is `CAT-GGL-<google product category id>`).
+ * The code convention and the mirror test live in
+ * `@/lib/products/sals3-category-code`, a module with no Drizzle or schema
+ * import, so the product editor can apply exactly the rule publication applies.
+ * Re-exported here because every existing caller reaches for them through this
+ * module.
  */
-export const TAXONOMY_V1_CODE_PREFIX = 'CAT-GGL-';
-
-/**
- * Whether a category code is a real Sals3 Taxonomy v1 row, as opposed to a
- * `CJ-<uuid>` mirror that `cj-mirror.ts` auto-creates from a supplier
- * category.
- *
- * A mirror is a perfectly good DRAFT default — a new product has to sit
- * somewhere before a person has looked at it, and the supplier's own
- * category is the best guess available. It is not a Sals3 category, and by
- * owner decision (2026-08-20) publication requires one.
- */
-export function isSals3TaxonomyCode(code: string | null): boolean {
-  return code !== null && code.startsWith(TAXONOMY_V1_CODE_PREFIX);
-}
+export {
+  TAXONOMY_V1_CODE_PREFIX,
+  isSals3TaxonomyCode,
+} from '@/lib/products/sals3-category-code';
 
 /**
  * Every Sals3 Taxonomy v1 category, as `{ code, path }` pairs, for a
