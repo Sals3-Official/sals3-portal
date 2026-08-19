@@ -40,6 +40,7 @@ import {
   type VariantFixture,
 } from '@/lib/seller-center/product-editor/types';
 import { suggestMetaDescription } from '@/lib/seller-center/product-editor/suggest-meta-description';
+import { isSals3TaxonomyCode } from '@/lib/products/sals3-category-code';
 import {
   initialDescriptionMode,
   type DescriptionMode,
@@ -286,19 +287,45 @@ function retailPriceIssue(fixture: ProductEditorFixture): ReadinessIssue {
  * have ever gone through this picker; a warning still surfaces the reminder
  * without that disruption.
  */
+/**
+ * A blocker, because publication refuses it.
+ *
+ * This said `WARNING` and explained that "Publishing without one is allowed",
+ * while `publish.ts` answered `SALS3_CATEGORY_REQUIRED` for the same product.
+ * The screen was contradicting the server, and the seller only found out by
+ * pressing Publish and being refused.
+ *
+ * The condition is now the server's own, rather than a different test that
+ * happened to be near it. `publish.ts` refuses a null code, an `UNMAPPED` or
+ * `AMBIGUOUS` mapping, and — the part that matters here — a `CJ-<uuid>` mirror
+ * code, which `cj-mirror.ts` auto-creates for almost every CJ-sourced product.
+ * A mirror resolves `EXACT` confidence, so confidence alone never caught it.
+ */
 function sals3CategoryIssue(fixture: ProductEditorFixture): ReadinessIssue {
   return {
     id: `${fixture.fixtureKey}-sals3-category`,
-    severity: 'WARNING',
-    title: 'No Sals3 category has been decided yet',
+    severity: 'BLOCKER',
+    title: 'Sals3 category is required',
     explanation:
-      'Choosing a real Sals3 category from Basic Information helps buyers find and trust this listing. Publishing without one is allowed.',
+      "This product sits under the supplier's own category, which is a starting point rather than a Sals3 one. Choose a Sals3 category in Basic Information — it is what buyers browse and what the price rules read.",
     affectedScope: 'Basic Information',
     source: 'AUTOMATED_VALIDATION',
     section: 'basic',
     reasonCode: null,
-    resolution: 'Decide a Sals3 category.',
+    resolution: 'Choose a Sals3 category.',
   };
+}
+
+/**
+ * The same test `publish.ts` applies, so the panel and the server cannot
+ * disagree about whether this product may publish.
+ */
+function needsSals3Category(fixture: ProductEditorFixture): boolean {
+  return (
+    !isSals3TaxonomyCode(fixture.sals3CategoryCode) ||
+    fixture.categoryMappingConfidence === 'UNMAPPED' ||
+    fixture.categoryMappingConfidence === 'AMBIGUOUS'
+  );
 }
 
 /**
@@ -658,18 +685,19 @@ export default function ProductEditorWorkspace({
     const hasMissingRetailPrice = variants.some(
       (variant) => variant.retailPrice.amountMinor <= 0,
     );
-    // Keyed off `sals3CategoryDeclaredBySeller`, not `categoryMappingConfidence`:
-    // the CJ auto-mirror already resolves EXACT/ACCEPTABLE confidence for
-    // almost every CJ-sourced product before any seller ever opens the
-    // picker, which made confidence alone a no-op gate (see the review that
-    // caught this before the PR — twice: once for the retired draft L1
-    // dropdown, once for this).
-    const hasMissingSals3Category = !fixture.sals3CategoryDeclaredBySeller;
+    // The mirror test, not `sals3CategoryDeclaredBySeller`. A real v1 category
+    // applied by an approved mapping is one publication accepts, so treating
+    // "not declared by this seller" as missing raised a blocker the server
+    // would not have raised. `isSals3TaxonomyCode` catches the case that
+    // actually matters — a `CJ-<uuid>` mirror, which resolves EXACT confidence
+    // and so slipped past a confidence-only check.
+    const hasMissingSals3Category = needsSals3Category(fixture);
     const withoutLocalIssues = fixture.issues.filter(
       (issue) =>
         issue.title !== 'Selling price is not resolved' &&
         issue.title !== 'Retail price is required' &&
         issue.title !== 'No Sals3 category has been decided yet' &&
+        issue.title !== 'Sals3 category is required' &&
         issue.section !== 'specification',
     );
     const localIssues = [

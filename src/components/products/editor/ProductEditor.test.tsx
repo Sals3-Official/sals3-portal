@@ -982,19 +982,18 @@ describe('Product Editor - the photo a real product actually has', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('warns, but never blocks publication, when no seller has ever declared a real Sals3 category', () => {
+  it('blocks publication when the product has no Sals3 category of its own', () => {
+    // Owner decision 2026-08-20 replaces the 2026-08-15 one that made this a
+    // warning. `publish.ts` already refused `SALS3_CATEGORY_REQUIRED`, so the
+    // panel calling it a warning — and saying publishing was allowed — was the
+    // screen contradicting the server, discovered only by pressing Publish.
     const resolved = withCoverAddress();
 
     render(
       <ProductEditor
         fixture={{
           ...resolved,
-          // The auto-mirrored/no-category case: `categoryMappingConfidence`
-          // is deliberately left at whatever `withCoverAddress()` already
-          // carries (typically 'EXACT', matching how the CJ auto-mirror
-          // resolves confidence too) — this warning must not be fooled by
-          // that. `sals3CategoryDeclaredBySeller: false` is the actual
-          // "nobody has decided this yet" signal.
+          sals3CategoryCode: null,
           sals3CategoryDeclaredBySeller: false,
         }}
         initialLifecycle="IDLE"
@@ -1003,14 +1002,9 @@ describe('Product Editor - the photo a real product actually has', () => {
     );
 
     expect(
-      screen.getAllByText('No Sals3 category has been decided yet').length,
+      screen.getAllByText('Sals3 category is required').length,
     ).toBeGreaterThan(0);
-    // A warning, not a blocker (owner decision 2026-08-15): a missing
-    // category is a seller's own business risk, not a technical gate — and a
-    // blocker here would have retroactively stopped every already-live
-    // product from republishing, since none of them have gone through this
-    // picker.
-    expect(publishButton()).toBeEnabled();
+    expect(publishButton()).toBeDisabled();
   });
 
   it('clears the reminder once a seller has declared a real Sals3 category, however confidence alone reads', () => {
@@ -1030,11 +1024,13 @@ describe('Product Editor - the photo a real product actually has', () => {
     );
 
     expect(
-      screen.queryByText('No Sals3 category has been decided yet'),
+      screen.queryByText('Sals3 category is required'),
     ).not.toBeInTheDocument();
   });
 
-  it('keeps the reminder even with EXACT confidence and a category path, when the auto-mirror produced them rather than a seller decision', () => {
+  it('blocks a CJ-mirrored category, which resolves EXACT confidence and is not a Sals3 one', () => {
+    // The case confidence alone could never catch: `cj-mirror.ts` auto-creates a
+    // `CJ-<id>` row for almost every CJ-sourced product and it resolves EXACT.
     const resolved = withCoverAddress();
 
     render(
@@ -1052,8 +1048,32 @@ describe('Product Editor - the photo a real product actually has', () => {
     );
 
     expect(
-      screen.getAllByText('No Sals3 category has been decided yet').length,
+      screen.getAllByText('Sals3 category is required').length,
     ).toBeGreaterThan(0);
-    expect(publishButton()).toBeEnabled();
+    expect(publishButton()).toBeDisabled();
+  });
+
+  it('accepts a real v1 category applied by an approved mapping, not only one the seller picked', () => {
+    // `publish.ts` accepts it, so the panel must not raise a blocker the server
+    // would never raise. Keying off "declared by this seller" did exactly that.
+    const resolved = withCoverAddress();
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          sals3CategoryPath: 'Apparel & Accessories > Clothing',
+          sals3CategoryCode: 'CAT-GGL-1604',
+          categoryMappingConfidence: 'EXACT',
+          sals3CategoryDeclaredBySeller: false,
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    expect(
+      screen.queryByText('Sals3 category is required'),
+    ).not.toBeInTheDocument();
   });
 });
