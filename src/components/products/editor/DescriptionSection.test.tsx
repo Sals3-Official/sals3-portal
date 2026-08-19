@@ -1,6 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import uploadDescriptionImageAction from '@/app/(portal)/listings/description-image-actions';
 import { renameOptionMappingAction } from '@/app/(portal)/listings/option-mapping-actions';
 import { saveProductDraftAction } from '@/app/(portal)/listings/product-draft-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
@@ -115,157 +114,60 @@ describe('Description section - block authoring', () => {
     );
   });
 
-  it('adds a heading the seller typed as a heading block, not a paragraph', async () => {
-    vi.mocked(saveProductDraftAction).mockResolvedValue({
-      ok: true,
-      revisionVersion: 4,
-    });
-
-    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Heading' }));
-    fireEvent.change(screen.getByLabelText('Heading text'), {
-      target: { value: 'Fit and sizing' },
-    });
-
-    const document = await saveDraft();
-
-    expect(document.blocks).toEqual([
-      { type: 'heading', level: 3, text: 'Fit and sizing' },
-    ]);
-  });
-
-  it('reorders blocks into the order the storefront will render', async () => {
-    vi.mocked(saveProductDraftAction).mockResolvedValue({
-      ok: true,
-      revisionVersion: 4,
-    });
-
-    renderEditor({
-      ...databaseBackedFixture(),
-      descriptionBlocks: [
-        { type: 'paragraph', text: 'First.' },
-        { type: 'paragraph', text: 'Second.' },
-      ],
-    });
-
-    fireEvent.click(
-      screen.getAllByRole('button', { name: /Move paragraph up/ })[1],
-    );
-
-    const document = await saveDraft();
-
-    expect(document.blocks).toEqual([
-      { type: 'paragraph', text: 'Second.' },
-      { type: 'paragraph', text: 'First.' },
-    ]);
-  });
-
-  it('warns about markup in the block rather than failing the save later', () => {
-    renderEditor({
-      ...databaseBackedFixture(),
-      descriptionBlocks: [{ type: 'paragraph', text: 'Placeholder.' }],
-    });
-
-    fireEvent.change(screen.getByLabelText('Paragraph text'), {
-      target: { value: 'Wear <b>this</b>.' },
-    });
-
-    expect(screen.getByText(/Markup is not allowed/)).toBeInTheDocument();
-  });
-
-  it('never tells the seller supplier HTML is sanitised', () => {
-    // There is no sanitiser. The copy that claimed one shipped for months
-    // beside a field sellers were being asked to trust.
+  it('shows a read-only summary and hands editing to the full editor', () => {
+    // Two editable surfaces over one document, each holding its own copy, is how
+    // one quietly reverts the other. The listing page states what exists; the
+    // full editor owns the changing of it.
     renderEditor(databaseBackedFixture());
 
-    expect(screen.queryByText(/are sanitised before/)).not.toBeInTheDocument();
     expect(
-      screen.getByText(/never copied into a Sals3 listing/),
+      screen.getByRole('link', { name: /Open full editor/i }),
+    ).toHaveAttribute(
+      'href',
+      `/listings/${DRAFT_TARGET.productId}/description`,
+    );
+    expect(screen.queryByLabelText('Paragraph text')).not.toBeInTheDocument();
+  });
+
+  it('names the empty state as writing rather than editing', () => {
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    expect(
+      screen.getByRole('link', { name: /Write description/i }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/Empty description/)).toBeInTheDocument();
   });
 
-  it('adds two consecutive image blocks for the side-by-side preset', async () => {
-    vi.mocked(saveProductDraftAction).mockResolvedValue({
-      ok: true,
-      revisionVersion: 4,
-    });
-    vi.mocked(uploadDescriptionImageAction).mockResolvedValue({
-      ok: true,
-      url: 'https://media.example.com/description-media/p/a.webp',
-      widthPixels: 1200,
-      heightPixels: 900,
-    });
+  it('keeps the blocks inline when there is no draft to save against', () => {
+    // A fixture preview has no revision for the full editor to compare-and-set,
+    // so the inline fields stay rather than linking to a screen that cannot save.
+    renderEditor({ ...databaseBackedFixture(), draftSaveTarget: null });
 
-    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
-
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Two images, side by side' }),
-    );
-
-    // The layout is adjacency, not a stored group: two plain image blocks,
-    // and the editor says what the storefront will do with them.
-    expect(screen.getAllByLabelText('Alt text')).toHaveLength(2);
-    expect(screen.getByText('1 of 2 side by side')).toBeInTheDocument();
-    expect(screen.getByText('2 of 2 side by side')).toBeInTheDocument();
+    expect(screen.getByLabelText('Paragraph text')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: /full editor/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it('uploads a file and saves the returned address in the block', async () => {
-    vi.mocked(saveProductDraftAction).mockResolvedValue({
-      ok: true,
-      revisionVersion: 4,
-    });
-    vi.mocked(uploadDescriptionImageAction).mockResolvedValue({
-      ok: true,
-      url: 'https://media.example.com/description-media/p/a.webp',
-      widthPixels: 1200,
-      heightPixels: 900,
-    });
-
-    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Image, full width' }));
-
-    const file = new File(['bytes'], 'chart.png', { type: 'image/png' });
-
-    // The file input is hidden from the accessibility tree — the Upload
-    // button is the control — so it is reached by test id rather than role.
-    fireEvent.change(screen.getByTestId(/-file$/), {
-      target: { files: [file] },
-    });
-
-    await waitFor(() =>
-      expect(uploadDescriptionImageAction).toHaveBeenCalled(),
-    );
-
-    fireEvent.change(screen.getByLabelText('Alt text'), {
-      target: { value: 'Size chart' },
-    });
-
-    const saved = await saveDraft();
-
-    expect(saved.blocks).toEqual([
-      {
-        type: 'image',
-        url: 'https://media.example.com/description-media/p/a.webp',
-        alt: 'Size chart',
-      },
-    ]);
-  });
-
-  it('asks for alt text before the image is publishable', () => {
+  it('summarises what the description holds without repeating the whole thing', () => {
     renderEditor({
       ...databaseBackedFixture(),
       descriptionBlocks: [
-        {
-          type: 'image',
-          url: 'https://media.example.com/description-media/p/a.webp',
-          alt: '',
-        },
+        { type: 'paragraph', text: 'A packable 20L daypack.' },
+        { type: 'heading', level: 3, text: 'Key features' },
+        { type: 'image', url: 'https://media.example.com/a.webp', alt: 'Back' },
       ],
     });
 
-    expect(screen.getByText(/Alt text is required/)).toBeInTheDocument();
+    expect(
+      screen.getByText('1 paragraph · 1 heading · 1 image'),
+    ).toBeInTheDocument();
+    // `getAllBy`: the draft storefront preview elsewhere in the editor renders
+    // the same first paragraph, which is correct — both are showing one
+    // document.
+    expect(
+      screen.getAllByText(/A packable 20L daypack/).length,
+    ).toBeGreaterThan(0);
   });
 });
 
