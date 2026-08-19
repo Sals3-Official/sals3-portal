@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyContributionFloor,
   applyFxAdjustment,
   applyRounding,
   convertAmountMinor,
@@ -160,5 +161,30 @@ describe('applyRounding', () => {
         b(amount),
       );
     });
+  });
+});
+
+describe('applyContributionFloor', () => {
+  it('returns the percentage price when it already clears cost + floor', () => {
+    expect(applyContributionFloor(b(1250), b(1000), b(100))).toBe(b(1250));
+  });
+
+  it('lifts to cost + floor when the percentage price falls short', () => {
+    expect(applyContributionFloor(b(1250), b(1000), b(500))).toBe(b(1500));
+  });
+
+  it('a zero floor is an exact no-op', () => {
+    expect(applyContributionFloor(b(1250), b(1000), b(0))).toBe(b(1250));
+  });
+
+  it('the exact crossover point goes to the percentage price (>=, not >)', () => {
+    // suggested == cost + floor: nothing to lift.
+    expect(applyContributionFloor(b(1500), b(1000), b(500))).toBe(b(1500));
+  });
+
+  it('rejects a negative floor instead of silently discounting below cost', () => {
+    expect(() => applyContributionFloor(b(1250), b(1000), b(-1))).toThrow(
+      RangeError,
+    );
   });
 });

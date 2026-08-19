@@ -1,109 +1,148 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { Sals3CategoryRow } from '@/lib/db/schema';
 import {
-  groupCategoryMarginRowsByL2,
-  type CategoryMarginLeafRow,
+  CATEGORY_PATH_SEPARATOR,
+  findNearestActiveCategoryPolicy,
 } from './repository';
 
 /**
- * Covers `groupCategoryMarginRowsByL2` in pure logic — no I/O, so no fake
- * executor is needed. `listCategoryMarginOverview`/`findLeafCategoriesByL1L2`
- * are query-builder functions whose deep `WHERE`/`LEFT JOIN` correctness is
- * Postgres's job, out of scope for a hand-rolled fake executor — same
- * convention `src/modules/market-config/repository.test.ts` documents; that
- * behaviour was confirmed manually against the real local database (1,345
- * leaves, 226 L2 groups, correct `LEFT JOIN` null-policy behaviour) while
- * building this module.
+ * Covers `findNearestActiveCategoryPolicy`'s chain derivation and
+ * deepest-wins selection in pure logic, with a fake executor that only
+ * records the query's shape and answers with canned rows. The deep
+ * `WHERE`/`JOIN` correctness of the plain CRUD functions is Postgres's
+ * job, out of scope for a hand-rolled fake executor — same convention
+ * `src/modules/market-config/repository.test.ts` documents.
  */
 
-function leaf(
-  overrides: Partial<CategoryMarginLeafRow> = {},
-): CategoryMarginLeafRow {
+function category(path: string, code = `CODE-${path}`): Sals3CategoryRow {
+  const segments = path.split(CATEGORY_PATH_SEPARATOR);
+
   return {
-    categoryId: 'category-1',
-    code: 'CAT-DIG-100801',
-    path: 'Digital Goods > Mobile Load > Telco Load Top-up',
-    l1: 'Digital Goods',
-    l2: 'Mobile Load',
-    l3: 'Telco Load Top-up',
-    policy: null,
-    ...overrides,
+    id: `id-${code}`,
+    code,
+    l1: segments[0] ?? null,
+    l2: segments[1] ?? null,
+    l3: segments[2] ?? null,
+    l4: segments[3] ?? null,
+    l5: segments[4] ?? null,
+    path,
+    taxonomyStatus: 'ADOPTED',
+    createdAt: new Date('2026-08-01T00:00:00Z'),
+  } as Sals3CategoryRow;
+}
+
+function policyRow(id: string) {
+  return {
+    id,
+    sellerAccountId: 'seller-1',
+    categoryId: `category-${id}`,
+    targetMarginRate: '0.300000',
+    roundingRule: 'NONE',
+    status: 'ACTIVE',
+    version: 1,
   };
 }
 
-describe('groupCategoryMarginRowsByL2', () => {
-  it('groups leaves by the (l1, l2) pair, not by l3 or the leaf itself', () => {
-    const rows = [
-      leaf({ categoryId: 'a', code: 'CAT-A' }),
-      leaf({ categoryId: 'b', code: 'CAT-B', l3: 'A different L3' }),
-      leaf({ categoryId: 'c', code: 'CAT-C', l1: 'Beauty', l2: 'Hair Care' }),
-    ];
+/**
+ * A fake executor for the one query shape this function issues:
+ * `.select().from().innerJoin().where()` resolving to rows.
+ */
+function fakeExecutor(rows: unknown[]) {
+  const where = vi.fn().mockResolvedValue(rows);
+  const innerJoin = vi.fn(() => ({ where }));
+  const from = vi.fn(() => ({ innerJoin }));
+  const select = vi.fn(() => ({ from }));
 
-    const groups = groupCategoryMarginRowsByL2(rows);
+  return { executor: { select } as never, select, where };
+}
 
-    expect(groups).toHaveLength(2);
-    const digital = groups.find(
-      (g) => g.groupKey === 'Digital Goods::Mobile Load',
+describe('findNearestActiveCategoryPolicy', () => {
+  it('returns null when no node on the chain carries an active policy', async () => {
+    const { executor } = fakeExecutor([]);
+
+    const result = await findNearestActiveCategoryPolicy(
+      executor,
+      'seller-1',
+      category('Apparel & Accessories > Clothing > Shirts & Tops'),
     );
-    expect(digital?.leaves.map((l) => l.categoryId)).toEqual(['a', 'b']);
-    const beauty = groups.find((g) => g.groupKey === 'Beauty::Hair Care');
-    expect(beauty?.leaves.map((l) => l.categoryId)).toEqual(['c']);
+
+    expect(result).toBeNull();
   });
 
-  it('a group with zero active policies still appears — never hidden for being empty', () => {
-    const rows = [
-      leaf({ policy: null }),
-      leaf({ categoryId: 'b', policy: null }),
-    ];
+  it("returns the category's own policy when it has one — self is the deepest node on its own chain", async () => {
+    const self = category('Apparel & Accessories > Clothing');
+    const department = category('Apparel & Accessories');
+    const { executor } = fakeExecutor([
+      { category: department, policy: policyRow('dept') },
+      { category: self, policy: policyRow('self') },
+    ]);
 
-    const groups = groupCategoryMarginRowsByL2(rows);
+    const result = await findNearestActiveCategoryPolicy(
+      executor,
+      'seller-1',
+      self,
+    );
 
-    expect(groups).toHaveLength(1);
-    expect(groups[0].leaves).toHaveLength(2);
-    expect(groups[0].leaves.every((l) => l.policy === null)).toBe(true);
+    expect(result?.policy.id).toBe('self');
+    expect(result?.sourceCategory.path).toBe(self.path);
   });
 
-  it('preserves each leaf`s own policy detail for the caller to derive uniform/mixed state from', () => {
-    const rows = [
-      leaf({
-        categoryId: 'a',
-        policy: {
-          id: 'policy-a',
-          targetMarginRate: '0.300000',
-          roundingRule: 'NONE',
-          version: 1,
-          updatedAt: new Date('2026-08-01T00:00:00Z'),
-        },
-      }),
-      leaf({
-        categoryId: 'b',
-        policy: {
-          id: 'policy-b',
-          targetMarginRate: '0.150000',
-          roundingRule: 'NEAREST_0_99',
-          version: 3,
-          updatedAt: new Date('2026-08-02T00:00:00Z'),
-        },
-      }),
-    ];
+  it('falls back to the nearest priced ancestor, not the shallowest', async () => {
+    const leaf = category(
+      'Apparel & Accessories > Clothing > Outerwear > Coats & Jackets',
+    );
+    const department = category('Apparel & Accessories');
+    const middle = category('Apparel & Accessories > Clothing');
+    const { executor } = fakeExecutor([
+      { category: department, policy: policyRow('dept') },
+      { category: middle, policy: policyRow('middle') },
+    ]);
 
-    const groups = groupCategoryMarginRowsByL2(rows);
+    const result = await findNearestActiveCategoryPolicy(
+      executor,
+      'seller-1',
+      leaf,
+    );
 
-    expect(groups[0].leaves[0].policy?.targetMarginRate).toBe('0.300000');
-    expect(groups[0].leaves[1].policy?.roundingRule).toBe('NEAREST_0_99');
+    // "Clothing" is deeper than the department — the nearest wins.
+    expect(result?.policy.id).toBe('middle');
+    expect(result?.sourceCategory.path).toBe(
+      'Apparel & Accessories > Clothing',
+    );
   });
 
-  it('buckets a null l1/l2 under "(Uncategorized)" rather than dropping the row', () => {
-    const rows = [leaf({ l1: null, l2: null })];
+  it('a department-only policy prices a depth-5 leaf', async () => {
+    const leaf = category(
+      'Home & Garden > Kitchen & Dining > Cookware > Pots > Stockpots',
+    );
+    const department = category('Home & Garden');
+    const { executor } = fakeExecutor([
+      { category: department, policy: policyRow('dept') },
+    ]);
 
-    const groups = groupCategoryMarginRowsByL2(rows);
+    const result = await findNearestActiveCategoryPolicy(
+      executor,
+      'seller-1',
+      leaf,
+    );
 
-    expect(groups).toHaveLength(1);
-    expect(groups[0].l1).toBe('(Uncategorized)');
-    expect(groups[0].l2).toBe('(Uncategorized)');
-    expect(groups[0].leaves).toHaveLength(1);
+    expect(result?.policy.id).toBe('dept');
+    expect(result?.sourceCategory.path).toBe('Home & Garden');
   });
 
-  it('returns an empty array for an empty input, not an error', () => {
-    expect(groupCategoryMarginRowsByL2([])).toEqual([]);
+  it('a department row (depth 1) checks only itself', async () => {
+    const department = category('Electronics');
+    const { executor, where } = fakeExecutor([
+      { category: department, policy: policyRow('dept') },
+    ]);
+
+    const result = await findNearestActiveCategoryPolicy(
+      executor,
+      'seller-1',
+      department,
+    );
+
+    expect(result?.policy.id).toBe('dept');
+    expect(where).toHaveBeenCalledTimes(1);
   });
 });
