@@ -1,4 +1,13 @@
-import { and, desc, eq, ilike, inArray, or } from 'drizzle-orm';
+import {
+  and,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+} from 'drizzle-orm';
 import type { Executor } from '@/modules/catalog/candidates/repository';
 import {
   pricingCategoryPolicies,
@@ -207,12 +216,30 @@ export type CategoryMarginLeafRow = {
 };
 
 /**
- * Every leaf in the taxonomy, LEFT JOINed to this seller's active policy
- * (or `null`). LEFT JOIN — not the INNER JOIN `listActiveCategoryPolicies`
- * uses — is what makes an L2 group with zero active policies still
- * knowable: the query is driven FROM `sals3Categories`, not from the
- * policy table. One query, no N+1 — the settings page's whole initial
- * render comes from this single fetch.
+ * The taxonomy down to L2 only — department and group — LEFT JOINed to this
+ * seller's active policy (or `null`).
+ *
+ * **Why L2 and not every row** (owner decision, 2026-08-19): the deepest
+ * levels are effectively per-item ("Bicycle Jerseys", "Bicycle Tights"),
+ * and per-product pricing belongs in the Product Catalogue, not in a
+ * commercial-rules screen. Shipping all 5,602 rows also put 5,382 rows on
+ * screen that nobody was ever going to tune by hand. 21 departments + 192
+ * groups = 213 rows, a 96% cut, and it holds as the taxonomy grows.
+ *
+ * Depth is NOT a resolution limit — `findNearestActiveCategoryPolicy` still
+ * walks the full path chain, so a product five levels deep inherits from its
+ * group or its department exactly as before. This narrows what a person is
+ * asked to configure, never what the resolver can read.
+ *
+ * The `OR policy IS NOT NULL` arm is deliberate: a deeper policy that
+ * already exists (the retired L1>L2 bulk fan-out wrote per-leaf rows) stays
+ * visible and editable. Hiding a rate that is actively pricing products
+ * would be the silent-configuration failure this codebase keeps hitting.
+ *
+ * LEFT JOIN — not the INNER JOIN `listActiveCategoryPolicies` uses — is what
+ * makes a group with zero active policies still knowable: the query is
+ * driven FROM `sals3Categories`, not from the policy table. One query, no
+ * N+1 — the settings page's whole initial render comes from this fetch.
  */
 export async function listCategoryMarginOverview(
   executor: Executor,
@@ -240,6 +267,12 @@ export async function listCategoryMarginOverview(
         eq(pricingCategoryPolicies.sellerAccountId, sellerAccountId),
         eq(pricingCategoryPolicies.status, 'ACTIVE'),
       ),
+    )
+    // Depth <= 2, plus anything already carrying a policy — see the doc
+    // comment. `l3 IS NULL` is the depth test: `path` is denormalized but
+    // `l1`/`l2`/`l3` are the real level columns.
+    .where(
+      or(isNull(sals3Categories.l3), isNotNull(pricingCategoryPolicies.id)),
     )
     .orderBy(
       sals3Categories.l1,

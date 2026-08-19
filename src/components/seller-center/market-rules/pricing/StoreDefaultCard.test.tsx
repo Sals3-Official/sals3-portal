@@ -55,7 +55,9 @@ describe('StoreDefaultCard — first run (no default yet)', () => {
       <StoreDefaultCard policy={null} sellerAccountId="seller-1" canManage />,
     );
 
-    expect(screen.getByText(/No store default set\./)).toBeInTheDocument();
+    expect(
+      screen.getByText(/still needs a price typed by hand/),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Set the default' }),
     ).toBeInTheDocument();
@@ -86,7 +88,7 @@ describe('StoreDefaultCard — first run (no default yet)', () => {
       target: { value: '35' },
     });
     fireEvent.change(
-      screen.getByLabelText('Minimum contribution in US dollars'),
+      screen.getByLabelText('Minimum profit per item in US dollars'),
       { target: { value: '2.50' } },
     );
     fireEvent.change(screen.getByPlaceholderText(/Reason/), {
@@ -209,7 +211,7 @@ describe('StoreDefaultCard — active default', () => {
     );
 
     expect(
-      screen.getByText(/freight is quoted at checkout/),
+      screen.getByText(/shipping is quoted separately at checkout/),
     ).toBeInTheDocument();
   });
 });

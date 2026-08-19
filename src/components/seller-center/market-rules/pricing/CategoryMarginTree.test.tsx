@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -26,10 +26,11 @@ vi.mock('@/app/(portal)/market-rules/pricing-actions', () => ({
 }));
 
 /* eslint-disable import/first */
-import CategoryMarginTree, {
+import CategoryMarginTree from './CategoryMarginTree';
+import {
   effectiveMarginFor,
   type CategoryMarginNodeViewModel,
-} from './CategoryMarginTree';
+} from './category-margin-model';
 
 function node(
   path: string,
@@ -160,9 +161,7 @@ describe('CategoryMarginTree', () => {
     );
 
     expect(screen.getByText('Clothing')).toBeInTheDocument();
-    expect(
-      screen.getAllByText('Inherits store default').length,
-    ).toBeGreaterThan(0);
+    expect(screen.getAllByText('Store default').length).toBeGreaterThan(0);
   });
 
   it('a set rate and an inherited rate are labelled differently', () => {
@@ -175,8 +174,9 @@ describe('CategoryMarginTree', () => {
       />,
     );
 
-    expect(screen.getByText('Set on this category')).toBeInTheDocument();
-    expect(screen.getByText('40.00%')).toBeInTheDocument();
+    expect(screen.getByText('This category')).toBeInTheDocument();
+    // Whole rates render whole — `40.00%` was false precision.
+    expect(screen.getByText('40%')).toBeInTheDocument();
   });
 
   it('search flattens to matching nodes shown with their full path', () => {
@@ -216,7 +216,7 @@ describe('CategoryMarginTree', () => {
     expect(screen.getByText(/No category matches/)).toBeInTheDocument();
   });
 
-  it('saving a branch margin calls the single-category action with the branch code — no fan-out input', async () => {
+  it('editing opens a pop-out, and saving calls the single-category action with that node code', async () => {
     mocks.saveCategoryPolicyAction.mockResolvedValue({ ok: true });
 
     render(
@@ -228,26 +228,33 @@ describe('CategoryMarginTree', () => {
       />,
     );
 
+    // Nothing is editable until the pop-out is opened — the table itself
+    // carries no inputs any more.
+    expect(
+      screen.queryByLabelText('Margin percent for Apparel & Accessories'),
+    ).toBeNull();
+
     // Departments without a policy offer "Set".
     fireEvent.click(screen.getAllByRole('button', { name: 'Set' })[0]);
-    fireEvent.change(
-      screen.getByLabelText('Margin percent for Apparel & Accessories'),
-      { target: { value: '40' } },
+
+    const marginInput = await screen.findByLabelText(
+      'Margin percent for Apparel & Accessories',
     );
+    fireEvent.change(marginInput, { target: { value: '40' } });
     fireEvent.change(
       screen.getByLabelText('Reason for change to Apparel & Accessories'),
       { target: { value: 'Department-level default for apparel.' } },
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save margin' }));
 
-    await screen.findByText('Apparel & Accessories'); // settle
-
-    expect(mocks.saveCategoryPolicyAction).toHaveBeenCalledWith({
-      categoryCode: 'CODE-Apparel & Accessories',
-      targetMarginRate: '0.4',
-      roundingRule: 'NONE',
-      reason: 'Department-level default for apparel.',
-    });
+    await waitFor(() =>
+      expect(mocks.saveCategoryPolicyAction).toHaveBeenCalledWith({
+        categoryCode: 'CODE-Apparel & Accessories',
+        targetMarginRate: '0.4',
+        roundingRule: 'NONE',
+        reason: 'Department-level default for apparel.',
+      }),
+    );
   });
 
   it('read-only callers see no Set/Edit controls at all', () => {

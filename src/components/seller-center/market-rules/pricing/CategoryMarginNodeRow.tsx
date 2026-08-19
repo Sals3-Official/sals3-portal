@@ -1,30 +1,16 @@
 'use client';
 
-/* eslint-disable react/jsx-no-bind -- handlers close over this row's own local editing state. */
-
-import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
-import { toast } from 'sonner';
-import {
-  getCategoryPolicyHistoryAction,
-  saveCategoryPolicyAction,
-} from '@/app/(portal)/market-rules/pricing-actions';
+import { getCategoryPolicyHistoryAction } from '@/app/(portal)/market-rules/pricing-actions';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import type { RoundingRule } from '@/modules/pricing/money-math';
+import CategoryMarginDialog from './CategoryMarginDialog';
 import DeactivateCategoryPolicyButton from './DeactivateCategoryPolicyButton';
-import type {
-  CategoryMarginNodeViewModel,
-  EffectiveMargin,
-} from './CategoryMarginTree';
+import {
+  ROW_GRID,
+  type CategoryMarginNodeViewModel,
+  type EffectiveMargin,
+} from './category-margin-model';
 import PolicyHistoryButton from './PolicyHistoryButton';
 
 type CategoryMarginNodeRowProps = {
@@ -38,13 +24,31 @@ type CategoryMarginNodeRowProps = {
   onToggleExpanded: () => void;
 };
 
-function editButtonLabel(isEditing: boolean, hasPolicy: boolean): string {
-  if (isEditing) return 'Close';
-  return hasPolicy ? 'Edit' : 'Set';
+/**
+ * `25.00%` reads as false precision on a number a person typed as `25`.
+ * Whole rates render whole; only a genuinely fractional rate shows decimals.
+ */
+function formatPercent(rate: string): string {
+  const value = Number(rate) * 100;
+  const rounded = Math.round(value * 100) / 100;
+  return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(2)}%`;
 }
 
-function formatPercent(rate: string): string {
-  return `${(Number(rate) * 100).toFixed(2)}%`;
+/**
+ * "Set on this category" collided with the button also labelled "Set" — the
+ * same word for a state and for an action. These name the origin only.
+ */
+function sourceLabel(effective: EffectiveMargin): string {
+  switch (effective.source) {
+    case 'SELF':
+      return 'This category';
+    case 'ANCESTOR':
+      return `From ${effective.ancestorName}`;
+    case 'STORE_DEFAULT':
+      return 'Store default';
+    default:
+      return 'Nothing yet';
+  }
 }
 
 function MarginChip({ effective }: { effective: EffectiveMargin }) {
@@ -71,31 +75,15 @@ function MarginChip({ effective }: { effective: EffectiveMargin }) {
   );
 }
 
-function sourceLabel(effective: EffectiveMargin): string {
-  switch (effective.source) {
-    case 'SELF':
-      return 'Set on this category';
-    case 'ANCESTOR':
-      return `Inherited from ${effective.ancestorName}`;
-    case 'STORE_DEFAULT':
-      return 'Inherits store default';
-    default:
-      return 'No policy anywhere';
-  }
-}
-
 /**
- * One taxonomy node. The margin chip is solid green when the node carries
- * its own policy and a `sals3-bright`-outlined tint when the rate is
- * inherited — an inherited rate is real and effective, but the outline
- * says "editing the parent moves this too". `sals3-bright` is used only as
- * a border here, never as text (it fails 4.5:1 — see the token's own doc
- * comment); the chip text is `sals3-deep`, 14.3:1 on white.
+ * One taxonomy node — department or group. The margin chip is solid green
+ * when the node carries its own policy and a `sals3-bright`-outlined tint
+ * when the rate is inherited: an inherited rate is real and effective, but
+ * the outline says "editing the parent moves this too". `sals3-bright` is
+ * used only as a border here, never as text (it fails 4.5:1 — see the
+ * token's own doc comment); the chip text is `sals3-deep`, 14.3:1 on white.
  *
- * Save commits on the first click: with inheritance, setting a branch no
- * longer overwrites any child's own policy (children with their own rate
- * keep it — they sit deeper in the chain), so the old bulk-overwrite
- * arming step has nothing left to guard against.
+ * Editing happens in a pop-out, not inline — see `CategoryMarginDialog`.
  */
 export default function CategoryMarginNodeRow({
   node,
@@ -106,64 +94,20 @@ export default function CategoryMarginNodeRow({
   isExpanded,
   onToggleExpanded,
 }: CategoryMarginNodeRowProps) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-  const [isEditing, setIsEditing] = useState(false);
-  const [marginPercent, setMarginPercent] = useState('');
-  const [roundingRule, setRoundingRule] = useState<RoundingRule>(
-    node.policy?.roundingRule ?? 'NONE',
-  );
-  const [reason, setReason] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
 
-  const ready = marginPercent.trim() !== '' && reason.trim().length >= 10;
-  const indent = flat ? 0 : (node.depth - 1) * 22;
+  const indent = flat ? 0 : (node.depth - 1) * 20;
   const hasChildren = node.childCount > 0;
-
-  function openEditor() {
-    setMarginPercent(
-      node.policy === null
-        ? ''
-        : (Number(node.policy.targetMarginRate) * 100).toString(),
-    );
-    setRoundingRule(node.policy?.roundingRule ?? 'NONE');
-    setReason('');
-    setError(null);
-    setIsEditing(true);
-  }
-
-  function handleSave() {
-    setError(null);
-    const targetMarginRate = (Number(marginPercent) / 100).toString();
-
-    startTransition(async () => {
-      const result = await saveCategoryPolicyAction({
-        categoryCode: node.code,
-        targetMarginRate,
-        roundingRule,
-        reason,
-      });
-
-      if (!result.ok) {
-        setError('Check the fields and try again.');
-        return;
-      }
-
-      toast.success(`Margin saved for ${node.name}.`);
-      setIsEditing(false);
-      router.refresh();
-    });
-  }
 
   return (
     <>
       <div
         role="row"
-        className="grid grid-cols-[minmax(0,1fr)_130px_minmax(140px,210px)_auto] items-center gap-3 border-b border-border px-3 py-2 last:border-b-0"
+        className={`${ROW_GRID} border-b border-border px-3 py-1.5 last:border-b-0 hover:bg-surface/60`}
       >
         <div
           role="cell"
-          className="flex min-w-0 items-center gap-1.5"
+          className="flex min-w-0 items-center gap-1"
           style={indent === 0 ? undefined : { paddingLeft: `${indent}px` }}
         >
           {hasChildren && !flat ? (
@@ -193,7 +137,7 @@ export default function CategoryMarginNodeRow({
             >
               {flat ? node.path : node.name}
             </span>
-            <span className="text-[11px] text-ink-faint">
+            <span className="truncate text-[11px] text-ink-faint">
               {hasChildren
                 ? `${node.subtreeCount.toLocaleString()} categories`
                 : node.code}
@@ -205,23 +149,23 @@ export default function CategoryMarginNodeRow({
           <MarginChip effective={effective} />
         </div>
 
-        <div role="cell">
+        <div role="cell" className="min-w-0">
           <span
-            className={`text-xs ${effective.source === 'SELF' ? 'text-ink-muted' : 'text-ink-faint'}`}
+            className={`block truncate text-xs ${effective.source === 'SELF' ? 'text-ink-muted' : 'text-ink-faint'}`}
           >
             {sourceLabel(effective)}
           </span>
         </div>
 
-        <div role="cell" className="flex items-center justify-end gap-1.5">
+        <div role="cell" className="flex items-center justify-end gap-1">
           {canManage ? (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => (isEditing ? setIsEditing(false) : openEditor())}
+              onClick={() => setIsEditorOpen(true)}
             >
-              {editButtonLabel(isEditing, node.policy !== null)}
+              {node.policy === null ? 'Set' : 'Edit'}
             </Button>
           ) : null}
           {canManage && node.policy !== null ? (
@@ -239,83 +183,13 @@ export default function CategoryMarginNodeRow({
         </div>
       </div>
 
-      {isEditing ? (
-        <div className="flex flex-wrap items-end gap-3 border-b border-l-[3px] border-b-border border-l-sals3-bright bg-surface px-3 py-3">
-          {error === null ? null : (
-            <p role="alert" className="w-full text-xs text-destructive">
-              {error}
-            </p>
-          )}
-          <div className="flex flex-col gap-1">
-            <span className="text-[11px] font-semibold text-ink-muted">
-              Margin
-            </span>
-            <div className="flex items-center gap-1">
-              <Input
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                min="0.01"
-                max="99.99"
-                value={marginPercent}
-                onChange={(event) => setMarginPercent(event.target.value)}
-                aria-label={`Margin percent for ${node.path}`}
-                className="h-8 w-20 text-right"
-              />
-              <span className="text-xs text-muted-foreground">%</span>
-            </div>
-          </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-[11px] font-semibold text-ink-muted">
-              Rounding
-            </span>
-            <Select
-              value={roundingRule}
-              onValueChange={(value) =>
-                setRoundingRule((value as RoundingRule | null) ?? 'NONE')
-              }
-            >
-              <SelectTrigger
-                aria-label={`Rounding for ${node.path}`}
-                className="h-8 w-40 text-xs"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="NONE">None — exact price</SelectItem>
-                <SelectItem value="NEAREST_0_99">Nearest .99</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex min-w-[200px] flex-1 flex-col gap-1">
-            <span className="text-[11px] font-semibold text-ink-muted">
-              Reason for change
-            </span>
-            <Input
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-              placeholder="Reason (min 10 characters)"
-              aria-label={`Reason for change to ${node.path}`}
-              className="h-8 text-xs"
-            />
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={isPending || !ready}
-            onClick={handleSave}
-          >
-            {isPending ? 'Saving…' : 'Save'}
-          </Button>
-          {hasChildren ? (
-            <span className="w-full text-[11px] text-ink-faint">
-              Covers all {node.subtreeCount.toLocaleString()} categories under{' '}
-              {node.name} that don&apos;t set their own margin. Categories with
-              their own rate keep it.
-            </span>
-          ) : null}
-        </div>
+      {canManage && isEditorOpen ? (
+        <CategoryMarginDialog
+          node={node}
+          effective={effective}
+          open={isEditorOpen}
+          onOpenChange={setIsEditorOpen}
+        />
       ) : null}
     </>
   );

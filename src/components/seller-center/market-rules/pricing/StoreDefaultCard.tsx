@@ -21,6 +21,7 @@ import DisclosureBanner from '@/components/seller-center/shared/DisclosureBanner
 import type { RoundingRule } from '@/modules/pricing/money-math';
 import type { PricingStoreDefaultRow } from '@/lib/db/schema';
 import DeactivateStoreDefaultButton from './DeactivateStoreDefaultButton';
+import StoreDefaultPreview from './StoreDefaultPreview';
 import PolicyHistoryButton from './PolicyHistoryButton';
 
 type StoreDefaultCardProps = {
@@ -42,26 +43,6 @@ function formatUsdMinor(minor: bigint): string {
   const whole = minor / BigInt(100);
   const cents = (minor % BigInt(100)).toString().padStart(2, '0');
   return `US$${whole.toString()}.${cents}`;
-}
-
-/**
- * A quick worked example so the two numbers stay concrete: at which cost
- * does the floor stop mattering? `crossover = floor × (1 − m) / m` — below
- * that supplier cost the floor rule wins, above it the percentage does.
- * Illustration only, computed from the two entered values; the real price
- * always comes from the server-side resolver.
- */
-function crossoverCostMinor(
-  marginPercent: string,
-  floorDollars: string,
-): number | null {
-  const margin = Number(marginPercent) / 100;
-  const floorMinor = Math.round(Number(floorDollars) * 100);
-
-  if (!Number.isFinite(margin) || margin <= 0 || margin >= 1) return null;
-  if (!Number.isFinite(floorMinor) || floorMinor <= 0) return null;
-
-  return Math.round((floorMinor * (1 - margin)) / margin);
 }
 
 /**
@@ -91,8 +72,6 @@ export default function StoreDefaultCard({
 
   // First-run state: nothing to toggle away from, the form is the card.
   const showForm = canManage && (policy === null || isEditing);
-
-  const crossover = crossoverCostMinor(marginPercent, floorDollars);
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -129,10 +108,9 @@ export default function StoreDefaultCard({
       {policy === null ? (
         <div className="flex items-start justify-between gap-2 p-4">
           <DisclosureBanner tone="warning" className="flex-1">
-            No store default set. Products in categories with no margin anywhere
-            cannot be auto-priced or published without a manual retail price.
-            Set one number here and every category inherits it until you refine
-            a department below.
+            No store default set, so every product still needs a price typed by
+            hand before it can go live. Fill in the two numbers below once and
+            every category prices itself from them.
           </DisclosureBanner>
           <PolicyHistoryButton
             title="History — Store default"
@@ -233,7 +211,7 @@ export default function StoreDefaultCard({
             </p>
           )}
           <div className="flex flex-col gap-1">
-            <Label htmlFor={`${fieldId}-margin`}>Default margin</Label>
+            <Label htmlFor={`${fieldId}-margin`}>Your margin</Label>
             <div className="flex items-center gap-1">
               <Input
                 id={`${fieldId}-margin`}
@@ -250,9 +228,12 @@ export default function StoreDefaultCard({
               />
               <span className="text-sm text-muted-foreground">%</span>
             </div>
+            <span className="text-xs text-ink-faint">
+              Your share of the selling price
+            </span>
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor={`${fieldId}-floor`}>Minimum contribution</Label>
+            <Label htmlFor={`${fieldId}-floor`}>Minimum profit per item</Label>
             <div className="flex items-center gap-1">
               <span className="text-sm text-muted-foreground">US$</span>
               <Input
@@ -263,10 +244,13 @@ export default function StoreDefaultCard({
                 min="0"
                 value={floorDollars}
                 onChange={(event) => setFloorDollars(event.target.value)}
-                aria-label="Minimum contribution in US dollars"
+                aria-label="Minimum profit per item in US dollars"
                 className="w-24 text-right"
               />
             </div>
+            <span className="text-xs text-ink-faint">
+              Covers costs that stay the same on a cheap item
+            </span>
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor={`${fieldId}-rounding`}>Rounding</Label>
@@ -304,21 +288,22 @@ export default function StoreDefaultCard({
           <Button type="submit" disabled={isPending}>
             {saveButtonLabel(isPending, policy !== null)}
           </Button>
+          <StoreDefaultPreview
+            marginPercent={marginPercent}
+            floorAmount={floorDollars}
+            roundingRule={roundingRule}
+          />
           <span className="w-full text-xs text-muted-foreground">
-            Margin is a share of the selling price, not a markup on cost — 30%
-            markup ≈ 23.08% margin.
-            {crossover === null
-              ? ''
-              : ` With these values, the floor sets the price for anything cheaper than ${formatUsdMinor(BigInt(crossover))} supplier cost; the percentage takes over above that.`}
+            This is margin, not markup: a 30% markup is the same as 23.08% here.
           </span>
         </form>
       ) : null}
 
       <div className="border-t border-border px-4 py-2.5">
         <p className="text-xs text-ink-faint">
-          Product-only guidance; freight is quoted at checkout. The floor and
-          margin cover payment fees, platform commission, and returns — none of
-          which are configured yet, so keep the default conservative and revisit
+          Product price only — shipping is quoted separately at checkout. These
+          two numbers have to cover card fees, Sals3 commission and returns, and
+          none of those are set up yet, so keep them conservative and revisit
           once the real payment rail exists.
         </p>
       </div>
