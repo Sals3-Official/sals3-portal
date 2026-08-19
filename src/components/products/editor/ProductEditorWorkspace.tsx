@@ -39,6 +39,10 @@ import {
   type VariantFixture,
 } from '@/lib/seller-center/product-editor/types';
 import { suggestMetaDescription } from '@/lib/seller-center/product-editor/suggest-meta-description';
+import {
+  initialDescriptionMode,
+  type DescriptionMode,
+} from '@/lib/products/simple-description';
 import BasicInformationSection from './BasicInformationSection';
 import BulkPricingDialog, { type BulkPricingMode } from './BulkPricingDialog';
 import CategoryAttributesSection from './category-attributes/CategoryAttributesSection';
@@ -228,9 +232,15 @@ const PUBLISH_FAILURE_MESSAGES: Record<string, string> = {
   failed: 'No listing was published.',
 };
 
-function descriptionDocumentFrom(blocks: KeyedDescriptionBlock[]) {
+function descriptionDocumentFrom(
+  blocks: KeyedDescriptionBlock[],
+  mode: DescriptionMode,
+) {
   return {
     version: DESCRIPTION_DOCUMENT_VERSION,
+    // Saved with the document because the content can no longer imply it: a
+    // simple-text description legitimately retains photos it is not publishing.
+    mode,
     blocks: prepareBlocksForSave(blocks.map((entry) => entry.block)),
   };
 }
@@ -363,6 +373,9 @@ export default function ProductEditorWorkspace({
    */
   const [descriptionBlocks, setDescriptionBlocks] = useState(() =>
     keyDescriptionBlocks(fixture.descriptionBlocks),
+  );
+  const [descriptionMode, setDescriptionMode] = useState<DescriptionMode>(() =>
+    initialDescriptionMode(fixture.descriptionBlocks, fixture.descriptionMode),
   );
 
   /**
@@ -661,7 +674,10 @@ export default function ProductEditorWorkspace({
         // is now a read-only pass-through of whatever value was already
         // stored, never a value this screen can change.
         sals3CategoryL1: fixture.sals3CategoryL1,
-        descriptionDocument: descriptionDocumentFrom(descriptionBlocks),
+        descriptionDocument: descriptionDocumentFrom(
+          descriptionBlocks,
+          descriptionMode,
+        ),
         variantRetailPrices: variants
           .filter((variant) => UUID_PATTERN.test(variant.id))
           .map((variant) => ({
@@ -1292,6 +1308,8 @@ export default function ProductEditorWorkspace({
                * rather than disabled — a button that cannot work in this mode is
                * not a feature the seller is missing.
                */
+              mode={descriptionMode}
+              onModeChange={setDescriptionMode}
               fullEditorHref={
                 fixture.draftSaveTarget === null
                   ? null

@@ -4,24 +4,29 @@ import type { DescriptionBlock } from './description-blocks';
  * The plain-text view of a description document.
  *
  * A seller who wants to type a description into one box should be able to, and
- * most do. But there is only ever **one stored format** — the allow-listed block
- * document — so "simple text" is a *view* over it rather than a second schema.
- * Two storage shapes for one field would mean two renderers, two validators, and
- * a mode flag that could disagree with the content it describes.
+ * most do. There is still only **one stored format** — the allow-listed block
+ * document — so simple text is a *view* over it rather than a second schema.
  *
- * The shape simple text can represent is paragraphs followed by images:
+ * Two owner decisions shape this, and the second one costs something:
  *
- *     [paragraph, paragraph, …][image, image, …]
+ * 1. **Simple text publishes exactly what it shows.** Only the paragraphs reach
+ *    the product page; a photo cannot be placed from a plain box, so a photo is
+ *    not part of what simple mode publishes.
+ * 2. **Switching to simple never destroys a photo.** One saved in the designed
+ *    layout stays in the document, unpublished while simple mode is on, and comes
+ *    back whole on switching layout again.
  *
- * Paragraphs because blank lines separate them, images trailing because a
- * textarea cannot express *interleaved* order — there is nowhere in a string to
- * say "and here, between these two paragraphs, a photo". That is the same
- * conclusion the PDP v3.1 spec reached for its own phase one, and the reason
- * design mode exists rather than the reason simple mode is broken.
+ * Together those mean the mode **cannot be derived from the content** any more: a
+ * simple-text document may legitimately hold photos it is not publishing, so the
+ * blocks no longer say which mode they are in. `mode` is therefore stored on the
+ * document itself — a field in the same JSONB column, so no migration is
+ * involved, exactly as `runs` needed none.
  *
- * Because the mode is derived from the content, nothing needs to be stored to
- * remember it and no migration is involved. A document that simple text can hold
- * opens in simple mode; one it cannot opens in design mode.
+ * That is a flag which could in principle disagree with the content, which is
+ * what this module previously avoided. The trade is deliberate: a flag that
+ * decides *what publishes* is a seller's stated intent, and honouring it costs
+ * less than deleting a photo they spent time uploading. A document with no `mode`
+ * is a legacy one, and its mode is inferred the old way.
  */
 
 /**
@@ -87,42 +92,60 @@ export function imagesOf(blocks: readonly DescriptionBlock[]): ImageBlock[] {
 }
 
 /**
- * Rebuilds a document from the simple surface's two parts.
+ * Rebuilds a simple-mode document: the typed paragraphs, then the photos the
+ * document was already carrying.
  *
- * Images always land after the text, which is the order simple mode can honestly
- * claim. Their relative order is the seller's, preserved from the strip.
+ * The photos are retained rather than published — `publishableBlocks` is what
+ * drops them for the product page. Keeping them in the stored document is the
+ * whole reason switching layouts is reversible.
  */
 export function simpleDescriptionToBlocks(
   text: string,
-  images: readonly ImageBlock[],
+  retainedImages: readonly ImageBlock[] = [],
 ): DescriptionBlock[] {
-  return [...descriptionTextToBlocks(text), ...images];
+  return [...descriptionTextToBlocks(text), ...retainedImages];
 }
 
 /**
- * True when simple text can hold this document without changing it.
+ * What a buyer actually sees, given the mode the seller chose.
  *
- * Deliberately strict. Emphasis counts as structure: a paragraph carrying `runs`
- * would come back plain, and losing a seller's bold silently is the same class of
- * defect as losing a heading. An image sitting *between* paragraphs also fails,
- * because simple mode would move it to the end and quietly rearrange the page.
+ * The one place the mode changes an outcome. Simple mode publishes its
+ * paragraphs; the photos it carries are the seller's, kept for when they switch
+ * layout again, and are not part of what simple text shows. Designed mode
+ * publishes everything.
+ *
+ * Called by the storefront read model so the rule lives once, rather than being
+ * re-derived by every consumer that renders a description.
+ */
+export function publishableBlocks(
+  blocks: readonly DescriptionBlock[],
+  mode: DescriptionMode,
+): DescriptionBlock[] {
+  if (mode === 'design') return [...blocks];
+
+  return blocks.filter((block) => block.type === 'paragraph');
+}
+
+/**
+ * True when switching to simple text would change nothing the seller has to
+ * agree to.
+ *
+ * Photos do not disqualify a document: they are retained across the switch and
+ * restored on switching back, so there is nothing to warn about. What does
+ * disqualify is text structure, because that genuinely changes — a heading
+ * becomes a paragraph and cannot become a heading again by itself, and emphasis
+ * is dropped. Losing a seller's bold silently is the same class of defect as
+ * losing a heading, so both are named before either happens.
  */
 export function canUseSimpleMode(blocks: readonly DescriptionBlock[]): boolean {
-  const firstImage = blocks.findIndex((block) => block.type === 'image');
-
-  return blocks.every((block, index) => {
-    if (block.type === 'image') return true;
-    if (block.type !== 'paragraph') return false;
-    if (block.runs !== undefined) return false;
-
-    // A paragraph after the first image would be reordered by the round trip.
-    return firstImage === -1 || index < firstImage;
-  });
+  return blocks.every(
+    (block) =>
+      block.type === 'image' ||
+      (block.type === 'paragraph' && block.runs === undefined),
+  );
 }
 
 function countLoss(blocks: readonly DescriptionBlock[]) {
-  const firstImage = blocks.findIndex((block) => block.type === 'image');
-
   return {
     headings: blocks.filter((block) => block.type === 'heading').length,
     bulletLists: blocks.filter((block) => block.type === 'bulletList').length,
@@ -130,15 +153,6 @@ function countLoss(blocks: readonly DescriptionBlock[]) {
     emphasised: blocks.filter(
       (block) => block.type === 'paragraph' && block.runs !== undefined,
     ).length,
-    /** An image with any non-image block after it is one the round trip moves. */
-    movedImages:
-      firstImage === -1
-        ? 0
-        : blocks.filter(
-            (block, index) =>
-              block.type === 'image' &&
-              blocks.slice(index + 1).some((later) => later.type !== 'image'),
-          ).length,
   };
 }
 
@@ -177,12 +191,6 @@ export function describeSimpleModeLoss(
       `bold or italic in ${plural(loss.emphasised, 'paragraph', 'paragraphs')}`,
     );
   }
-  if (loss.movedImages > 0) {
-    parts.push(
-      `${plural(loss.movedImages, 'image', 'images')} that sit between paragraphs`,
-    );
-  }
-
   if (parts.length === 0) return null;
 
   const listed =
@@ -190,16 +198,17 @@ export function describeSimpleModeLoss(
       ? parts[0]
       : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 
-  return `Simple text cannot hold ${listed}. Your words are kept — the structure becomes plain paragraphs, and any image between paragraphs moves to the end.`;
+  return `Simple text cannot hold ${listed}. Your words are kept and become plain paragraphs. Photos are not affected — they stay with the description and come back if you switch layout again.`;
 }
 
 /**
  * The explicit, confirmed conversion into what simple text can hold.
  *
  * Every word survives. A heading becomes its own paragraph, a bullet list and a
- * detail list become one line per entry, emphasis is dropped, and images move to
- * the end in their existing order. Nothing is deleted — which is what makes this
- * recoverable by retyping rather than by restoring a revision.
+ * detail list become one line per entry, and emphasis is dropped. **Photos are
+ * carried through untouched**, in their existing order, so switching layout again
+ * restores them — nothing a seller uploaded is destroyed by choosing a simpler
+ * editor.
  */
 export function flattenToSimpleMode(
   blocks: readonly DescriptionBlock[],
@@ -234,9 +243,24 @@ export function flattenToSimpleMode(
   return simpleDescriptionToBlocks(text, imagesOf(blocks));
 }
 
-/** The mode a stored document should open in, with no preference recorded anywhere. */
+/**
+ * The mode a stored document opens in.
+ *
+ * The stored `mode` wins whenever there is one, because a simple-text document
+ * holding retained photos is indistinguishable from a designed one by content
+ * alone — that ambiguity is exactly why the field exists.
+ *
+ * `undefined` means a document written before the field did. Those are inferred
+ * the way they always were, and a legacy document holding a photo opens designed,
+ * which is where its photo is visible.
+ */
 export function initialDescriptionMode(
   blocks: readonly DescriptionBlock[],
+  storedMode?: DescriptionMode,
 ): DescriptionMode {
-  return canUseSimpleMode(blocks) ? 'simple' : 'design';
+  if (storedMode !== undefined) return storedMode;
+
+  const hasPhoto = blocks.some((block) => block.type === 'image');
+
+  return canUseSimpleMode(blocks) && !hasPhoto ? 'simple' : 'design';
 }

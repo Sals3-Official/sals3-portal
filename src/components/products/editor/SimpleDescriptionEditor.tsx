@@ -1,9 +1,7 @@
 'use client';
 
-import { TriangleAlert, X } from 'lucide-react';
-import Image from 'next/image';
+import { ImageOff, TriangleAlert } from 'lucide-react';
 import { useId, useState } from 'react';
-import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import type { DescriptionBlock } from '@/lib/products/description-blocks';
@@ -19,16 +17,17 @@ import { cn } from '@/lib/utils';
 /**
  * The description as one box of text.
  *
- * The mode most sellers want: type the description, done. It writes the same
- * allow-listed block document the designed layout writes — paragraphs split on
- * blank lines — so there is one stored format and one renderer, and switching
- * modes never converts between two schemas.
+ * What this box holds is exactly what the product page shows: its paragraphs.
+ * Headings, lists, and photo placement belong to the designed layout.
  *
- * Deliberately just the box. Photos are added in the designed layout, where
- * placement is the whole point; an upload button here could only ever produce
- * "the photos you uploaded, in that order, after the text", which is a worse
- * version of what the other mode does properly. Prompt chips went for the same
- * reason — a row of suggestions around an empty box is furniture, not help.
+ * A photo saved in the designed layout is **kept, not deleted** — it rides along
+ * in the stored document, is not published while simple text is on, and comes
+ * back whole on switching layout again. The seller is told it is there, because a
+ * photo that is neither visible nor mentioned reads as one that was thrown away.
+ *
+ * It writes the same allow-listed block document the designed layout writes —
+ * paragraphs split on blank lines — so there is one stored format and one
+ * renderer, and switching modes never converts between two schemas.
  *
  * Still no markup. This is a `<textarea>`: what a seller types is text, pasted
  * formatting arrives as the words without the tags, and `MARKUP_OPENER` refuses
@@ -45,7 +44,6 @@ export default function SimpleDescriptionEditor({
   onBlocksChange,
 }: SimpleDescriptionEditorProps) {
   const fieldId = useId();
-  const images = imagesOf(blocks);
 
   /**
    * The text being typed is local state, not a value read back out of `blocks`.
@@ -56,6 +54,7 @@ export default function SimpleDescriptionEditor({
    * that produced it, and the seller watched their space vanish. The trim belongs
    * at save time, where `prepareBlocksForSave` already does it.
    */
+  const retainedImages = imagesOf(blocks);
   const derivedText = blocksToSimpleText(blocks);
   const [text, setText] = useState(derivedText);
 
@@ -73,13 +72,6 @@ export default function SimpleDescriptionEditor({
 
   const isOverSoftMax = text.length > SIMPLE_TEXT_SOFT_MAX;
 
-  function commit(nextText: string, nextImages = images) {
-    setText(nextText);
-    onBlocksChange(simpleDescriptionToBlocks(nextText, nextImages));
-  }
-
-  const missingAlt = images.filter((image) => image.alt.trim() === '').length;
-
   return (
     <div className="flex flex-col gap-3">
       <div className="overflow-hidden rounded-lg border border-input">
@@ -90,7 +82,14 @@ export default function SimpleDescriptionEditor({
           id={fieldId}
           value={text}
           rows={14}
-          onChange={(event) => commit(event.target.value)}
+          onChange={(event) => {
+            setText(event.target.value);
+            // The retained photos are re-attached on every edit, so typing here
+            // can never be the thing that drops one.
+            onBlocksChange(
+              simpleDescriptionToBlocks(event.target.value, retainedImages),
+            );
+          }}
           placeholder={
             'Describe the product in your own words.\n\nLeave a blank line to start a new paragraph.'
           }
@@ -109,6 +108,18 @@ export default function SimpleDescriptionEditor({
         </div>
       </div>
 
+      {retainedImages.length === 0 ? null : (
+        <p className="flex items-start gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs text-ink-muted">
+          <ImageOff
+            aria-hidden="true"
+            className="mt-0.5 size-3.5 shrink-0 text-ink-subtle"
+          />
+          {retainedImages.length === 1
+            ? 'One photo from the designed layout is saved with this description. Simple text does not show it on the product page — switch to the designed layout to place it again.'
+            : `${retainedImages.length} photos from the designed layout are saved with this description. Simple text does not show them on the product page — switch to the designed layout to place them again.`}
+        </p>
+      )}
+
       {isOverSoftMax ? (
         <p role="status" className="flex gap-1.5 text-xs text-amber-700">
           <TriangleAlert
@@ -120,91 +131,6 @@ export default function SimpleDescriptionEditor({
           read past this length.
         </p>
       ) : null}
-
-      {/*
-       * Photos the document already holds, added in the designed layout.
-       *
-       * Shown rather than hidden: they are stored content that publishes to the
-       * product page, and a screen holding something the seller cannot see is the
-       * defect this codebase has met three times. There is no upload here — only
-       * the alt text every image needs before publishing, and a way to take one
-       * out.
-       */}
-      {images.length === 0 ? null : (
-        <div className="flex flex-col gap-2">
-          <p className="text-xs font-medium text-ink">
-            Photos in this description
-            <span className="ml-1.5 font-normal text-ink-subtle">
-              added in the designed layout, published after the text
-            </span>
-          </p>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-            {images.map((image, index) => (
-              <div
-                // The address is the identity: two tiles cannot hold one upload,
-                // and a stored R2 URL never changes under a tile.
-                key={image.url}
-                className="flex flex-col gap-1.5"
-              >
-                <div className="relative aspect-[4/3] overflow-hidden rounded-lg border border-border bg-surface-sunken">
-                  <Image
-                    src={image.url}
-                    alt={image.alt}
-                    fill
-                    sizes="(min-width: 1024px) 200px, 45vw"
-                    loading="lazy"
-                    className="object-cover"
-                  />
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    aria-label={`Remove photo ${index + 1}`}
-
-                    onClick={() =>
-                      commit(
-                        text,
-                        images.filter((_, position) => position !== index),
-                      )
-                    }
-                    className="absolute top-1 right-1 size-6 p-0"
-                  >
-                    <X aria-hidden="true" className="size-3.5" />
-                  </Button>
-                </div>
-                <input
-                  value={image.alt}
-                  aria-label={`Alt text for photo ${index + 1}`}
-                  placeholder="Describe this photo"
-
-                  onChange={(event) =>
-                    commit(
-                      text,
-                      images.map((entry, position) =>
-                        position === index
-                          ? { ...entry, alt: event.target.value }
-                          : entry,
-                      ),
-                    )
-                  }
-                  className="w-full rounded-md border border-input px-2 py-1 text-xs text-ink placeholder:text-ink-subtle focus-visible:border-transparent focus-visible:outline-2 focus-visible:outline-offset-[-1px] focus-visible:outline-sals3-bright"
-                />
-              </div>
-            ))}
-          </div>
-          {missingAlt > 0 ? (
-            <p role="status" className="flex gap-1.5 text-xs text-amber-700">
-              <TriangleAlert
-                aria-hidden="true"
-                className="mt-0.5 size-3.5 shrink-0"
-              />
-              {missingAlt === 1
-                ? 'One photo still needs a description. It is required before this listing can publish.'
-                : `${missingAlt} photos still need a description. Each is required before this listing can publish.`}
-            </p>
-          ) : null}
-        </div>
-      )}
     </div>
   );
 }

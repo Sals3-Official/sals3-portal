@@ -188,6 +188,24 @@ export { DESCRIPTION_DOCUMENT_VERSION };
 export const descriptionDocumentSchema = z
   .object({
     version: z.literal(DESCRIPTION_DOCUMENT_VERSION),
+    /**
+     * Which editor the seller chose, and therefore what publishes.
+     *
+     * Optional, and absent on every document written before it existed — those
+     * are inferred from their content, so no stored description changes meaning
+     * and no migration is needed. Adding an optional field to a JSONB document is
+     * the same non-event `runs` was.
+     *
+     * It exists because the content can no longer answer the question. Simple
+     * mode publishes only its paragraphs but **retains** photos saved in the
+     * designed layout, so a simple document holding photos is indistinguishable
+     * by content from a designed one. The alternative was deleting a seller's
+     * photos on a layout switch, which is a worse trade than storing an intent.
+     *
+     * `publishableBlocks` in `@/lib/products/simple-description` is the only
+     * place this changes an outcome.
+     */
+    mode: z.enum(['simple', 'design']).optional(),
     blocks: z.array(descriptionBlockSchema).max(MAX_BLOCKS),
   })
   .superRefine((document, context) => {

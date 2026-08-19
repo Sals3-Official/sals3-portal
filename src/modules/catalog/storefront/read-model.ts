@@ -13,6 +13,10 @@ import {
   sals3Categories,
 } from '@/lib/db/schema';
 import {
+  initialDescriptionMode,
+  publishableBlocks,
+} from '@/lib/products/simple-description';
+import {
   descriptionDocumentSchema,
   type DescriptionDocument,
 } from '@/modules/catalog/products/description-document';
@@ -413,9 +417,27 @@ async function loadDescriptionBlocks(
     .limit(1);
   const parsed = descriptionDocumentSchema.safeParse(rows[0]?.snapshot);
 
-  if (!parsed.success || parsed.data.blocks.length === 0) return null;
+  if (!parsed.success) return null;
 
-  return { blocks: parsed.data.blocks };
+  /*
+   * The seller's chosen editor decides what publishes.
+   *
+   * Simple text publishes its paragraphs. A photo saved earlier in the designed
+   * layout stays in the stored document — so switching layout again restores it
+   * whole — but it is not part of what simple text shows, because a plain box
+   * cannot place it and a buyer should see what the seller was looking at.
+   *
+   * `initialDescriptionMode` supplies the mode for a legacy document that predates
+   * the field, so nothing stored before this change alters what it publishes.
+   */
+  const blocks = publishableBlocks(
+    parsed.data.blocks,
+    initialDescriptionMode(parsed.data.blocks, parsed.data.mode),
+  );
+
+  if (blocks.length === 0) return null;
+
+  return { blocks };
 }
 
 /**

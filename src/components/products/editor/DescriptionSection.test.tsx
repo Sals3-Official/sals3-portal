@@ -53,6 +53,8 @@ vi.mock('@/app/(portal)/listings/description-image-actions', () => ({
   default: vi.fn(),
 }));
 
+const PHOTO_URL = 'https://media.example.com/description-media/p/a.webp';
+
 const DRAFT_TARGET = {
   productId: '11111111-1111-4111-8111-111111111111',
   revisionId: '22222222-2222-4222-8222-222222222222',
@@ -468,28 +470,74 @@ describe('Description section - simple text and designed layout', () => {
     ]);
   });
 
-  it('shows photos the document already holds, with no way to upload here', () => {
-    // Photos are added in the designed layout. They still have to be *visible*
-    // here: they are stored content that publishes to the product page, and a
-    // screen holding something the seller cannot see is the defect this codebase
-    // has met three times.
+  it('opens a legacy photo-bearing document in the designed layout', () => {
+    // No stored mode means it predates the field, so its photo was published.
+    // Designed is where that photo is visible, and nothing it publishes changes.
     renderEditor({
       ...databaseBackedFixture(),
+      descriptionMode: undefined,
       descriptionBlocks: [
         { type: 'paragraph', text: 'Soft cotton twill.' },
-        {
-          type: 'image',
-          url: 'https://media.example.com/description-media/p/a.webp',
-          alt: '',
-        },
+        { type: 'image', url: PHOTO_URL, alt: 'Pocket detail' },
       ],
     });
 
-    expect(screen.getByLabelText('Alt text for photo 1')).toBeInTheDocument();
-    expect(screen.getByText(/still needs a description/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Designed layout/ }),
+    ).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('says a retained photo is kept and not published, rather than showing nothing', () => {
+    // The seller chose simple text. The photo stays in the document so switching
+    // layout again restores it, and simple text does not publish it — so it has
+    // to be *mentioned*, or it reads as a photo that was thrown away.
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: 'simple',
+      descriptionBlocks: [
+        { type: 'paragraph', text: 'Soft cotton twill.' },
+        { type: 'image', url: PHOTO_URL, alt: 'Pocket detail' },
+      ],
+    });
+
+    expect(screen.getByLabelText('Product description')).toHaveValue(
+      'Soft cotton twill.',
+    );
+    expect(
+      screen.getByText(/One photo from the designed layout is saved/),
+    ).toBeInTheDocument();
     expect(
       screen.queryByTestId('simple-description-file'),
     ).not.toBeInTheDocument();
+  });
+
+  it('keeps a retained photo through an edit and a save', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 4,
+    });
+
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: 'simple',
+      descriptionBlocks: [
+        { type: 'paragraph', text: 'Soft cotton twill.' },
+        { type: 'image', url: PHOTO_URL, alt: 'Pocket detail' },
+      ],
+    });
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'Rewritten entirely.' },
+    });
+
+    const document = await saveDraft();
+
+    // Typing in the box must never be the thing that drops an upload.
+    expect(document.blocks).toEqual([
+      { type: 'paragraph', text: 'Rewritten entirely.' },
+      { type: 'image', url: PHOTO_URL, alt: 'Pocket detail' },
+    ]);
+    expect(document.mode).toBe('simple');
   });
 
   it('keeps the simple box free of an upload button and prompt chips', () => {

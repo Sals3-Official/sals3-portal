@@ -1,17 +1,13 @@
 'use client';
 
 import { RotateCcw, TriangleAlert } from 'lucide-react';
-import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   descriptionBlocksToPlainText,
   isBlockEmpty,
 } from '@/lib/products/description-blocks';
 import { keyDescriptionBlocks } from '@/lib/products/keyed-blocks';
-import {
-  initialDescriptionMode,
-  type DescriptionMode,
-} from '@/lib/products/simple-description';
+import type { DescriptionMode } from '@/lib/products/simple-description';
 import DescriptionBlockEditor, {
   type DescriptionImageUpload,
   type KeyedDescriptionBlock,
@@ -44,6 +40,9 @@ type DescriptionSectionProps = {
    * quietly reverts the other.
    */
   fullEditorHref?: string | null;
+  /** Which editor the seller chose. Owned by the workspace so it saves with the draft. */
+  mode: DescriptionMode;
+  onModeChange: (mode: DescriptionMode) => void;
 };
 
 /**
@@ -69,18 +68,11 @@ export default function DescriptionSection({
   uploadImage,
   uploadDisabledReason = null,
   fullEditorHref = null,
+  mode,
+  onModeChange,
 }: DescriptionSectionProps) {
   const isEmpty = blocks.every((entry) => isBlockEmpty(entry.block));
   const plainBlocks = blocks.map((entry) => entry.block);
-  /**
-   * Derived from the content, not stored: a document simple text can hold opens
-   * simple, anything else opens designed. That keeps a mode column — and the
-   * migration to add it — out of a decision the content already answers, and it
-   * means a brand-new product starts in the box most sellers want.
-   */
-  const [mode, setMode] = useState<DescriptionMode>(() =>
-    initialDescriptionMode(plainBlocks),
-  );
   const isTypingHere = mode === 'simple' || fullEditorHref === null;
 
   /**
@@ -164,7 +156,7 @@ export default function DescriptionSection({
         <DescriptionModeToggle
           mode={mode}
           blocks={plainBlocks}
-          onModeChange={setMode}
+          onModeChange={onModeChange}
           onFlatten={(flattened) =>
             onBlocksChange(keyDescriptionBlocks(flattened))
           }

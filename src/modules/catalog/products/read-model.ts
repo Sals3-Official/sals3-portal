@@ -64,6 +64,7 @@ import { feedSnapshotSchema } from '@/modules/catalog/candidates/rules/contracts
 import type { CategoryAttributeContract } from '@/modules/catalog/taxonomy/attribute-types';
 import { validateCategoryAttributeSubmission } from '@/modules/catalog/taxonomy/attribute-contract';
 import { suggestedAxisNamesForCategory } from '@/modules/catalog/taxonomy/variation-families';
+import type { DescriptionMode } from '@/lib/products/simple-description';
 import { descriptionDocumentSchema } from './description-document';
 import { deriveOptionSplit } from './option-split';
 import { deriveSourceChanges } from './source-changes';
@@ -446,6 +447,19 @@ function descriptionBlocksOf(
   const parsed = descriptionDocumentSchema.safeParse(revision?.contentDocument);
 
   return parsed.success ? parsed.data.blocks : [];
+}
+
+/**
+ * Which editor the seller last chose, or `undefined` for a document written
+ * before the field existed. The editor infers a mode for those rather than
+ * assuming one here.
+ */
+function descriptionModeOf(
+  revision: ProductRevisionRow | undefined,
+): DescriptionMode | undefined {
+  const parsed = descriptionDocumentSchema.safeParse(revision?.contentDocument);
+
+  return parsed.success ? parsed.data.mode : undefined;
 }
 
 function variantOrderKey(variant: CatalogueVariantFixture): string {
@@ -968,6 +982,7 @@ function buildCatalogueProducts(
         sals3ProductId: product.id,
         name: product.title,
         descriptionBlocks,
+        descriptionMode: descriptionModeOf(revision),
         // Derived, never stored twice: the plain-text projection is what the
         // meta-description suggestion and the content-readiness check want,
         // while `descriptionBlocks` above is what the editor writes back.

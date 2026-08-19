@@ -47,7 +47,11 @@ import StudioCanvas from './StudioCanvas';
  */
 
 export type SaveDescription = (input: {
-  descriptionDocument: { version: number; blocks: DescriptionBlock[] };
+  descriptionDocument: {
+    version: number;
+    mode: 'design';
+    blocks: DescriptionBlock[];
+  };
 }) => Promise<
   { ok: true; revisionVersion: number } | { ok: false; message: string }
 >;
@@ -136,6 +140,10 @@ export default function DescriptionStudio({
     const result = await onSave({
       descriptionDocument: {
         version: DESCRIPTION_DOCUMENT_VERSION,
+        // This screen *is* the designed layout, so saving from it records that
+        // choice. Without it a document saved here would look mode-less and be
+        // inferred from content, which is the ambiguity the field exists to end.
+        mode: 'design' as const,
         blocks: prepareBlocksForSave(blocks.map((entry) => entry.block)),
       },
     });
