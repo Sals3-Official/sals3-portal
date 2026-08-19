@@ -1,6 +1,9 @@
 'use client';
 
+/* eslint-disable react/jsx-no-bind -- handlers close over this row's own local state. */
+
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { ChevronRight } from 'lucide-react';
 import { getCategoryPolicyHistoryAction } from '@/app/(portal)/market-rules/pricing-actions';
 import { Button } from '@/components/ui/button';
@@ -94,7 +97,17 @@ export default function CategoryMarginNodeRow({
   isExpanded,
   onToggleExpanded,
 }: CategoryMarginNodeRowProps) {
+  const router = useRouter();
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+
+  /**
+   * Close, then refresh — from here, because this component stays mounted
+   * through both. The dialog cannot do it: closing unmounts it.
+   */
+  function handleSaved() {
+    setIsEditorOpen(false);
+    router.refresh();
+  }
 
   const indent = flat ? 0 : (node.depth - 1) * 20;
   const hasChildren = node.childCount > 0;
@@ -189,6 +202,7 @@ export default function CategoryMarginNodeRow({
           effective={effective}
           open={isEditorOpen}
           onOpenChange={setIsEditorOpen}
+          onSaved={handleSaved}
         />
       ) : null}
     </>

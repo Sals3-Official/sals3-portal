@@ -27,6 +27,7 @@ import {
   findActiveProductOverride,
   findActiveVariantOverride,
   findActiveStoreDefault,
+  findCategoriesByCodes,
   findCategoryByCode,
   findCategoryById,
   removeProductOverride,
@@ -37,6 +38,7 @@ import {
   reviseVariantOverride,
   searchCategories,
 } from '@/modules/pricing/repository';
+import { parseMarginCsv } from '@/modules/pricing/margin-csv';
 import {
   isValidFxAdjustmentRate,
   isValidMarginRate,
@@ -259,6 +261,224 @@ export async function saveCategoryPolicyAction(
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('[portal] save category policy failed', {
+      sellerAccountId: auth.sellerAccountId,
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+    return { ok: false, reason: 'failed' };
+  }
+}
+
+// --- Bulk category margins (CSV) -------------------------------------------
+
+const applyMarginCsvInputSchema = z.object({
+  csv: z.string().min(1).max(2_000_000),
+  reason: reasonSchema,
+});
+
+export type ApplyMarginCsvSummary = {
+  /** Categories given a margin, or moved to a different one. */
+  written: number;
+  /** Categories whose margin was removed because the cell was empty. */
+  cleared: number;
+  /** Rows that already matched, so nothing was written for them. */
+  unchanged: number;
+};
+
+/**
+ * Applies a whole margin file in ONE transaction.
+ *
+ * All-or-nothing on purpose. A bulk price change that half-lands leaves a
+ * catalogue priced by two different decisions with nothing on screen saying
+ * which rows took — the operator would have to diff the file against the
+ * table to find out. Refusing the file whole is recoverable; a partial apply
+ * is not.
+ *
+ * Every row still goes through `createCategoryPolicy`/`reviseCategoryPolicy`
+ * and writes its own audit event, exactly as a single edit does. Bulk is a
+ * different door into the same writer, never a shortcut past it — the
+ * versioned history has to read the same whether a rate arrived by form or
+ * by file.
+ */
+export async function applyMarginCsvAction(input: unknown): Promise<
+  | ({ ok: true } & { data: ApplyMarginCsvSummary })
+  | {
+      ok: false;
+      reason:
+        'invalid_input' | 'denied' | 'rate_limited' | 'not_found' | 'failed';
+      fieldErrors?: Record<string, string>;
+      /** One line per problem, already numbered for a spreadsheet. */
+      rowErrors?: string[];
+    }
+> {
+  const parsedInput = applyMarginCsvInputSchema.safeParse(input);
+  if (!parsedInput.success) {
+    return {
+      ok: false,
+      reason: 'invalid_input',
+      fieldErrors: toFieldErrors(parsedInput.error),
+    };
+  }
+
+  const auth = await authorize(
+    'pricing_policy:manage',
+    'pricing:apply-margin-csv',
+  );
+  if (!auth.ok) return auth;
+
+  const parsedCsv = parseMarginCsv(parsedInput.data.csv);
+
+  if (!parsedCsv.ok) {
+    return {
+      ok: false,
+      reason: 'invalid_input',
+      rowErrors: parsedCsv.errors.map(
+        (error) => `Line ${error.line}: ${error.message}`,
+      ),
+    };
+  }
+
+  if (parsedCsv.rows.length === 0) {
+    return {
+      ok: false,
+      reason: 'invalid_input',
+      rowErrors: ['The file has a header but no category rows.'],
+    };
+  }
+
+  try {
+    // Resolve every code up front. An unknown code is the one mistake a
+    // person cannot see in their own spreadsheet, so it is named per line
+    // rather than reported as a count.
+    const codes = parsedCsv.rows.map((row) => row.categoryCode);
+    const categories = await findCategoriesByCodes(getDb(), codes);
+    const byCode = new Map(
+      categories.map((category) => [category.code, category]),
+    );
+
+    const unknown = parsedCsv.rows
+      .map((row, index) => ({ row, line: index + 2 }))
+      .filter((entry) => !byCode.has(entry.row.categoryCode));
+
+    if (unknown.length > 0) {
+      return {
+        ok: false,
+        reason: 'not_found',
+        rowErrors: unknown.map(
+          (entry) =>
+            `Line ${entry.line}: ${entry.row.categoryCode} is not a Sals3 category.`,
+        ),
+      };
+    }
+
+    const summary: ApplyMarginCsvSummary = {
+      written: 0,
+      cleared: 0,
+      unchanged: 0,
+    };
+
+    await getDb().transaction(async (tx) => {
+      /* eslint-disable no-await-in-loop */
+      // eslint-disable-next-line no-restricted-syntax -- sequential: every row shares this transaction's connection, and the audit trail reads in file order.
+      for (const row of parsedCsv.rows) {
+        const category = byCode.get(row.categoryCode);
+
+        const existing =
+          category === undefined
+            ? null
+            : await findActiveCategoryPolicy(
+                tx,
+                auth.sellerAccountId,
+                category.id,
+              );
+
+        // Every code was resolved before the transaction opened, so this
+        // only narrows the type.
+        if (category === undefined) {
+          summary.unchanged += 1;
+        } else if (row.marginPercent === null) {
+          // An empty cell means "no margin here". Deactivating is the same
+          // operation the row's own Deactivate button performs.
+          if (existing === null) {
+            summary.unchanged += 1;
+          } else {
+            await deactivateCategoryPolicy(
+              tx,
+              existing.id,
+              auth.sellerAccountId,
+            );
+            summary.cleared += 1;
+
+            await appendAuditEvent(tx, {
+              actorId: auth.actorId,
+              action: 'category_pricing_policy.deactivated',
+              entityType: 'PricingCategoryPolicy',
+              entityId: existing.id,
+              payload: {
+                sellerAccountId: auth.sellerAccountId,
+                categoryCode: category.code,
+                reason: parsedInput.data.reason,
+                source: 'csv-import',
+              },
+            });
+          }
+        } else if (
+          // A row that already says what the table says. Writing it would add
+          // a version and an audit event that record no change.
+          existing !== null &&
+          Number(existing.targetMarginRate) === row.marginPercent / 100 &&
+          existing.roundingRule === row.roundingRule
+        ) {
+          summary.unchanged += 1;
+        } else {
+          const targetMarginRate = (row.marginPercent / 100).toString();
+          const written =
+            existing === null
+              ? await createCategoryPolicy(tx, {
+                  sellerAccountId: auth.sellerAccountId,
+                  categoryId: category.id,
+                  targetMarginRate,
+                  roundingRule: row.roundingRule,
+                  reason: parsedInput.data.reason,
+                  actorId: auth.actorId,
+                })
+              : await reviseCategoryPolicy(tx, existing, {
+                  targetMarginRate,
+                  roundingRule: row.roundingRule,
+                  reason: parsedInput.data.reason,
+                  actorId: auth.actorId,
+                });
+
+          summary.written += 1;
+
+          await appendAuditEvent(tx, {
+            actorId: auth.actorId,
+            action:
+              existing === null
+                ? 'category_pricing_policy.created'
+                : 'category_pricing_policy.revised',
+            entityType: 'PricingCategoryPolicy',
+            entityId: written.id,
+            payload: {
+              sellerAccountId: auth.sellerAccountId,
+              categoryCode: category.code,
+              targetMarginRate,
+              roundingRule: row.roundingRule,
+              reason: parsedInput.data.reason,
+              version: written.version,
+              supersedesId: written.supersedesId,
+              source: 'csv-import',
+            },
+          });
+        }
+      }
+      /* eslint-enable no-await-in-loop */
+    });
+
+    revalidatePath('/market-rules');
+    return { ok: true, data: summary };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] apply margin csv failed', {
       sellerAccountId: auth.sellerAccountId,
       error: error instanceof Error ? error.message : 'unknown',
     });

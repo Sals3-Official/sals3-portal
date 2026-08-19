@@ -7,6 +7,7 @@ import {
 } from '@/modules/pricing/repository';
 import DisclosureBanner from '@/components/seller-center/shared/DisclosureBanner';
 import CategoryMarginTree from './CategoryMarginTree';
+import MarginCsvControls from './MarginCsvControls';
 import type {
   CategoryMarginNodeViewModel,
   StoreDefaultSummary,
@@ -163,16 +164,26 @@ export default async function CategoryPricingSection({
       aria-labelledby="category-pricing-heading"
       className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4"
     >
-      <div>
-        <h2 id="category-pricing-heading" className="text-base font-semibold">
-          Category margins
-        </h2>
-        <p className="max-w-[78ch] text-sm text-muted-foreground">
-          A category without its own margin inherits the nearest parent above
-          it, then the store default. Set a margin only where a department
-          genuinely differs; a product can still override it in the Product
-          Editor.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 id="category-pricing-heading" className="text-base font-semibold">
+            Category margins
+          </h2>
+          <p className="max-w-[78ch] text-sm text-muted-foreground">
+            A category without its own margin uses the nearest parent above it.
+            Set a margin only where a department genuinely differs; a product
+            can still override it in the Product Editor.
+          </p>
+        </div>
+        {categoryData === null ? null : (
+          <MarginCsvControls
+            nodes={toNodeViewModels(
+              categoryData.rows,
+              categoryData.descendantCounts,
+            )}
+            canManage={canManage}
+          />
+        )}
       </div>
       {categoryData === null ? (
         <DisclosureBanner tone="warning">

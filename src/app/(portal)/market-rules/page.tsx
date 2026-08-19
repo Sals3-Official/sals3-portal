@@ -3,7 +3,6 @@ import PageHeader from '@/components/portal/PageHeader';
 import MarketRolesExplainerPanel from '@/components/seller-center/market-rules/MarketRolesExplainerPanel';
 import CategoryPricingSection from '@/components/seller-center/market-rules/pricing/CategoryPricingSection';
 import FundingBufferSection from '@/components/seller-center/market-rules/pricing/FundingBufferSection';
-import StoreDefaultSection from '@/components/seller-center/market-rules/pricing/StoreDefaultSection';
 import { can } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 
@@ -30,6 +29,14 @@ export const metadata: Metadata = { title: 'Market rules · Seller Center' };
  * `seller_market_profiles` is untouched — the data and every backend reader
  * still work; only the way in is gone.
  *
+ * ## Store default pricing is also unmounted (owner decision 2026-08-20)
+ *
+ * "Pang gulo lang" — per-category margin is enough for now. The card is
+ * unmounted rather than deleted, and the resolver's store-default layer is
+ * left in place unread: the seller had already deactivated their own row, so
+ * nothing is silently pricing behind the removed screen. Re-mounting one
+ * component brings it back if the decision changes.
+ *
  * ## What is left, and why the gates differ
  *
  * The roles panel, then pricing (ADR-015 Phase 1). Pricing is gated by
@@ -52,10 +59,6 @@ export default async function MarketRulesPage() {
       <MarketRolesExplainerPanel />
       {canReadPricing ? (
         <>
-          <StoreDefaultSection
-            sellerAccountId={session.sellerId}
-            canManage={canManagePricing}
-          />
           <CategoryPricingSection
             sellerAccountId={session.sellerId}
             canManage={canManagePricing}

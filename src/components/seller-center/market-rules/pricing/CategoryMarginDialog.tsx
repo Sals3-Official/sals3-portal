@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { saveCategoryPolicyAction } from '@/app/(portal)/market-rules/pricing-actions';
 import { Button } from '@/components/ui/button';
@@ -33,6 +32,11 @@ type CategoryMarginDialogProps = {
   effective: EffectiveMargin;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Called after the server confirms the write. The ROW owns what happens
+   * next, not this dialog — see the note on `handleSubmit`.
+   */
+  onSaved: () => void;
 };
 
 function inheritedFrom(effective: EffectiveMargin): string | null {
@@ -65,8 +69,8 @@ export default function CategoryMarginDialog({
   effective,
   open,
   onOpenChange,
+  onSaved,
 }: CategoryMarginDialogProps) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [marginPercent, setMarginPercent] = useState(
     node.policy === null
@@ -103,8 +107,19 @@ export default function CategoryMarginDialog({
 
       toast.success(`Margin saved for ${node.name}.`);
       setReason('');
-      onOpenChange(false);
-      router.refresh();
+      /**
+       * Hand off instead of refreshing here.
+       *
+       * This used to call `onOpenChange(false)` and then `router.refresh()`.
+       * The first line unmounts this dialog — the row renders it only while
+       * open — so the refresh was dispatched from a component that was gone
+       * in the same commit, and React discarded it. The save landed, the
+       * toast appeared, the dialog closed, and the row still showed the old
+       * rate until the seller reloaded the page by hand.
+       *
+       * The row survives the close, so the row does the refresh.
+       */
+      onSaved();
     });
   }
 
