@@ -468,6 +468,41 @@ describe('VariantOptionMappingSection', () => {
   });
 });
 
+describe('Variant Matrix copy for a single variant', () => {
+  it('says variant, not variants, and drops the ordering instruction', () => {
+    // Both became reachable when a one-variant product started getting a matrix.
+    // `1 variants` reads as carelessness, and there is nothing to order when
+    // every axis holds exactly one value.
+    render(
+      <VariantOptionMappingSection
+        proposal={[{ index: 0, values: ['Storage box'] }]}
+        variantCount={1}
+      />,
+    );
+
+    // The sentence is split across elements by JSX spacing, so it is read off
+    // the paragraph rather than matched node by node.
+    const intro = screen.getByText(/Found 1 buyer option/).textContent ?? '';
+
+    expect(intro).toContain('across 1 variant in');
+    expect(intro).not.toContain('order its values');
+  });
+
+  it('keeps both when there is a real choice', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[{ index: 0, values: ['Black', 'Army Green'] }]}
+        variantCount={2}
+      />,
+    );
+
+    const intro = screen.getByText(/Found 1 buyer option/).textContent ?? '';
+
+    expect(intro).toContain('across 2 variants');
+    expect(intro).toContain('order its values');
+  });
+});
+
 describe('every workbook suggestion is offered', () => {
   it('renders one button per name and applies the one clicked', () => {
     // The workbook says this category varies by colour or material. Showing only
@@ -484,7 +519,9 @@ describe('every workbook suggestion is offered', () => {
       screen.getByRole('button', { name: 'Use “Colour”' }),
     ).toBeInTheDocument();
 
-    const material = screen.getByRole('button', { name: 'Use “Material”' });
+    const material = screen.getByRole('button', {
+      name: 'Use “Material”',
+    });
 
     fireEvent.click(material);
 

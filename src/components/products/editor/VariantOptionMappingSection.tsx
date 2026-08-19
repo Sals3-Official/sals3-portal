@@ -659,6 +659,9 @@ export default function VariantOptionMappingSection({
     setMessage(result.message ?? null);
   }
 
+  /** Ordering is only an instruction when some axis has more than one value. */
+  const hasValuesToOrder = axes.some((axis) => axis.values.length > 1);
+
   return (
     <div className="flex flex-col gap-4 border-b border-border pb-5">
       <VariantMatrixHeader
@@ -666,13 +669,22 @@ export default function VariantOptionMappingSection({
         severity={unnamedSeverity}
       />
 
+      {/*
+        Both plurals and the ordering clause became reachable when a
+        single-variant product started getting a matrix. `1 variants` reads as
+        carelessness, and telling a seller to order values makes no sense when
+        every axis holds exactly one.
+      */}
       <p className="text-sm text-muted-foreground">
         Found {proposal.length} buyer{' '}
         {proposal.length === 1 ? 'option' : 'options'} across {variantCount}{' '}
-        variants in the supplier&rsquo;s own labels. Name each option, then
-        order its values the way buyers should see them. Supplier values are
-        locked: renaming a buyer label changes the storefront only, and CJ still
-        fulfils by its own value.
+        {variantCount === 1 ? 'variant' : 'variants'} in the supplier&rsquo;s
+        own labels. Name each option
+        {hasValuesToOrder
+          ? ', then order its values the way buyers should see them'
+          : ''}
+        . Supplier values are locked: renaming a buyer label changes the
+        storefront only, and CJ still fulfils by its own value.
       </p>
 
       <div className="flex flex-col gap-4">
