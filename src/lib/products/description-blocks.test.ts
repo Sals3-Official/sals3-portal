@@ -234,3 +234,70 @@ describe('description blocks', () => {
     expect(parsed.success).toBe(false);
   });
 });
+
+/**
+ * The seam both editors save through, and the reason it has to know about runs.
+ *
+ * Trimming `text` while leaving `runs` untouched would break the document
+ * schema's join invariant on any paragraph ending in a space — a save refused
+ * for a reason no seller could see or act on.
+ */
+describe('prepareBlocksForSave paragraph emphasis', () => {
+  it('trims the runs with the text so the two still join', () => {
+    const [block] = prepareBlocksForSave([
+      {
+        type: 'paragraph',
+        text: '  Soft cotton  ',
+        runs: [{ text: '  Soft ' }, { text: 'cotton  ', marks: ['strong'] }],
+      },
+    ]);
+
+    expect(block).toEqual({
+      type: 'paragraph',
+      text: 'Soft cotton',
+      runs: [{ text: 'Soft ' }, { text: 'cotton', marks: ['strong'] }],
+    });
+  });
+
+  it('produces a document the schema accepts', () => {
+    const blocks = prepareBlocksForSave([
+      {
+        type: 'paragraph',
+        text: 'Soft cotton ',
+        runs: [{ text: 'Soft ' }, { text: 'cotton ', marks: ['em'] }],
+      },
+    ]);
+
+    expect(
+      descriptionDocumentSchema.safeParse({ version: 1, blocks }).success,
+    ).toBe(true);
+  });
+
+  it('drops `runs` entirely when nothing is emphasised', () => {
+    const [block] = prepareBlocksForSave([
+      {
+        type: 'paragraph',
+        text: 'Soft cotton',
+        runs: [{ text: 'Soft cotton' }],
+      },
+    ]);
+
+    expect(block).toEqual({ type: 'paragraph', text: 'Soft cotton' });
+  });
+
+  it('leaves a paragraph that never had runs alone', () => {
+    const [block] = prepareBlocksForSave([
+      { type: 'paragraph', text: ' Soft cotton ' },
+    ]);
+
+    expect(block).toEqual({ type: 'paragraph', text: 'Soft cotton' });
+  });
+
+  it('drops a paragraph whose runs were nothing but whitespace', () => {
+    expect(
+      prepareBlocksForSave([
+        { type: 'paragraph', text: '   ', runs: [{ text: '   ' }] },
+      ]),
+    ).toEqual([]);
+  });
+});

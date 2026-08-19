@@ -8,6 +8,7 @@ import DescriptionBlockEditor, {
   type DescriptionImageUpload,
   type KeyedDescriptionBlock,
 } from './DescriptionBlockEditor';
+import DescriptionSummary from './DescriptionSummary';
 import FieldSourceBadge from './FieldSourceBadge';
 import MetaDescriptionField from './MetaDescriptionField';
 
@@ -25,6 +26,14 @@ type DescriptionSectionProps = {
   onSaveMetaDescription?: () => Promise<{ ok: boolean; message?: string }>;
   uploadImage?: DescriptionImageUpload;
   uploadDisabledReason?: string | null;
+  /**
+   * Where the full editor lives for this draft, or `null` when there is no
+   * saveable revision behind the screen — a fixture preview. When present, this
+   * section becomes a read-only summary and the full editor owns the editing,
+   * because two surfaces each holding their own copy of one document is how one
+   * quietly reverts the other.
+   */
+  fullEditorHref?: string | null;
 };
 
 /**
@@ -49,6 +58,7 @@ export default function DescriptionSection({
   onSaveMetaDescription,
   uploadImage,
   uploadDisabledReason = null,
+  fullEditorHref = null,
 }: DescriptionSectionProps) {
   const isEmpty = blocks.every((entry) => isBlockEmpty(entry.block));
 
@@ -62,51 +72,67 @@ export default function DescriptionSection({
          * copy it never wrote.
          */}
         <FieldSourceBadge source="SELLER" />
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={isUnchanged}
-          onClick={onRevert}
-        >
-          <RotateCcw aria-hidden="true" />
-          Revert to last saved
-        </Button>
+        {/* Revert restores this screen's own unsaved edits. In summary mode
+            there are none to restore — the full editor saves its own work — so
+            the control is absent rather than permanently disabled. */}
+        {fullEditorHref === null ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isUnchanged}
+            onClick={onRevert}
+          >
+            <RotateCcw aria-hidden="true" />
+            Revert to last saved
+          </Button>
+        ) : null}
       </div>
 
-      <p className="flex items-start gap-2 rounded-lg border border-amber-600/30 bg-warning-surface/50 px-3 py-2.5 text-xs text-ink-muted">
-        <TriangleAlert
-          aria-hidden="true"
-          className="mt-0.5 size-3.5 shrink-0 text-amber-600"
-        />
-        The supplier&apos;s own description is raw HTML and is never copied into
-        a Sals3 listing — there is no sanitiser to make it safe to publish.
-        Write the description here; the storefront renders these blocks as plain
-        text, so markup is rejected rather than displayed.
-      </p>
+      {fullEditorHref === null ? (
+        <p className="flex items-start gap-2 rounded-lg border border-amber-600/30 bg-warning-surface/50 px-3 py-2.5 text-xs text-ink-muted">
+          <TriangleAlert
+            aria-hidden="true"
+            className="mt-0.5 size-3.5 shrink-0 text-amber-600"
+          />
+          The supplier&apos;s own description is raw HTML and is never copied
+          into a Sals3 listing — there is no sanitiser to make it safe to
+          publish. Write the description here; the storefront renders these
+          blocks as plain text, so markup is rejected rather than displayed.
+        </p>
+      ) : null}
 
       <div className="flex flex-col gap-1.5">
         <p className="text-sm font-medium">Product description</p>
-        <DescriptionBlockEditor
-          blocks={blocks}
-          onChange={onBlocksChange}
-          uploadImage={uploadImage}
-          uploadDisabledReason={uploadDisabledReason}
-        />
-        {isEmpty ? (
-          <p role="status" className="flex gap-1.5 text-xs text-amber-600">
-            <TriangleAlert
-              aria-hidden="true"
-              className="mt-0.5 size-3.5 shrink-0"
+        {fullEditorHref === null ? (
+          <>
+            <DescriptionBlockEditor
+              blocks={blocks}
+              onChange={onBlocksChange}
+              uploadImage={uploadImage}
+              uploadDisabledReason={uploadDisabledReason}
             />
-            Empty description. The listing can publish without one, but the
-            storefront will show only specifications.
-          </p>
+            {isEmpty ? (
+              <p role="status" className="flex gap-1.5 text-xs text-amber-600">
+                <TriangleAlert
+                  aria-hidden="true"
+                  className="mt-0.5 size-3.5 shrink-0"
+                />
+                Empty description. The listing can publish without one, but the
+                storefront will show only specifications.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Recommended order: summary, key features, materials, sizing,
+                package contents, care. Blocks publish in the order shown here.
+              </p>
+            )}
+          </>
         ) : (
-          <p className="text-xs text-muted-foreground">
-            Recommended order: summary, key features, materials, sizing, package
-            contents, care. Blocks publish in the order shown here.
-          </p>
+          <DescriptionSummary
+            blocks={blocks.map((entry) => entry.block)}
+            fullEditorHref={fullEditorHref}
+          />
         )}
       </div>
 

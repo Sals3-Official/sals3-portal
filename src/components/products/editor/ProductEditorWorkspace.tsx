@@ -1285,6 +1285,18 @@ export default function ProductEditorWorkspace({
                   ? 'Images can be uploaded once this draft is saved against a real product.'
                   : null
               }
+              /*
+               * Only a database-backed draft can open the full editor: that
+               * screen saves through its own compare-and-set on a real revision,
+               * so a fixture preview has nothing for it to write to. Absent
+               * rather than disabled — a button that cannot work in this mode is
+               * not a feature the seller is missing.
+               */
+              fullEditorHref={
+                fixture.draftSaveTarget === null
+                  ? null
+                  : `/listings/${fixture.draftSaveTarget.productId}/description`
+              }
             />
           </EditorSectionCard>
 
