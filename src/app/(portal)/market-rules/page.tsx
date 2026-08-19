@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import PageHeader from '@/components/portal/PageHeader';
 import MarketRolesExplainerPanel from '@/components/seller-center/market-rules/MarketRolesExplainerPanel';
-import MarketProfileSection from '@/components/seller-center/market-rules/profile/MarketProfileSection';
 import CategoryPricingSection from '@/components/seller-center/market-rules/pricing/CategoryPricingSection';
 import FundingBufferSection from '@/components/seller-center/market-rules/pricing/FundingBufferSection';
 import StoreDefaultSection from '@/components/seller-center/market-rules/pricing/StoreDefaultSection';
@@ -11,21 +10,29 @@ import { requirePermission } from '@/lib/auth/session';
 export const metadata: Metadata = { title: 'Market rules · Seller Center' };
 
 /**
- * What this account is actually configured for, and the commercial rules it
- * applies — all resolved for `session.sellerId`, never for a market chosen by
- * an env var or a route param.
+ * The commercial rules this account applies — all resolved for
+ * `session.sellerId`, never for a market chosen by an env var or a route
+ * param.
  *
- * This page no longer reads `lib/seller-center/market-config.ts`. That
- * fixture's PH/ID/SG markets, and the commission/tax/carrier/payout rows
- * `buildMarketRules()` derived from them, are interface-review examples; in
- * production `getActiveMarket()` returned `null` and the whole screen
- * degraded to a generic "not available" notice that told a signed-in seller
- * nothing about their own account. `MarketProfileSection` reads the real
- * persisted profile instead and states honestly what is and is not set up.
+ * ## Market setup is deliberately not here (owner decision 2026-08-20)
  *
- * Three separate concerns, in order, and deliberately not merged: the
- * account's own market setup; the roles that gate changes to it; then
- * category pricing and the funding buffer (ADR-015 Phase 1), gated by
+ * `MarketProfileSection` and its policy-context panel used to open this page.
+ * Bogs removed them: a different business model is coming for destination
+ * setup, and ADR-014 puts market governance in the Admin Portal rather than
+ * inside a tenant screen. The components stay in the tree, unmounted, rather
+ * than deleted — the decision is that this was the wrong *place* for them,
+ * not that the work was wrong.
+ *
+ * **Consequence to carry forward, not solved here**: `publishProduct` still
+ * refuses `NO_ACTIVE_MARKET_PROFILE` when a seller has no destination, and
+ * this page was the only surface that could create one. Until the replacement
+ * exists, a seller with no profile has no path to a first publication.
+ * `seller_market_profiles` is untouched — the data and every backend reader
+ * still work; only the way in is gone.
+ *
+ * ## What is left, and why the gates differ
+ *
+ * The roles panel, then pricing (ADR-015 Phase 1). Pricing is gated by
  * `pricing_policy:read` independently of `market_rules:read` — staff and
  * viewer hold the latter but not the former. Having a pricing rule never
  * means a market is active, and vice versa.
@@ -33,7 +40,6 @@ export const metadata: Metadata = { title: 'Market rules · Seller Center' };
 export default async function MarketRulesPage() {
   const session = await requirePermission('market_rules:read');
 
-  const canManageProfile = can(session.role, 'market_profile:manage');
   const canReadPricing = can(session.role, 'pricing_policy:read');
   const canManagePricing = can(session.role, 'pricing_policy:manage');
 
@@ -42,10 +48,6 @@ export default async function MarketRulesPage() {
       <PageHeader
         title="Market rules"
         description="What this account is set up to sell, and the commercial rules it applies"
-      />
-      <MarketProfileSection
-        sellerAccountId={session.sellerId}
-        canManage={canManageProfile}
       />
       <MarketRolesExplainerPanel />
       {canReadPricing ? (

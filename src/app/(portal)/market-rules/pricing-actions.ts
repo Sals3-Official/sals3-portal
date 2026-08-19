@@ -75,7 +75,10 @@ const fxAdjustmentRateSchema = z.string().refine((value) => {
 const reasonSchema = z
   .string()
   .trim()
-  .min(MIN_REASON_LENGTH, 'Explain why in at least 10 characters.')
+  .min(
+    MIN_REASON_LENGTH,
+    `Write why you made this change. Use ${MIN_REASON_LENGTH} characters or more.`,
+  )
   .max(500);
 
 const roundingRuleSchema = z.enum(['NONE', 'NEAREST_0_99']);
@@ -93,6 +96,32 @@ export type ActionResult<T = undefined> =
         | 'failed';
       fieldErrors?: Record<string, string>;
     };
+
+/**
+ * Zod's own per-field messages, in the shape `ActionResult.fieldErrors`
+ * already declared.
+ *
+ * That field existed from the first version of this file and was never
+ * populated: every failure returned a bare `invalid_input`, so the UI could
+ * only say "check the highlighted fields" while highlighting nothing. The
+ * owner hit it on 2026-08-20 trying to set a store default — the real cause
+ * was a reason under 10 characters, and nothing on screen said so.
+ *
+ * One message per field, first issue wins. The schemas' own `.refine`
+ * messages are already written for a person to read.
+ */
+function toFieldErrors(error: z.ZodError): Record<string, string> {
+  const fieldErrors: Record<string, string> = {};
+
+  error.issues.forEach((issue) => {
+    const field = issue.path[0];
+    if (typeof field !== 'string') return;
+    if (fieldErrors[field] !== undefined) return;
+    fieldErrors[field] = issue.message;
+  });
+
+  return fieldErrors;
+}
 
 async function authorize(
   permission: 'pricing_policy:read' | 'pricing_policy:manage',
@@ -160,7 +189,13 @@ export async function saveCategoryPolicyAction(
   input: unknown,
 ): Promise<ActionResult> {
   const parsed = saveCategoryPolicyInputSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, reason: 'invalid_input' };
+  if (!parsed.success) {
+    return {
+      ok: false,
+      reason: 'invalid_input',
+      fieldErrors: toFieldErrors(parsed.error),
+    };
+  }
 
   const auth = await authorize(
     'pricing_policy:manage',
@@ -336,7 +371,13 @@ export async function saveStoreDefaultAction(
   input: unknown,
 ): Promise<ActionResult> {
   const parsed = saveStoreDefaultInputSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, reason: 'invalid_input' };
+  if (!parsed.success) {
+    return {
+      ok: false,
+      reason: 'invalid_input',
+      fieldErrors: toFieldErrors(parsed.error),
+    };
+  }
 
   const auth = await authorize(
     'pricing_policy:manage',
@@ -504,7 +545,13 @@ export async function saveFundingBufferPolicyAction(
   input: unknown,
 ): Promise<ActionResult> {
   const parsed = saveFundingBufferPolicyInputSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, reason: 'invalid_input' };
+  if (!parsed.success) {
+    return {
+      ok: false,
+      reason: 'invalid_input',
+      fieldErrors: toFieldErrors(parsed.error),
+    };
+  }
 
   const auth = await authorize(
     'pricing_policy:manage',

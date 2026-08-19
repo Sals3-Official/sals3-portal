@@ -132,7 +132,7 @@ describe('saveCategoryPolicyAction', () => {
       targetMarginRate: '1.5',
     });
 
-    expect(result).toEqual({ ok: false, reason: 'invalid_input' });
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
     expect(requirePermissionMock).not.toHaveBeenCalled();
   });
 
@@ -142,7 +142,7 @@ describe('saveCategoryPolicyAction', () => {
       reason: 'why',
     });
 
-    expect(result).toEqual({ ok: false, reason: 'invalid_input' });
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
   });
 
   it('rate-limits repeated calls', async () => {
@@ -301,7 +301,7 @@ describe('saveFundingBufferPolicyAction', () => {
       adjustmentRate: '0.5',
     });
 
-    expect(result).toEqual({ ok: false, reason: 'invalid_input' });
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
     expect(requirePermissionMock).not.toHaveBeenCalled();
   });
 
@@ -800,7 +800,7 @@ describe('saveStoreDefaultAction', () => {
       targetMarginRate: '1.2',
     });
 
-    expect(result).toEqual({ ok: false, reason: 'invalid_input' });
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
     expect(getDbMock).not.toHaveBeenCalled();
   });
 
@@ -814,8 +814,11 @@ describe('saveStoreDefaultAction', () => {
       minContribution: '2.505',
     });
 
-    expect(negative).toEqual({ ok: false, reason: 'invalid_input' });
-    expect(threeDecimals).toEqual({ ok: false, reason: 'invalid_input' });
+    expect(negative).toMatchObject({ ok: false, reason: 'invalid_input' });
+    expect(threeDecimals).toMatchObject({
+      ok: false,
+      reason: 'invalid_input',
+    });
     expect(getDbMock).not.toHaveBeenCalled();
   });
 
@@ -935,5 +938,62 @@ describe('deactivateStoreDefaultAction', () => {
       TX,
       expect.objectContaining({ action: 'pricing_store_default.deactivated' }),
     );
+  });
+});
+
+describe('field-level validation messages', () => {
+  /**
+   * `ActionResult.fieldErrors` was declared from the first version of this
+   * file and never populated, so the UI could only say "check the highlighted
+   * fields" while highlighting nothing. The owner hit exactly that on
+   * 2026-08-20: the real cause was a reason under 10 characters and nothing
+   * on screen said so.
+   */
+  it('names the field that failed, not just that something did', async () => {
+    const result = await saveStoreDefaultAction({
+      targetMarginRate: '0.35',
+      minContribution: '2.50',
+      roundingRule: 'NONE',
+      reason: 'short',
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.fieldErrors?.reason).toMatch(/10 characters or more/);
+  });
+
+  it('reports a bad margin against the margin field', async () => {
+    const result = await saveStoreDefaultAction({
+      targetMarginRate: '1.5',
+      minContribution: '0',
+      roundingRule: 'NONE',
+      reason: 'A perfectly valid reason here.',
+    });
+
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.fieldErrors?.targetMarginRate).toBeDefined();
+    expect(result.fieldErrors?.reason).toBeUndefined();
+  });
+
+  it('reports a bad contribution floor against the floor field', async () => {
+    const result = await saveStoreDefaultAction({
+      targetMarginRate: '0.35',
+      minContribution: '2.505',
+      roundingRule: 'NONE',
+      reason: 'A perfectly valid reason here.',
+    });
+
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.fieldErrors?.minContribution).toBeDefined();
+  });
+
+  it('does the same for the funding buffer, which shares the defect', async () => {
+    const result = await saveFundingBufferPolicyAction({
+      adjustmentRate: '0.025',
+      reason: 'nope',
+    });
+
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.fieldErrors?.reason).toMatch(/10 characters or more/);
   });
 });
