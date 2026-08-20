@@ -95,7 +95,12 @@ const renameMappingInputSchema = z.object({
 });
 
 export type RenameOptionMappingActionResult =
-  | { ok: true; axisCount: number; renamedValueCount: number }
+  | {
+      ok: true;
+      axisCount: number;
+      renamedValueCount: number;
+      reorderedAxisCount: number;
+    }
   | { ok: false; reason: string; message: string };
 
 export type OptionMappingActionResult =
@@ -345,9 +350,11 @@ export async function recoverSupplierLabelsAction(
 }
 
 /**
- * Rename an existing Variant Matrix.
+ * Rename an existing Variant Matrix, and reorder the values inside it.
  *
- * The words a buyer reads, and nothing else. `renameOptionMapping` explains
+ * The words a buyer reads and the order they read them in — nothing else. The
+ * axis count, and which supplier token sits at which axis, stay fixed.
+ * `renameOptionMapping` explains
  * why that is safe where a full remap is not: the option-combination key is
  * built from the supplier's own token, so a display label carries no
  * identity and can be corrected without touching a variant, a cart, or an
@@ -382,5 +389,6 @@ export async function renameOptionMappingAction(
     ok: true,
     axisCount: result.axisCount,
     renamedValueCount: result.renamedValueCount,
+    reorderedAxisCount: result.reorderedAxisCount,
   };
 }

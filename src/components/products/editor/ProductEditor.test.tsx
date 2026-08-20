@@ -6,6 +6,7 @@ import {
   within,
 } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import assignVariantMediaAction from '@/app/(portal)/listings/variant-media-actions';
 import saveCategoryAttributesAction from '@/app/(portal)/listings/category-attributes-actions';
 import saveMetaDescriptionAction from '@/app/(portal)/listings/meta-description-actions';
 import { publishProductAction } from '@/app/(portal)/listings/publish-actions';
@@ -60,6 +61,11 @@ vi.mock('@/app/(portal)/listings/description-image-actions', () => ({
 vi.mock('@/app/(portal)/listings/media-actions', () => ({
   uploadSellerMediaAction: vi.fn(),
   deleteSellerMediaAction: vi.fn(),
+}));
+
+// Same reasoning: `assign-variant-media.ts` reaches the server-only db client too.
+vi.mock('@/app/(portal)/listings/variant-media-actions', () => ({
+  default: vi.fn(),
 }));
 
 // Same reasoning: `save-category-attributes.ts` reaches the server-only db client too.
@@ -1242,5 +1248,335 @@ describe('Product Editor - the photo a real product actually has', () => {
     expect(
       screen.queryByText('Sals3 category is required'),
     ).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The reported behaviour: a seller typed a specification, pressed Publish
+ * without pressing Save Specifications, and the listing went live without it.
+ * The section owns its own versioned write, so the publish request never carried
+ * those fields — and nothing on screen said they were unsaved.
+ */
+describe('Product Editor - Publish carries unsaved specifications', () => {
+  const VALIDATION = {
+    outcome: 'VALID' as const,
+    categoryCode: 'CAT-GGL-1',
+    controlsVersion: 'sals3-attribute-controls-v1',
+    acceptedAttributes: {},
+    missingRequiredAttributes: [],
+    missingRecommendedAttributes: [],
+    unrecognizedAttributes: [],
+    findings: [],
+    contractVersion: 'category-attribute-contract-v1',
+  };
+
+  function renderWithSpecification() {
+    const resolved = fixture('pass');
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          categoryAttributes: [categoryAttributeField({})],
+          categoryAttributesControlsVersion: 'sals3-attribute-controls-v1',
+          publishTarget: {
+            productId: '11111111-1111-4111-8111-111111111111',
+            expectedProductVersion: 7,
+          },
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+  }
+
+  async function confirmPublish() {
+    fireEvent.click(screen.getByRole('button', { name: /^Publish/ }));
+
+    const dialog = await screen.findByRole('alertdialog');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Publish/ }));
+  }
+
+  it('saves the edited specification first, then publishes against the new version', async () => {
+    vi.mocked(saveCategoryAttributesAction).mockResolvedValue({
+      ok: true,
+      productVersion: 8,
+      validation: VALIDATION,
+    });
+    vi.mocked(publishProductAction).mockResolvedValue({
+      ok: true,
+      slug: 'aurelis-daypack',
+      offerCount: 2,
+      availability: 'AVAILABLE',
+    });
+
+    renderWithSpecification();
+
+    fireEvent.change(screen.getByDisplayValue('Royal Canin'), {
+      target: { value: 'Generic' },
+    });
+    await confirmPublish();
+
+    await waitFor(() =>
+      expect(saveCategoryAttributesAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          expectedProductVersion: 7,
+          attributes: { Brand: ['Generic'] },
+        }),
+      ),
+    );
+
+    // 8, not 7: the specification write bumped `products.version`, and a
+    // publish that compare-and-sets against 7 would be refused for having done
+    // what it was asked to do.
+    await waitFor(() =>
+      expect(publishProductAction).toHaveBeenCalledWith(
+        expect.objectContaining({ expectedProductVersion: 8 }),
+      ),
+    );
+  });
+
+  it('publishes nothing when the specification write is refused', async () => {
+    vi.mocked(saveCategoryAttributesAction).mockResolvedValue({
+      ok: false,
+      reason: 'version_conflict',
+      message: 'This product changed in another tab or session.',
+    });
+    vi.mocked(publishProductAction).mockClear();
+
+    renderWithSpecification();
+
+    fireEvent.change(screen.getByDisplayValue('Royal Canin'), {
+      target: { value: 'Generic' },
+    });
+    await confirmPublish();
+
+    await waitFor(() =>
+      expect(saveCategoryAttributesAction).toHaveBeenCalled(),
+    );
+    // Publishing anyway would put a listing live that contradicts the screen.
+    expect(publishProductAction).not.toHaveBeenCalled();
+  });
+
+  it('does not write specifications that were never edited', async () => {
+    vi.mocked(saveCategoryAttributesAction).mockClear();
+    vi.mocked(publishProductAction).mockResolvedValue({
+      ok: true,
+      slug: 'aurelis-daypack',
+      offerCount: 2,
+      availability: 'AVAILABLE',
+    });
+
+    renderWithSpecification();
+    await confirmPublish();
+
+    await waitFor(() => expect(publishProductAction).toHaveBeenCalled());
+    expect(saveCategoryAttributesAction).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Publication used to report itself in a toast that dismissed itself while the
+ * seller was still reading it, and offered nowhere to go.
+ */
+describe('Product Editor - publish confirmation', () => {
+  it('confirms the listing is live and offers the way back to the catalogue', async () => {
+    const resolved = fixture('pass');
+
+    vi.mocked(publishProductAction).mockResolvedValue({
+      ok: true,
+      slug: 'aurelis-daypack',
+      offerCount: 2,
+      availability: 'AVAILABLE',
+    });
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          publishTarget: {
+            productId: '11111111-1111-4111-8111-111111111111',
+            expectedProductVersion: 7,
+          },
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^Publish/ }));
+
+    const confirmation = await screen.findByRole('alertdialog');
+
+    fireEvent.click(
+      within(confirmation).getByRole('button', { name: /^Publish/ }),
+    );
+
+    expect(
+      await screen.findByText('Published to the storefront'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('/p/aurelis-daypack')).toBeInTheDocument();
+
+    const back = screen.getByRole('link', {
+      name: 'Go to Product Catalogue',
+    });
+
+    expect(back).toHaveAttribute('href', '/products/pipeline?tab=ready');
+  });
+
+  it('says nothing about publication in design-preview mode', async () => {
+    renderEditor('pass');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Publish/ }));
+
+    const confirmation = await screen.findByRole('alertdialog');
+
+    fireEvent.click(
+      within(confirmation).getByRole('button', { name: /^Publish/ }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Published to the storefront'),
+      ).not.toBeInTheDocument(),
+    );
+  });
+});
+
+/**
+ * `product_media_sources.variant_id` existed from the start, the read model
+ * always reported `hasImage` from it, and nothing ever wrote it — so every
+ * variant of every product showed "No variant image" with no control to press,
+ * on products whose photos were already uploaded.
+ */
+describe('Product Editor - variant photos', () => {
+  const PHOTO = 'https://media.example-r2.dev/product-media/p/one.webp';
+  const OTHER_PHOTO = 'https://media.example-r2.dev/product-media/p/two.webp';
+  const MEDIA_ID = '88888888-8888-4888-8888-888888888888';
+
+  function renderWithMedia(variantOverrides: Record<string, unknown> = {}) {
+    const resolved = fixture('pass');
+    const [firstVariant, ...restVariants] = resolved.variants;
+
+    if (firstVariant === undefined) throw new Error('fixture has no variants');
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          assignableMedia: [
+            {
+              mediaId: MEDIA_ID,
+              url: PHOTO,
+              sourceType: 'SELLER_UPLOAD',
+              variantId: null,
+            },
+            {
+              mediaId: '99999999-9999-4999-8999-999999999999',
+              url: OTHER_PHOTO,
+              sourceType: 'SUPPLIER_ORIGINAL',
+              variantId: null,
+            },
+          ],
+          variants: [{ ...firstVariant, ...variantOverrides }, ...restVariants],
+          publishTarget: {
+            productId: '11111111-1111-4111-8111-111111111111',
+            expectedProductVersion: 7,
+          },
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    return { variantLabel: firstVariant.optionLabel };
+  }
+
+  it('offers a control on a variant that has no photo', () => {
+    const { variantLabel } = renderWithMedia({
+      hasImage: false,
+      imageUrl: null,
+      imageMediaId: null,
+    });
+
+    expect(
+      screen.getByRole('button', {
+        name: `Choose photo for ${variantLabel}`,
+      }),
+    ).toBeEnabled();
+  });
+
+  it('assigns the chosen photo to that variant', async () => {
+    vi.mocked(assignVariantMediaAction).mockResolvedValue({
+      ok: true,
+      mediaId: MEDIA_ID,
+      variantId: 'ignored-by-the-local-update',
+    });
+
+    const { variantLabel } = renderWithMedia({
+      hasImage: false,
+      imageUrl: null,
+      imageMediaId: null,
+    });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: `Choose photo for ${variantLabel}` }),
+    );
+
+    const picker = await screen.findByRole('dialog');
+
+    fireEvent.click(within(picker).getAllByRole('button')[0] as HTMLElement);
+
+    await waitFor(() =>
+      expect(assignVariantMediaAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          productId: '11111111-1111-4111-8111-111111111111',
+          mediaId: MEDIA_ID,
+        }),
+      ),
+    );
+  });
+
+  it('says plainly that unlinking is not a delete', async () => {
+    const { variantLabel } = renderWithMedia({
+      hasImage: true,
+      imageUrl: PHOTO,
+      imageMediaId: MEDIA_ID,
+    });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: `Change photo for ${variantLabel}` }),
+    );
+
+    expect(
+      await screen.findByText(/stays in Product media/i),
+    ).toBeInTheDocument();
+  });
+
+  it('reports a refusal instead of showing a photo that was not linked', async () => {
+    vi.mocked(assignVariantMediaAction).mockResolvedValue({
+      ok: false,
+      reason: 'MEDIA_NOT_FOUND',
+      message: 'That photo is no longer stored on this product.',
+    });
+
+    const { variantLabel } = renderWithMedia({
+      hasImage: false,
+      imageUrl: null,
+      imageMediaId: null,
+    });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: `Choose photo for ${variantLabel}` }),
+    );
+
+    const picker = await screen.findByRole('dialog');
+
+    fireEvent.click(within(picker).getAllByRole('button')[0] as HTMLElement);
+
+    expect(
+      await screen.findByText(/no longer stored on this product/i),
+    ).toBeInTheDocument();
   });
 });

@@ -7,6 +7,7 @@ import {
   describeBlockProblem,
   descriptionBlocksToPlainText,
   emptyBlockOfType,
+  firstBlockProblem,
   isBlockEmpty,
   prepareBlocksForSave,
   type DescriptionBlock,
@@ -299,5 +300,58 @@ describe('prepareBlocksForSave paragraph emphasis', () => {
         { type: 'paragraph', text: '   ', runs: [{ text: '   ' }] },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe('firstBlockProblem', () => {
+  it('names the image the server would refuse, and where it is', () => {
+    const refused = firstBlockProblem([
+      { type: 'paragraph', text: 'Copy.' },
+      { type: 'image', url: 'https://cdn.example.com/a.webp', alt: '' },
+    ]);
+
+    expect(refused?.index).toBe(1);
+    expect(refused?.problem).toMatch(/Alt text is required/);
+  });
+
+  /**
+   * The bug this exists for: an image with a file and no alt text passed the
+   * editor and failed `descriptionDocumentSchema`, which surfaced as
+   * "Remove any pasted formatting" — the wrong cause and an impossible fix.
+   */
+  it('agrees with the document schema about what is storable', () => {
+    const blocks: DescriptionBlock[] = [
+      { type: 'image', url: 'https://cdn.example.com/a.webp', alt: '' },
+    ];
+
+    expect(firstBlockProblem(blocks)).not.toBeNull();
+    expect(
+      descriptionDocumentSchema.safeParse({
+        version: DESCRIPTION_DOCUMENT_VERSION,
+        blocks: prepareBlocksForSave(blocks),
+      }).success,
+    ).toBe(false);
+  });
+
+  it('ignores a block that is about to be dropped rather than stored', () => {
+    // An image row with no file yet is an editing state. `prepareBlocksForSave`
+    // removes it, so refusing the save on its account would block a seller for
+    // a block that never reaches the server.
+    const blocks: DescriptionBlock[] = [
+      { type: 'paragraph', text: 'Copy.' },
+      { type: 'image', url: '', alt: '' },
+    ];
+
+    expect(firstBlockProblem(blocks)).toBeNull();
+    expect(
+      descriptionDocumentSchema.safeParse({
+        version: DESCRIPTION_DOCUMENT_VERSION,
+        blocks: prepareBlocksForSave(blocks),
+      }).success,
+    ).toBe(true);
+  });
+
+  it('passes a complete document', () => {
+    expect(firstBlockProblem(AUTHORED)).toBeNull();
   });
 });

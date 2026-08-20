@@ -44,9 +44,47 @@ describe('rename option mapping - what it may never write', () => {
     expect(SOURCE).not.toMatch(/offerSupplierBindings/);
   });
 
-  it('writes exactly the two display columns', () => {
+  it('writes exactly the display columns and the display order', () => {
     expect(SOURCE).toMatch(/\.set\(\{ name: axis\.name\.trim\(\) \}\)/);
-    expect(SOURCE).toMatch(/\.set\(\{ label: value\.label\.trim\(\) \}\)/);
+    expect(SOURCE).toMatch(
+      /\.set\(\{ label: value\.label\.trim\(\), position: index \}\)/,
+    );
+  });
+
+  /**
+   * `product_option_values_option_position_key` is a plain unique index — not
+   * deferrable — so a straight swap collides mid-statement. Every row of the
+   * axis is lifted above its own maximum first, which empties the `0..n-1`
+   * range the second pass writes into. A negative sentinel is not an option:
+   * `product_option_values_position_non_negative` forbids it.
+   */
+  it('clears the position range before assigning final positions', () => {
+    expect(SOURCE).toMatch(/positionOffset/);
+    expect(SOURCE).toMatch(
+      /position: sql`\$\{productOptionValues\.position\} \+ \$\{positionOffset\}`/,
+    );
+    expect(SOURCE).not.toMatch(/position: -/);
+  });
+
+  /**
+   * Order comes from array order, never from a client-supplied index — the same
+   * rule `saveOptionMapping` follows, and the reason there is no second source
+   * of truth for a value's place.
+   */
+  it('takes position from array order rather than a submitted field', () => {
+    // The accepted input carries no position: the array index is the order.
+    expect(SOURCE).toMatch(/values: \{ valueId: string; label: string \}\[\]/);
+    expect(SOURCE).toMatch(/axis\.values\.entries\(\)/);
+  });
+
+  /**
+   * A payload missing one value was harmless while only labels were written;
+   * with positions written it would leave the omitted row at its offset
+   * position, silently sorting it last.
+   */
+  it('refuses a partial axis now that order is written', () => {
+    expect(SOURCE).toMatch(/incomplete/);
+    expect(SOURCE).toMatch(/storedCountByAxis/);
   });
 
   it('is compare-and-set on the product version', () => {

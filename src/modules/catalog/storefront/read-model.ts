@@ -491,7 +491,38 @@ async function loadDescriptionBlocks(
 }
 
 /**
- * The published variants, each with the option values that identify it.
+ * Two variants' places in the seller's arranged Variant Matrix.
+ *
+ * Compared axis by axis, so the first axis decides and later axes break its
+ * ties — the reading order of a size chart. `sals3_sku` is the final tiebreak
+ * rather than the primary sort it used to be: it is a hash, so ordering by it
+ * showed buyers `L, M, S, XL, XXL` no matter how the matrix was arranged.
+ *
+ * A missing position sorts last. That is a variant whose option row could not
+ * be read, and appending it is the one placement that never claims an order the
+ * seller did not set.
+ */
+function compareMatrixOrder(
+  left: readonly number[],
+  right: readonly number[],
+  leftSku: string,
+  rightSku: string,
+): number {
+  const depth = Math.max(left.length, right.length);
+
+  for (let axis = 0; axis < depth; axis += 1) {
+    const a = left[axis] ?? Number.MAX_SAFE_INTEGER;
+    const b = right[axis] ?? Number.MAX_SAFE_INTEGER;
+
+    if (a !== b) return a - b;
+  }
+
+  return leftSku.localeCompare(rightSku);
+}
+
+/**
+ * The published variants, each with the option values that identify it, in the
+ * order the seller arranged them.
  *
  * A variant with no mapped options is still returned: it is the single implicit
  * variant of a product that has no axes, and the consumer renders no selector
@@ -512,6 +543,7 @@ async function loadPublishedVariants(
       optionName: productOptions.name,
       optionValue: productOptionValues.label,
       optionPosition: productOptions.position,
+      optionValuePosition: productOptionValues.position,
       // Only the label. `provider_variant_references` also holds
       // `external_variant_id`, `external_sku` and the observed supplier cost —
       // none of which may reach a public feed, so none of which is selected.
@@ -553,6 +585,18 @@ async function loadPublishedVariants(
   // JS rather than with an aggregate so the option order stays the seller's
   // `position` rather than whatever a string_agg produced.
   const byVariant = new Map<string, StorefrontVariant>();
+  /**
+   * Each variant's place in the seller's arranged matrix: the value position at
+   * each axis position, so `Black · S` sorts before `Black · M` when the seller
+   * arranged `S, M, L`.
+   *
+   * The rows arrive ordered by `sals3_sku`, which is a hash — buyers were shown
+   * sizes in hash order however the Variant Matrix was arranged, which made the
+   * portal's reordering purely cosmetic. Sorted here rather than in SQL because
+   * the sort key spans one row per axis and only exists once the rows are
+   * folded.
+   */
+  const orderKeys = new Map<string, number[]>();
 
   rows.forEach((row) => {
     const priceMinor = Number(row.priceMinor);
@@ -578,12 +622,26 @@ async function loadPublishedVariants(
 
     if (row.optionName !== null && row.optionValue !== null) {
       existing.options.push({ name: row.optionName, value: row.optionValue });
+
+      if (row.optionPosition !== null && row.optionValuePosition !== null) {
+        const key = orderKeys.get(row.id) ?? [];
+
+        key[row.optionPosition] = row.optionValuePosition;
+        orderKeys.set(row.id, key);
+      }
     }
 
     byVariant.set(row.id, existing);
   });
 
-  return [...byVariant.values()];
+  return [...byVariant.values()].sort((left, right) =>
+    compareMatrixOrder(
+      orderKeys.get(left.id) ?? [],
+      orderKeys.get(right.id) ?? [],
+      left.sku,
+      right.sku,
+    ),
+  );
 }
 
 /**

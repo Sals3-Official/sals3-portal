@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import { ChevronDown, ChevronUp, ImageOff, Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,6 +28,12 @@ type VariantPricingTableProps = {
   onRetailChange: (variantId: string, amountMinor: number) => void;
   onSellerSkuChange: (variantId: string, value: string) => void;
   onBulkSetPrice: () => void;
+  /**
+   * Opens the photo picker for one variant. Omitted in fixture/design-preview
+   * mode and wherever no real media can be assigned, in which case the cell
+   * reports the state without offering a control that would do nothing.
+   */
+  onPickImage?: (variantId: string) => void;
 };
 
 const COLUMNS = [
@@ -39,6 +46,67 @@ const COLUMNS = [
   'Supplier stock',
   'Attention',
 ];
+
+/**
+ * The Image cell: the variant's own photo, or the offer to choose one.
+ *
+ * It used to render the literal string `img` in a bordered box for a variant
+ * that had a photo — a placeholder for a picture the cell already had the
+ * address of, next to rows that could never gain one because nothing wrote
+ * `product_media_sources.variant_id`. Now the photo is the cell, and the cell is
+ * the control.
+ *
+ * 36px square at 72px source: it is a thumbnail in a dense table, and asking
+ * for a full-size render per row would download twelve product photos to draw
+ * twelve small squares.
+ */
+function VariantImageCell({
+  variant,
+  onPick,
+}: {
+  variant: VariantFixture;
+  onPick?: (() => void) | undefined;
+}) {
+  const content =
+    variant.imageUrl === null || variant.imageUrl === undefined ? (
+      <span className="flex size-9 items-center justify-center rounded-md border border-dashed border-border-strong text-amber-600">
+        <ImageOff aria-hidden="true" className="size-3.5" />
+      </span>
+    ) : (
+      <Image
+        src={variant.imageUrl}
+        alt=""
+        width={72}
+        height={72}
+        loading="lazy"
+        className="size-9 rounded-md border border-border object-cover"
+      />
+    );
+
+  if (onPick === undefined) {
+    return (
+      <span title={variant.hasImage ? undefined : 'No variant image'}>
+        {content}
+        <span className="sr-only">
+          {variant.hasImage ? 'Variant photo' : 'No variant image'}
+        </span>
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      // The accessible name carries the variant, because a table of ten
+      // identical "Choose photo" buttons names none of them.
+      aria-label={`${variant.hasImage ? 'Change' : 'Choose'} photo for ${variant.optionLabel}`}
+      className="rounded-md outline-offset-2 transition hover:brightness-95 focus-visible:outline-2"
+    >
+      {content}
+    </button>
+  );
+}
 
 /**
  * `optionLabel` arrives pre-formatted by the read-model: `"Colour: Army
@@ -135,6 +203,7 @@ export default function VariantPricingTable({
   onRetailChange,
   onSellerSkuChange,
   onBulkSetPrice,
+  onPickImage,
 }: VariantPricingTableProps) {
   return (
     <div className="flex flex-col gap-3">
@@ -198,22 +267,14 @@ export default function VariantPricingTable({
                     />
                   </TableCell>
                   <TableCell>
-                    {variant.hasImage ? (
-                      <span
-                        aria-hidden="true"
-                        className="flex size-9 items-center justify-center rounded-md border border-border bg-muted font-mono text-xs text-muted-foreground"
-                      >
-                        img
-                      </span>
-                    ) : (
-                      <span
-                        title="No variant image"
-                        className="flex size-9 items-center justify-center rounded-md border border-dashed border-border-strong text-amber-600"
-                      >
-                        <ImageOff aria-hidden="true" className="size-3.5" />
-                        <span className="sr-only">No variant image</span>
-                      </span>
-                    )}
+                    <VariantImageCell
+                      variant={variant}
+                      onPick={
+                        onPickImage === undefined
+                          ? undefined
+                          : () => onPickImage(variant.id)
+                      }
+                    />
                   </TableCell>
                   <TableCell className="max-w-56 font-medium">
                     <VariantIdentity optionLabel={variant.optionLabel} />

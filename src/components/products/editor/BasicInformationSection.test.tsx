@@ -95,8 +95,10 @@ describe('BasicInformationSection - Product media', () => {
   it('states the size/format/resolution guidance the upload pipeline actually enforces', () => {
     renderSection({ media: [] });
 
+    // One sentence, from `image-upload-limits`, on every upload surface. Three
+    // surfaces used to spell it out by hand and two of them had already drifted.
     expect(screen.getByText(/2000 × 2000 px/)).toBeInTheDocument();
-    expect(screen.getByText(/up to 5 MB/)).toBeInTheDocument();
+    expect(screen.getByText(/max 5 MB/)).toBeInTheDocument();
     expect(screen.getByText(/JPG, PNG, or WebP/)).toBeInTheDocument();
   });
 

@@ -19,6 +19,7 @@ import {
   DESCRIPTION_DOCUMENT_VERSION,
   MAX_BLOCKS,
   emptyBlockOfType,
+  firstBlockProblem,
   prepareBlocksForSave,
   type DescriptionBlock,
   type DescriptionBlockType,
@@ -134,6 +135,28 @@ export default function DescriptionStudio({
   }
 
   async function save() {
+    /**
+     * Refuse here, beside the block, rather than at the server boundary.
+     *
+     * `descriptionDocumentSchema` requires alt text on any stored image, and a
+     * document that fails it comes back as one `invalid_input` whose copy names
+     * pasted formatting — a cause a seller who simply uploaded a photo never
+     * had, and an instruction that cannot fix it. `describeBlockProblem` already
+     * knew the real reason and was already rendered in the inspector; it was
+     * only ever shown for the block that happened to be selected.
+     *
+     * Selecting the offending block is the point: the inspector then renders
+     * that same sentence next to the field that fixes it.
+     */
+    const refused = firstBlockProblem(blocks.map((entry) => entry.block));
+
+    if (refused !== null) {
+      setSelectedKey(blocks[refused.index]?.key ?? null);
+      setStatus({ kind: 'error', message: refused.problem });
+
+      return;
+    }
+
     setIsSaving(true);
     setStatus(null);
 

@@ -83,6 +83,11 @@ vi.mock('@/app/(portal)/listings/media-actions', () => ({
   deleteSellerMediaAction: vi.fn(),
 }));
 
+// Same reasoning: `assign-variant-media.ts` reaches the server-only db client.
+vi.mock('@/app/(portal)/listings/variant-media-actions', () => ({
+  default: vi.fn(),
+}));
+
 // The page reads `getDb()` directly for the category picker's reference
 // data — mocked at this boundary rather than reaching for a real database
 // in a component test.

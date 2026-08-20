@@ -837,6 +837,79 @@ raw `UNBRANDED` token, and an unresolved field is still unresolved for
 readiness/blocker purposes — nothing here touches CJ supplier identity,
 brand evidence, or order-fulfillment fields.
 
+**The Variant Matrix can be reordered after it is saved, not only renamed
+(2026-08-21).** `S, M, L, XL, XXL` is alphabetically `L, M, S, XL, XXL`, which is
+what buyers were shown: the first-time mapping form had up/down arrows and the
+later **Edit names** form had none, so an order set wrong (or produced by the
+split) could never be corrected. Both forms now render the same row —
+`VariantMatrixValueRow`, one component instead of two drifted layouts, the second
+of which put the supplier token alone in a half-width column with the input
+floating at the far right. `renameOptionMapping` writes
+`product_option_values.position` from array order, in two passes: every value of
+the axis is first lifted above its own maximum, because
+`product_option_values_option_position_key` is a plain (non-deferrable) unique
+index that a straight swap collides on, and
+`product_option_values_position_non_negative` rules out negative sentinels. No
+migration, and no identity moves — `option_combination_key` is built from
+`normalized_value`, so a reorder changes only what a buyer reads. A partial axis
+is now refused (`UNKNOWN_AXIS`): harmless while only labels were written, it
+would otherwise leave an omitted value parked at its offset position. The
+storefront read model sorts published variants by those positions too
+(`compareMatrixOrder`), instead of by `sals3_sku` — a hash, which made the
+portal-side order cosmetic.
+
+**A description save says what is actually wrong with it (2026-08-21).** An
+uploaded photo with no alt text passed the editor, failed
+`descriptionDocumentSchema`'s `min(1)` on `alt`, and came back as _"That
+description could not be read. Remove any pasted formatting and try again."_ —
+naming a cause the seller never had and an action that could not fix it.
+`firstBlockProblem` runs `describeBlockProblem` (which already existed, and was
+already rendered for whichever block happened to be selected) over everything
+about to be stored, refuses the save locally, and selects the offending block so
+the inspector shows the sentence beside the field that fixes it. Blocks
+`prepareBlocksForSave` drops — an image row with no file yet — are skipped, so
+they stay an editing state rather than becoming a refusal. The upload panel also
+states the ceiling before the picker opens; `image-upload-limits.ts` is the one
+copy of it, asserted against `image-upload-pipeline`'s own constants by test,
+replacing three hand-typed captions of which two had already drifted.
+
+**Publish no longer discards unsaved specifications (2026-08-21).** The
+Specification section owns its own versioned write, so a seller who typed a value
+and pressed **Publish Update** without pressing **Save Specifications** published
+without it — with nothing on screen saying the field was unsaved. Publish and
+Save Draft now flush the specification fields first
+(`flushCategoryAttributes`), and publish compare-and-sets against the
+`products.version` that flush returned rather than the one the page rendered
+with — otherwise the second write is refused for having done exactly what it was
+asked to do. A refused flush stops the publish: a listing that contradicts the
+screen is worse than no listing.
+
+**A variant can be given one of the product's stored photos (2026-08-21).**
+`product_media_sources.variant_id` has existed since the table was created
+(ADR-013 §8) and the editor's read model always reported `hasImage` from it, but
+no write path ever set it — so every variant in production showed _"No variant
+image"_, on products whose photos were already uploaded, with the Image cell
+rendering the literal string `img` for the rows that did have one. The cell is
+now the photo and the control: it opens `VariantImagePicker`, which lists every
+stored photo of the product — supplier original and seller upload alike, because
+saying _which variant a photo depicts_ is a Sals3 editorial fact, not a change to
+supplier evidence. `assignVariantMedia` moves one nullable column, matching both
+the media row and the variant row on the resolved product's own id (the case a
+tenant check alone lets through), reads the previous holder before writing
+because Postgres `RETURNING` reports the row _after_ the statement, and records
+the move in the audit trail. Clearing is the same write with `variantId: null`:
+the photo stays in Product media, and no file is uploaded, copied, or deleted.
+Nothing is uploaded from this dialog — that stays in Basic Information's Product
+media. No migration.
+
+**Publication confirms itself in a dialog (2026-08-21).** A successful publish
+reported itself in a toast that dismissed while the seller was still reading it,
+naming a storefront path and offering nowhere to go. `PublishSuccessDialog` shows
+the path and the live offer count behind a frosted backdrop, with **Go to Product
+Catalogue** as a real link and **Stay on this listing** beside it. The panel
+itself stays near-opaque: text over a live blur cannot hold a contrast ratio,
+because whatever scrolls behind it decides the ratio.
+
 ## Description: simple text or a designed layout
 
 The Description section offers two editors and the seller picks with a toggle.

@@ -36,6 +36,7 @@ import {
   type DescriptionBlockType,
   type ImageBlock,
 } from '@/lib/products/description-blocks';
+import { IMAGE_UPLOAD_LIMITS_COPY } from '@/lib/products/image-upload-limits';
 import {
   keyDescriptionBlocks,
   type KeyedDescriptionBlock,
@@ -366,7 +367,7 @@ function ImageBlockFields({
               {uploadButtonLabel(isUploading, block.url)}
             </Button>
             <span className="text-xs text-muted-foreground">
-              JPEG, PNG, or WebP · up to 5 MB · 2000 × 2000 px
+              {IMAGE_UPLOAD_LIMITS_COPY}
             </span>
           </div>
 

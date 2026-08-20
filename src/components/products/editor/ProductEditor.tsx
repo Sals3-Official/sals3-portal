@@ -1,4 +1,5 @@
 import { FlaskConical } from 'lucide-react';
+import assignVariantMediaAction from '@/app/(portal)/listings/variant-media-actions';
 import saveCategoryAttributesAction from '@/app/(portal)/listings/category-attributes-actions';
 import { decideCategoryMappingAction } from '@/app/(portal)/listings/category-mapping-actions';
 import {
@@ -114,6 +115,9 @@ export default function ProductEditor({
         }
         deleteMediaAction={
           isDatabaseBacked ? deleteSellerMediaAction : undefined
+        }
+        assignVariantMediaAction={
+          isDatabaseBacked ? assignVariantMediaAction : undefined
         }
         saveCategoryAttributesAction={
           isDatabaseBacked ? saveCategoryAttributesAction : undefined

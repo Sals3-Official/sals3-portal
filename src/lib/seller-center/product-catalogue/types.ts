@@ -225,6 +225,17 @@ export type CatalogueVariantFixture = {
   /** Supplier reference only, shown read-only. */
   cjVariantId: string;
   hasImage: boolean;
+  /**
+   * The photo recorded for this specific variant (ADR-013 §8), if one is.
+   *
+   * `hasImage` said whether such a row existed and nothing could ever make one:
+   * `product_media_sources.variant_id` has been nullable since the table was
+   * created and no write path ever set it, so every variant in production
+   * reported `false`. The address is carried here so the editor can show the
+   * photo rather than a placeholder, and `imageMediaId` so it can be unlinked.
+   */
+  imageUrl?: string | null;
+  imageMediaId?: string | null;
   /** Seller-managed customer-facing price. */
   sellingPrice: MoneyValue | null;
   /** Observed supplier fact, never the customer price. */
@@ -243,6 +254,18 @@ export type CatalogueVariantFixture = {
   evidenceFreshness: EvidenceFreshness;
   /** Manual seller pause, independent of supplier-driven availability. */
   manuallyPaused: boolean;
+};
+
+/**
+ * One stored photo, as the variant-image picker needs it: the real media row id,
+ * a host-checked address, where it came from, and which variant already holds it.
+ */
+export type AssignableMediaFixture = {
+  mediaId: string;
+  url: string;
+  sourceType: 'SUPPLIER_ORIGINAL' | 'SELLER_UPLOAD';
+  /** The variant currently pointed at this photo, or null for product-level. */
+  variantId: string | null;
 };
 
 /** One mapped option axis, as stored. Display words plus their read-only source. */
@@ -293,6 +316,16 @@ export type CatalogueProductFixture = {
    * inside editable media management.
    */
   supplierMediaUrls?: string[];
+  /**
+   * Every stored photo of this product a variant could be pointed at, supplier
+   * original and seller upload alike, each with the real
+   * `product_media_sources` id the assignment writes to.
+   *
+   * Kept apart from the URL lists above because those are deduplicated display
+   * projections: two rows sharing an address collapse into one string, and an
+   * assignment needs the row. Absent on the illustrative fixtures.
+   */
+  assignableMedia?: AssignableMediaFixture[];
   /**
    * The subset of `mediaImageUrls` the seller actually uploaded themselves
    * (`product_media_sources` rows with `sourceType: 'SELLER_UPLOAD'`).
