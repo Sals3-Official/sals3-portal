@@ -301,7 +301,18 @@ describe('buyer-visible media selection', () => {
         },
       ],
       // loadApprovedImages, loadDescriptionBlocks, loadPublishedVariants,
-      // loadSpecs — in the Promise.all order `findPublishedProductBySlug` uses.
+      // loadSpecs, loadSpecification, loadMetaDescription — in the Promise.all
+      // order `findPublishedProductBySlug` uses.
+      //
+      // A loader added to that Promise.all without a row here is **not** a
+      // failure: `recordingExecutor` defaults a missing entry to `[]`. The
+      // assertion below reads `recorded[1]`, the gallery's WHERE, and a new
+      // loader appended after it cannot shift that index. Both facts are worth
+      // stating, because the alternative reading — that this list must stay in
+      // step or the test breaks — would send the next person editing it for no
+      // reason.
+      [],
+      [],
       [],
       [],
       [],

@@ -105,6 +105,13 @@ const ROW: StorefrontDetailRow = {
     brand: 'Sals3 Basics',
     condition: 'NEW',
   },
+  specification: [
+    { label: 'Material', value: 'Polyester shell, fleece lining' },
+    { label: 'Season', value: 'Autumn, Winter' },
+    { label: 'Country of Origin', value: 'China' },
+  ],
+  metaDescription:
+    'A short-cut waterproof shell jacket with a fleece lining, in black and navy.',
 };
 
 describe('the committed contract fixture', () => {

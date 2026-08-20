@@ -2602,6 +2602,56 @@ blocks from the frozen published revision, `variants[]` with their options, and
 absent description means nobody has written one, which is a different fact from
 an empty one.
 
+#### `specification` is not `specs`
+
+Added 2026-08-21 for the PDP v3.1 shell, alongside `metaDescription`. They look
+like two more optional keys and they are, but the first one carries a boundary
+worth stating once:
+
+- **`specs`** is what the **supplier reported** and Sals3 repeats — weight,
+  dimensions, GTIN, MPN, condition. The consumer labels it "as reported by the
+  supplier."
+- **`specification`** is what the **seller declared themselves**, against the
+  attribute set their Sals3 category defines. `{ label, value }` pairs from
+  `product_category_attribute_values`, ordered `REQUIRED` → `RECOMMENDED` →
+  `OPTIONAL` and alphabetically within each group — the same order the editor's
+  Specification section asks for them in.
+
+The consumer renders them as two sections with two provenance lines. Merging
+them into one table under one footnote would attribute the seller's own
+declaration to CJ, which is why they are separate keys rather than a merged bag.
+
+Three filters decide what reaches a buyer, all in
+`src/modules/catalog/storefront/specification.ts`:
+
+1. The attribute must be **recognised under the product's current category** —
+   the join is on `products.category_id`, not on the `controls_version` the
+   value was saved against. A stored value survives a category change on
+   purpose, so a row can outlive the contract that asked for it.
+2. `seo_visibility = 'ATTRIBUTE_CONTEXT_ONLY'` **never reaches a buyer**. The
+   workbook classifies every attribute; that column decides, not this code.
+3. An **empty value produces no row**. This is also what keeps a defaulted
+   `Others` country of origin off the page: the editor shows `Others` as a
+   _placeholder_ for an undecided field, so an undecided origin has no stored
+   value and therefore no row — and no data-quality claim is made to Google
+   about a fact nobody established.
+
+The workbook's `UNBRANDED` token is display-mapped to `Generic` here, through
+the same `categoryAttributeValueDisplayLabel` the editor uses, so the raw token
+never reaches a buyer while what is stored stays the seller's actual pick.
+
+`metaDescription` is the seller-edited `<meta name="description">` from
+`products.meta_description`, trimmed, and **omitted when blank** — an empty
+string would beat the consumer's own fallback chain and leave the page with no
+meta description at all. It is hidden metadata: the consumer must never render
+it in the page body.
+
+No migration: every column and table these read already existed. The
+`storefront-catalog-product` cache key moved `v3` → `v4`, because a warm `v3`
+entry would keep serving rows without either field for up to 30 seconds after
+deploy — which reads as "the feature did not ship". The feed key stays on `v2`;
+a card row carries neither field.
+
 `shipsFrom` is omitted in v1 on purpose. No product, variant, or offer column
 holds a stock-origin country, and the only source is seller-scoped screening
 evidence a public query must not join to. Adding it properly is a migration.

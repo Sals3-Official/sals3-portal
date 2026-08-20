@@ -142,6 +142,29 @@ export type StorefrontProductDetail = StorefrontProduct & {
   description?: { blocks: DescriptionBlock[] };
   variants?: StorefrontProductVariant[];
   specs?: StorefrontProductSpecs;
+  /**
+   * The seller's own answers to their category's attribute set, in the order
+   * the editor asked for them.
+   *
+   * A **different kind of claim** from `specs`, which is why it is a different
+   * key: these are the seller's declarations, `specs` is what the supplier
+   * reported. The consumer must not merge them into one table under one
+   * provenance line — doing so attributes the seller's own words to CJ.
+   */
+  specification?: StorefrontProductSpecification[];
+  /**
+   * The seller-edited page meta description. Hidden metadata only: never
+   * rendered in the page body, and it outranks the consumer's own fallback
+   * chain when present.
+   */
+  metaDescription?: string;
+};
+
+/** One seller-entered category attribute, already display-mapped by the portal. */
+export type StorefrontProductSpecification = {
+  /** The workbook's own attribute name, verbatim. */
+  label: string;
+  value: string;
 };
 
 export type StorefrontProductVariant = {
@@ -299,6 +322,12 @@ export function toStorefrontProductDetail(
       ? {}
       : { variants: row.variants.map(toStorefrontVariant) }),
     ...(row.specs === undefined ? {} : { specs: row.specs }),
+    ...(row.specification === undefined
+      ? {}
+      : { specification: row.specification }),
+    ...(row.metaDescription === undefined
+      ? {}
+      : { metaDescription: row.metaDescription }),
   };
 }
 
