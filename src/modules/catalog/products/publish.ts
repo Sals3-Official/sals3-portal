@@ -24,6 +24,7 @@ import {
 } from '@/modules/market-config/capabilities';
 import { findActiveProfileForSeller } from '@/modules/market-config/repository';
 import { resolveProductPricing } from '@/modules/pricing/resolver';
+import { minimumRetailAmountMinorForSupplierCost } from '@/lib/pricing/retail-price-floor';
 import { ensureProductCjCategory } from './category-mirror';
 import { deriveOptionSplit } from './option-split';
 import {
@@ -585,13 +586,12 @@ export default async function publishProduct(input: {
          * `US$1.29` per unit before freight, and it was the floor price the
          * storefront advertised.
          *
-         * The comparison is against the supplier cost only, and equality still
-         * refuses: a zero-spread seller price is not a retail price the system
-         * can honestly call ready. Cost-plus-margin would be the stronger rule,
-         * but it needs a category policy, and a product reaching this branch
-         * usually has none — that is why the resolver was skipped. So this
-         * refuses the provable no-margin/loss cases and leaves the margin
-         * question to the resolver.
+         * The comparison is against the supplier cost plus a hard 2.5% spread.
+         * Cost-plus-margin would be the stronger rule, but it needs a category
+         * policy, and a product reaching this branch usually has none — that is
+         * why the resolver was skipped. So this refuses the provable
+         * no-margin/thin-margin/loss cases and leaves the full margin question
+         * to the resolver.
          */
         const costMinor = variant.costMinor as number;
         const costCurrency = variant.costCurrency ?? SETTLEMENT_CURRENCY;
@@ -607,11 +607,14 @@ export default async function publishProduct(input: {
           };
         }
 
-        if (manualRetailPrice.amountMinor <= costMinor) {
+        const minimumRetailMinor =
+          minimumRetailAmountMinorForSupplierCost(costMinor);
+
+        if (manualRetailPrice.amountMinor < minimumRetailMinor) {
           return {
             ok: false,
             reason: 'RETAIL_BELOW_SUPPLIER_COST',
-            detail: `Retail price ${formatMinor(manualRetailPrice.amountMinor, costCurrency)} must be above the supplier cost ${formatMinor(costMinor, costCurrency)} for ${variant.sku}.`,
+            detail: `Retail price ${formatMinor(manualRetailPrice.amountMinor, costCurrency)} must be at least ${formatMinor(minimumRetailMinor, costCurrency)} for ${variant.sku}, which is 2.5% above the supplier cost ${formatMinor(costMinor, costCurrency)}.`,
           };
         }
 

@@ -28,6 +28,10 @@ import {
   sectionSeverity,
 } from '@/lib/seller-center/product-editor/derive';
 import {
+  clampRetailAmountMinorToSupplierFloor,
+  minimumRetailAmountMinorForSupplierCost,
+} from '@/lib/pricing/retail-price-floor';
+import {
   EDITOR_SECTIONS,
   type CategoryAttributeFieldFixture,
   type EditorLifecycle,
@@ -247,15 +251,14 @@ function retailAmountAboveSupplierCost(
   retailCurrency: string,
   supplierCost: VariantFixture['supplierCost'],
 ): number {
-  if (
-    amountMinor <= 0 ||
-    retailCurrency !== supplierCost.currency ||
-    amountMinor > supplierCost.amountMinor
-  ) {
+  if (amountMinor <= 0 || retailCurrency !== supplierCost.currency) {
     return amountMinor;
   }
 
-  return supplierCost.amountMinor + 1;
+  return clampRetailAmountMinorToSupplierFloor(
+    amountMinor,
+    supplierCost.amountMinor,
+  );
 }
 
 function retailPriceIssue(fixture: ProductEditorFixture): ReadinessIssue {
@@ -278,14 +281,14 @@ function retailPriceNotAboveCostIssue(
   return {
     id: `${fixture.fixtureKey}-retail-price-not-above-cost`,
     severity: 'BLOCKER',
-    title: 'Retail price must be above supplier cost',
+    title: 'Retail price must include at least 2.5% markup',
     explanation:
-      'Raise every listed variant above its supplier cost before publication.',
+      'Raise every listed variant to at least 2.5% above its supplier cost before publication.',
     affectedScope: 'Variants & Pricing',
     source: 'AUTOMATED_VALIDATION',
     section: 'variants',
     reasonCode: null,
-    resolution: 'Set a retail price higher than the supplier cost.',
+    resolution: 'Set a retail price at least 2.5% above the supplier cost.',
   };
 }
 
@@ -603,7 +606,10 @@ export default function ProductEditorWorkspace({
         variant.enabled &&
         variant.retailPrice.amountMinor > 0 &&
         variant.retailPrice.currency === variant.supplierCost.currency &&
-        variant.retailPrice.amountMinor <= variant.supplierCost.amountMinor,
+        variant.retailPrice.amountMinor <
+          minimumRetailAmountMinorForSupplierCost(
+            variant.supplierCost.amountMinor,
+          ),
     );
     // Keyed off `sals3CategoryDeclaredBySeller`, not `categoryMappingConfidence`:
     // the CJ auto-mirror already resolves EXACT/ACCEPTABLE confidence for
@@ -659,12 +665,16 @@ export default function ProductEditorWorkspace({
         (variant) =>
           variant.supplierCost.currency === fixture.source.sourceCurrency,
       )
-      .map((variant) => variant.supplierCost.amountMinor);
+      .map((variant) =>
+        minimumRetailAmountMinorForSupplierCost(
+          variant.supplierCost.amountMinor,
+        ),
+      );
 
     if (matchingCosts.length === 0) return null;
 
     return {
-      amountMinor: Math.max(...matchingCosts) + 1,
+      amountMinor: Math.max(...matchingCosts),
       currency: fixture.source.sourceCurrency,
     };
   }, [bulkAffected, fixture.source.sourceCurrency]);

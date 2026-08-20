@@ -10,10 +10,8 @@ import saveCategoryAttributesAction from '@/app/(portal)/listings/category-attri
 import saveMetaDescriptionAction from '@/app/(portal)/listings/meta-description-actions';
 import { publishProductAction } from '@/app/(portal)/listings/publish-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
-import {
-  formatMoney,
-  minorToDecimalString,
-} from '@/lib/seller-center/product-editor/format';
+import { minorToDecimalString } from '@/lib/seller-center/product-editor/format';
+import { minimumRetailAmountMinorForSupplierCost } from '@/lib/pricing/retail-price-floor';
 import type {
   CategoryAttributeFieldFixture,
   EditorLifecycle,
@@ -612,12 +610,11 @@ describe('Product Editor - money that is not known', () => {
     );
 
     expect(
-      screen.getAllByText('Retail price must be above supplier cost').length,
+      screen.getAllByText('Retail price must include at least 2.5% markup')
+        .length,
     ).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /^Publish/ })).toBeDisabled();
-    expect(screen.getAllByText(/Must be above .* cost/).length).toBeGreaterThan(
-      0,
-    );
+    expect(screen.getAllByText(/Minimum /).length).toBeGreaterThan(0);
   });
 
   it('shows the supplier source currency in the source drawer', () => {
@@ -810,7 +807,7 @@ describe('Product Editor - structure', () => {
       target.supplierCost.currency,
     );
     const minimumRetail = minorToDecimalString(
-      target.supplierCost.amountMinor + 1,
+      minimumRetailAmountMinorForSupplierCost(target.supplierCost.amountMinor),
       target.supplierCost.currency,
     );
 
@@ -820,7 +817,7 @@ describe('Product Editor - structure', () => {
 
     await waitFor(() => expect(retailInput).toHaveValue(minimumRetail));
     expect(
-      screen.queryByText('Retail price must be above supplier cost'),
+      screen.queryByText('Retail price must include at least 2.5% markup'),
     ).not.toBeInTheDocument();
   });
 
@@ -832,25 +829,24 @@ describe('Product Editor - structure', () => {
     const currency = resolved.source.sourceCurrency;
     const blockedPrice = minorToDecimalString(highestSupplierCost, currency);
     const minimumRetailPrice = {
-      amountMinor: highestSupplierCost + 1,
+      amountMinor: minimumRetailAmountMinorForSupplierCost(highestSupplierCost),
       currency,
     };
 
     render(<ProductEditor fixture={resolved} initialLifecycle="IDLE" />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Set retail price…' }));
-    fireEvent.change(screen.getByLabelText(`Retail price (${currency})`), {
+    const bulkPriceInput = screen.getByLabelText(`Retail price (${currency})`);
+
+    expect(bulkPriceInput).toHaveAttribute(
+      'min',
+      minorToDecimalString(minimumRetailPrice.amountMinor, currency),
+    );
+
+    fireEvent.change(bulkPriceInput, {
       target: { value: blockedPrice },
     });
 
-    expect(
-      screen.getByText(`Minimum allowed: ${formatMoney(minimumRetailPrice)}.`),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        `Retail price must be at least ${formatMoney(minimumRetailPrice)}.`,
-      ),
-    ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
   });
 

@@ -2,6 +2,7 @@ import type {
   MoneyValue,
   SourceChangeFixture,
 } from '@/lib/seller-center/product-editor/types';
+import { minimumRetailAmountMinorForSupplierCost } from '@/lib/pricing/retail-price-floor';
 
 /**
  * What the supplier changed since this product was drafted.
@@ -31,9 +32,10 @@ import type {
  * ## Deliberately not every difference
  *
  * Inventory moves constantly on a dropshipping feed. Reporting every fluctuation
- * would bury the two facts that actually cost a seller money — a cost that rose
- * above their retail price, and a variant that no longer exists — so stock is
- * reported only when it reaches zero.
+ * would bury the two facts that actually cost a seller money — a cost that means
+ * their retail price no longer clears the required supplier-cost floor, and a
+ * variant that no longer exists — so stock is reported only when it reaches
+ * zero.
  */
 
 /** The draft-time record, as the catalogue read-model already assembles it. */
@@ -127,28 +129,31 @@ export function deriveSourceChanges(input: {
         const rose = currentMinor > variant.supplierCost.amountMinor;
         const retail = variant.retailPrice;
         // The alarm this whole diff was worth building for. A supplier cost that
-        // has climbed past the seller's retail price means every sale of that
-        // variant loses money, and nothing else in the editor would say so.
-        const aboveRetail =
+        // has climbed too close to the seller's retail price means the offer no
+        // longer clears the required seller spread, and nothing else in the
+        // source-change panel would say so.
+        const minimumRetailMinor =
+          minimumRetailAmountMinorForSupplierCost(currentMinor);
+        const belowRequiredFloor =
           retail !== null &&
           retail.amountMinor > 0 &&
-          currentMinor > retail.amountMinor;
+          minimumRetailMinor > retail.amountMinor;
 
         changes.push({
           id: `${variant.variantId}-cost`,
-          title: aboveRetail
-            ? `${variant.displayLabel} now costs more than it sells for`
+          title: belowRequiredFloor
+            ? `${variant.displayLabel} no longer clears the supplier-cost floor`
             : `${variant.displayLabel} supplier cost ${rose ? 'rose' : 'fell'}`,
-          body: aboveRetail
-            ? `The supplier now charges ${money({ amountMinor: currentMinor, currency: variant.supplierCost.currency })} against a retail price of ${money(retail)}. Every sale at that price loses money.`
+          body: belowRequiredFloor
+            ? `The supplier now charges ${money({ amountMinor: currentMinor, currency: variant.supplierCost.currency })} against a retail price of ${money(retail)}. The minimum retail price is now ${money({ amountMinor: minimumRetailMinor, currency: variant.supplierCost.currency })}.`
             : `Was ${money(variant.supplierCost)} when drafted, now ${money({ amountMinor: currentMinor, currency: variant.supplierCost.currency })}.`,
           occurredAt,
-          currentListingImpact: aboveRetail
-            ? 'Raise the retail price or disable this variant. Publishing is refused while a retail price sits below supplier cost.'
+          currentListingImpact: belowRequiredFloor
+            ? 'Raise the retail price or disable this variant. Publishing is refused while a retail price sits below the supplier-cost floor.'
             : 'The retail price is unchanged, so the margin on this variant has moved.',
           acceptedOrderImpact: ACCEPTED_ORDER_IMPACT,
           listingAutoPaused: false,
-          sellerActionRequired: aboveRetail,
+          sellerActionRequired: belowRequiredFloor,
         });
       }
     }

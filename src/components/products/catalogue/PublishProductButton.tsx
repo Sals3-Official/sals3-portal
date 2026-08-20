@@ -40,7 +40,7 @@ const FAILURE_MESSAGES: Record<PublishActionFailureReason, string> = {
   NO_APPROVED_MEDIA: 'No approved product image is on file yet.',
   PRICING_UNRESOLVED: 'A price could not be resolved.',
   RETAIL_BELOW_SUPPLIER_COST:
-    'A retail price is not above what the supplier charges. Raise it above the supplier cost before publishing.',
+    'A retail price is below the required supplier-cost floor. Raise it to at least 2.5% above supplier cost before publishing.',
   NO_ACTIVE_MARKET_PROFILE:
     'Activate a market profile in Market Rules before publishing.',
   CURRENCY_NOT_AUTHORIZED:

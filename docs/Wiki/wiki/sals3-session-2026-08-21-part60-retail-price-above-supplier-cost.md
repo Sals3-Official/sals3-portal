@@ -14,7 +14,7 @@ related:
   - "[[nextjs-component-security-code-rules]]"
 ---
 
-# Sals3 Session 2026-08-21 Part 60 - Retail Price Above Supplier Cost
+# Sals3 Session 2026-08-21 Part 60 - Retail Price Supplier-Cost Floor
 
 ## Context
 
@@ -26,10 +26,10 @@ fees, freight, refunds, payment rails, tax handling, or operating costs.
 
 ## Owner Decision
 
-Retail price must be strictly above stored supplier cost for every listed
-variant when both prices are in the same currency. Equal-to-cost is not a
-seller choice the platform should pass through as ready, because it records a
-zero-spread offer as publishable.
+Retail price must be at least 2.5% above stored supplier cost for every listed
+variant when both prices are in the same currency. Equal-to-cost is not a seller
+choice the platform should pass through as ready, and a one-cent spread is still
+too thin because it records a near-zero-spread offer as publishable.
 
 ## Implementation
 
@@ -51,6 +51,15 @@ screenshot:
   and disables Apply when the entered value is equal to or below the highest
   affected supplier cost.
 - Regression tests cover the manual and bulk same-cost paths.
+
+A follow-up on 2026-08-21 tightened the rule again after the owner observed that
+the same value could still appear while the field was focused. The floor is now
+`ceil(supplierCost * 1.025)` in minor currency units:
+
+- for `$4.29` supplier cost, the minimum retail price is `$4.40`;
+- the input validates the draft text while the seller is still focused in the
+  field;
+- bulk pricing, readiness, and server publish all use the same 2.5% floor.
 
 ## Verification
 
