@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import type { DescriptionBlock } from '@/modules/catalog/products/description-document';
+import { slugBaseFromTitle } from '@/modules/catalog/products/slug';
 import type {
   StorefrontCategoryRow,
+  StorefrontDepartmentRow,
   StorefrontDetailRow,
   StorefrontListRow,
   StorefrontPage,
@@ -318,17 +320,88 @@ export function toStorefrontProductFeed(
   };
 }
 
+/**
+ * The top (L1) segment of a taxonomy path — "Apparel & Accessories" for
+ * "Apparel & Accessories > Clothing > Dresses".
+ *
+ * Splits on `/` as well as `>`: auto-mirrored CJ rows write their path with
+ * either separator ("Women's Clothing / Tops & Sets / Sweaters"), and a tile
+ * showing a whole supplier path instead of a department name is the failure
+ * this guards.
+ */
+export function categoryTopName(path: string): string {
+  const segments = path
+    .split(/[>/]/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment !== '');
+
+  return segments[0] ?? path;
+}
+
+/**
+ * The public id for a main category.
+ *
+ * Not the taxonomy code: a `cat-ggl-5079` URL names a Google leaf id, which
+ * is neither readable nor stable across a taxonomy refresh. The reduction is
+ * `slugBaseFromTitle`'s, reused rather than re-derived so a category id and a
+ * product slug can never disagree about what "&" or "," becomes.
+ */
+export function toCategorySlug(name: string): string {
+  return slugBaseFromTitle(name);
+}
+
+/**
+ * The "All departments" list: every main category the taxonomy defines,
+ * whether or not a product is published under it.
+ *
+ * Same `{ id, code, name }` shape as `toStorefrontCategories`, on purpose —
+ * the consumer validates one category schema, and a department *is* a main
+ * category. The two differ only in whether stock is required.
+ */
+export function toStorefrontDepartments(
+  rows: readonly StorefrontDepartmentRow[],
+): StorefrontCategory[] {
+  const byId = new Map<string, StorefrontCategory>();
+
+  rows.forEach((row) => {
+    // `categoryTopName`, not a bare trim: the producer query already scopes
+    // to the Sals3 taxonomy, and this is the second line of defence against a
+    // row that stored a whole path in the department column.
+    const name = categoryTopName(row.l1);
+    const id = toCategorySlug(name);
+
+    if (!isPublicSlug(id) || byId.has(id)) return;
+
+    byId.set(id, { id, code: displayCode(name), name });
+  });
+
+  return [...byId.values()];
+}
+
+/**
+ * The **main** (L1) categories that have at least one published product,
+ * derived by rolling every published leaf up to the top of its path.
+ *
+ * The rows are per-leaf, and the leaf set of a CJ-mirrored taxonomy is 5,595
+ * rows deep — browsing it directly puts "Rangefinders" next to "Breast Milk
+ * Storage Containers" and can never have a complete icon set. Grouping at L1
+ * gives the storefront ~21 possible tiles, each with a name a buyer
+ * recognises, while keeping the invariant that no tile can be empty: a
+ * category only appears here because a published product is under it.
+ *
+ * The leaf itself is not lost — `toStorefrontProduct` still carries the leaf
+ * code per product, and the detail row carries the full path for a breadcrumb.
+ */
 export function toStorefrontCategories(
   rows: readonly StorefrontCategoryRow[],
 ): StorefrontCategory[] {
   const byId = new Map<string, StorefrontCategory>();
 
   rows.forEach((row) => {
-    const id = row.code.toLowerCase();
+    const name = categoryTopName(row.path);
+    const id = toCategorySlug(name);
 
     if (!isPublicSlug(id) || byId.has(id)) return;
-
-    const name = categoryLeafName(row.path);
 
     byId.set(id, { id, code: displayCode(name), name });
   });

@@ -5,9 +5,11 @@ import { cache } from 'react';
 import { unstable_cache } from 'next/cache';
 import {
   findPublishedProductBySlug,
+  listCategoryDepartments,
   listPublishedCategories,
   listPublishedProducts,
   type StorefrontCategoryRow,
+  type StorefrontDepartmentRow,
   type StorefrontDetailRow,
   type StorefrontPage,
   type StorefrontSection,
@@ -97,6 +99,18 @@ const readCategoriesAcrossRequests = unstable_cache(
   { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
 );
 
+/**
+ * Cached separately from the published-category list, and on a longer-lived
+ * key in spirit: the department list only changes when the taxonomy itself is
+ * reseeded, not when a product is published. It still shares the catalogue tag
+ * so one revalidation clears both.
+ */
+const readDepartmentsAcrossRequests = unstable_cache(
+  async (): Promise<StorefrontDepartmentRow[]> => listCategoryDepartments(),
+  ['storefront-catalog-departments', 'v1'],
+  { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
+);
+
 export const readStorefrontFeed: (
   section: StorefrontSection,
   page: number,
@@ -109,3 +123,7 @@ export const readStorefrontProduct: (
 
 export const readStorefrontCategories: () => Promise<StorefrontCategoryRow[]> =
   cache(readCategoriesAcrossRequests);
+
+export const readStorefrontDepartments: () => Promise<
+  StorefrontDepartmentRow[]
+> = cache(readDepartmentsAcrossRequests);
