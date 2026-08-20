@@ -653,12 +653,15 @@ describe('publishProduct', () => {
       expect(writes).toHaveLength(0);
     });
 
-    it('allows a price exactly at the supplier cost', async () => {
-      const { db } = transactionalDb();
+    it('refuses a price exactly at the supplier cost', async () => {
+      const { db, writes } = transactionalDb();
 
-      // Zero margin is a seller's decision to make. Below cost is a loss the
-      // platform refuses to record as resolved.
-      expect(await publishAt(db, 796)).toMatchObject({ ok: true });
+      expect(await publishAt(db, 796)).toMatchObject({
+        ok: false,
+        reason: 'RETAIL_BELOW_SUPPLIER_COST',
+        detail: expect.stringMatching(/must be above.*USD 7\.96/),
+      });
+      expect(writes).toHaveLength(0);
     });
 
     it('allows a price above the supplier cost', async () => {

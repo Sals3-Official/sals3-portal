@@ -587,6 +587,35 @@ describe('Product Editor - money that is not known', () => {
     ).toBeGreaterThan(0);
   });
 
+  it('blocks publication when retail price equals supplier cost', () => {
+    const resolved = fixture('pass');
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          variants: resolved.variants.map((variant) => ({
+            ...variant,
+            retailPrice: {
+              ...variant.retailPrice,
+              amountMinor: variant.supplierCost.amountMinor,
+              currency: variant.supplierCost.currency,
+            },
+          })),
+        }}
+        initialLifecycle="IDLE"
+      />,
+    );
+
+    expect(
+      screen.getAllByText('Retail price must be above supplier cost').length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /^Publish/ })).toBeDisabled();
+    expect(screen.getAllByText(/Must be above .* cost/).length).toBeGreaterThan(
+      0,
+    );
+  });
+
   it('shows the supplier source currency in the source drawer', () => {
     renderEditor('pass');
 

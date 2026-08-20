@@ -71,11 +71,11 @@ export default function RetailPriceInput({
   }
 
   const comparable = value.currency === supplierCost.currency;
-  const belowCost =
+  const notAboveCost =
     comparable &&
     value.amountMinor > 0 &&
-    value.amountMinor < supplierCost.amountMinor;
-  const errorId = belowCost ? `${label}-below-cost` : undefined;
+    value.amountMinor <= supplierCost.amountMinor;
+  const errorId = notAboveCost ? `${label}-not-above-cost` : undefined;
 
   return (
     <div className="flex flex-col gap-1">
@@ -84,10 +84,10 @@ export default function RetailPriceInput({
         inputMode="decimal"
         autoComplete="off"
         aria-label={label}
-        aria-invalid={belowCost}
+        aria-invalid={notAboveCost}
         aria-describedby={errorId}
         className={`h-8 w-24 tabular-nums ${
-          belowCost ? 'border-destructive text-destructive' : ''
+          notAboveCost ? 'border-destructive text-destructive' : ''
         }`}
         value={draft}
         onFocus={() => setFocused(true)}
@@ -106,9 +106,9 @@ export default function RetailPriceInput({
           onChange(decimalStringToMinor(next, value.currency));
         }}
       />
-      {belowCost ? (
+      {notAboveCost ? (
         <span id={errorId} className="text-xs text-destructive">
-          Below {formatMoney(supplierCost)} cost
+          Must be above {formatMoney(supplierCost)} cost
         </span>
       ) : null}
     </div>
