@@ -1,14 +1,25 @@
-import { and, desc, eq, ilike, or } from 'drizzle-orm';
+import {
+  and,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+} from 'drizzle-orm';
 import type { Executor } from '@/modules/catalog/candidates/repository';
 import {
   pricingCategoryPolicies,
   pricingFxAdjustmentPolicies,
   pricingProductOverrides,
+  pricingStoreDefaults,
   pricingVariantOverrides,
   sals3Categories,
   type PricingCategoryPolicyRow,
   type PricingFxAdjustmentPolicyRow,
   type PricingProductOverrideRow,
+  type PricingStoreDefaultRow,
   type PricingVariantOverrideRow,
   type RoundingRule as SchemaRoundingRule,
   type Sals3CategoryRow,
@@ -36,6 +47,23 @@ export async function findCategoryByCode(
     .limit(1);
 
   return rows[0] ?? null;
+}
+
+/**
+ * Resolve many category codes in one statement — the bulk-import path needs
+ * every code in an uploaded file, and one query per row would turn a 213-row
+ * spreadsheet into 213 round trips inside a transaction.
+ */
+export async function findCategoriesByCodes(
+  executor: Executor,
+  codes: string[],
+): Promise<Sals3CategoryRow[]> {
+  if (codes.length === 0) return [];
+
+  return executor
+    .select()
+    .from(sals3Categories)
+    .where(inArray(sals3Categories.code, codes));
 }
 
 export async function findCategoryById(
@@ -102,6 +130,58 @@ export async function findActiveCategoryPolicy(
   return rows[0] ?? null;
 }
 
+export const CATEGORY_PATH_SEPARATOR = ' > ';
+
+export type NearestCategoryPolicy = {
+  policy: PricingCategoryPolicyRow;
+  /** The category the policy is actually attached to — the product's own category or its nearest priced ancestor. */
+  sourceCategory: Sals3CategoryRow;
+};
+
+/**
+ * The product category's own policy, or the nearest ancestor's (ADR-015
+ * §3's least-to-most-specific chain, 2026-08-19 amendment): Taxonomy v1
+ * stores a row for every node, so "Apparel & Accessories > Clothing >
+ * Shirts & Tops" checks itself, then "… > Clothing", then the department.
+ * One query for the whole chain — every ancestor path is derivable from
+ * the leaf's own `path` string, so no recursive CTE is needed — then the
+ * deepest priced node wins client-side (at most 5 rows).
+ */
+export async function findNearestActiveCategoryPolicy(
+  executor: Executor,
+  sellerAccountId: string,
+  category: Sals3CategoryRow,
+): Promise<NearestCategoryPolicy | null> {
+  const segments = category.path.split(CATEGORY_PATH_SEPARATOR);
+  const chainPaths = segments.map((_, index) =>
+    segments.slice(0, index + 1).join(CATEGORY_PATH_SEPARATOR),
+  );
+
+  const rows = await executor
+    .select({
+      category: sals3Categories,
+      policy: pricingCategoryPolicies,
+    })
+    .from(sals3Categories)
+    .innerJoin(
+      pricingCategoryPolicies,
+      and(
+        eq(pricingCategoryPolicies.categoryId, sals3Categories.id),
+        eq(pricingCategoryPolicies.sellerAccountId, sellerAccountId),
+        eq(pricingCategoryPolicies.status, 'ACTIVE'),
+      ),
+    )
+    .where(inArray(sals3Categories.path, chainPaths));
+
+  if (rows.length === 0) return null;
+
+  const deepest = rows.reduce((best, row) =>
+    row.category.path.length > best.category.path.length ? row : best,
+  );
+
+  return { policy: deepest.policy, sourceCategory: deepest.category };
+}
+
 export type CategoryPolicyWithCategory = PricingCategoryPolicyRow & {
   categoryCode: string;
   categoryPath: string;
@@ -153,13 +233,70 @@ export type CategoryMarginLeafRow = {
 };
 
 /**
- * Every leaf in the taxonomy, LEFT JOINed to this seller's active policy
- * (or `null`). LEFT JOIN — not the INNER JOIN `listActiveCategoryPolicies`
- * uses — is what makes an L2 group with zero active policies still
- * knowable: the query is driven FROM `sals3Categories`, not from the
- * policy table. One query, no N+1 — the settings page's whole initial
- * render comes from this single fetch.
+ * The taxonomy down to L2 only — department and group — LEFT JOINed to this
+ * seller's active policy (or `null`).
+ *
+ * **Why L2 and not every row** (owner decision, 2026-08-19): the deepest
+ * levels are effectively per-item ("Bicycle Jerseys", "Bicycle Tights"),
+ * and per-product pricing belongs in the Product Catalogue, not in a
+ * commercial-rules screen. Shipping all 5,602 rows also put 5,382 rows on
+ * screen that nobody was ever going to tune by hand. 21 departments + 192
+ * groups = 213 rows, a 96% cut, and it holds as the taxonomy grows.
+ *
+ * Depth is NOT a resolution limit — `findNearestActiveCategoryPolicy` still
+ * walks the full path chain, so a product five levels deep inherits from its
+ * group or its department exactly as before. This narrows what a person is
+ * asked to configure, never what the resolver can read.
+ *
+ * The `OR policy IS NOT NULL` arm is deliberate: a deeper policy that
+ * already exists (the retired L1>L2 bulk fan-out wrote per-leaf rows) stays
+ * visible and editable. Hiding a rate that is actively pricing products
+ * would be the silent-configuration failure this codebase keeps hitting.
+ *
+ * LEFT JOIN — not the INNER JOIN `listActiveCategoryPolicies` uses — is what
+ * makes a group with zero active policies still knowable: the query is
+ * driven FROM `sals3Categories`, not from the policy table. One query, no
+ * N+1 — the settings page's whole initial render comes from this fetch.
  */
+/**
+ * How many categories sit under each node, counted across the WHOLE
+ * taxonomy — not just the rows `listCategoryMarginOverview` returns.
+ *
+ * This exists because deriving the count from those rows is wrong the
+ * moment they are depth-capped, and it shipped wrong: "Home & Garden —
+ * 1,034 categories" rendered as "21", and the editor told a seller a
+ * department margin covered 21 categories when it covered 1,034. A number
+ * that understates the blast radius of a pricing change by 50x is worse
+ * than no number.
+ *
+ * Reads one column. The 5,602 short strings stay on the server — only the
+ * 213 aggregated counts reach the browser — so this is cheaper than it
+ * looks and needs no recursive CTE.
+ */
+export async function countDescendantsByPath(
+  executor: Executor,
+): Promise<Map<string, number>> {
+  const rows = await executor
+    .select({ path: sals3Categories.path })
+    .from(sals3Categories);
+
+  const counts = new Map<string, number>();
+
+  rows.forEach((row) => {
+    const segments = row.path.split(CATEGORY_PATH_SEPARATOR);
+
+    // Every strict ancestor of this row gains one descendant.
+    for (let depth = 1; depth < segments.length; depth += 1) {
+      const ancestorPath = segments
+        .slice(0, depth)
+        .join(CATEGORY_PATH_SEPARATOR);
+      counts.set(ancestorPath, (counts.get(ancestorPath) ?? 0) + 1);
+    }
+  });
+
+  return counts;
+}
+
 export async function listCategoryMarginOverview(
   executor: Executor,
   sellerAccountId: string,
@@ -187,6 +324,12 @@ export async function listCategoryMarginOverview(
         eq(pricingCategoryPolicies.status, 'ACTIVE'),
       ),
     )
+    // Depth <= 2, plus anything already carrying a policy — see the doc
+    // comment. `l3 IS NULL` is the depth test: `path` is denormalized but
+    // `l1`/`l2`/`l3` are the real level columns.
+    .where(
+      or(isNull(sals3Categories.l3), isNotNull(pricingCategoryPolicies.id)),
+    )
     .orderBy(
       sals3Categories.l1,
       sals3Categories.l2,
@@ -212,62 +355,6 @@ export async function listCategoryMarginOverview(
             updatedAt: row.updatedAt as Date,
           },
   }));
-}
-
-/**
- * Authoritative "every leaf under this L2 today" lookup, used ONLY at
- * write time by the bulk margin action. Recomputed from `(l1, l2)` on
- * every write — never trust a client-supplied leaf-id list, which would
- * open a staleness/tamper gap.
- */
-export async function findLeafCategoriesByL1L2(
-  executor: Executor,
-  l1: string,
-  l2: string,
-): Promise<Sals3CategoryRow[]> {
-  return executor
-    .select()
-    .from(sals3Categories)
-    .where(and(eq(sals3Categories.l1, l1), eq(sals3Categories.l2, l2)));
-}
-
-export type CategoryMarginGroup = {
-  l1: string;
-  l2: string;
-  /** Stable client-side key and lookup key: `${l1}::${l2}`. */
-  groupKey: string;
-  leaves: CategoryMarginLeafRow[];
-};
-
-/**
- * Pure grouping — no I/O. Kept out of SQL deliberately: "uniform / mixed /
- * unset" per group needs to compare actual rate+rounding values across a
- * group's leaves, including treating "no policy" as a distinct third
- * state — a plain reduce over an already-small (1,345-row) array reads far
- * more clearly than the equivalent SQL aggregate. Buckets a null `l1`/`l2`
- * under `'(Uncategorized)'` rather than dropping the row; every live row
- * today is fully populated, but this defends against the schema's
- * nullability anyway.
- */
-export function groupCategoryMarginRowsByL2(
-  rows: CategoryMarginLeafRow[],
-): CategoryMarginGroup[] {
-  const byKey = new Map<string, CategoryMarginGroup>();
-
-  rows.forEach((row) => {
-    const l1 = row.l1 ?? '(Uncategorized)';
-    const l2 = row.l2 ?? '(Uncategorized)';
-    const groupKey = `${l1}::${l2}`;
-
-    let group = byKey.get(groupKey);
-    if (group === undefined) {
-      group = { l1, l2, groupKey, leaves: [] };
-      byKey.set(groupKey, group);
-    }
-    group.leaves.push(row);
-  });
-
-  return [...byKey.values()];
 }
 
 export async function createCategoryPolicy(
@@ -682,6 +769,103 @@ export async function deactivateFundingBufferPolicy(
       and(
         eq(pricingFxAdjustmentPolicies.id, policyId),
         eq(pricingFxAdjustmentPolicies.sellerAccountId, sellerAccountId),
+      ),
+    )
+    .returning();
+
+  return row ?? null;
+}
+
+// --- Store default (ADR-015 §3 base layer) -------------------------------
+
+export async function findActiveStoreDefault(
+  executor: Executor,
+  sellerAccountId: string,
+): Promise<PricingStoreDefaultRow | null> {
+  const rows = await executor
+    .select()
+    .from(pricingStoreDefaults)
+    .where(
+      and(
+        eq(pricingStoreDefaults.sellerAccountId, sellerAccountId),
+        eq(pricingStoreDefaults.status, 'ACTIVE'),
+      ),
+    )
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
+export async function createStoreDefault(
+  executor: Executor,
+  input: {
+    sellerAccountId: string;
+    targetMarginRate: string;
+    minContributionMinor: bigint;
+    minContributionCurrency: string;
+    roundingRule: SchemaRoundingRule;
+    reason: string;
+    actorId: string;
+  },
+): Promise<PricingStoreDefaultRow> {
+  const [row] = await executor
+    .insert(pricingStoreDefaults)
+    .values({ ...input, version: 1, supersedesId: null, status: 'ACTIVE' })
+    .returning();
+
+  return row;
+}
+
+/** Supersedes `previous` and inserts the new active version. Caller must run this inside a transaction. */
+export async function reviseStoreDefault(
+  executor: Executor,
+  previous: PricingStoreDefaultRow,
+  input: {
+    targetMarginRate: string;
+    minContributionMinor: bigint;
+    minContributionCurrency: string;
+    roundingRule: SchemaRoundingRule;
+    reason: string;
+    actorId: string;
+  },
+): Promise<PricingStoreDefaultRow> {
+  await executor
+    .update(pricingStoreDefaults)
+    .set({ status: 'SUPERSEDED', updatedAt: new Date() })
+    .where(eq(pricingStoreDefaults.id, previous.id));
+
+  const [row] = await executor
+    .insert(pricingStoreDefaults)
+    .values({
+      sellerAccountId: previous.sellerAccountId,
+      targetMarginRate: input.targetMarginRate,
+      minContributionMinor: input.minContributionMinor,
+      minContributionCurrency: input.minContributionCurrency,
+      roundingRule: input.roundingRule,
+      reason: input.reason,
+      actorId: input.actorId,
+      version: previous.version + 1,
+      supersedesId: previous.id,
+      status: 'ACTIVE',
+    })
+    .returning();
+
+  return row;
+}
+
+/** Scoped by `sellerAccountId` — see `deactivateCategoryPolicy`'s comment. */
+export async function deactivateStoreDefault(
+  executor: Executor,
+  policyId: string,
+  sellerAccountId: string,
+): Promise<PricingStoreDefaultRow | null> {
+  const [row] = await executor
+    .update(pricingStoreDefaults)
+    .set({ status: 'DEACTIVATED', updatedAt: new Date() })
+    .where(
+      and(
+        eq(pricingStoreDefaults.id, policyId),
+        eq(pricingStoreDefaults.sellerAccountId, sellerAccountId),
       ),
     )
     .returning();

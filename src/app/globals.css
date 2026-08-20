@@ -23,6 +23,19 @@
   --color-brand-700: #08466a;
   --color-brand-600: #0a5c8a;
   --color-brand-100: #e7eef3;
+  /*
+   * Sals3 Blue Gradient - the named brand pair, split by role because one of
+   * them cannot carry text.
+   *
+   * `sals3-deep` measures 14.3:1 on white and is the text colour: labels,
+   * links, headings, and the gradient's dark stop. `sals3-bright` measures
+   * 3.75:1 - it clears the 3:1 threshold for a component boundary and fails
+   * the 4.5:1 threshold for body text, so it is a border, a focus ring, a
+   * fill, or the gradient's light stop, and never a text colour. Reaching for
+   * it as text is the one mistake this split exists to prevent.
+   */
+  --color-sals3-deep: #002b53;
+  --color-sals3-bright: #018cc9;
   --color-teal-500: #157f7f;
   --color-red-600: #d92d20;
   --color-amber-600: #9a6200;
@@ -186,6 +199,23 @@
   --sidebar-accent-foreground: #ffffff;
   --sidebar-border: #1d4670;
   --sidebar-ring: #7fd4d4;
+}
+
+/*
+ * The Sals3 Blue Gradient, as one named asset rather than a hex pair repeated
+ * per component.
+ *
+ * White on the light stop measures 3.75:1, so any label sitting on this must
+ * stay large and bold - 14px/700 is the floor. That constraint is the reason
+ * the gradient is reserved for a primary action and never used as a page or
+ * card background, where arbitrary text would land on the light end.
+ */
+@utility bg-sals3-gradient {
+  background-image: linear-gradient(
+    150deg,
+    var(--color-sals3-deep) 0%,
+    var(--color-sals3-bright) 100%
+  );
 }
 
 @layer base {

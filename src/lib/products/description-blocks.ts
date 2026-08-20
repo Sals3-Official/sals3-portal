@@ -13,14 +13,27 @@
  *
  * There is deliberately no `html` block and no free-form string passthrough.
  * This is an allow list, not a sanitiser — see the document module's own
- * header for why that distinction is load-bearing.
+ * header for why that distinction is load-bearing. Paragraph emphasis is the
+ * one thing that looks like markup and is not: `./inline-runs` carries it as
+ * a closed mark vocabulary the renderer turns into elements, never a string a
+ * renderer has to parse.
  */
+
+import {
+  plainTextOfRuns,
+  runsAreUnmarked,
+  trimInlineRuns,
+  type InlineRun,
+} from './inline-runs';
 
 /**
  * Bumped only when stored documents need migrating. Adding an optional block
  * type to the union does not qualify — an older document still parses.
  */
 export const DESCRIPTION_DOCUMENT_VERSION = 1;
+
+export type { InlineMark, InlineRun } from './inline-runs';
+export { INLINE_MARKS, MAX_RUNS_PER_BLOCK } from './inline-runs';
 
 export const MAX_BLOCKS = 60;
 export const MAX_TEXT_LENGTH = 4_000;
@@ -36,7 +49,25 @@ export const MARKUP_OPENER = /<[a-zA-Z/!?]/;
 // eslint-disable-next-line no-control-regex
 export const DISALLOWED_CONTROL = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/;
 
-export type ParagraphBlock = { type: 'paragraph'; text: string };
+/**
+ * A paragraph, optionally with emphasis over part of it.
+ *
+ * `text` stays the canonical value and `runs` stays optional, and that
+ * ordering is the whole design. A consumer that knows nothing about marks —
+ * the storefront today, the meta-description projection, the readiness check —
+ * reads `text` and renders every word. It loses the emphasis and never loses
+ * content. Compare the `image` block, which a four-member union drops whole:
+ * additive-optional degrades, additive-required disappears.
+ *
+ * `runs` must join to exactly `text`; `description-document.ts` refuses the
+ * save otherwise. Two fields that could disagree about what the seller wrote
+ * would let a marked renderer and a plain renderer show different sentences.
+ */
+export type ParagraphBlock = {
+  type: 'paragraph';
+  text: string;
+  runs?: InlineRun[];
+};
 
 /** Only sub-headings: the product title owns the single `h1` on the page. */
 export type HeadingBlock = { type: 'heading'; level: 2 | 3; text: string };
@@ -277,8 +308,35 @@ export function prepareBlocksForSave(
 ): DescriptionBlock[] {
   return blocks
     .map((block): DescriptionBlock => {
-      if (block.type === 'paragraph' || block.type === 'heading') {
+      if (block.type === 'heading') {
         return { ...block, text: block.text.trim() };
+      }
+
+      /**
+       * A paragraph's `runs` are trimmed with its text, not after it.
+       *
+       * Trimming `text` alone would leave runs joining to the untrimmed string,
+       * which the document schema refuses — every paragraph with a trailing
+       * space would fail to save for a reason no seller could see or act on.
+       * Deriving `text` from the trimmed runs keeps the two in step by
+       * construction rather than by two matching `.trim()` calls.
+       *
+       * `runs` is dropped when nothing is emphasised so unstyled text has one
+       * canonical spelling; an empty list is refused by the schema, and two
+       * spellings of "no emphasis" would checksum differently and read as a
+       * real edit in the revision history.
+       */
+      if (block.type === 'paragraph') {
+        if (block.runs === undefined) {
+          return { type: 'paragraph', text: block.text.trim() };
+        }
+
+        const runs = trimInlineRuns(block.runs);
+        const text = plainTextOfRuns(runs);
+
+        return runsAreUnmarked(runs)
+          ? { type: 'paragraph', text }
+          : { type: 'paragraph', text, runs };
       }
 
       if (block.type === 'image') {

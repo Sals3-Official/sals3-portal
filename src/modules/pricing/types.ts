@@ -11,12 +11,14 @@ export type CategoryMappingConfidence =
   'EXACT' | 'ACCEPTABLE' | 'AMBIGUOUS' | 'UNMAPPED';
 
 export type ResolvedPolicyLayer =
-  'CATEGORY' | 'PRODUCT_OVERRIDE' | 'VARIANT_OVERRIDE';
+  'STORE_DEFAULT' | 'CATEGORY' | 'PRODUCT_OVERRIDE' | 'VARIANT_OVERRIDE';
 
 export type PricingUnavailableReason =
   | 'CATEGORY_NOT_FOUND'
   | 'CATEGORY_MAPPING_REQUIRES_REVIEW'
   | 'CATEGORY_POLICY_REQUIRED'
+  | 'PRICING_POLICY_REQUIRED'
+  | 'CONTRIBUTION_FLOOR_CURRENCY_MISMATCH'
   | 'SUPPLIER_COST_UNAVAILABLE'
   | 'REFERENCE_FX_UNAVAILABLE'
   | 'FUNDING_BUFFER_REQUIRED'
@@ -29,7 +31,12 @@ export const PRICING_UNAVAILABLE_REASON_LABELS: Record<
 > = {
   CATEGORY_NOT_FOUND: 'Category not found',
   CATEGORY_MAPPING_REQUIRES_REVIEW: 'Category mapping requires review',
+  /** Legacy (resolver v2) — kept so decisions stored before v3 still render. v3 emits PRICING_POLICY_REQUIRED instead. */
   CATEGORY_POLICY_REQUIRED: 'Category policy required',
+  PRICING_POLICY_REQUIRED:
+    'No margin policy — set a store default or a category margin in Market rules',
+  CONTRIBUTION_FLOOR_CURRENCY_MISMATCH:
+    'Contribution floor currency does not match the settlement currency',
   SUPPLIER_COST_UNAVAILABLE: 'Supplier cost unavailable',
   REFERENCE_FX_UNAVAILABLE: 'Reference FX unavailable',
   FUNDING_BUFFER_REQUIRED: 'Funding buffer required',
@@ -37,8 +44,8 @@ export const PRICING_UNAVAILABLE_REASON_LABELS: Record<
   INVALID_MARGIN_RATE: 'Invalid margin rate',
 };
 
-/** Bumped whenever the resolver's formula or precedence changes, so a persisted/rendered decision can always be traced to the logic that produced it — same idiom as `POLICY_VERSION` in `rules/policy.ts`. Bumped to v2: the funding buffer now always applies as a cost-basis uplift, unconditionally, instead of being gated on a buyer-settlement currency mismatch. */
-export const PRICING_RESOLVER_VERSION = 'pricing-resolver-v2';
+/** Bumped whenever the resolver's formula or precedence changes, so a persisted/rendered decision can always be traced to the logic that produced it — same idiom as `POLICY_VERSION` in `rules/policy.ts`. Bumped to v3 (2026-08-19): nearest-ancestor category resolution, the store-default base layer, and the minimum-contribution floor — offers stamped v2 were priced by exact-category-only logic with no floor. */
+export const PRICING_RESOLVER_VERSION = 'pricing-resolver-v3';
 
 export type PricingResolutionInput = {
   sellerAccountId: string;
@@ -60,6 +67,15 @@ export type PricingDecision =
       resolvedLayer: ResolvedPolicyLayer;
       categoryCode: string;
       categoryPath: string;
+      /**
+       * The category the winning category policy is actually attached to —
+       * the product's own category or its nearest priced ancestor. `null`
+       * when the store default resolved (no priced node anywhere on the
+       * chain). ADR-015 §3 requires precedence to be recorded, not just
+       * applied.
+       */
+      policySourceCategoryCode: string | null;
+      policySourceCategoryPath: string | null;
       targetMarginRate: string;
       roundingRule: RoundingRule;
       referenceFxRate: string;
@@ -71,8 +87,15 @@ export type PricingDecision =
       effectiveProductCost: Money;
       suggestedItemPrice: Money;
       roundedSuggestedItemPrice: Money;
-      categoryPolicyId: string;
-      categoryPolicyVersion: number;
+      /** `null` when the store default is the resolving base — no category policy exists on the chain. */
+      categoryPolicyId: string | null;
+      categoryPolicyVersion: number | null;
+      storeDefaultPolicyId: string | null;
+      storeDefaultPolicyVersion: number | null;
+      /** The seller's minimum contribution floor, when a store default carries one; `null` when no store default exists. */
+      minContribution: Money | null;
+      /** True when `cost + floor` beat the percentage price — the floor, not the margin rate, set this suggestion. */
+      contributionFloorApplied: boolean;
       productOverrideId: string | null;
       productOverrideVersion: number | null;
       variantOverrideId: string | null;

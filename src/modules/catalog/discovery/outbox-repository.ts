@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import type { Database, DbExecutor } from '@/lib/db/client';
 import { workOutbox, type WorkOutboxRow } from '@/lib/db/schema';
 import { MAX_OUTBOX_ATTEMPTS, OUTBOX_LEASE_MS } from './config';
-import type { QueueMessage } from './messages';
+import type { QueueMessage, QueueOperation } from './messages';
 
 /**
  * Durable work outbox (ADR-013 §12). A handler persists successor intent in
@@ -29,9 +29,10 @@ export type OutboxIntent = {
  */
 const OUTBOX_CLAIM_PRIORITY = sql`
   CASE
-    WHEN ${workOutbox.operation} = 'EVALUATE_CANDIDATE' THEN 0
-    WHEN ${workOutbox.operation} = 'RECONCILE_PRODUCT' THEN 1
-    WHEN ${workOutbox.operation} = 'WEBHOOK_EVENT' THEN 2
+    WHEN ${workOutbox.operation} = 'FULFILL_ORDER' THEN 0
+    WHEN ${workOutbox.operation} = 'EVALUATE_CANDIDATE' THEN 1
+    WHEN ${workOutbox.operation} = 'RECONCILE_PRODUCT' THEN 2
+    WHEN ${workOutbox.operation} = 'WEBHOOK_EVENT' THEN 3
     WHEN ${workOutbox.operation} = 'DISCOVERY_CURATED_LANE'
       AND ${workOutbox.payload}->>'lane' = 'CJ_TRENDING' THEN 10
     WHEN ${workOutbox.operation} = 'DISCOVERY_CURATED_LANE'
@@ -88,19 +89,35 @@ export async function insertOutboxIntents(
  */
 export async function claimDispatchableOutbox(
   db: Database,
-  input: { leaseToken: string; batchSize: number },
+  input: {
+    leaseToken: string;
+    batchSize: number;
+    idempotencyKeys?: string[];
+    operations?: QueueOperation[];
+  },
 ): Promise<WorkOutboxRow[]> {
   return db.transaction(async (tx) => {
     const now = new Date();
+    const filters = [
+      eq(workOutbox.state, 'PENDING'),
+      or(isNull(workOutbox.leasedUntil), lte(workOutbox.leasedUntil, now)),
+    ];
+
+    if (
+      input.idempotencyKeys !== undefined &&
+      input.idempotencyKeys.length > 0
+    ) {
+      filters.push(inArray(workOutbox.idempotencyKey, input.idempotencyKeys));
+    }
+
+    if (input.operations !== undefined && input.operations.length > 0) {
+      filters.push(inArray(workOutbox.operation, input.operations));
+    }
+
     const claimable = await tx
       .select({ id: workOutbox.id })
       .from(workOutbox)
-      .where(
-        and(
-          eq(workOutbox.state, 'PENDING'),
-          or(isNull(workOutbox.leasedUntil), lte(workOutbox.leasedUntil, now)),
-        ),
-      )
+      .where(and(...filters))
       .orderBy(OUTBOX_CLAIM_PRIORITY, asc(workOutbox.createdAt))
       .limit(input.batchSize)
       .for('update', { skipLocked: true });

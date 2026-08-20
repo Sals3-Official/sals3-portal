@@ -18,6 +18,10 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # Backstop. A green run takes about 6 minutes; the default ceiling is 6
+    # hours, which is how a hung apt step sat for 22 minutes on 2026-08-19
+    # before a human noticed and cancelled it by hand.
+    timeout-minutes: 25
 
     steps:
       - name: Check out repository
@@ -55,11 +59,49 @@ jobs:
       # download. On a miss we do both, exactly as before.
       - name: Install Playwright browser and system dependencies
         if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 8
         run: npx playwright install --with-deps chromium
 
-      - name: Install Playwright system dependencies
+      # `install-deps` shells out to `apt-get`, which made this 13-19 second
+      # step the least reliable thing in the pipeline. On 2026-08-19 it stalled
+      # three times in one afternoon and each stall had to be cancelled by
+      # hand. The logs show two DIFFERENT causes, which is the point:
+      #
+      #   E: Could not get lock /var/lib/apt/lists/lock.       <- the runner's
+      #      It is held by process NNNN (apt-get)                 own boot job
+      #
+      #   Get:3 archive.ubuntu.com noble-updates InRelease     <- 37s for one
+      #   ...then no output at all for eight minutes              index, then
+      #                                                           nothing
+      #
+      # So there is no single apt failure to harden against, and every fix
+      # aimed at one of them left the other live. The durable answer is to
+      # stop letting apt decide whether this pipeline runs.
+      #
+      # It does not have to. `ubuntu-24.04` already ships the Chromium
+      # libraries, and the browser binary itself comes from the cache above,
+      # so on a cache hit this call is usually a no-op that merely re-confirms
+      # what is already installed. When it cannot run, the honest thing is to
+      # say so and carry on: the e2e suite is the real test of whether a
+      # library is missing, and Playwright fails with an explicit
+      # "Host system is missing dependencies" naming each one — a far better
+      # diagnostic than a hung apt step, and impossible to mistake for flake.
+      #
+      # `DPkg::Lock::Timeout` still lets apt wait out the boot job rather than
+      # erroring instantly, so the common case keeps working.
+      - name: Refresh Playwright system dependencies (best effort)
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+        timeout-minutes: 4
+        continue-on-error: true
+        run: |
+          echo 'DPkg::Lock::Timeout "120";' \
+            | sudo tee /etc/apt/apt.conf.d/99lock-timeout > /dev/null
+
+          if npx playwright install-deps chromium; then
+            exit 0
+          fi
+
+          echo "::warning::install-deps could not run (apt lock or slow mirror). Continuing: the runner image already ships these libraries, and the e2e run will name any that are genuinely missing."
 
       # `next build` reuses this to skip recompiling unchanged modules. The
       # restore-keys fall back to the newest cache for the same lockfile, so a

@@ -107,6 +107,58 @@ export function axisNameForFamilies(families: string[]): string | null {
 }
 
 /**
+ * Every buyer-facing name the workbook offers for one family cell, in the
+ * sheet's own order.
+ *
+ * `axisNameForFamilies` keeps only the first, on the reasoning that a joined
+ * label (`Colour / Material`) would recreate the verbose-label problem this
+ * module exists to solve. That reasoning is about producing one *string*; it
+ * does not justify discarding the rest of what the workbook says.
+ *
+ * `Household Drawer Organizer Inserts` is the case that showed it: the workbook
+ * gives `COLOR; MATERIAL`, and a bamboo organizer was offered `Use "Colour"`
+ * and nothing else. The suggestion was not wrong so much as half-reported —
+ * the sheet had already named the better one. Offering each as its own button
+ * lets the seller pick without anybody guessing, and without editing
+ * owner-authored data to suit one product.
+ */
+export function axisNamesForFamilies(families: string[]): string[] {
+  return [
+    ...new Set(
+      families
+        .map((family) => FAMILY_AXIS_NAMES[family])
+        .filter((name): name is string => name !== undefined),
+    ),
+  ];
+}
+
+/**
+ * Every suggested axis name per tier, tier 1 first.
+ *
+ * Same positional contract as `suggestedAxisNamesForCategory`: index 0 means
+ * tier 1 to every consumer, so a tier with no recognised family is an empty
+ * array rather than a gap the caller has to compact.
+ */
+export function suggestedAxisNameOptionsForCategory(
+  categoryCode: string | null,
+): string[][] {
+  if (categoryCode === null) return [];
+
+  const patternCode = patternCodeByCategoryCode.get(categoryCode);
+
+  if (patternCode === undefined) return [];
+
+  const pattern = patternsByCode.get(patternCode);
+
+  if (pattern === undefined) return [];
+
+  return [
+    axisNamesForFamilies(pattern.tier1Families),
+    axisNamesForFamilies(pattern.tier2Families),
+  ];
+}
+
+/**
  * Suggested axis names for one Sals3 category, tier 1 first.
  *
  * Returns `[]` for a category this taxonomy version does not cover, and `null`

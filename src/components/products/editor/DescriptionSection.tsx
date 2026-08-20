@@ -1,15 +1,23 @@
+'use client';
+
 import { RotateCcw, TriangleAlert } from 'lucide-react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   descriptionBlocksToPlainText,
   isBlockEmpty,
 } from '@/lib/products/description-blocks';
+import { keyDescriptionBlocks } from '@/lib/products/keyed-blocks';
+import type { DescriptionMode } from '@/lib/products/simple-description';
 import DescriptionBlockEditor, {
   type DescriptionImageUpload,
   type KeyedDescriptionBlock,
 } from './DescriptionBlockEditor';
+import DescriptionModeToggle from './DescriptionModeToggle';
+import DescriptionSummary from './DescriptionSummary';
 import FieldSourceBadge from './FieldSourceBadge';
 import MetaDescriptionField from './MetaDescriptionField';
+import SimpleDescriptionEditor from './SimpleDescriptionEditor';
 
 type DescriptionSectionProps = {
   blocks: KeyedDescriptionBlock[];
@@ -25,6 +33,22 @@ type DescriptionSectionProps = {
   onSaveMetaDescription?: () => Promise<{ ok: boolean; message?: string }>;
   uploadImage?: DescriptionImageUpload;
   uploadDisabledReason?: string | null;
+  /**
+   * Where the full editor lives for this draft, or `null` when there is no
+   * saveable revision behind the screen — a fixture preview. When present, this
+   * section becomes a read-only summary and the full editor owns the editing,
+   * because two surfaces each holding their own copy of one document is how one
+   * quietly reverts the other.
+   */
+  fullEditorHref?: string | null;
+  /** Which editor the seller chose. Owned by the workspace so it saves with the draft. */
+  mode: DescriptionMode;
+  onModeChange: (mode: DescriptionMode) => void;
+  /**
+   * Saves this section alone. Absent for a fixture preview, which has no
+   * revision to write to.
+   */
+  onSave?: () => Promise<{ ok: boolean; message: string }>;
 };
 
 /**
@@ -49,8 +73,54 @@ export default function DescriptionSection({
   onSaveMetaDescription,
   uploadImage,
   uploadDisabledReason = null,
+  fullEditorHref = null,
+  mode,
+  onModeChange,
+  onSave,
 }: DescriptionSectionProps) {
+  const [isSaving, setIsSaving] = useState(false);
+  const [status, setStatus] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
   const isEmpty = blocks.every((entry) => isBlockEmpty(entry.block));
+  const plainBlocks = blocks.map((entry) => entry.block);
+  const isTypingHere = mode === 'simple' || fullEditorHref === null;
+
+  /**
+   * Three surfaces over one document, named rather than nested inline: which
+   * editor renders depends both on the seller's mode choice and on whether a
+   * saveable revision exists behind the screen, and a nested ternary hides that.
+   */
+  let descriptionEditor;
+
+  if (mode === 'simple') {
+    descriptionEditor = (
+      <SimpleDescriptionEditor
+        blocks={plainBlocks}
+        onBlocksChange={(next) => onBlocksChange(keyDescriptionBlocks(next))}
+      />
+    );
+  } else if (fullEditorHref === null) {
+    // Designed layout with no saveable revision behind it: a fixture preview, so
+    // the blocks are edited in place here rather than on a screen whose save
+    // could never succeed.
+    descriptionEditor = (
+      <DescriptionBlockEditor
+        blocks={blocks}
+        onChange={onBlocksChange}
+        uploadImage={uploadImage}
+        uploadDisabledReason={uploadDisabledReason}
+      />
+    );
+  } else {
+    descriptionEditor = (
+      <DescriptionSummary
+        blocks={plainBlocks}
+        fullEditorHref={fullEditorHref}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -62,37 +132,103 @@ export default function DescriptionSection({
          * copy it never wrote.
          */}
         <FieldSourceBadge source="SELLER" />
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={isUnchanged}
-          onClick={onRevert}
-        >
-          <RotateCcw aria-hidden="true" />
-          Revert to last saved
-        </Button>
+
+        <div className="flex items-center gap-2">
+          {/* Revert restores this screen's own unsaved edits. In summary mode
+            there are none to restore — the full editor saves its own work — so
+            the control is absent rather than permanently disabled. */}
+          {isTypingHere ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isUnchanged || isSaving}
+              onClick={onRevert}
+            >
+              <RotateCcw aria-hidden="true" />
+              Revert to last saved
+            </Button>
+          ) : null}
+
+          {/*
+           * Only where this screen is the one being typed into.
+           *
+           * In the designed layout the editing happens on the full editor, which
+           * saves its own work, so a save button here could only ever commit the
+           * mode choice — a control with nothing visible to act on. Switching
+           * editor is still persisted: by `Save Draft` at the foot of the page,
+           * or by the full editor itself, which records the designed layout when
+           * it saves.
+           *
+           * In simple text it earns its place: it saves the description alone and
+           * leaves the title and the prices exactly where the seller left them.
+           */}
+          {onSave === undefined || !isTypingHere ? null : (
+            <Button
+              type="button"
+              size="sm"
+              disabled={isSaving}
+              onClick={() => {
+                setIsSaving(true);
+                setStatus(null);
+                onSave()
+                  .then((result) => setStatus(result))
+                  .catch(() =>
+                    setStatus({
+                      ok: false,
+                      message: 'The description could not be saved.',
+                    }),
+                  )
+                  .finally(() => setIsSaving(false));
+              }}
+            >
+              {isSaving ? 'Saving…' : 'Save description'}
+            </Button>
+          )}
+        </div>
       </div>
 
-      <p className="flex items-start gap-2 rounded-lg border border-amber-600/30 bg-warning-surface/50 px-3 py-2.5 text-xs text-ink-muted">
-        <TriangleAlert
-          aria-hidden="true"
-          className="mt-0.5 size-3.5 shrink-0 text-amber-600"
-        />
-        The supplier&apos;s own description is raw HTML and is never copied into
-        a Sals3 listing — there is no sanitiser to make it safe to publish.
-        Write the description here; the storefront renders these blocks as plain
-        text, so markup is rejected rather than displayed.
-      </p>
+      {status === null ? null : (
+        <p
+          role="status"
+          aria-live="polite"
+          className={
+            status.ok
+              ? 'text-xs text-green-700'
+              : 'text-xs font-medium text-red-700'
+          }
+        >
+          {status.message}
+        </p>
+      )}
 
-      <div className="flex flex-col gap-1.5">
+      {isTypingHere ? (
+        <p className="flex items-start gap-2 rounded-lg border border-amber-600/30 bg-warning-surface/50 px-3 py-2.5 text-xs text-ink-muted">
+          <TriangleAlert
+            aria-hidden="true"
+            className="mt-0.5 size-3.5 shrink-0 text-amber-600"
+          />
+          The supplier&apos;s own description is raw HTML and is never copied
+          into a Sals3 listing — there is no sanitiser to make it safe to
+          publish. Write the description here; the storefront renders these
+          blocks as plain text, so markup is rejected rather than displayed.
+        </p>
+      ) : null}
+
+      <div className="flex flex-col gap-2.5">
         <p className="text-sm font-medium">Product description</p>
-        <DescriptionBlockEditor
-          blocks={blocks}
-          onChange={onBlocksChange}
-          uploadImage={uploadImage}
-          uploadDisabledReason={uploadDisabledReason}
+
+        <DescriptionModeToggle
+          mode={mode}
+          blocks={plainBlocks}
+          onModeChange={onModeChange}
+          onFlatten={(flattened) =>
+            onBlocksChange(keyDescriptionBlocks(flattened))
+          }
         />
+
+        {descriptionEditor}
+
         {isEmpty ? (
           <p role="status" className="flex gap-1.5 text-xs text-amber-600">
             <TriangleAlert
@@ -102,12 +238,7 @@ export default function DescriptionSection({
             Empty description. The listing can publish without one, but the
             storefront will show only specifications.
           </p>
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            Recommended order: summary, key features, materials, sizing, package
-            contents, care. Blocks publish in the order shown here.
-          </p>
-        )}
+        ) : null}
       </div>
 
       <MetaDescriptionField
@@ -115,9 +246,7 @@ export default function DescriptionSection({
         onChange={onMetaDescriptionChange}
         isSuggested={isMetaDescriptionSuggested}
         productName={productName}
-        fallbackDescription={descriptionBlocksToPlainText(
-          blocks.map((entry) => entry.block),
-        )}
+        fallbackDescription={descriptionBlocksToPlainText(plainBlocks)}
         onSave={onSaveMetaDescription}
       />
     </div>

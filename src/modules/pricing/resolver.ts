@@ -1,5 +1,6 @@
 import type { Executor } from '@/modules/catalog/candidates/repository';
 import {
+  applyContributionFloor,
   applyFxAdjustment,
   applyRounding,
   convertAmountMinor,
@@ -11,11 +12,12 @@ import {
 } from './money-math';
 import { resolveReferenceFxRate } from './reference-fx';
 import {
-  findActiveCategoryPolicy,
   findActiveFundingBufferPolicy,
   findActiveProductOverride,
+  findActiveStoreDefault,
   findActiveVariantOverride,
   findCategoryByCode,
+  findNearestActiveCategoryPolicy,
 } from './repository';
 import {
   PRICING_RESOLVER_VERSION,
@@ -39,18 +41,37 @@ function unavailable(reason: PricingUnavailableReason): PricingDecision {
 }
 
 /**
- * Resolves product-only price guidance from category → product override →
- * variant override (ADR-015 §3), always applying the seller's own funding
- * buffer on top of the platform reference rate (ADR-015 §4) — a real,
- * unconditional cost-basis uplift, not gated on a buyer-settlement
- * currency mismatch. Server-side only — never
- * trusts a browser-supplied margin, rate, cost, or policy id (this function
- * takes exactly one caller-controlled input, `supplierCost`, and treats it
- * as evidence to validate, not as something to price directly).
+ * Resolves product-only price guidance through ADR-015 §3's
+ * least-to-most-specific chain (v3, 2026-08-19 amendment):
+ *
+ *   store default → nearest-ancestor category policy → product override
+ *   → variant override
+ *
+ * Two v3 changes over the exact-category-only v2:
+ *
+ * - **Nearest-ancestor category resolution.** Taxonomy v1 stores a row for
+ *   every node, so a policy set on "Apparel & Accessories" prices every
+ *   product anywhere under it unless a deeper node (or the product's own
+ *   category) carries its own. 21 department policies plus one store
+ *   default can cover the whole 5,595-row taxonomy — the per-leaf fan-out
+ *   this replaces wrote 5,595 rows per seller and silently missed any
+ *   category added later.
+ * - **Minimum contribution floor** (ADR-015 §1's named input, previously
+ *   unbuilt): `max(marginPrice, cost + floor)`. A percentage alone loses
+ *   money on cheap items where fixed per-order costs dominate; the floor
+ *   alone would undercharge expensive ones. The floor lives on the store
+ *   default and applies whichever layer supplied the margin.
+ *
+ * The seller's funding buffer still applies unconditionally on top of the
+ * platform reference rate (ADR-015 §4) — a real cost-basis uplift, never
+ * gated on a currency mismatch. Server-side only — this function takes
+ * exactly one caller-controlled input, `supplierCost`, and treats it as
+ * evidence to validate, not as something to price directly.
  *
  * Fails closed with a specific, user-readable reason rather than falling
- * back to 0%, a global margin, a stale rate, or a demo value — every branch
- * below returns before doing arithmetic on data it could not verify.
+ * back to 0%, a global margin, a stale rate, or a demo value — every
+ * branch below returns before doing arithmetic on data it could not
+ * verify.
  */
 export async function resolveProductPricing(
   executor: Executor,
@@ -70,18 +91,40 @@ export async function resolveProductPricing(
     return unavailable('CATEGORY_NOT_FOUND');
   }
 
-  const categoryPolicy = await findActiveCategoryPolicy(
+  const nearestCategoryPolicy = await findNearestActiveCategoryPolicy(
     executor,
     input.sellerAccountId,
-    category.id,
+    category,
   );
 
-  if (categoryPolicy === null) {
-    return unavailable('CATEGORY_POLICY_REQUIRED');
+  // Fetched even when a category policy exists: the store default is the
+  // only carrier of the contribution floor, and the rounding fallback when
+  // the chain has no policy.
+  const storeDefault = await findActiveStoreDefault(
+    executor,
+    input.sellerAccountId,
+  );
+
+  if (nearestCategoryPolicy === null && storeDefault === null) {
+    return unavailable('PRICING_POLICY_REQUIRED');
   }
 
-  let resolvedLayer: ResolvedPolicyLayer = 'CATEGORY';
-  let { targetMarginRate } = categoryPolicy;
+  let resolvedLayer: ResolvedPolicyLayer =
+    nearestCategoryPolicy === null ? 'STORE_DEFAULT' : 'CATEGORY';
+  let targetMarginRate =
+    nearestCategoryPolicy === null
+      ? // `storeDefault` cannot be null here — the guard above returned.
+        (storeDefault as NonNullable<typeof storeDefault>).targetMarginRate
+      : nearestCategoryPolicy.policy.targetMarginRate;
+
+  // Rounding belongs to the nearest category policy when one exists, else
+  // the store default — an override wins the margin but never silently
+  // changes how a whole category rounds (unchanged v2 behaviour, extended
+  // to the new base layer).
+  const roundingRule =
+    nearestCategoryPolicy?.policy.roundingRule ??
+    (storeDefault as NonNullable<typeof storeDefault>).roundingRule;
+
   let productOverrideId: string | null = null;
   let productOverrideVersion: number | null = null;
   let variantOverrideId: string | null = null;
@@ -187,18 +230,39 @@ export async function resolveProductPricing(
     return unavailable('INVALID_MARGIN_RATE');
   }
 
-  const roundedMinor = applyRounding(
+  // The contribution floor lives on the store default. A floor in a
+  // currency the settlement currency cannot be compared against fails
+  // closed — converting at an invented rate is the flat-markup failure
+  // ADR-003 prohibits. A seller with no store default simply has no floor.
+  let minContributionMinor = BigInt(0);
+
+  if (storeDefault !== null && storeDefault.minContributionMinor > BigInt(0)) {
+    if (storeDefault.minContributionCurrency !== input.settlementCurrency) {
+      return unavailable('CONTRIBUTION_FLOOR_CURRENCY_MISMATCH');
+    }
+    minContributionMinor = storeDefault.minContributionMinor;
+  }
+
+  const flooredMinor = applyContributionFloor(
     suggestedMinor,
-    categoryPolicy.roundingRule,
+    effectiveProductCostMinor,
+    minContributionMinor,
   );
+  const contributionFloorApplied = flooredMinor > suggestedMinor;
+
+  const roundedMinor = applyRounding(flooredMinor, roundingRule);
 
   return {
     outcome: 'PRODUCT_MARGIN_ESTIMATE',
     resolvedLayer,
     categoryCode: category.code,
     categoryPath: category.path,
+    policySourceCategoryCode:
+      nearestCategoryPolicy?.sourceCategory.code ?? null,
+    policySourceCategoryPath:
+      nearestCategoryPolicy?.sourceCategory.path ?? null,
     targetMarginRate,
-    roundingRule: categoryPolicy.roundingRule,
+    roundingRule,
     referenceFxRate: formatScaledRate(referenceRate.rateScaled),
     referenceFxSource: referenceRate.source,
     referenceFxObservedAt: referenceRate.observedAt,
@@ -210,15 +274,25 @@ export async function resolveProductPricing(
       currency: input.settlementCurrency,
     },
     suggestedItemPrice: {
-      amountMinor: Number(suggestedMinor),
+      amountMinor: Number(flooredMinor),
       currency: input.settlementCurrency,
     },
     roundedSuggestedItemPrice: {
       amountMinor: Number(roundedMinor),
       currency: input.settlementCurrency,
     },
-    categoryPolicyId: categoryPolicy.id,
-    categoryPolicyVersion: categoryPolicy.version,
+    categoryPolicyId: nearestCategoryPolicy?.policy.id ?? null,
+    categoryPolicyVersion: nearestCategoryPolicy?.policy.version ?? null,
+    storeDefaultPolicyId: storeDefault?.id ?? null,
+    storeDefaultPolicyVersion: storeDefault?.version ?? null,
+    minContribution:
+      storeDefault === null
+        ? null
+        : {
+            amountMinor: Number(storeDefault.minContributionMinor),
+            currency: storeDefault.minContributionCurrency,
+          },
+    contributionFloorApplied,
     productOverrideId,
     productOverrideVersion,
     variantOverrideId,

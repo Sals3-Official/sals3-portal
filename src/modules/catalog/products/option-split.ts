@@ -114,9 +114,21 @@ export function combinationKeyOf(tokens: string[]): string {
 export function deriveOptionSplit(
   variants: LabelledVariant[],
 ): OptionSplitProposal | undefined {
-  // Two variants is the minimum that can encode a grid, and every variant must
-  // carry a label: a partial proposal would silently omit the unlabelled ones.
-  if (variants.length < 2) return undefined;
+  // One variant is enough, corrected 2026-08-19 by owner decision. The previous
+  // floor of two came from "a grid needs two rows", which answered a question
+  // nobody was asking: the point of the matrix is not to prove a grid exists but
+  // to let a seller say what a buyer reads. A lone variant labelled `Storage box`
+  // reached the storefront as the supplier's own words with nothing the seller
+  // could do about it, and the section explained that as "Not detected", which
+  // sounds like a limitation rather than a rule.
+  //
+  // Publication is deliberately *not* gated on it — see
+  // `optionMappingRequiredButMissing`. A product with one variant offers a buyer
+  // no choice to make, so an unnamed axis there is a presentation question, never
+  // a correctness one.
+  if (variants.length < 1) return undefined;
+  // Every variant must carry a label: a partial proposal would silently omit the
+  // unlabelled ones.
   if (variants.some((variant) => variant.label === null)) return undefined;
 
   const tokenised = variants.map((variant) =>
@@ -171,7 +183,16 @@ export function deriveOptionSplit(
   // constant bucket contributes a harmless factor of 1 to that arithmetic.
   const positions = values
     .map((bucket, index) => ({ index, values: bucket }))
-    .filter((position) => position.values.length >= 2);
+    .filter(
+      (position) =>
+        // With one variant every position holds exactly one value, so the
+        // constant rule above would drop all of them and return an empty
+        // matrix — worse than the "Not detected" it replaced. The rule exists to
+        // stop a buyer being offered a choice that is not a choice; with a single
+        // variant there is no choice to fake, and what is left is the seller
+        // naming what that one label reads as.
+        variants.length === 1 || position.values.length >= 2,
+    );
 
   return { positions, byCombination, labelWidth: width };
 }

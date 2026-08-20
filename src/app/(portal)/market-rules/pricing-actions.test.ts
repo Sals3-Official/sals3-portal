@@ -52,7 +52,11 @@ const pricingRepositoryMocks = vi.hoisted(() => ({
   reviseCategoryPolicy: vi.fn(),
   deactivateCategoryPolicy: vi.fn(),
   findCategoryById: vi.fn(),
-  findLeafCategoriesByL1L2: vi.fn(),
+  findActiveStoreDefault: vi.fn(),
+  findCategoriesByCodes: vi.fn(),
+  createStoreDefault: vi.fn(),
+  reviseStoreDefault: vi.fn(),
+  deactivateStoreDefault: vi.fn(),
   findActiveFundingBufferPolicy: vi.fn(),
   createFundingBufferPolicy: vi.fn(),
   reviseFundingBufferPolicy: vi.fn(),
@@ -75,15 +79,17 @@ vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 /* eslint-disable import/first */
 import { PermissionError } from '@/lib/auth/permissions';
 import {
+  applyMarginCsvAction,
   deactivateCategoryPolicyAction,
   deactivateFundingBufferPolicyAction,
-  getCategoryGroupHistoryAction,
+  deactivateStoreDefaultAction,
   getCategoryPolicyHistoryAction,
   getFundingBufferHistoryAction,
+  getStoreDefaultHistoryAction,
   removeProductOverrideAction,
-  saveCategoryGroupMarginAction,
   saveCategoryPolicyAction,
   saveFundingBufferPolicyAction,
+  saveStoreDefaultAction,
   saveProductOverrideAction,
   saveVariantOverrideAction,
 } from './pricing-actions';
@@ -128,7 +134,7 @@ describe('saveCategoryPolicyAction', () => {
       targetMarginRate: '1.5',
     });
 
-    expect(result).toEqual({ ok: false, reason: 'invalid_input' });
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
     expect(requirePermissionMock).not.toHaveBeenCalled();
   });
 
@@ -138,7 +144,7 @@ describe('saveCategoryPolicyAction', () => {
       reason: 'why',
     });
 
-    expect(result).toEqual({ ok: false, reason: 'invalid_input' });
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
   });
 
   it('rate-limits repeated calls', async () => {
@@ -274,155 +280,6 @@ describe('deactivateCategoryPolicyAction', () => {
   });
 });
 
-describe('saveCategoryGroupMarginAction', () => {
-  const VALID_INPUT = {
-    l1: 'Health & Beauty',
-    l2: 'Hair Care',
-    targetMarginRate: '0.30',
-    roundingRule: 'NONE',
-    reason: 'Aligning hair care to the new supplier cost band.',
-  };
-
-  const LEAVES = [
-    { id: 'leaf-1', code: 'CAT-BEA-1' },
-    { id: 'leaf-2', code: 'CAT-BEA-2' },
-    { id: 'leaf-3', code: 'CAT-BEA-3' },
-  ];
-
-  it('denies a caller without pricing_policy:manage', async () => {
-    requirePermissionMock.mockRejectedValue(new PermissionError());
-
-    const result = await saveCategoryGroupMarginAction(VALID_INPUT);
-
-    expect(result).toEqual({ ok: false, reason: 'denied' });
-    expect(
-      pricingRepositoryMocks.findLeafCategoriesByL1L2,
-    ).not.toHaveBeenCalled();
-  });
-
-  it('rejects an out-of-range margin rate before touching the database', async () => {
-    const result = await saveCategoryGroupMarginAction({
-      ...VALID_INPUT,
-      targetMarginRate: '1.5',
-    });
-
-    expect(result).toEqual({ ok: false, reason: 'invalid_input' });
-    expect(requirePermissionMock).not.toHaveBeenCalled();
-  });
-
-  it('rejects a reason that is too short to be a real explanation', async () => {
-    const result = await saveCategoryGroupMarginAction({
-      ...VALID_INPUT,
-      reason: 'why',
-    });
-
-    expect(result).toEqual({ ok: false, reason: 'invalid_input' });
-  });
-
-  it('rate-limits repeated calls', async () => {
-    checkRateLimitMock.mockReturnValue({ allowed: false });
-
-    const result = await saveCategoryGroupMarginAction(VALID_INPUT);
-
-    expect(result).toEqual({ ok: false, reason: 'rate_limited' });
-  });
-
-  it('returns not_found when no leaf exists under this l1/l2 today', async () => {
-    pricingRepositoryMocks.findLeafCategoriesByL1L2.mockResolvedValue([]);
-
-    const result = await saveCategoryGroupMarginAction(VALID_INPUT);
-
-    expect(result).toEqual({ ok: false, reason: 'not_found' });
-  });
-
-  it('writes every leaf inside one shared transaction, not one per leaf', async () => {
-    pricingRepositoryMocks.findLeafCategoriesByL1L2.mockResolvedValue(LEAVES);
-    pricingRepositoryMocks.findActiveCategoryPolicy.mockResolvedValue(null);
-    pricingRepositoryMocks.createCategoryPolicy.mockImplementation(
-      async (_tx: unknown, input: { categoryId: string }) => ({
-        id: `policy-for-${input.categoryId}`,
-        version: 1,
-        supersedesId: null,
-      }),
-    );
-
-    const result = await saveCategoryGroupMarginAction(VALID_INPUT);
-
-    expect(result).toEqual({ ok: true, data: { updatedCount: 3 } });
-    expect(transactionMock).toHaveBeenCalledTimes(1);
-    expect(pricingRepositoryMocks.createCategoryPolicy).toHaveBeenCalledTimes(
-      3,
-    );
-    LEAVES.forEach((leaf) => {
-      expect(pricingRepositoryMocks.createCategoryPolicy).toHaveBeenCalledWith(
-        TX,
-        expect.objectContaining({
-          sellerAccountId: SELLER_A_ID,
-          categoryId: leaf.id,
-        }),
-      );
-    });
-  });
-
-  it('unconditionally overwrites a leaf that already has an active policy — never skips a customized one', async () => {
-    pricingRepositoryMocks.findLeafCategoriesByL1L2.mockResolvedValue(LEAVES);
-    pricingRepositoryMocks.findActiveCategoryPolicy.mockImplementation(
-      async (_tx: unknown, _sellerId: string, categoryId: string) =>
-        categoryId === 'leaf-2'
-          ? { id: 'existing-policy', version: 5, categoryId: 'leaf-2' }
-          : null,
-    );
-    pricingRepositoryMocks.createCategoryPolicy.mockResolvedValue({
-      id: 'new-policy',
-      version: 1,
-      supersedesId: null,
-    });
-    pricingRepositoryMocks.reviseCategoryPolicy.mockResolvedValue({
-      id: 'revised-policy',
-      version: 6,
-      supersedesId: 'existing-policy',
-    });
-
-    await saveCategoryGroupMarginAction(VALID_INPUT);
-
-    expect(pricingRepositoryMocks.reviseCategoryPolicy).toHaveBeenCalledWith(
-      TX,
-      expect.objectContaining({ categoryId: 'leaf-2' }),
-      expect.objectContaining({ targetMarginRate: '0.30' }),
-    );
-    expect(pricingRepositoryMocks.createCategoryPolicy).toHaveBeenCalledTimes(
-      2,
-    );
-  });
-
-  it('audits every leaf with a shared bulkOperationId and the l1/l2 that triggered it', async () => {
-    pricingRepositoryMocks.findLeafCategoriesByL1L2.mockResolvedValue(LEAVES);
-    pricingRepositoryMocks.findActiveCategoryPolicy.mockResolvedValue(null);
-    pricingRepositoryMocks.createCategoryPolicy.mockResolvedValue({
-      id: 'policy-x',
-      version: 1,
-      supersedesId: null,
-    });
-
-    await saveCategoryGroupMarginAction(VALID_INPUT);
-
-    expect(appendAuditEventMock).toHaveBeenCalledTimes(3);
-    const payloads = appendAuditEventMock.mock.calls.map(
-      (call) => (call[1] as { payload: Record<string, unknown> }).payload,
-    );
-    const bulkIds = new Set(payloads.map((p) => p.bulkOperationId));
-    expect(bulkIds.size).toBe(1);
-    payloads.forEach((payload) => {
-      expect(payload).toMatchObject({
-        bulkL1: VALID_INPUT.l1,
-        bulkL2: VALID_INPUT.l2,
-        bulkLeafCount: 3,
-        sellerAccountId: SELLER_A_ID,
-      });
-    });
-  });
-});
-
 describe('saveFundingBufferPolicyAction', () => {
   const VALID_INPUT = {
     adjustmentRate: '0.03',
@@ -446,7 +303,7 @@ describe('saveFundingBufferPolicyAction', () => {
       adjustmentRate: '0.5',
     });
 
-    expect(result).toEqual({ ok: false, reason: 'invalid_input' });
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
     expect(requirePermissionMock).not.toHaveBeenCalled();
   });
 
@@ -882,24 +739,17 @@ describe('policy history read actions', () => {
     expect(listAuditHistoryForSellerEntityMock).not.toHaveBeenCalled();
   });
 
-  it('getCategoryGroupHistoryAction filters by the bulk l1/l2 keys, not by category code', async () => {
+  it("getStoreDefaultHistoryAction always scopes by the caller's own sellerAccountId, ignoring any input", async () => {
     listAuditHistoryForSellerEntityMock.mockResolvedValue(HISTORY);
 
-    const result = await getCategoryGroupHistoryAction(
-      'Health & Beauty',
-      'Hair Care',
-    );
+    const result = await getStoreDefaultHistoryAction();
 
     expect(result).toEqual({ ok: true, data: HISTORY });
     expect(listAuditHistoryForSellerEntityMock).toHaveBeenCalledWith(
       expect.anything(),
       {
-        entityType: 'PricingCategoryPolicy',
+        entityType: 'PricingStoreDefault',
         sellerAccountId: SELLER_A_ID,
-        payloadEquals: {
-          bulkL1: 'Health & Beauty',
-          bulkL2: 'Hair Care',
-        },
       },
     );
   });
@@ -924,7 +774,407 @@ describe('policy history read actions', () => {
     // parameters (category code, l1/l2, nothing at all) — there is no
     // sellerAccountId parameter for a caller to override in the first place.
     expect(getCategoryPolicyHistoryAction.length).toBe(1);
-    expect(getCategoryGroupHistoryAction.length).toBe(2);
+    expect(getStoreDefaultHistoryAction.length).toBe(0);
     expect(getFundingBufferHistoryAction.length).toBe(0);
+  });
+});
+
+describe('saveStoreDefaultAction', () => {
+  const VALID_INPUT = {
+    targetMarginRate: '0.35',
+    minContribution: '2.50',
+    roundingRule: 'NEAREST_0_99',
+    reason: 'Initial store-wide default while headcount is one.',
+  };
+
+  it('denies a caller without pricing_policy:manage', async () => {
+    requirePermissionMock.mockRejectedValue(new PermissionError());
+
+    const result = await saveStoreDefaultAction(VALID_INPUT);
+
+    expect(result).toEqual({ ok: false, reason: 'denied' });
+    expect(pricingRepositoryMocks.createStoreDefault).not.toHaveBeenCalled();
+  });
+
+  it('rejects an out-of-range margin rate before touching the database', async () => {
+    const result = await saveStoreDefaultAction({
+      ...VALID_INPUT,
+      targetMarginRate: '1.2',
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+    expect(getDbMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a negative or malformed contribution floor before touching the database', async () => {
+    const negative = await saveStoreDefaultAction({
+      ...VALID_INPUT,
+      minContribution: '-1',
+    });
+    const threeDecimals = await saveStoreDefaultAction({
+      ...VALID_INPUT,
+      minContribution: '2.505',
+    });
+
+    expect(negative).toMatchObject({ ok: false, reason: 'invalid_input' });
+    expect(threeDecimals).toMatchObject({
+      ok: false,
+      reason: 'invalid_input',
+    });
+    expect(getDbMock).not.toHaveBeenCalled();
+  });
+
+  it('rate-limits repeated calls', async () => {
+    checkRateLimitMock.mockReturnValue({ allowed: false });
+
+    const result = await saveStoreDefaultAction(VALID_INPUT);
+
+    expect(result).toEqual({ ok: false, reason: 'rate_limited' });
+  });
+
+  it('creates a new version-1 default with the floor in minor units, and audits it', async () => {
+    pricingRepositoryMocks.findActiveStoreDefault.mockResolvedValue(null);
+    pricingRepositoryMocks.createStoreDefault.mockResolvedValue({
+      id: POLICY_ID,
+      version: 1,
+      supersedesId: null,
+    });
+
+    const result = await saveStoreDefaultAction(VALID_INPUT);
+
+    expect(result).toEqual({ ok: true });
+    expect(pricingRepositoryMocks.createStoreDefault).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({
+        sellerAccountId: SELLER_A_ID,
+        targetMarginRate: '0.35',
+        minContributionMinor: BigInt(250),
+        minContributionCurrency: 'USD',
+        roundingRule: 'NEAREST_0_99',
+      }),
+    );
+    expect(appendAuditEventMock).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({
+        action: 'pricing_store_default.created',
+        entityType: 'PricingStoreDefault',
+      }),
+    );
+  });
+
+  it('revises (supersedes) the existing active default instead of creating a duplicate', async () => {
+    const existing = { id: POLICY_ID, version: 2 };
+    pricingRepositoryMocks.findActiveStoreDefault.mockResolvedValue(existing);
+    pricingRepositoryMocks.reviseStoreDefault.mockResolvedValue({
+      id: 'new-id',
+      version: 3,
+      supersedesId: POLICY_ID,
+    });
+
+    const result = await saveStoreDefaultAction(VALID_INPUT);
+
+    expect(result).toEqual({ ok: true });
+    expect(pricingRepositoryMocks.reviseStoreDefault).toHaveBeenCalledWith(
+      TX,
+      existing,
+      expect.objectContaining({ minContributionMinor: BigInt(250) }),
+    );
+    expect(pricingRepositoryMocks.createStoreDefault).not.toHaveBeenCalled();
+    expect(appendAuditEventMock).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({ action: 'pricing_store_default.revised' }),
+    );
+  });
+
+  it('a whole-dollar floor converts exactly to minor units', async () => {
+    pricingRepositoryMocks.findActiveStoreDefault.mockResolvedValue(null);
+    pricingRepositoryMocks.createStoreDefault.mockResolvedValue({
+      id: POLICY_ID,
+      version: 1,
+      supersedesId: null,
+    });
+
+    await saveStoreDefaultAction({ ...VALID_INPUT, minContribution: '3' });
+
+    expect(pricingRepositoryMocks.createStoreDefault).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({ minContributionMinor: BigInt(300) }),
+    );
+  });
+});
+
+describe('deactivateStoreDefaultAction', () => {
+  it('refuses to deactivate a default claimed to belong to a different seller (IDOR guard)', async () => {
+    const result = await deactivateStoreDefaultAction(POLICY_ID, SELLER_B_ID);
+
+    expect(result).toEqual({ ok: false, reason: 'not_found' });
+    expect(
+      pricingRepositoryMocks.deactivateStoreDefault,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('returns not_found when the policy id does not actually belong to this seller in the database', async () => {
+    pricingRepositoryMocks.deactivateStoreDefault.mockResolvedValue(null);
+
+    const result = await deactivateStoreDefaultAction(POLICY_ID, SELLER_A_ID);
+
+    expect(result).toEqual({ ok: false, reason: 'not_found' });
+    expect(appendAuditEventMock).not.toHaveBeenCalled();
+  });
+
+  it('deactivates and audits when the seller id matches the caller', async () => {
+    pricingRepositoryMocks.deactivateStoreDefault.mockResolvedValue({
+      id: POLICY_ID,
+      version: 1,
+    });
+
+    const result = await deactivateStoreDefaultAction(POLICY_ID, SELLER_A_ID);
+
+    expect(result).toEqual({ ok: true });
+    expect(pricingRepositoryMocks.deactivateStoreDefault).toHaveBeenCalledWith(
+      TX,
+      POLICY_ID,
+      SELLER_A_ID,
+    );
+    expect(appendAuditEventMock).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({ action: 'pricing_store_default.deactivated' }),
+    );
+  });
+});
+
+describe('field-level validation messages', () => {
+  /**
+   * `ActionResult.fieldErrors` was declared from the first version of this
+   * file and never populated, so the UI could only say "check the highlighted
+   * fields" while highlighting nothing. The owner hit exactly that on
+   * 2026-08-20: the real cause was a reason under 10 characters and nothing
+   * on screen said so.
+   */
+  it('names the field that failed, not just that something did', async () => {
+    const result = await saveStoreDefaultAction({
+      targetMarginRate: '0.35',
+      minContribution: '2.50',
+      roundingRule: 'NONE',
+      reason: 'short',
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.fieldErrors?.reason).toMatch(/10 characters or more/);
+  });
+
+  it('reports a bad margin against the margin field', async () => {
+    const result = await saveStoreDefaultAction({
+      targetMarginRate: '1.5',
+      minContribution: '0',
+      roundingRule: 'NONE',
+      reason: 'A perfectly valid reason here.',
+    });
+
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.fieldErrors?.targetMarginRate).toBeDefined();
+    expect(result.fieldErrors?.reason).toBeUndefined();
+  });
+
+  it('reports a bad contribution floor against the floor field', async () => {
+    const result = await saveStoreDefaultAction({
+      targetMarginRate: '0.35',
+      minContribution: '2.505',
+      roundingRule: 'NONE',
+      reason: 'A perfectly valid reason here.',
+    });
+
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.fieldErrors?.minContribution).toBeDefined();
+  });
+
+  it('does the same for the funding buffer, which shares the defect', async () => {
+    const result = await saveFundingBufferPolicyAction({
+      adjustmentRate: '0.025',
+      reason: 'nope',
+    });
+
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.fieldErrors?.reason).toMatch(/10 characters or more/);
+  });
+});
+
+describe('applyMarginCsvAction', () => {
+  const HEADER = 'category_code,category_path,margin_percent,rounding';
+  const REASON = 'Bulk repricing after the supplier cost review.';
+
+  function category(code: string, id: string) {
+    return { id, code, path: `Path ${code}` };
+  }
+
+  beforeEach(() => {
+    pricingRepositoryMocks.findCategoriesByCodes.mockResolvedValue([
+      category('CAT-GGL-1', 'cat-1'),
+      category('CAT-GGL-2', 'cat-2'),
+    ]);
+    pricingRepositoryMocks.findActiveCategoryPolicy.mockResolvedValue(null);
+    pricingRepositoryMocks.createCategoryPolicy.mockResolvedValue({
+      id: 'policy-new',
+      version: 1,
+      supersedesId: null,
+    });
+  });
+
+  it('denies a caller without pricing_policy:manage', async () => {
+    requirePermissionMock.mockRejectedValue(new PermissionError());
+
+    const result = await applyMarginCsvAction({
+      csv: `${HEADER}\nCAT-GGL-1,Anything,35,NONE`,
+      reason: REASON,
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'denied' });
+    expect(pricingRepositoryMocks.createCategoryPolicy).not.toHaveBeenCalled();
+  });
+
+  it('writes every row inside one transaction, with one audit event each', async () => {
+    const result = await applyMarginCsvAction({
+      csv: [
+        HEADER,
+        'CAT-GGL-1,Anything,35,NONE',
+        'CAT-GGL-2,Anything,40,NONE',
+      ].join('\n'),
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(transactionMock).toHaveBeenCalledTimes(1);
+    expect(pricingRepositoryMocks.createCategoryPolicy).toHaveBeenCalledTimes(
+      2,
+    );
+    // Bulk is another door into the same writer, not a shortcut past the
+    // audit trail.
+    expect(appendAuditEventMock).toHaveBeenCalledTimes(2);
+    expect(appendAuditEventMock).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({
+        action: 'category_pricing_policy.created',
+        payload: expect.objectContaining({ source: 'csv-import' }),
+      }),
+    );
+  });
+
+  /**
+   * All-or-nothing. A half-applied price change leaves the catalogue priced
+   * by two different decisions with nothing on screen saying which rows took.
+   */
+  it('writes nothing at all when one line is malformed', async () => {
+    const result = await applyMarginCsvAction({
+      csv: [
+        HEADER,
+        'CAT-GGL-1,Anything,35,NONE',
+        'CAT-GGL-2,Anything,zzz,NONE',
+      ].join('\n'),
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.rowErrors?.[0]).toMatch(/Line 3/);
+    expect(transactionMock).not.toHaveBeenCalled();
+    expect(pricingRepositoryMocks.createCategoryPolicy).not.toHaveBeenCalled();
+  });
+
+  it('names an unknown category by line, and writes nothing', async () => {
+    pricingRepositoryMocks.findCategoriesByCodes.mockResolvedValue([
+      category('CAT-GGL-1', 'cat-1'),
+    ]);
+
+    const result = await applyMarginCsvAction({
+      csv: [
+        HEADER,
+        'CAT-GGL-1,Anything,35,NONE',
+        'CAT-GGL-9,Anything,40,NONE',
+      ].join('\n'),
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'not_found' });
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.rowErrors?.[0]).toMatch(/CAT-GGL-9 is not a Sals3 category/);
+    expect(transactionMock).not.toHaveBeenCalled();
+  });
+
+  it('an empty margin cell deactivates that category rather than writing zero', async () => {
+    pricingRepositoryMocks.findActiveCategoryPolicy.mockResolvedValue({
+      id: 'policy-1',
+      targetMarginRate: '0.350000',
+      roundingRule: 'NONE',
+      version: 1,
+    });
+    pricingRepositoryMocks.deactivateCategoryPolicy.mockResolvedValue({
+      id: 'policy-1',
+      version: 1,
+    });
+
+    const result = await applyMarginCsvAction({
+      csv: `${HEADER}\nCAT-GGL-1,Anything,,`,
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({ ok: true, data: { cleared: 1 } });
+    expect(pricingRepositoryMocks.deactivateCategoryPolicy).toHaveBeenCalled();
+    expect(pricingRepositoryMocks.createCategoryPolicy).not.toHaveBeenCalled();
+  });
+
+  it('skips a row that already matches, so no version or audit event records a non-change', async () => {
+    pricingRepositoryMocks.findActiveCategoryPolicy.mockResolvedValue({
+      id: 'policy-1',
+      targetMarginRate: '0.350000',
+      roundingRule: 'NONE',
+      version: 1,
+    });
+
+    const result = await applyMarginCsvAction({
+      csv: `${HEADER}\nCAT-GGL-1,Anything,35,NONE`,
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: { unchanged: 1, written: 0 },
+    });
+    expect(pricingRepositoryMocks.reviseCategoryPolicy).not.toHaveBeenCalled();
+    expect(appendAuditEventMock).not.toHaveBeenCalled();
+  });
+
+  it('revises rather than duplicating when the category already has a different rate', async () => {
+    pricingRepositoryMocks.findActiveCategoryPolicy.mockResolvedValue({
+      id: 'policy-1',
+      targetMarginRate: '0.200000',
+      roundingRule: 'NONE',
+      version: 1,
+    });
+    pricingRepositoryMocks.reviseCategoryPolicy.mockResolvedValue({
+      id: 'policy-2',
+      version: 2,
+      supersedesId: 'policy-1',
+    });
+
+    const result = await applyMarginCsvAction({
+      csv: `${HEADER}\nCAT-GGL-1,Anything,35,NONE`,
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({ ok: true, data: { written: 1 } });
+    expect(pricingRepositoryMocks.reviseCategoryPolicy).toHaveBeenCalled();
+    expect(pricingRepositoryMocks.createCategoryPolicy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a reason too short to explain a bulk change', async () => {
+    const result = await applyMarginCsvAction({
+      csv: `${HEADER}\nCAT-GGL-1,Anything,35,NONE`,
+      reason: 'nope',
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.fieldErrors?.reason).toBeDefined();
   });
 });

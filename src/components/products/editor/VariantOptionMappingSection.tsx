@@ -98,7 +98,8 @@ export type VariantOptionMappingSectionProps = {
    * the category offers none. Offered as a one-press suggestion, never pre-filled
    * — see the "A suggestion, not a default" note above.
    */
-  suggestedAxisNames?: (string | null)[];
+  /** Every name the workbook offers for each axis, in the sheet's own order. */
+  suggestedAxisNames?: string[][];
   variantCount: number;
   /**
    * Whether leaving this unmapped actually blocks publication — true only for a
@@ -658,6 +659,9 @@ export default function VariantOptionMappingSection({
     setMessage(result.message ?? null);
   }
 
+  /** Ordering is only an instruction when some axis has more than one value. */
+  const hasValuesToOrder = axes.some((axis) => axis.values.length > 1);
+
   return (
     <div className="flex flex-col gap-4 border-b border-border pb-5">
       <VariantMatrixHeader
@@ -665,13 +669,22 @@ export default function VariantOptionMappingSection({
         severity={unnamedSeverity}
       />
 
+      {/*
+        Both plurals and the ordering clause became reachable when a
+        single-variant product started getting a matrix. `1 variants` reads as
+        carelessness, and telling a seller to order values makes no sense when
+        every axis holds exactly one.
+      */}
       <p className="text-sm text-muted-foreground">
         Found {proposal.length} buyer{' '}
         {proposal.length === 1 ? 'option' : 'options'} across {variantCount}{' '}
-        variants in the supplier&rsquo;s own labels. Name each option, then
-        order its values the way buyers should see them. Supplier values are
-        locked: renaming a buyer label changes the storefront only, and CJ still
-        fulfils by its own value.
+        {variantCount === 1 ? 'variant' : 'variants'} in the supplier&rsquo;s
+        own labels. Name each option
+        {hasValuesToOrder
+          ? ', then order its values the way buyers should see them'
+          : ''}
+        . Supplier values are locked: renaming a buyer label changes the
+        storefront only, and CJ still fulfils by its own value.
       </p>
 
       <div className="flex flex-col gap-4">
@@ -679,7 +692,7 @@ export default function VariantOptionMappingSection({
           const nameId = `variant-matrix-option-${axisIndex}`;
           const missingName =
             touched[axisIndex] === true && axis.name.trim() === '';
-          const suggestion = suggestedAxisNames[axisIndex] ?? null;
+          const suggestions = suggestedAxisNames[axisIndex] ?? [];
 
           return (
             <div
@@ -725,20 +738,25 @@ export default function VariantOptionMappingSection({
                 or accepted — repeating the suggestion beside it would read as a
                 correction of the seller's own choice.
               */}
-              {suggestion !== null && axis.name.trim() === '' ? (
+              {suggestions.length > 0 && axis.name.trim() === '' ? (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="text-xs text-muted-foreground">
-                    Suggested for this category:
+                    {suggestions.length === 1
+                      ? 'Suggested for this category:'
+                      : 'Suggested for this category — pick one:'}
                   </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-6 px-2 text-xs"
-                    onClick={() => applyAxisName(axisIndex, suggestion)}
-                  >
-                    Use &ldquo;{suggestion}&rdquo;
-                  </Button>
+                  {suggestions.map((suggestion) => (
+                    <Button
+                      key={suggestion}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => applyAxisName(axisIndex, suggestion)}
+                    >
+                      Use &ldquo;{suggestion}&rdquo;
+                    </Button>
+                  ))}
                 </div>
               ) : null}
 

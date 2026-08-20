@@ -5,5 +5,16 @@ if [ "$branch" = "develop" ] || [ "$branch" = "main" ]; then
   exit 1
 fi
 
+# Fast gate. The full `npm run verify` — build, 2,100+ unit tests, 69 e2e —
+# runs on pre-push instead, so nothing reaches the remote unverified.
+#
+# It used to run here too, which meant a branch of three commits paid for
+# four full runs (three commits plus the push) before CI then paid for a
+# fifth. Six or seven minutes per commit, most of it re-proving what the
+# previous commit had already proven about code that had not changed.
+#
+# What stays here is what catches a mistake while it is still cheap to fix:
+# lint-staged formats and lints the files actually staged, and the
+# typecheck catches a broken signature across the whole project.
 npx lint-staged
-npm run verify
+npm run typecheck:clean

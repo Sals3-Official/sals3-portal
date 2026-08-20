@@ -220,6 +220,11 @@ function snapshotLines(
           externalVariantId: z.string(),
           externalSku: z.string().nullable(),
           sals3Sku: z.string(),
+          // Absent on intents created before 0024 — read as null rather than
+          // failing acceptance for an in-flight checkout across the deploy.
+          variantLabel: z.string().nullable().optional(),
+          // Same deploy-boundary tolerance as variantLabel.
+          imageUrl: z.string().nullable().optional(),
           packageId: z.string(),
         }),
       ),
@@ -239,6 +244,8 @@ function snapshotLines(
     externalVariantId: line.externalVariantId,
     externalSku: line.externalSku,
     sals3Sku: line.sals3Sku,
+    variantLabel: line.variantLabel ?? null,
+    imageUrl: line.imageUrl ?? null,
   }));
 }
 

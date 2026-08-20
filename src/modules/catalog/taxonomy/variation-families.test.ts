@@ -13,6 +13,8 @@ import variationFamiliesExtract from '@/lib/db/seed-data/sals3-category-variatio
 import {
   FAMILY_AXIS_NAMES,
   axisNameForFamilies,
+  axisNamesForFamilies,
+  suggestedAxisNameOptionsForCategory,
   suggestedAxisNamesForCategory,
 } from './variation-families';
 /* eslint-enable import/first */
@@ -127,5 +129,46 @@ describe('the committed extract', () => {
       'sals3-taxonomy-v1',
     );
     expect(variationFamiliesExtract.categories).toHaveLength(5595);
+  });
+});
+
+describe('axisNamesForFamilies', () => {
+  it('keeps every name the workbook cell offers, in the sheet order', () => {
+    expect(axisNamesForFamilies(['COLOR', 'MATERIAL'])).toEqual([
+      'Colour',
+      'Material',
+    ]);
+  });
+
+  it('drops unrecognised tokens without dropping the recognised ones', () => {
+    expect(axisNamesForFamilies(['NOPE', 'SIZE'])).toEqual(['Size']);
+  });
+
+  it('deduplicates families that map to one name', () => {
+    expect(axisNamesForFamilies(['COLOR', 'COLOR'])).toEqual(['Colour']);
+  });
+});
+
+describe('suggestedAxisNameOptionsForCategory', () => {
+  it('offers both names for the category that exposed the half-report', () => {
+    // `Household Drawer Organizer Inserts` — the workbook gives
+    // `COLOR; MATERIAL`, and a bamboo organizer was offered `Use "Colour"` and
+    // nothing else. Both were in the sheet the whole time.
+    expect(suggestedAxisNameOptionsForCategory('CAT-GGL-8058')[0]).toEqual([
+      'Colour',
+      'Material',
+    ]);
+  });
+
+  it('keeps tier position, so an unrecognised tier is empty rather than missing', () => {
+    const tiers = suggestedAxisNameOptionsForCategory('CAT-GGL-8058');
+
+    expect(tiers).toHaveLength(2);
+    expect(tiers[1]).toEqual(['Size', 'Capacity']);
+  });
+
+  it('returns nothing for a category this taxonomy version does not cover', () => {
+    expect(suggestedAxisNameOptionsForCategory('CJ-1042')).toEqual([]);
+    expect(suggestedAxisNameOptionsForCategory(null)).toEqual([]);
   });
 });

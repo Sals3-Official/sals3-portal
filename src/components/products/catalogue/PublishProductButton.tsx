@@ -33,8 +33,8 @@ const FAILURE_MESSAGES: Record<PublishActionFailureReason, string> = {
   failed: 'Publishing failed. Try again in a moment.',
   NO_ACTIVE_VARIANT:
     'No active variant yet. Fetch supplier evidence for this product first.',
-  CATEGORY_UNMAPPED:
-    'No CJ category is on record for this product, so it cannot be categorised or priced.',
+  SALS3_CATEGORY_REQUIRED:
+    'Choose a Sals3 category for this product before publishing. The supplier’s own category is only a draft placeholder.',
   OPTIONS_UNMAPPED:
     'Name this product’s Variant Matrix in Variants & Pricing before publishing.',
   NO_APPROVED_MEDIA: 'No approved product image is on file yet.',

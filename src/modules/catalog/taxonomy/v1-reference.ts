@@ -1,6 +1,7 @@
 import { asc, like, not, sql } from 'drizzle-orm';
 import { sals3Categories } from '@/lib/db/schema';
 import type { Executor } from '@/modules/catalog/candidates/repository';
+import { TAXONOMY_V1_CODE_PREFIX } from '@/lib/products/sals3-category-code';
 
 /**
  * Read-only Sals3 Taxonomy v1 reference data — deliberately its own file,
@@ -14,11 +15,16 @@ import type { Executor } from '@/modules/catalog/candidates/repository';
  */
 
 /**
- * The v1 seed's own code convention (`scripts/seed-sals3-taxonomy-v1.mts`,
- * `src/lib/db/seed-data/sals3-taxonomy-v1.json` — every one of its 5,595
- * rows is `CAT-GGL-<google product category id>`).
+ * The code convention and the mirror test live in
+ * `@/lib/products/sals3-category-code`, a module with no Drizzle or schema
+ * import, so the product editor can apply exactly the rule publication applies.
+ * Re-exported here because every existing caller reaches for them through this
+ * module.
  */
-const TAXONOMY_V1_CODE_PREFIX = 'CAT-GGL-';
+export {
+  TAXONOMY_V1_CODE_PREFIX,
+  isSals3TaxonomyCode,
+} from '@/lib/products/sals3-category-code';
 
 /**
  * Every Sals3 Taxonomy v1 category, as `{ code, path }` pairs, for a

@@ -1,0 +1,73 @@
+# One-time, idempotent write — no schedule, manual trigger only.
+#
+# Runs the DDL creating pricing_store_defaults (the seller store-default
+# pricing table, ADR-015 §3's base layer). Same break-glass pattern as
+# products-migrate-show-supplier-photo.yml and
+# taxonomy-migrate-attribute-controls.yml: a manual workflow_dispatch calling
+# an authenticated internal route with the shared CRON_SECRET — no Vercel
+# access or raw database credential required.
+#
+# Run this BEFORE merging the pricing-inheritance feature PR that reads the
+# table — until it runs, the resolver's store-default lookup would fail with
+# 'relation "pricing_store_defaults" does not exist'.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin, e.g.
+#                                https://sals3-portal.example.com
+
+name: Pricing Migrate Store Defaults
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the store-defaults migration endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/pricing/migrate-store-defaults"
+
+          # Read-only first, so the log records the state this run started from.
+          echo "--- table state before ---"
+          curl -sS "$endpoint" -H "Authorization: Bearer $CRON_SECRET"
+          echo
+
+          echo "--- applying migration ---"
+          status=$(curl -sS -o /tmp/migrate-response.json -w '%{http_code}' \
+            -X POST "$endpoint" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/migrate-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "store-defaults migration returned HTTP $status" >&2
+            echo "Nothing was changed: the DDL runs in a transaction with a" >&2
+            echo "lock_timeout, so a lock it could not acquire rolls back" >&2
+            echo "cleanly. Safe to re-run when the database is quieter." >&2
+            exit 1
+          fi
+
+          # A 200 is not proof. Assert the table is genuinely there, or fail
+          # the run — a migration that reports success without achieving
+          # anything is the exact failure this endpoint exists to prevent.
+          echo "--- verifying table exists ---"
+          if ! grep -q '"tableExistsAfter":true' /tmp/migrate-response.json; then
+            echo "Migration returned HTTP $status but the table is still absent" >&2
+            exit 1
+          fi
+
+          echo "Verified: pricing_store_defaults exists."

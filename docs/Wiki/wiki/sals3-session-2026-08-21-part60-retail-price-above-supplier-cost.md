@@ -59,6 +59,8 @@ the same value could still appear while the field was focused. The floor is now
 - for `$4.29` supplier cost, the minimum retail price is `$4.40`;
 - the input validates the draft text while the seller is still focused in the
   field;
+- the shared publish-gate copy now names the 2.5% markup requirement instead of
+  the older "above supplier cost" floor;
 - bulk pricing, readiness, and server publish all use the same 2.5% floor.
 
 ## Verification

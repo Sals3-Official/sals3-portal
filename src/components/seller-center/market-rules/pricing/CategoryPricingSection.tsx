@@ -1,18 +1,24 @@
 import getDb from '@/lib/db/client';
 import {
-  groupCategoryMarginRowsByL2,
+  countDescendantsByPath,
+  findActiveStoreDefault,
   listCategoryMarginOverview,
-  type CategoryMarginGroup,
+  type CategoryMarginLeafRow,
 } from '@/modules/pricing/repository';
 import DisclosureBanner from '@/components/seller-center/shared/DisclosureBanner';
-import CategoryMarginGroupList, {
-  type CategoryMarginGroupViewModel,
-} from './CategoryMarginGroupList';
+import CategoryMarginTree from './CategoryMarginTree';
+import MarginCsvControls from './MarginCsvControls';
+import type {
+  CategoryMarginNodeViewModel,
+  StoreDefaultSummary,
+} from './category-margin-model';
 
 type CategoryPricingSectionProps = {
   sellerAccountId: string;
   canManage: boolean;
 };
+
+const PATH_SEPARATOR = ' > ';
 
 /**
  * Falls back to an honest "not available" read rather than crashing the
@@ -20,15 +26,21 @@ type CategoryPricingSectionProps = {
  * yet (same discipline as `resolveFixtureVariantGuidance` — a missing
  * table is an operational condition, not a bug to surface as a 500).
  */
-async function readCategoryMarginGroups(
-  sellerAccountId: string,
-): Promise<CategoryMarginGroup[] | null> {
+async function readCategoryRows(sellerAccountId: string): Promise<{
+  rows: CategoryMarginLeafRow[];
+  descendantCounts: Map<string, number>;
+} | null> {
   try {
-    const rows = await listCategoryMarginOverview(getDb(), sellerAccountId);
-    return groupCategoryMarginRowsByL2(rows);
+    const db = getDb();
+    const [rows, descendantCounts] = await Promise.all([
+      listCategoryMarginOverview(db, sellerAccountId),
+      countDescendantsByPath(db),
+    ]);
+
+    return { rows, descendantCounts };
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.error('[portal] failed to read category pricing groups', {
+    console.error('[portal] failed to read category margin rows', {
       sellerAccountId,
       error: error instanceof Error ? error.message : 'unknown',
     });
@@ -37,85 +49,174 @@ async function readCategoryMarginGroups(
 }
 
 /**
- * Presentation shaping only — kept out of `repository.ts`, which stays
- * free of UI-state concepts. "Uniform" requires every leaf to be set AND
- * to share the same rate AND rounding; "no policy" is a distinct third
- * state from "set but differs," never conflated with a 0% assumption.
+ * Deliberately its own read with its own failure state, NOT bundled into
+ * the taxonomy read above.
+ *
+ * These two answer different questions and fail for different reasons, and
+ * one of them is the whole screen. When they shared a `Promise.all` inside
+ * one `try`, a `pricing_store_defaults` table that did not exist yet took
+ * the entire category tree down with it — a screen that had rendered 220
+ * groups the day before showed only "not available", which is exactly the
+ * silent, wider-than-necessary degradation this codebase keeps being bitten
+ * by. Observed live on 2026-08-19 between the feature deploy and the
+ * migration run.
+ *
+ * Three states, kept distinct: rows (a real default), `null` (read fine,
+ * none configured — the ordinary first-run case), and `unavailable` (the
+ * backend could not answer). Only the last is an error worth a banner; the
+ * middle one is normal and the tree already renders it honestly.
  */
-function toViewModel(group: CategoryMarginGroup): CategoryMarginGroupViewModel {
-  const activePolicies = group.leaves
-    .map((leaf) => leaf.policy)
-    .filter((policy): policy is NonNullable<typeof policy> => policy !== null);
+async function readStoreDefault(
+  sellerAccountId: string,
+): Promise<
+  | { state: 'ok'; storeDefault: StoreDefaultSummary | null }
+  | { state: 'unavailable' }
+> {
+  try {
+    const storeDefault = await findActiveStoreDefault(getDb(), sellerAccountId);
 
-  const setCount = activePolicies.length;
-  const allUniform =
-    setCount === group.leaves.length &&
-    activePolicies.every(
-      (policy) =>
-        policy.targetMarginRate === activePolicies[0]?.targetMarginRate &&
-        policy.roundingRule === activePolicies[0]?.roundingRule,
-    );
-
-  let marginState: CategoryMarginGroupViewModel['marginState'] = 'MIXED';
-  if (setCount === 0) marginState = 'UNSET';
-  else if (allUniform) marginState = 'UNIFORM';
-
-  return {
-    groupKey: group.groupKey,
-    l1: group.l1,
-    l2: group.l2,
-    leafCount: group.leaves.length,
-    setCount,
-    marginState,
-    uniformRate:
-      marginState === 'UNIFORM'
-        ? (activePolicies[0]?.targetMarginRate ?? null)
-        : null,
-    uniformRoundingRule:
-      marginState === 'UNIFORM'
-        ? (activePolicies[0]?.roundingRule ?? null)
-        : null,
-    leaves: group.leaves.map((leaf) => ({
-      categoryId: leaf.categoryId,
-      code: leaf.code,
-      path: leaf.path,
-      policy: leaf.policy,
-    })),
-  };
+    return {
+      state: 'ok',
+      storeDefault:
+        storeDefault === null
+          ? null
+          : {
+              targetMarginRate: storeDefault.targetMarginRate,
+              roundingRule: storeDefault.roundingRule,
+            },
+    };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] failed to read the store default for the tree', {
+      sellerAccountId,
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+    return { state: 'unavailable' };
+  }
 }
 
-/** ADR-015 Phase 1: category-first manual margin policy, grouped by L1>L2. */
+/**
+ * Presentation shaping only — every taxonomy row becomes a tree node with
+ * its depth, parent path, and child/subtree counts precomputed once here,
+ * so the client walks Maps instead of re-scanning 5,595 paths per render.
+ */
+function toNodeViewModels(
+  rows: CategoryMarginLeafRow[],
+  descendantCounts: Map<string, number>,
+): CategoryMarginNodeViewModel[] {
+  // `childCount` is derived from the ROWS — it drives the expand chevron, so
+  // it must describe what this view can actually render. `subtreeCount` is
+  // taken from the full-taxonomy counts instead, because it describes what a
+  // margin set here will really cover; deriving it from depth-capped rows is
+  // what made "Home & Garden — 1,034 categories" render as "21".
+  const childCounts = new Map<string, number>();
+
+  rows.forEach((row) => {
+    const segments = row.path.split(PATH_SEPARATOR);
+    const parentPath =
+      segments.length > 1 ? segments.slice(0, -1).join(PATH_SEPARATOR) : null;
+
+    if (parentPath !== null) {
+      childCounts.set(parentPath, (childCounts.get(parentPath) ?? 0) + 1);
+    }
+  });
+
+  return rows.map((row) => {
+    const segments = row.path.split(PATH_SEPARATOR);
+
+    return {
+      categoryId: row.categoryId,
+      code: row.code,
+      path: row.path,
+      name: segments[segments.length - 1],
+      depth: segments.length,
+      parentPath:
+        segments.length > 1 ? segments.slice(0, -1).join(PATH_SEPARATOR) : null,
+      childCount: childCounts.get(row.path) ?? 0,
+      subtreeCount: descendantCounts.get(row.path) ?? 0,
+      policy: row.policy,
+    };
+  });
+}
+
+/**
+ * ADR-015 Phase 1, reworked 2026-08-19: category margin as an inheritance
+ * tree. A category without its own margin inherits the nearest priced
+ * ancestor, then the store default — so a handful of department policies
+ * covers everything, and the old per-leaf bulk fan-out (5,595 rows per
+ * seller per change) is gone.
+ */
 export default async function CategoryPricingSection({
   sellerAccountId,
   canManage,
 }: CategoryPricingSectionProps) {
-  const groups = await readCategoryMarginGroups(sellerAccountId);
+  // Independent reads: a store-default failure must never hide the tree.
+  const [categoryData, storeDefaultResult] = await Promise.all([
+    readCategoryRows(sellerAccountId),
+    readStoreDefault(sellerAccountId),
+  ]);
+
+  const storeDefault =
+    storeDefaultResult.state === 'ok' ? storeDefaultResult.storeDefault : null;
 
   return (
     <section
       aria-labelledby="category-pricing-heading"
       className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4"
     >
-      <div>
-        <h2 id="category-pricing-heading" className="text-base font-semibold">
-          Category pricing
-        </h2>
-        <p className="max-w-[78ch] text-sm text-muted-foreground">
-          Your target margin per Sals3 category — the normal default. A product
-          can override it in the Product Editor.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 id="category-pricing-heading" className="text-base font-semibold">
+            Category margins
+          </h2>
+          <p className="max-w-[78ch] text-sm text-muted-foreground">
+            A category without its own margin uses the nearest parent above it.
+            Set a margin only where a department genuinely differs; a product
+            can still override it in the Product Editor.
+          </p>
+        </div>
+        {categoryData === null ? null : (
+          <MarginCsvControls
+            nodes={toNodeViewModels(
+              categoryData.rows,
+              categoryData.descendantCounts,
+            )}
+            canManage={canManage}
+          />
+        )}
       </div>
-      {groups === null ? (
+      {categoryData === null ? (
         <DisclosureBanner tone="warning">
           Category pricing is not available right now. Your saved margins are
           safe. Try again shortly, or contact support if this keeps happening.
         </DisclosureBanner>
       ) : (
-        <CategoryMarginGroupList
-          groups={groups.map(toViewModel)}
-          sellerAccountId={sellerAccountId}
-          canManage={canManage}
-        />
+        <>
+          {storeDefaultResult.state === 'unavailable' ? (
+            <DisclosureBanner tone="warning">
+              Your store default could not be read, so the inherited rates below
+              are incomplete — a category with no margin of its own may still be
+              covered by a default this page cannot see right now. Margins set
+              on a category are unaffected.
+            </DisclosureBanner>
+          ) : null}
+          {storeDefaultResult.state === 'ok' && storeDefault === null ? (
+            <DisclosureBanner tone="warning">
+              No store default exists yet, so a category shown as &quot;Not
+              set&quot; cannot price at all — its products need a manual retail
+              price until a default or a parent margin covers them.
+            </DisclosureBanner>
+          ) : null}
+          <CategoryMarginTree
+            nodes={toNodeViewModels(
+              categoryData.rows,
+              categoryData.descendantCounts,
+            )}
+            storeDefault={storeDefault}
+            sellerAccountId={sellerAccountId}
+            canManage={canManage}
+          />
+        </>
       )}
     </section>
   );

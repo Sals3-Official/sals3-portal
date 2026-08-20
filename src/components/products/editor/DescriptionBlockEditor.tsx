@@ -36,6 +36,10 @@ import {
   type DescriptionBlockType,
   type ImageBlock,
 } from '@/lib/products/description-blocks';
+import {
+  keyDescriptionBlocks,
+  type KeyedDescriptionBlock,
+} from '@/lib/products/keyed-blocks';
 
 /**
  * The block editor behind the storefront's "About this product" section.
@@ -53,31 +57,14 @@ import {
  * formatting toolbar would imply otherwise.
  */
 
-export type KeyedDescriptionBlock = {
-  /**
-   * React list identity only — never a DOM id.
-   *
-   * Blocks carry no id of their own and this list reorders, so an index key
-   * would move a seller's cursor to a different field mid-edit. The counter
-   * behind it is per module instance, which differs between the server and
-   * the browser, so putting it in an `id` attribute produced a hydration
-   * mismatch. Field ids come from `useId` instead.
-   */
-  key: string;
-  block: DescriptionBlock;
-};
-
-let nextBlockKey = 0;
-
-export function keyDescriptionBlocks(
-  blocks: readonly DescriptionBlock[],
-): KeyedDescriptionBlock[] {
-  return blocks.map((block) => {
-    nextBlockKey += 1;
-
-    return { key: `block-${nextBlockKey}`, block };
-  });
-}
+/**
+ * Block identity now lives in `@/lib/products/keyed-blocks`, so the description
+ * studio can key the same document without importing this client component for
+ * a counter. Re-exported here because every existing caller imports it from
+ * this module.
+ */
+export type { KeyedDescriptionBlock };
+export { keyDescriptionBlocks };
 
 /**
  * What the seller can add, named after what the storefront produces.

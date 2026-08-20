@@ -49,6 +49,10 @@ vi.mock('@/app/(portal)/listings/category-mapping-actions', () => ({
 
 // Same reasoning: `upload-seller-media.ts` reaches the server-only db client
 // and `@aws-sdk/client-s3` too.
+vi.mock('@/app/(portal)/listings/description-actions', () => ({
+  default: vi.fn(),
+}));
+
 vi.mock('@/app/(portal)/listings/description-image-actions', () => ({
   default: vi.fn(),
 }));
@@ -187,12 +191,92 @@ describe('Product Editor - publication outcomes', () => {
     const button = publishButton();
 
     expect(button).toBeDisabled();
-    expect(button).toHaveAttribute('title', '3 hard blockers must clear first');
+    // Four, not three: the shared publish-gate predictor adds `No variant is
+    // listed`, which is true of this fixture and which `publish.ts` would have
+    // refused on. Asserted by name below so the number is not a magic constant.
+    expect(button).toHaveAttribute('title', '4 hard blockers must clear first');
     // The reason is on screen too, not only in a tooltip.
     expect(
-      screen.getAllByText('3 hard blockers must clear first').length,
+      screen.getAllByText('4 hard blockers must clear first').length,
     ).toBeGreaterThan(0);
     expect(screen.getByText('Publishing is disabled')).toBeInTheDocument();
+    expect(screen.getAllByText('No variant is listed').length).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it('clears a gate when the seller changes the thing it is about', () => {
+    // The bug this exists to catch: the predictor read `fixture`, the page-load
+    // snapshot, so switching a variant on left `No variant is listed` standing
+    // over a listed variant. It read as a broken toggle. Every other test in this
+    // file seeds state and renders once, so none of them exercised *change* —
+    // which is why a green suite shipped it.
+    const resolved = fixture('pass');
+    const first = resolved.variants[0];
+
+    if (first === undefined) throw new Error('fixture has no variants');
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          variants: [
+            {
+              ...first,
+              enabled: false,
+              supplierStock: 20_000,
+              listingState: 'NOT_LISTED',
+            },
+          ],
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    // `autoListVariants` switches an in-stock, unblocked variant on at load, so
+    // the gate must already be absent.
+    expect(screen.queryByText('No variant is listed')).not.toBeInTheDocument();
+
+    const listSwitch = screen
+      .getAllByRole('switch')
+      .find((element) =>
+        /^List /.test(element.getAttribute('aria-label') ?? ''),
+      );
+
+    if (listSwitch === undefined) throw new Error('no list switch');
+
+    fireEvent.click(listSwitch);
+
+    // Switched off by hand: the gate has to come back, or the panel is not
+    // watching either.
+    expect(screen.getAllByText('No variant is listed').length).toBeGreaterThan(
+      0,
+    );
+
+    fireEvent.click(listSwitch);
+
+    expect(screen.queryByText('No variant is listed')).not.toBeInTheDocument();
+  });
+
+  it('predicts no gate for a product publication would accept', () => {
+    // The safety property of the predictor. A missing warning costs one refused
+    // Publish; a false blocker stops a listing that could have gone live, and no
+    // wording makes that acceptable. So the clean fixtures must predict nothing.
+    renderEditor('pass');
+
+    expect(publishButton()).toBeEnabled();
+
+    [
+      'Sals3 category is required',
+      'No variant is listed',
+      'No supplier cost on any listable variant',
+      'No approved photo is on file',
+      'Retail price must include at least 2.5% markup',
+      'Variant Matrix needs its option names',
+    ].forEach((title) =>
+      expect(screen.queryByText(title)).not.toBeInTheDocument(),
+    );
   });
 });
 
@@ -1065,19 +1149,18 @@ describe('Product Editor - the photo a real product actually has', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('warns, but never blocks publication, when no seller has ever declared a real Sals3 category', () => {
+  it('blocks publication when the product has no Sals3 category of its own', () => {
+    // Owner decision 2026-08-20 replaces the 2026-08-15 one that made this a
+    // warning. `publish.ts` already refused `SALS3_CATEGORY_REQUIRED`, so the
+    // panel calling it a warning — and saying publishing was allowed — was the
+    // screen contradicting the server, discovered only by pressing Publish.
     const resolved = withCoverAddress();
 
     render(
       <ProductEditor
         fixture={{
           ...resolved,
-          // The auto-mirrored/no-category case: `categoryMappingConfidence`
-          // is deliberately left at whatever `withCoverAddress()` already
-          // carries (typically 'EXACT', matching how the CJ auto-mirror
-          // resolves confidence too) — this warning must not be fooled by
-          // that. `sals3CategoryDeclaredBySeller: false` is the actual
-          // "nobody has decided this yet" signal.
+          sals3CategoryCode: null,
           sals3CategoryDeclaredBySeller: false,
         }}
         initialLifecycle="IDLE"
@@ -1086,14 +1169,9 @@ describe('Product Editor - the photo a real product actually has', () => {
     );
 
     expect(
-      screen.getAllByText('No Sals3 category has been decided yet').length,
+      screen.getAllByText('Sals3 category is required').length,
     ).toBeGreaterThan(0);
-    // A warning, not a blocker (owner decision 2026-08-15): a missing
-    // category is a seller's own business risk, not a technical gate — and a
-    // blocker here would have retroactively stopped every already-live
-    // product from republishing, since none of them have gone through this
-    // picker.
-    expect(publishButton()).toBeEnabled();
+    expect(publishButton()).toBeDisabled();
   });
 
   it('clears the reminder once a seller has declared a real Sals3 category, however confidence alone reads', () => {
@@ -1113,11 +1191,13 @@ describe('Product Editor - the photo a real product actually has', () => {
     );
 
     expect(
-      screen.queryByText('No Sals3 category has been decided yet'),
+      screen.queryByText('Sals3 category is required'),
     ).not.toBeInTheDocument();
   });
 
-  it('keeps the reminder even with EXACT confidence and a category path, when the auto-mirror produced them rather than a seller decision', () => {
+  it('blocks a CJ-mirrored category, which resolves EXACT confidence and is not a Sals3 one', () => {
+    // The case confidence alone could never catch: `cj-mirror.ts` auto-creates a
+    // `CJ-<id>` row for almost every CJ-sourced product and it resolves EXACT.
     const resolved = withCoverAddress();
 
     render(
@@ -1135,8 +1215,32 @@ describe('Product Editor - the photo a real product actually has', () => {
     );
 
     expect(
-      screen.getAllByText('No Sals3 category has been decided yet').length,
+      screen.getAllByText('Sals3 category is required').length,
     ).toBeGreaterThan(0);
-    expect(publishButton()).toBeEnabled();
+    expect(publishButton()).toBeDisabled();
+  });
+
+  it('accepts a real v1 category applied by an approved mapping, not only one the seller picked', () => {
+    // `publish.ts` accepts it, so the panel must not raise a blocker the server
+    // would never raise. Keying off "declared by this seller" did exactly that.
+    const resolved = withCoverAddress();
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          sals3CategoryPath: 'Apparel & Accessories > Clothing',
+          sals3CategoryCode: 'CAT-GGL-1604',
+          categoryMappingConfidence: 'EXACT',
+          sals3CategoryDeclaredBySeller: false,
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    expect(
+      screen.queryByText('Sals3 category is required'),
+    ).not.toBeInTheDocument();
   });
 });

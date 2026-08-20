@@ -42,6 +42,12 @@
             { "label": "Material", "value": "Polyester shell, fleece lining" },
             { "label": "Care", "value": "Machine wash cold" }
           ]
+        },
+        {
+          "type": "image",
+          "url": "https://pub-5bd4708f2c2e4597ab8bd6234faae447.r2.dev/description-media/90a329b9-56aa-4f54-abb2-ad843602aa73/size-chart.webp",
+          "alt": "Size chart for the shell jacket",
+          "caption": "Measurements taken flat, in centimetres"
         }
       ]
     },

@@ -174,8 +174,43 @@ describe('deriveOptionSplit', () => {
     ).toBe(undefined);
   });
 
-  it('refuses fewer than two variants', () => {
-    expect(deriveOptionSplit([variant('a', 'Black-S')])).toBe(undefined);
+  it('proposes a matrix for a single variant, so its label is still nameable', () => {
+    // Owner decision 2026-08-19. A lone variant reached the storefront wearing
+    // the supplier's own words with nothing the seller could do about it, and the
+    // section called that "Not detected" — which reads as a limitation rather
+    // than a rule.
+    const split = deriveOptionSplit([variant('a', 'Black-S')]);
+
+    expect(split?.labelWidth).toBe(2);
+    expect(split?.positions.map((position) => position.values)).toEqual([
+      ['Black'],
+      ['S'],
+    ]);
+  });
+
+  it('still proposes one for a single variant with a one-token label', () => {
+    const split = deriveOptionSplit([variant('a', 'Storage box')]);
+
+    expect(split?.positions.map((position) => position.values)).toEqual([
+      ['Storage box'],
+    ]);
+  });
+
+  it('refuses an empty variant set', () => {
+    expect(deriveOptionSplit([])).toBe(undefined);
+  });
+
+  it('still drops a constant position when there is a real choice to protect', () => {
+    // Two variants differing only in size: the colour position is a constant and
+    // offering it would invent a decision the buyer never has.
+    const split = deriveOptionSplit([
+      variant('a', 'Black-S'),
+      variant('b', 'Black-M'),
+    ]);
+
+    expect(split?.positions.map((position) => position.values)).toEqual([
+      ['S', 'M'],
+    ]);
   });
 });
 
@@ -191,5 +226,19 @@ describe('combinationKeyOf', () => {
     const tokens = splitLabelTokens('Army Green-XL');
 
     expect(combinationKeyOf(tokens)).toBe('Army Green-XL');
+  });
+});
+
+describe('single-variant products never gate publication', () => {
+  // The safety property of allowing a one-variant matrix. Letting it reach the
+  // publish gate would newly refuse every live one-variant product carrying a
+  // concatenated label until somebody named its axes — a listing already selling,
+  // stopped by a change meant only to give the seller a naming control.
+  it('proposes a two-axis split for one variant, which the gate must then ignore', () => {
+    const split = deriveOptionSplit([variant('a', 'Army Green-XL')]);
+
+    // `labelWidth >= 2` is what `optionMappingRequiredButMissing` gates on, so
+    // this is exactly the shape that would have started blocking.
+    expect(split?.labelWidth).toBe(2);
   });
 });

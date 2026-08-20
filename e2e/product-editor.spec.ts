@@ -87,9 +87,18 @@ test.describe('Add Product - supplier-prefilled editor', () => {
     const publish = page.getByRole('button', { name: 'Publish Product' });
 
     await expect(publish).toBeDisabled();
+    // Four since the shared publish-gate predictor landed: this fixture also
+    // trips `No variant is listed`, which `publish.ts` would have refused on and
+    // the panel previously never mentioned. Named as well as counted, so the
+    // number is not a magic constant.
     await expect(
-      page.getByText('3 hard blockers must clear first').first(),
+      page.getByText('4 hard blockers must clear first').first(),
     ).toBeVisible();
+    // Attached rather than visible: the readiness rail caps how many issues it
+    // renders and puts the rest behind `View all issues` (the part-35 layout), so
+    // the fourth blocker is in the panel without being on screen. The count above
+    // is what the seller sees; this asserts which gate produced it.
+    await expect(page.getByText('No variant is listed').first()).toBeAttached();
   });
 
   test('the supplier source drawer opens, closes on Escape, and shows no credential', async ({

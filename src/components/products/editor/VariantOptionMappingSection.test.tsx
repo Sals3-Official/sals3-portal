@@ -172,7 +172,7 @@ describe('VariantOptionMappingSection', () => {
     render(
       <VariantOptionMappingSection
         proposal={PROPOSAL}
-        suggestedAxisNames={['Colour', 'Size']}
+        suggestedAxisNames={[['Colour'], ['Size']]}
         variantCount={6}
         onSave={onSave}
       />,
@@ -194,7 +194,7 @@ describe('VariantOptionMappingSection', () => {
     render(
       <VariantOptionMappingSection
         proposal={PROPOSAL}
-        suggestedAxisNames={['Colour', 'Size']}
+        suggestedAxisNames={[['Colour'], ['Size']]}
         variantCount={6}
         onSave={onSave}
       />,
@@ -310,7 +310,7 @@ describe('VariantOptionMappingSection', () => {
     render(
       <VariantOptionMappingSection
         proposal={PROPOSAL}
-        suggestedAxisNames={['Colour', null]}
+        suggestedAxisNames={[['Colour'], []]}
         variantCount={6}
       />,
     );
@@ -465,5 +465,80 @@ describe('VariantOptionMappingSection', () => {
 
     // S moved 0 -> 1 of three, so its own arrow stays enabled and keeps focus.
     expect(screen.getByRole('button', { name: 'Move S down' })).toHaveFocus();
+  });
+});
+
+describe('Variant Matrix copy for a single variant', () => {
+  it('says variant, not variants, and drops the ordering instruction', () => {
+    // Both became reachable when a one-variant product started getting a matrix.
+    // `1 variants` reads as carelessness, and there is nothing to order when
+    // every axis holds exactly one value.
+    render(
+      <VariantOptionMappingSection
+        proposal={[{ index: 0, values: ['Storage box'] }]}
+        variantCount={1}
+      />,
+    );
+
+    // The sentence is split across elements by JSX spacing, so it is read off
+    // the paragraph rather than matched node by node.
+    const intro = screen.getByText(/Found 1 buyer option/).textContent ?? '';
+
+    expect(intro).toContain('across 1 variant in');
+    expect(intro).not.toContain('order its values');
+  });
+
+  it('keeps both when there is a real choice', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[{ index: 0, values: ['Black', 'Army Green'] }]}
+        variantCount={2}
+      />,
+    );
+
+    const intro = screen.getByText(/Found 1 buyer option/).textContent ?? '';
+
+    expect(intro).toContain('across 2 variants');
+    expect(intro).toContain('order its values');
+  });
+});
+
+describe('every workbook suggestion is offered', () => {
+  it('renders one button per name and applies the one clicked', () => {
+    // The workbook says this category varies by colour or material. Showing only
+    // the first was a half-report, and it put "Colour" beside a bamboo organizer.
+    render(
+      <VariantOptionMappingSection
+        proposal={[{ index: 0, values: ['Storage box'] }]}
+        suggestedAxisNames={[['Colour', 'Material']]}
+        variantCount={1}
+      />,
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Use “Colour”' }),
+    ).toBeInTheDocument();
+
+    const material = screen.getByRole('button', {
+      name: 'Use “Material”',
+    });
+
+    fireEvent.click(material);
+
+    expect(screen.getByLabelText('Option 1 name')).toHaveValue('Material');
+  });
+
+  it('says pick one only when there is more than one to pick', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[{ index: 0, values: ['Black', 'Army Green'] }]}
+        suggestedAxisNames={[['Colour']]}
+        variantCount={2}
+      />,
+    );
+
+    expect(
+      screen.getByText('Suggested for this category:'),
+    ).toBeInTheDocument();
   });
 });

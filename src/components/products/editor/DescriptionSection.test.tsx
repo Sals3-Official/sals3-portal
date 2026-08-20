@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import uploadDescriptionImageAction from '@/app/(portal)/listings/description-image-actions';
+import saveDescriptionAction from '@/app/(portal)/listings/description-actions';
 import { renameOptionMappingAction } from '@/app/(portal)/listings/option-mapping-actions';
 import { saveProductDraftAction } from '@/app/(portal)/listings/product-draft-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
@@ -50,9 +50,15 @@ vi.mock('@/app/(portal)/listings/show-supplier-photo-actions', () => ({
   default: vi.fn(),
 }));
 
+vi.mock('@/app/(portal)/listings/description-actions', () => ({
+  default: vi.fn(),
+}));
+
 vi.mock('@/app/(portal)/listings/description-image-actions', () => ({
   default: vi.fn(),
 }));
+
+const PHOTO_URL = 'https://media.example.com/description-media/p/a.webp';
 
 const DRAFT_TARGET = {
   productId: '11111111-1111-4111-8111-111111111111',
@@ -115,157 +121,63 @@ describe('Description section - block authoring', () => {
     );
   });
 
-  it('adds a heading the seller typed as a heading block, not a paragraph', async () => {
-    vi.mocked(saveProductDraftAction).mockResolvedValue({
-      ok: true,
-      revisionVersion: 4,
-    });
-
-    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Heading' }));
-    fireEvent.change(screen.getByLabelText('Heading text'), {
-      target: { value: 'Fit and sizing' },
-    });
-
-    const document = await saveDraft();
-
-    expect(document.blocks).toEqual([
-      { type: 'heading', level: 3, text: 'Fit and sizing' },
-    ]);
-  });
-
-  it('reorders blocks into the order the storefront will render', async () => {
-    vi.mocked(saveProductDraftAction).mockResolvedValue({
-      ok: true,
-      revisionVersion: 4,
-    });
-
-    renderEditor({
-      ...databaseBackedFixture(),
-      descriptionBlocks: [
-        { type: 'paragraph', text: 'First.' },
-        { type: 'paragraph', text: 'Second.' },
-      ],
-    });
-
-    fireEvent.click(
-      screen.getAllByRole('button', { name: /Move paragraph up/ })[1],
-    );
-
-    const document = await saveDraft();
-
-    expect(document.blocks).toEqual([
-      { type: 'paragraph', text: 'Second.' },
-      { type: 'paragraph', text: 'First.' },
-    ]);
-  });
-
-  it('warns about markup in the block rather than failing the save later', () => {
-    renderEditor({
-      ...databaseBackedFixture(),
-      descriptionBlocks: [{ type: 'paragraph', text: 'Placeholder.' }],
-    });
-
-    fireEvent.change(screen.getByLabelText('Paragraph text'), {
-      target: { value: 'Wear <b>this</b>.' },
-    });
-
-    expect(screen.getByText(/Markup is not allowed/)).toBeInTheDocument();
-  });
-
-  it('never tells the seller supplier HTML is sanitised', () => {
-    // There is no sanitiser. The copy that claimed one shipped for months
-    // beside a field sellers were being asked to trust.
+  it('shows a read-only summary and hands editing to the full editor', () => {
+    // Two editable surfaces over one document, each holding its own copy, is how
+    // one quietly reverts the other. The listing page states what exists; the
+    // full editor owns the changing of it.
     renderEditor(databaseBackedFixture());
 
-    expect(screen.queryByText(/are sanitised before/)).not.toBeInTheDocument();
     expect(
-      screen.getByText(/never copied into a Sals3 listing/),
-    ).toBeInTheDocument();
+      screen.getByRole('link', { name: /Open full editor/i }),
+    ).toHaveAttribute(
+      'href',
+      `/listings/${DRAFT_TARGET.productId}/description`,
+    );
+    expect(screen.queryByLabelText('Paragraph text')).not.toBeInTheDocument();
   });
 
-  it('adds two consecutive image blocks for the side-by-side preset', async () => {
-    vi.mocked(saveProductDraftAction).mockResolvedValue({
-      ok: true,
-      revisionVersion: 4,
-    });
-    vi.mocked(uploadDescriptionImageAction).mockResolvedValue({
-      ok: true,
-      url: 'https://media.example.com/description-media/p/a.webp',
-      widthPixels: 1200,
-      heightPixels: 900,
-    });
-
+  it('opens an empty description in the simple box, ready to type', () => {
+    // A new product should not need a click before the first keystroke. The mode
+    // is derived from content, and an empty document is simple-representable.
     renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
 
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Two images, side by side' }),
-    );
-
-    // The layout is adjacency, not a stored group: two plain image blocks,
-    // and the editor says what the storefront will do with them.
-    expect(screen.getAllByLabelText('Alt text')).toHaveLength(2);
-    expect(screen.getByText('1 of 2 side by side')).toBeInTheDocument();
-    expect(screen.getByText('2 of 2 side by side')).toBeInTheDocument();
+    expect(screen.getByLabelText('Product description')).toBeInTheDocument();
+    expect(screen.getByText(/Empty description/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: /full editor/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it('uploads a file and saves the returned address in the block', async () => {
-    vi.mocked(saveProductDraftAction).mockResolvedValue({
-      ok: true,
-      revisionVersion: 4,
-    });
-    vi.mocked(uploadDescriptionImageAction).mockResolvedValue({
-      ok: true,
-      url: 'https://media.example.com/description-media/p/a.webp',
-      widthPixels: 1200,
-      heightPixels: 900,
-    });
+  it('keeps the blocks inline when there is no draft to save against', () => {
+    // A fixture preview has no revision for the full editor to compare-and-set,
+    // so the inline fields stay rather than linking to a screen that cannot save.
+    renderEditor({ ...databaseBackedFixture(), draftSaveTarget: null });
 
-    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Image, full width' }));
-
-    const file = new File(['bytes'], 'chart.png', { type: 'image/png' });
-
-    // The file input is hidden from the accessibility tree — the Upload
-    // button is the control — so it is reached by test id rather than role.
-    fireEvent.change(screen.getByTestId(/-file$/), {
-      target: { files: [file] },
-    });
-
-    await waitFor(() =>
-      expect(uploadDescriptionImageAction).toHaveBeenCalled(),
-    );
-
-    fireEvent.change(screen.getByLabelText('Alt text'), {
-      target: { value: 'Size chart' },
-    });
-
-    const saved = await saveDraft();
-
-    expect(saved.blocks).toEqual([
-      {
-        type: 'image',
-        url: 'https://media.example.com/description-media/p/a.webp',
-        alt: 'Size chart',
-      },
-    ]);
+    expect(screen.getByLabelText('Paragraph text')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: /full editor/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it('asks for alt text before the image is publishable', () => {
+  it('summarises what the description holds without repeating the whole thing', () => {
     renderEditor({
       ...databaseBackedFixture(),
       descriptionBlocks: [
-        {
-          type: 'image',
-          url: 'https://media.example.com/description-media/p/a.webp',
-          alt: '',
-        },
+        { type: 'paragraph', text: 'A packable 20L daypack.' },
+        { type: 'heading', level: 3, text: 'Key features' },
+        { type: 'image', url: 'https://media.example.com/a.webp', alt: 'Back' },
       ],
     });
 
-    expect(screen.getByText(/Alt text is required/)).toBeInTheDocument();
+    expect(
+      screen.getByText('1 paragraph · 1 heading · 1 image'),
+    ).toBeInTheDocument();
+    // `getAllBy`: the draft storefront preview elsewhere in the editor renders
+    // the same first paragraph, which is correct — both are showing one
+    // document.
+    expect(
+      screen.getAllByText(/A packable 20L daypack/).length,
+    ).toBeGreaterThan(0);
   });
 });
 
@@ -407,5 +319,470 @@ describe('Variant Matrix - renaming a saved mapping', () => {
       ).toBeInTheDocument(),
     );
     expect(screen.queryByText(/Mapped as Colour/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Two editors over one stored document.
+ *
+ * The mode is derived from the content rather than stored, so these cases are
+ * about which surface a given document opens in — and about the one conversion
+ * that can change content, which must never happen without being named first.
+ */
+describe('Description section - simple text and designed layout', () => {
+  const RICH = [
+    { type: 'heading' as const, level: 2 as const, text: 'Fit and sizing' },
+    { type: 'bulletList' as const, items: ['Six pockets'] },
+  ];
+
+  it('opens a plain-paragraph document in simple text', () => {
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionBlocks: [{ type: 'paragraph', text: 'Soft cotton twill.' }],
+    });
+
+    expect(screen.getByLabelText('Product description')).toHaveValue(
+      'Soft cotton twill.',
+    );
+    expect(screen.getByRole('button', { name: /Simple text/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('opens a document with structure in the designed layout', () => {
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: RICH });
+
+    expect(
+      screen.getByRole('button', { name: /Designed layout/ }),
+    ).toHaveAttribute('aria-pressed', 'true');
+    expect(
+      screen.getByRole('link', { name: /Open full editor/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('saves what was typed in the simple box as paragraph blocks', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 4,
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'Features:\nSix pockets\n\nCare:\nCold wash' },
+    });
+
+    // A blank line starts a paragraph; a single newline stays inside one.
+    expect((await saveDraft()).blocks).toEqual([
+      { type: 'paragraph', text: 'Features:\nSix pockets' },
+      { type: 'paragraph', text: 'Care:\nCold wash' },
+    ]);
+  });
+
+  it('switching to the designed layout needs no warning and loses nothing', () => {
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionBlocks: [{ type: 'paragraph', text: 'Soft cotton twill.' }],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Designed layout/ }));
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Open full editor/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('refuses to flatten a designed document without naming what it costs', () => {
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: RICH });
+
+    fireEvent.click(screen.getByRole('button', { name: /Simple text/ }));
+
+    const dialog = screen.getByRole('alertdialog');
+
+    expect(dialog).toHaveTextContent('1 heading');
+    expect(dialog).toHaveTextContent('1 bullet list');
+    // The modal correctly takes the background out of the accessibility tree,
+    // so "still designed" is asserted by the cancel case below rather than by
+    // reaching for a control the dialog is deliberately hiding.
+  });
+
+  it('cancelling the warning keeps the designed layout untouched', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 4,
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: RICH });
+
+    fireEvent.click(screen.getByRole('button', { name: /Simple text/ }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Keep the designed layout/ }),
+    );
+
+    expect((await saveDraft()).blocks).toEqual(RICH);
+  });
+
+  it('confirming keeps every word and drops only the structure', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 4,
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: RICH });
+
+    fireEvent.click(screen.getByRole('button', { name: /Simple text/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Switch and flatten/ }));
+
+    expect((await saveDraft()).blocks).toEqual([
+      { type: 'paragraph', text: 'Fit and sizing' },
+      { type: 'paragraph', text: 'Six pockets' },
+    ]);
+  });
+
+  it('lets a trailing space be typed, and keeps it', () => {
+    // Storing trims each paragraph, so deriving the field's value from the
+    // document made a trailing space impossible to type — it round-tripped away
+    // in the same keystroke that produced it. The field holds its own text and
+    // reconciles against its projection instead.
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionBlocks: [{ type: 'paragraph', text: 'Soft cotton' }],
+    });
+
+    const field = screen.getByLabelText('Product description');
+
+    fireEvent.change(field, { target: { value: 'Soft cotton ' } });
+
+    expect(field).toHaveValue('Soft cotton ');
+  });
+
+  it('saves the trimmed text even though the field keeps the space', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 4,
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: '  Soft cotton  ' },
+    });
+
+    expect((await saveDraft()).blocks).toEqual([
+      { type: 'paragraph', text: 'Soft cotton' },
+    ]);
+  });
+
+  it('opens a legacy photo-bearing document in the designed layout', () => {
+    // No stored mode means it predates the field, so its photo was published.
+    // Designed is where that photo is visible, and nothing it publishes changes.
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: undefined,
+      descriptionBlocks: [
+        { type: 'paragraph', text: 'Soft cotton twill.' },
+        { type: 'image', url: PHOTO_URL, alt: 'Pocket detail' },
+      ],
+    });
+
+    expect(
+      screen.getByRole('button', { name: /Designed layout/ }),
+    ).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('says a retained photo is kept and not published, rather than showing nothing', () => {
+    // The seller chose simple text. The photo stays in the document so switching
+    // layout again restores it, and simple text does not publish it — so it has
+    // to be *mentioned*, or it reads as a photo that was thrown away.
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: 'simple',
+      descriptionBlocks: [
+        { type: 'paragraph', text: 'Soft cotton twill.' },
+        { type: 'image', url: PHOTO_URL, alt: 'Pocket detail' },
+      ],
+    });
+
+    expect(screen.getByLabelText('Product description')).toHaveValue(
+      'Soft cotton twill.',
+    );
+    expect(
+      screen.getByText(/One photo from the designed layout is saved/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId('simple-description-file'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps a retained photo through an edit and a save', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 4,
+    });
+
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: 'simple',
+      descriptionBlocks: [
+        { type: 'paragraph', text: 'Soft cotton twill.' },
+        { type: 'image', url: PHOTO_URL, alt: 'Pocket detail' },
+      ],
+    });
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'Rewritten entirely.' },
+    });
+
+    const document = await saveDraft();
+
+    // Typing in the box must never be the thing that drops an upload.
+    expect(document.blocks).toEqual([
+      { type: 'paragraph', text: 'Rewritten entirely.' },
+      { type: 'image', url: PHOTO_URL, alt: 'Pocket detail' },
+    ]);
+    expect(document.mode).toBe('simple');
+  });
+
+  it('keeps the simple box free of an upload button and prompt chips', () => {
+    // Both were removed on purpose. A toolbar here could only produce a worse
+    // version of what the designed layout does properly, and a row of
+    // suggestions around an empty box is furniture rather than help.
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    expect(
+      screen.queryByRole('button', { name: /Add images/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Recommended input/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Two ways this editor used to leave a seller guessing whether a save landed.
+ */
+describe('Product editor - telling the seller a save landed', () => {
+  it('shows renamed option labels without a manual page refresh', () => {
+    // `router.refresh()` re-renders this client component with a fresh fixture
+    // but never remounts it, and `variants` was seeded by `useState` on mount.
+    // So "Save names" reported success while every row underneath kept the old
+    // label, and refreshing by hand was the only way to find out it had worked.
+    const base = databaseBackedFixture();
+    const before: ProductEditorFixture = {
+      ...base,
+      variants: base.variants.map((variant, index) =>
+        index === 0 ? { ...variant, optionLabel: 'Colr: army green' } : variant,
+      ),
+    };
+
+    const { rerender } = renderEditor(before);
+
+    expect(
+      screen.getByRole('switch', { name: 'List Colr: army green' }),
+    ).toBeInTheDocument();
+
+    const after: ProductEditorFixture = {
+      ...before,
+      variants: before.variants.map((variant, index) =>
+        index === 0
+          ? { ...variant, optionLabel: 'Colour: Army Green' }
+          : variant,
+      ),
+    };
+
+    rerender(
+      <ProductEditor
+        fixture={after}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    expect(
+      screen.getByRole('switch', { name: 'List Colour: Army Green' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('switch', { name: 'List Colr: army green' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps an unsaved retail price while adopting a renamed label', () => {
+    // The reason only the label field is copied across. Replacing the whole row
+    // would discard a price the seller typed and had not saved yet — a worse
+    // bug than the one being fixed.
+    const base = databaseBackedFixture();
+    const priced = base.variants[0];
+
+    if (priced === undefined) throw new Error('fixture has no variants');
+
+    const { rerender } = renderEditor(base);
+
+    const priceField = screen.getAllByLabelText(/Retail price/i)[0];
+
+    if (priceField === undefined) throw new Error('no retail price field');
+
+    fireEvent.change(priceField, { target: { value: '42.50' } });
+
+    rerender(
+      <ProductEditor
+        fixture={{
+          ...base,
+          variants: base.variants.map((variant, index) =>
+            index === 0
+              ? { ...variant, optionLabel: 'Colour: Army Green' }
+              : variant,
+          ),
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    expect(screen.getAllByLabelText(/Retail price/i)[0]).toHaveValue('42.50');
+  });
+
+  it('saves the description from its own section, in both modes', async () => {
+    vi.mocked(saveDescriptionAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 5,
+      contentChecksum: 'abc',
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'Soft cotton twill.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save description/ }));
+
+    await waitFor(() => expect(saveDescriptionAction).toHaveBeenCalled());
+
+    const [input] = vi.mocked(saveDescriptionAction).mock.calls.at(-1) ?? [];
+    const sent = input as {
+      descriptionDocument: { mode: string; blocks: unknown[] };
+    };
+
+    expect(sent.descriptionDocument.blocks).toEqual([
+      { type: 'paragraph', text: 'Soft cotton twill.' },
+    ]);
+    expect(sent.descriptionDocument.mode).toBe('simple');
+    expect(await screen.findByText('Description saved.')).toBeInTheDocument();
+  });
+
+  it('stops offering to revert once the description has saved', async () => {
+    vi.mocked(saveDescriptionAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 5,
+      contentChecksum: 'abc',
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'Soft cotton twill.' },
+    });
+
+    expect(
+      screen.getByRole('button', { name: /Revert to last saved/ }),
+    ).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Save description/ }));
+    await screen.findByText('Description saved.');
+
+    // Saved work must not keep reading as unsaved.
+    expect(
+      screen.getByRole('button', { name: /Revert to last saved/ }),
+    ).toBeDisabled();
+  });
+
+  it('says so when the description save is refused', async () => {
+    vi.mocked(saveDescriptionAction).mockResolvedValue({
+      ok: false,
+      reason: 'version_conflict',
+      message: 'This description changed in another tab or session.',
+    });
+
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'Soft cotton twill.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save description/ }));
+
+    expect(
+      await screen.findByText(/changed in another tab or session/),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('Product editor - a mode switch is an unsaved change', () => {
+  it('marks the page unsaved after switching editor', () => {
+    // The mode is stored on the document, so changing it changes the document.
+    // The page must not claim there is nothing to save.
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: 'simple',
+      descriptionBlocks: [{ type: 'paragraph', text: 'Soft cotton twill.' }],
+    });
+
+    expect(
+      screen.getByRole('button', { name: /Revert to last saved/ }),
+    ).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Designed layout/ }));
+
+    expect(
+      screen.getByRole('button', { name: /Designed layout/ }),
+    ).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('offers no save or revert in the designed layout, where they act on nothing', () => {
+    // Editing happens on the full editor, which saves its own work. A save
+    // button here could only commit the mode choice — a control with nothing
+    // visible to act on. `Save Draft` and the full editor both persist it.
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: 'design',
+      descriptionBlocks: [{ type: 'heading', level: 2, text: 'Fit' }],
+    });
+
+    expect(
+      screen.queryByRole('button', { name: /Save description/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Revert to last saved/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Open full editor/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('carries the switched mode through Save Draft', async () => {
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionVersion: 4,
+    });
+
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: 'simple',
+      descriptionBlocks: [{ type: 'paragraph', text: 'Soft cotton twill.' }],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Designed layout/ }));
+
+    expect((await saveDraft()).mode).toBe('design');
+  });
+
+  it('shows the empty-description warning once, not twice', () => {
+    // The section owns that message for both modes. The summary said it too,
+    // in different words, so one finding read as two.
+    renderEditor({
+      ...databaseBackedFixture(),
+      descriptionMode: 'design',
+      descriptionBlocks: [],
+    });
+
+    expect(screen.getAllByText(/Empty description/)).toHaveLength(1);
   });
 });

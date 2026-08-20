@@ -4,8 +4,10 @@ import { z } from 'zod';
 import {
   DESCRIPTION_DOCUMENT_VERSION,
   DISALLOWED_CONTROL,
+  INLINE_MARKS,
   MARKUP_OPENER,
   MAX_BLOCKS,
+  MAX_RUNS_PER_BLOCK,
   MAX_LABEL_LENGTH,
   MAX_ALT_LENGTH,
   MAX_LIST_ITEMS,
@@ -14,6 +16,7 @@ import {
   type BulletListBlock,
   type HeadingBlock,
   type ImageBlock,
+  type InlineRun,
   type KeyValueListBlock,
   type ParagraphBlock,
 } from '@/lib/products/description-blocks';
@@ -65,9 +68,44 @@ const plainText = (max: number) =>
         'Control characters are not allowed in product description content.',
     });
 
+/**
+ * One run's text: the same markup and control rules as `plainText`, without
+ * the trim or the non-empty floor at the edges of the string.
+ *
+ * A run legitimately holds interior whitespace — the space between a bold word
+ * and the next word has to belong to some run — and trimming each run
+ * individually would delete it, breaking the join invariant below on the very
+ * documents the feature exists for. Whitespace-only is therefore allowed;
+ * genuinely empty is not, because the normaliser drops empty runs and one
+ * arriving here means the client skipped it.
+ */
+const runText = z
+  .string()
+  .min(1)
+  .max(MAX_TEXT_LENGTH)
+  .refine((value) => !MARKUP_OPENER.test(value), {
+    message: 'Markup is not allowed in product description content.',
+  })
+  .refine((value) => !DISALLOWED_CONTROL.test(value), {
+    message:
+      'Control characters are not allowed in product description content.',
+  });
+
+const inlineRunSchema = z.object({
+  text: runText,
+  /**
+   * A closed enum, so an unknown mark is a rejected save rather than a style
+   * a renderer has to decide what to do with. `.max` matches the vocabulary
+   * size: the same mark twice is not a different meaning, and the normaliser
+   * never emits it.
+   */
+  marks: z.array(z.enum(INLINE_MARKS)).max(INLINE_MARKS.length).optional(),
+}) satisfies z.ZodType<InlineRun>;
+
 const paragraphBlockSchema = z.object({
   type: z.literal('paragraph'),
   text: plainText(MAX_TEXT_LENGTH),
+  runs: z.array(inlineRunSchema).max(MAX_RUNS_PER_BLOCK).optional(),
 }) satisfies z.ZodType<ParagraphBlock>;
 
 const headingBlockSchema = z.object({
@@ -124,10 +162,95 @@ export const descriptionBlockSchema = z.discriminatedUnion('type', [
 
 export { DESCRIPTION_DOCUMENT_VERSION };
 
-export const descriptionDocumentSchema = z.object({
-  version: z.literal(DESCRIPTION_DOCUMENT_VERSION),
-  blocks: z.array(descriptionBlockSchema).max(MAX_BLOCKS),
-});
+/**
+ * A paragraph's `runs` must join to exactly its `text`.
+ *
+ * Enforced here, at the document level, rather than on the block schema:
+ * `z.discriminatedUnion` takes plain object schemas, and a `superRefine`
+ * wrapper around the paragraph member would have to be unwrapped for the
+ * discriminator to stay resolvable. One walk over the blocks is also the only
+ * place this rule lives, which is what the block union's own `satisfies`
+ * checks buy elsewhere.
+ *
+ * The rule itself is the reason emphasis is safe to add at all. Two fields
+ * that could describe different sentences would mean a buyer's view depended
+ * on whether their renderer understood marks — a seller could review the
+ * styled paragraph, publish, and have different words reach every consumer
+ * that reads `text`, which today is the storefront, the meta-description
+ * suggestion, and the readiness check. One canonical string, optionally
+ * described a second time, cannot diverge from itself.
+ *
+ * Marks are not deduplicated or reordered on the way in. Both are the client
+ * normaliser's job, and quietly rewriting the payload here would mean the
+ * checksum stored as the revision's identity describes a document the editor
+ * never showed the seller.
+ */
+export const descriptionDocumentSchema = z
+  .object({
+    version: z.literal(DESCRIPTION_DOCUMENT_VERSION),
+    /**
+     * Which editor the seller chose, and therefore what publishes.
+     *
+     * Optional, and absent on every document written before it existed — those
+     * are inferred from their content, so no stored description changes meaning
+     * and no migration is needed. Adding an optional field to a JSONB document is
+     * the same non-event `runs` was.
+     *
+     * It exists because the content can no longer answer the question. Simple
+     * mode publishes only its paragraphs but **retains** photos saved in the
+     * designed layout, so a simple document holding photos is indistinguishable
+     * by content from a designed one. The alternative was deleting a seller's
+     * photos on a layout switch, which is a worse trade than storing an intent.
+     *
+     * `publishableBlocks` in `@/lib/products/simple-description` is the only
+     * place this changes an outcome.
+     */
+    mode: z.enum(['simple', 'design']).optional(),
+    blocks: z.array(descriptionBlockSchema).max(MAX_BLOCKS),
+  })
+  .superRefine((document, context) => {
+    document.blocks.forEach((block, index) => {
+      if (block.type !== 'paragraph') return;
+
+      const { runs } = block;
+
+      if (runs === undefined) return;
+
+      const path = ['blocks', index, 'runs'];
+
+      if (runs.length === 0) {
+        context.addIssue({
+          code: 'custom',
+          path,
+          message:
+            'Omit `runs` for an unemphasised paragraph rather than sending an empty list.',
+        });
+
+        return;
+      }
+
+      if (runs.map((run) => run.text).join('') !== block.text) {
+        context.addIssue({
+          code: 'custom',
+          path,
+          message:
+            'Description emphasis does not match the paragraph text it describes.',
+        });
+      }
+
+      runs.forEach((run, runIndex) => {
+        const marks = run.marks ?? [];
+
+        if (new Set(marks).size !== marks.length) {
+          context.addIssue({
+            code: 'custom',
+            path: [...path, runIndex, 'marks'],
+            message: 'A run repeats a mark.',
+          });
+        }
+      });
+    });
+  });
 
 export type DescriptionBlock = z.infer<typeof descriptionBlockSchema>;
 export type DescriptionDocument = z.infer<typeof descriptionDocumentSchema>;

@@ -19,6 +19,7 @@ function renderSection(overrides: Partial<ProductEditorFixture> = {}) {
   return render(
     <BasicInformationSection
       fixture={fixture}
+      media={fixture.media}
       productName={fixture.productName}
       onProductNameChange={vi.fn()}
       sellerSku=""
@@ -40,6 +41,47 @@ describe('BasicInformationSection - Product media', () => {
     renderSection({ media: [] });
 
     expect(screen.getByText('0 of 12 photos')).toBeInTheDocument();
+  });
+
+  it('counts the live media list, not the server-rendered fixture snapshot', () => {
+    // Regression: the counter and grid used to read `fixture.media`, so an
+    // upload never appeared until a full refresh re-rendered the page.
+    const fixture = { ...loadFixture('pass'), media: [] };
+
+    render(
+      <BasicInformationSection
+        fixture={fixture}
+        media={[
+          {
+            id: 'live-1',
+            label: 'Photo 1',
+            sourceUrl: null,
+            altText: 'Seller-uploaded photo',
+            rightsCheck: 'VERIFIED',
+            storageState: 'SALS3_STORED',
+            sourceType: 'SELLER_UPLOAD',
+            pixelWidth: 1200,
+            pixelHeight: 1200,
+            note: null,
+            isCover: true,
+          },
+        ]}
+        productName={fixture.productName}
+        onProductNameChange={vi.fn()}
+        sellerSku=""
+        onSellerSkuChange={vi.fn()}
+        brandDeclaration="No brand / generic"
+        onBrandDeclarationChange={vi.fn()}
+        onUploadPhoto={vi.fn()}
+        onDeletePhoto={vi.fn()}
+        onMakeCoverPhoto={vi.fn()}
+        isUploadingPhoto={false}
+        deletingPhotoId={null}
+        showSupplierPhoto={fixture.showSupplierPhoto}
+      />,
+    );
+
+    expect(screen.getByText('1 of 12 photos')).toBeInTheDocument();
   });
 
   it('tells the seller the storefront falls back to the supplier photo until they upload one', () => {

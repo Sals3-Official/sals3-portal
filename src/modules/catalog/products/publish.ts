@@ -25,7 +25,8 @@ import {
 import { findActiveProfileForSeller } from '@/modules/market-config/repository';
 import { resolveProductPricing } from '@/modules/pricing/resolver';
 import { minimumRetailAmountMinorForSupplierCost } from '@/lib/pricing/retail-price-floor';
-import { ensureProductCjCategory } from './category-mirror';
+import type { PublishGateReason } from '@/lib/products/publish-gates';
+import { isSals3TaxonomyCode } from '@/modules/catalog/taxonomy/v1-reference';
 import { deriveOptionSplit } from './option-split';
 import {
   projectSupplierMediaForProduct,
@@ -133,6 +134,19 @@ async function optionMappingRequiredButMissing(
    */
   if (split.labelWidth < 2) return false;
 
+  /**
+   * A single-variant product never gates publication either, whatever its label
+   * width (2026-08-19).
+   *
+   * `deriveOptionSplit` now accepts one variant so the seller can name what a
+   * buyer reads. Letting that reach this gate would newly refuse every live
+   * one-variant product carrying a concatenated label until somebody named its
+   * axes — a listing already selling, stopped by a change meant to give the
+   * seller a naming control. With one variant a buyer has no choice to make, so
+   * there is no opaque option string to protect them from.
+   */
+  if (labels.length < 2) return false;
+
   const mapped = await executor
     .select({ id: productOptions.id })
     .from(productOptions)
@@ -142,19 +156,23 @@ async function optionMappingRequiredButMissing(
   return mapped.length === 0;
 }
 
-export type PublishRefusal =
-  | 'NO_ACTIVE_VARIANT'
-  | 'CATEGORY_UNMAPPED'
-  | 'OPTIONS_UNMAPPED'
-  | 'NO_APPROVED_MEDIA'
-  | 'PRICING_UNRESOLVED'
-  | 'RETAIL_BELOW_SUPPLIER_COST'
-  | 'NO_ACTIVE_MARKET_PROFILE'
-  | 'CURRENCY_NOT_AUTHORIZED'
-  | 'NO_SUPPLIER_COST'
-  | 'NO_ACTIVE_SUPPLIER_BINDING'
-  | 'NO_PUBLISHABLE_REVISION'
-  | 'SLUG_UNAVAILABLE';
+/**
+ * Every reason this module may refuse, derived from the gate catalogue in
+ * `@/lib/products/publish-gates` rather than listed again here.
+ *
+ * That indirection is the point. The catalogue carries each gate's seller-facing
+ * copy and the editor section it belongs to, so a gate this module learns to
+ * refuse without copy over there does not compile — which is what stops the
+ * readiness panel from silently knowing about fewer gates than the server, as it
+ * did for eight of eleven. `SALS3_CATEGORY_REQUIRED` replaced
+ * `CATEGORY_UNMAPPED` on 2026-08-20: a CJ mirror is no longer accepted in its
+ * place.
+ *
+ * Note what has *not* moved: every condition below is still evaluated here,
+ * inside the transaction, against the pricing resolver and the market capability
+ * boundary. Only the vocabulary is shared.
+ */
+export type PublishRefusal = PublishGateReason;
 
 export type PublishProductResult =
   | {
@@ -460,44 +478,35 @@ export default async function publishProduct(input: {
       return { ok: false, reason: 'NO_ACTIVE_VARIANT' };
     }
 
-    let { categoryCode } = product;
-    let categoryConfidence = product.confidence;
-    let productVersion = input.expectedProductVersion;
+    const { categoryCode } = product;
+    const categoryConfidence = product.confidence;
+    const productVersion = input.expectedProductVersion;
 
+    /**
+     * Publication requires a real Sals3 Taxonomy v1 category, chosen by a
+     * person (owner decision 2026-08-20).
+     *
+     * This reverses the 2026-08-14 decision that "the CJ category is the
+     * Sals3 category", which this branch implemented by calling
+     * `ensureProductCjCategory` to mint a `CJ-<uuid>` mirror row and carry
+     * on. The mirror keeps the place it earns — a DRAFT default, so a new
+     * product has somewhere to sit before anyone has looked at it. What it
+     * must not do is reach a live listing: `CJ-976399B4-534B-46F0-B18A-…`
+     * is the supplier's filing system, not Sals3's, and once published it
+     * becomes the category a buyer browses and the node the pricing chain
+     * resolves a margin from.
+     *
+     * `UNMAPPED`/`AMBIGUOUS` are refused for the reason they always were.
+     * What changed is that a mirrored code is refused too, instead of being
+     * manufactured on the way past.
+     */
     if (
       categoryCode === null ||
       categoryConfidence === 'UNMAPPED' ||
-      categoryConfidence === 'AMBIGUOUS'
+      categoryConfidence === 'AMBIGUOUS' ||
+      !isSals3TaxonomyCode(categoryCode)
     ) {
-      // The CJ category is the Sals3 category (owner decision 2026-08-14).
-      // A product still `UNMAPPED` here predates that decision, so it is
-      // categorised now, from the same persisted supplier facts a new draft
-      // would use — inside this transaction, so a later refusal undoes it.
-      const candidateId =
-        variants.find((variant) => variant.supplierCandidateId !== null)
-          ?.supplierCandidateId ?? null;
-      const mirrored =
-        candidateId === null
-          ? null
-          : await ensureProductCjCategory(tx, {
-              productId: input.productId,
-              stewardSellerAccountId: input.sellerAccountId,
-              expectedProductVersion: input.expectedProductVersion,
-              candidateId,
-              actorId: input.actorId,
-            });
-
-      // Still a real refusal: this candidate has no CJ category on record,
-      // so there is nothing to categorise or price the product with.
-      if (mirrored === null) {
-        return { ok: false, reason: 'CATEGORY_UNMAPPED' };
-      }
-
-      categoryCode = mirrored.categoryCode;
-      categoryConfidence = mirrored.categoryMappingConfidence;
-      // The assignment bumped `products.version`; every later write must
-      // compare against the bumped value, not the one the screen read.
-      productVersion = mirrored.productVersion;
+      return { ok: false, reason: 'SALS3_CATEGORY_REQUIRED' };
     }
 
     if (await optionMappingRequiredButMissing(tx, input.productId)) {

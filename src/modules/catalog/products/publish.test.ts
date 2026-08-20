@@ -19,7 +19,6 @@ const mocks = vi.hoisted(() => ({
   resolveProductPricing: vi.fn(),
   projectSupplierMedia: vi.fn(),
   appendAuditEvent: vi.fn(),
-  ensureProductCjCategory: vi.fn(),
 }));
 
 vi.mock('@/modules/market-config/repository', () => ({
@@ -46,10 +45,6 @@ vi.mock('./media-projection', () => ({
 
 vi.mock('@/modules/catalog/candidates/repository', () => ({
   appendAuditEvent: mocks.appendAuditEvent,
-}));
-
-vi.mock('./category-mirror', () => ({
-  ensureProductCjCategory: mocks.ensureProductCjCategory,
 }));
 
 const publishProduct = (await import('./publish')).default;
@@ -99,7 +94,7 @@ function productRow(overrides: Record<string, unknown> = {}) {
     slug: null,
     version: 1,
     categoryId: 'cat-1',
-    categoryCode: 'CAT-APP-100412',
+    categoryCode: 'CAT-GGL-1604',
     confidence: 'EXACT',
     currentRevisionId: 'rev-1',
     ...overrides,
@@ -284,7 +279,6 @@ describe('publishProduct', () => {
       source: 'DETAIL_EVIDENCE',
     });
     // No CJ category to mirror unless a test says otherwise.
-    mocks.ensureProductCjCategory.mockResolvedValue(null);
   });
 
   it('publishes a product that satisfies every gate', async () => {
@@ -380,32 +374,55 @@ describe('publishProduct', () => {
     expect(await publish(emptyDb)).toEqual({ ok: false, reason: 'not_found' });
   });
 
-  it.each([
-    ['UNMAPPED', 'CATEGORY_UNMAPPED'],
-    ['AMBIGUOUS', 'CATEGORY_UNMAPPED'],
-  ])(
-    'refuses a %s category mapping when the candidate has no CJ category to mirror',
-    async (confidence, reason) => {
+  it.each([['UNMAPPED'], ['AMBIGUOUS']])(
+    'refuses a %s category mapping outright — no mirror is minted to get past it',
+    async (confidence) => {
       const { db } = transactionalDb({ product: productRow({ confidence }) });
 
-      expect(await publish(db)).toEqual({ ok: false, reason });
-      // The mirror was consulted with the variant's source candidate before
-      // refusing — refusal means it really had nothing, not that nobody asked.
-      expect(mocks.ensureProductCjCategory).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          productId: PRODUCT_ID,
-          stewardSellerAccountId: SELLER_ID,
-          candidateId: 'candidate-1',
-          expectedProductVersion: 1,
-        }),
-      );
-      expect(mocks.resolveProductPricing).not.toHaveBeenCalled();
+      expect(await publish(db)).toEqual({
+        ok: false,
+        reason: 'SALS3_CATEGORY_REQUIRED',
+      });
     },
   );
 
   /**
-   * Four labels forming an exact 2 × 2 grid, which is the only shape
+   * The 2026-08-20 reversal. Publication used to mint a `CJ-<uuid>` mirror
+   * category and carry on; a mirror is a draft default, not a Sals3
+   * category, and it must not reach a live listing.
+   */
+  it('refuses a CJ mirror category even when the mapping confidence is EXACT', async () => {
+    const { db } = transactionalDb({
+      product: productRow({
+        categoryCode: 'CJ-2409230540351618000',
+        confidence: 'EXACT',
+      }),
+    });
+
+    expect(await publish(db)).toEqual({
+      ok: false,
+      reason: 'SALS3_CATEGORY_REQUIRED',
+    });
+    // And it refuses before pricing — a mirrored node must never resolve a margin.
+    expect(mocks.resolveProductPricing).not.toHaveBeenCalled();
+  });
+
+  it('refuses a Taxonomy v0 code, which is not a v1 category either', async () => {
+    const { db } = transactionalDb({
+      product: productRow({
+        categoryCode: 'CAT-APP-100412',
+        confidence: 'EXACT',
+      }),
+    });
+
+    expect(await publish(db)).toEqual({
+      ok: false,
+      reason: 'SALS3_CATEGORY_REQUIRED',
+    });
+  });
+
+  /**
+   * Four labels forming a complete two-axis grid — the shape
    * `deriveOptionSplit` accepts. Every other field comes from `variantRow` so the
    * earlier refusals still pass and the option gate is what answers.
    */
@@ -521,7 +538,7 @@ describe('publishProduct', () => {
     expect(await publish(db)).toMatchObject({ ok: true });
   });
 
-  it('categorises an UNMAPPED product from its CJ category, then publishes', async () => {
+  it('does not categorise an UNMAPPED product from its CJ category any more', async () => {
     const { db, writes } = transactionalDb({
       product: productRow({
         categoryId: null,
@@ -530,32 +547,15 @@ describe('publishProduct', () => {
       }),
     });
 
-    mocks.ensureProductCjCategory.mockResolvedValue({
-      categoryCode: 'CJ-2409230540351618000',
-      categoryMappingConfidence: 'EXACT',
-      // The assignment's own compare-and-set bumped the product version.
-      productVersion: 2,
-    });
-
     const result = await publish(db);
 
-    expect(result).toMatchObject({ ok: true, slug: 'waterproof-shell-jacket' });
-    // Pricing ran on the mirrored category, not on the NULL the row carried.
-    expect(mocks.resolveProductPricing).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        categoryCode: 'CJ-2409230540351618000',
-        categoryMappingConfidence: 'EXACT',
-      }),
-    );
-    // The publication flip compared against the bumped version.
-    const productWrite = writes.find((write) => write.table === products)
-      ?.values as Record<string, unknown>;
-
-    expect(productWrite).toMatchObject({
-      publicationState: 'PUBLISHED',
-      version: 3,
+    expect(result).toEqual({
+      ok: false,
+      reason: 'SALS3_CATEGORY_REQUIRED',
     });
+    // Nothing was written on the way to the refusal — no mirror row, no
+    // version bump, no publication flip.
+    expect(writes).toHaveLength(0);
   });
 
   it('refuses when the product has no active variant', async () => {
@@ -857,7 +857,7 @@ describe('publishProduct', () => {
     expect(mocks.resolveProductPricing).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        categoryCode: 'CAT-APP-100412',
+        categoryCode: 'CAT-GGL-1604',
         settlementCurrency: 'USD',
       }),
     );
@@ -881,12 +881,11 @@ describe('publishProduct — category attribute specifications never gate publis
       skipped: 0,
       source: 'DETAIL_EVIDENCE',
     });
-    mocks.ensureProductCjCategory.mockResolvedValue(null);
   });
 
   const CATEGORY_ROW = {
     id: 'cat-1',
-    code: 'CAT-APP-100412',
+    code: 'CAT-GGL-1604',
     path: 'Apparel & Accessories',
   };
 

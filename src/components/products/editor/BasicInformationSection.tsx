@@ -9,7 +9,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import type { ProductEditorFixture } from '@/lib/seller-center/product-editor/types';
+import type {
+  MediaItemFixture,
+  ProductEditorFixture,
+} from '@/lib/seller-center/product-editor/types';
 import ProductPhotoManager from './ProductPhotoManager';
 import Sals3CategoryPicker, {
   type Sals3CategoryOption,
@@ -39,24 +42,26 @@ function supplierPhotoCaption(
     return "Buyers see only your photos — the supplier's is hidden.";
   }
 
-  return 'Off with nothing uploaded yet — buyers see no photo at all.';
+  // The storefront's fallback, stated rather than implied: the switch only
+  // starts hiding the supplier photo once there is a seller photo to show
+  // instead, so "off" with an empty gallery never blanks the product page.
+  return "Off with nothing uploaded yet — buyers still see the supplier's photo until you upload your own.";
 }
 
-function photoManagerCaption(
-  hasOwnPhotos: boolean,
-  showSupplierPhoto: boolean,
-): string {
+function photoManagerCaption(hasOwnPhotos: boolean): string {
   if (hasOwnPhotos) return 'The star sets a photo as the storefront cover.';
 
-  if (showSupplierPhoto) {
-    return "Shown from the supplier's own photo until you upload one — see Supplier Details for the original.";
-  }
-
-  return "No photo will show until you upload one — the supplier's photo is turned off above.";
+  return "Shown from the supplier's own photo until you upload one — see Supplier Details for the original.";
 }
 
 type BasicInformationSectionProps = {
   fixture: ProductEditorFixture;
+  /**
+   * The live media list the workspace owns — not `fixture.media`, which is the
+   * server-rendered snapshot and goes stale the moment an upload or delete
+   * succeeds without a full refresh.
+   */
+  media: MediaItemFixture[];
   productName: string;
   onProductNameChange: (value: string) => void;
   sellerSku: string;
@@ -90,6 +95,7 @@ type BasicInformationSectionProps = {
  */
 export default function BasicInformationSection({
   fixture,
+  media,
   productName,
   onProductNameChange,
   sellerSku,
@@ -111,7 +117,7 @@ export default function BasicInformationSection({
     (issue) => issue.reasonCode === 'COUNTERFEIT_HIGH_CONFIDENCE',
   );
 
-  const hasOwnPhotos = fixture.media.length > 0;
+  const hasOwnPhotos = media.length > 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -119,7 +125,7 @@ export default function BasicInformationSection({
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h3 className="text-[13px] font-semibold">Product media</h3>
           <span className="text-xs text-muted-foreground">
-            {fixture.media.length} of {MAX_SELLER_PHOTOS} photos
+            {media.length} of {MAX_SELLER_PHOTOS} photos
           </span>
         </div>
 
@@ -152,7 +158,7 @@ export default function BasicInformationSection({
 
         <div className="mt-2.5">
           <ProductPhotoManager
-            media={fixture.media}
+            media={media}
             onUpload={onUploadPhoto}
             onDelete={onDeletePhoto}
             onMakeCover={onMakeCoverPhoto}
@@ -163,9 +169,8 @@ export default function BasicInformationSection({
         </div>
 
         <p className="mt-2 text-xs text-muted-foreground">
-          {photoManagerCaption(hasOwnPhotos, showSupplierPhoto)} Max 2000 × 2000
-          px · JPG, PNG, or WebP, up to 5 MB each · compressed automatically on
-          upload.
+          {photoManagerCaption(hasOwnPhotos)} Max 2000 × 2000 px · JPG, PNG, or
+          WebP, up to 5 MB each · compressed automatically on upload.
         </p>
       </div>
 

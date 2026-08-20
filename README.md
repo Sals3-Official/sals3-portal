@@ -152,7 +152,10 @@ webhooks in `sals3-ecommerce`:
   address, freight, and supplier snapshot before Stripe payment.
 - `POST /api/storefront/checkout/orders/accept` accepts verified paid Stripe
   Checkout data idempotently, creates the paid Sals3 order, and inserts a
-  durable `FULFILL_ORDER` outbox intent.
+  durable `FULFILL_ORDER` outbox intent. After the transaction commits, the
+  route immediately drains that exact outbox row so order-critical fulfillment
+  is not stuck behind catalogue discovery work; if publish fails, the paid order
+  remains accepted and the row stays visible for recovery.
 
 Portal owns PostgreSQL order rows, CJ credentials, the supplier adapter, the
 outbox, and the queue worker. Ecommerce never stores CJ keys and cannot
@@ -256,6 +259,7 @@ Redis, KV, or paid cache service is used for this path.
 | `/orders`                                                  | Seller Center order screen shell. Real paid storefront orders now persist in PostgreSQL for fulfillment, but this UI remains a static/illustrative operations surface until the order-management views are wired to the new tables                                                                                                                                                                                                                                                             |
 | `/listings`                                                | Product Catalogue. Reads persisted Sals3 Product/Variant/Offer/provider-reference rows for the seller and maps them into the existing catalogue UI. No supplier API call is made. Imported rows remain Draft/Unpublished until the real publish gates can resolve category, media, price, variant options, and revision approval.                                                                                                                                                              |
 | `/listings/new`                                            | Add Product. No query: the blank essentials-first wizard (read-only fields, no save yet). `?fixture=<key>`: the supplier-prefilled Product Editor design preview — see [Product Editor](#product-editor-add-product-from-a-supplier-product). `?productId=<uuid>`: opens a persisted Product Catalogue draft, using supplier detail evidence saved during the Add to Product Catalogue / Customize & List action. `?supplierCandidateId=` remains reserved and does not render fictional data. |
+| `/listings/[productId]/description`                        | **Description full editor** — the description on its own full-viewport screen, outside the portal shell. Block palette, a canvas set to the product page's own measurements, and a per-block inspector. Saves the description alone through its own compare-and-set Server Action; requires an open `DRAFT` revision. See [Description full editor](#description-full-editor)                                                                                                                  |
 | `/inventory`                                               | Inline stock edits with undo and an audit record                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `/finances`                                                | Itemized ledger and estimated proceeds for one example order                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `/payouts`                                                 | Payout schedule, states, and destination                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -623,6 +627,26 @@ storefront already does. Requires the five `CLOUDFLARE_R2_*` variables (see
 [Environment setup](#setup)); with any of them unset, Upload stays visibly
 disabled with an honest reason instead of a fake success.
 
+**The storefront read model honours "Show supplier photo" and puts seller
+uploads first (2026-08-20).** `modules/catalog/storefront/read-model.ts`
+previously ignored `products.show_supplier_photo` and never distinguished
+`SELLER_UPLOAD` from `SUPPLIER_ORIGINAL`, so nothing a seller uploaded or
+toggled ever changed what a buyer saw. Both the card's `primaryImageUrl` and
+the detail gallery now share one `mediaVisibleToBuyers` predicate: a seller's
+own upload always shows, the supplier's original shows while the switch is
+on, and switching it off hides the supplier photo **only once an approved
+seller upload exists** — with nothing uploaded yet the supplier photo still
+renders, exactly what the editor's own caption promises. Seller uploads
+outrank supplier originals in both queries, matching the editor preview's
+`[...media, ...supplierMedia]` order. The `unstable_cache` keys were bumped
+(`feed` v1→v2, `product` v2→v3) so warm entries cannot keep serving a photo
+the seller just hid. Same change: the editor's "N of 12 photos" counter and
+photo grid now read the workspace's live media state instead of the
+server-rendered fixture, so an upload appears immediately rather than after a
+refresh, and the storefront contract's description block union gained the
+`image` block on the consumer side (`sals3-ecommerce`), so seller-placed
+description photos finally render on the product page.
+
 **A new `Specification` section sits between Basic Information and
 Description (2026-08-17)** — category-driven attribute controls
 (dropdowns, multi-selects, text/number/measurement/boolean/date fields)
@@ -812,6 +836,218 @@ submitted and stored when a seller picks the no-brand option is still the
 raw `UNBRANDED` token, and an unresolved field is still unresolved for
 readiness/blocker purposes — nothing here touches CJ supplier identity,
 brand evidence, or order-fulfillment fields.
+
+## Description: simple text or a designed layout
+
+The Description section offers two editors and the seller picks with a toggle.
+
+| Mode                | Surface                                          | Where it saves                                    |
+| ------------------- | ------------------------------------------------ | ------------------------------------------------- |
+| **Simple text**     | One box on the listing page                      | `Save Draft`, like every other field on that form |
+| **Designed layout** | A summary card linking to the full-screen editor | That screen's own narrow description save         |
+
+**Both write the same stored document.** Simple text is a _view_ over the
+allow-listed block format, not a second schema: paragraphs split on blank lines,
+images appended after them. One stored format means one renderer, one validator,
+and no mode flag that can disagree with the content it describes.
+
+The shape simple text can hold is `[paragraph…][image…]`. Paragraphs because
+blank lines separate them — a single newline stays _inside_ a paragraph, which is
+how sellers actually write a features list in a plain box. Images trail because a
+textarea cannot express interleaved order; there is nowhere in a string to say
+"and here, between these two paragraphs, a photo". That is what designed mode is
+for.
+
+### The mode is stored on the document, but still needs no migration
+
+`descriptionDocumentSchema` carries an optional `mode: 'simple' | 'design'`. It
+lives in the same JSONB column as the blocks, so adding it was a code-only
+change — the same non-event `runs` was.
+
+It is stored rather than derived because **the content can no longer answer the
+question.** Simple text publishes only its paragraphs but _retains_ photos saved
+in the designed layout, so a simple document holding photos is indistinguishable
+by content from a designed one. That ambiguity is the whole reason the field
+exists.
+
+This is a flag that could in principle disagree with the content, which earlier
+versions of this feature avoided on purpose. The trade is deliberate: a flag that
+decides _what publishes_ records a seller's stated intent, and honouring it costs
+less than deleting photos they spent time uploading.
+
+A document with no `mode` predates the field. `initialDescriptionMode` infers one
+for those — text-only opens simple, anything holding a photo opens designed,
+which is where that photo is visible — so no stored description changes what it
+publishes.
+
+### Photos are retained across a switch, never deleted
+
+Owner decision, and it is the point of the stored mode:
+
+| Seller does                          | What happens                                                      |
+| ------------------------------------ | ----------------------------------------------------------------- |
+| Uses simple text                     | Only the paragraphs reach the product page                        |
+| Switches to simple with photos saved | Photos stay in the document, unpublished, and are named on screen |
+| Switches back to the designed layout | Photos come back whole, in order                                  |
+
+`publishableBlocks(blocks, mode)` is the **only** place the mode changes an
+outcome, and the storefront read model is its only caller — so the rule lives
+once instead of being re-derived by every consumer that renders a description.
+
+Simple mode states what it is holding (_"One photo from the designed layout is
+saved with this description…"_) rather than showing a strip it cannot let the
+seller place. A photo that is neither visible nor mentioned reads as one that was
+thrown away.
+
+### Switching to simple text names what it costs, first
+
+Simple → designed is lossless and silent: every paragraph and image is already a
+valid block, so that direction adds capability without touching content.
+
+Designed → simple asks only when text _structure_ would change.
+`describeSimpleModeLoss` counts what will flatten and says so in the seller's
+words ("Simple text cannot hold 2 headings and 1 bullet list…"), and
+`flattenToSimpleMode` runs only on confirmation. **Every word survives** — a
+heading becomes its own paragraph, lists become one line per entry, emphasis is
+dropped. Photos are not listed as a loss because they are not one: they are
+carried through untouched, and the message says so.
+
+A document that is already plain paragraphs plus photos switches with no dialog
+at all, because nothing about it changes.
+
+This is not politeness. `descriptionBlocksToPlainText` carries a comment
+recording that this exact round trip once "silently downgraded headings,
+bullets, and detail lists into paragraphs". Naming the loss before it happens is
+the difference between a conversion the seller chose and one that happened to
+them.
+
+### Simple text is only the box
+
+No upload button and no prompt chips, by owner decision. An upload here could
+only ever produce "the photos you uploaded, in that order, after the text", a
+worse version of what the designed layout does properly — placement is that
+mode's whole point. A row of suggestions around an empty box is furniture rather
+than help.
+
+Photos a document already holds are **named** in simple mode rather than shown as
+an editable strip, because simple mode cannot place one and does not publish one.
+Adding or placing a photo means switching to the designed layout.
+
+### The character counter is guidance, never a limit
+
+`SIMPLE_TEXT_SOFT_MAX` (3,000) turns the counter amber and explains itself. It
+cannot refuse a save and never truncates — a seller who arrives over it by
+switching from a long designed document keeps every word. Truncating a seller's
+copy to satisfy a counter would be the worst possible reading of "guidance".
+
+### One bug worth recording
+
+The field holds its own text in state rather than deriving it from the document
+each render. Deriving it made **a trailing space impossible to type**: storing
+trims each paragraph, so a space at the end round-tripped away in the same
+keystroke that produced it and the seller watched it vanish. The reconciliation
+compares the incoming document against the field's _own projection_
+(`normalizeSimpleText`), never against its raw value, so the parent's faithful
+echo is not mistaken for a change made elsewhere. The trim belongs at save time,
+where `prepareBlocksForSave` already does it.
+
+### Not built: AI Polish
+
+A "polish this description" action needs an AI provider, a per-call cost, and a
+decision about rewriting a seller's own words on their behalf. None of those are
+approved, so there is no button — a control that cannot work is worse than its
+absence.
+
+## Description full editor
+
+`/listings/[productId]/description` is the description editor on its own
+full-viewport screen. It replaced the inline block form inside the listing
+editor's Description section, which is now a read-only summary plus an
+`Open full editor` link. A fixture preview (`?fixture=`) has no revision to
+compare-and-set against, so it keeps the inline form instead of linking to a
+screen whose save could never succeed.
+
+### Why a separate route, and a separate save
+
+The screen owns the description and nothing else. `Save Draft` on the listing
+editor writes a whole draft — title, category, and every variant retail price —
+so a second screen saving through that action would let a description edit
+quietly revert a price changed in another tab. This screen calls
+`saveDescriptionAction`, which compare-and-sets the exact revision version the
+canvas rendered and touches no other column, following the same single-concern
+pattern as `saveMetaDescription`, `saveShowSupplierPhoto`, and
+`renameOptionMapping`.
+
+Because nothing else on the listing is held there, leaving needs no
+are-you-sure prompt. And because the revision version moves on save, a stale
+listing-editor tab that later presses `Save Draft` is **refused** with
+`version_conflict` rather than overwriting what was written here.
+
+It lives in an `(studio)` route group with its own pass-through layout. Layouts
+nest, so a child of `(portal)` could only add chrome to the rail and topbar,
+never remove them; here the rail is genuinely absent, which is what gives the
+canvas the width a page-shaped preview needs.
+
+### The canvas is calibrated to the product page, not to today's storefront
+
+Text sits in a 70ch measure at 15px/1.7, headings are Outfit, captions are
+12.5px, and images break out past the measure with their aspect ratio reserved —
+16:9 for a single image, 4:3 once two or more sit consecutively. These are the
+PDP v3.1 target measurements. The deployed storefront currently renders
+descriptions at 14px and has no `image` branch at all, so calibrating to what
+ships today would mean rebuilding this the week the redesign lands.
+
+The 70ch measure is **drawn** on the canvas as a hairline guide, and image
+blocks visibly cross it. Text staying narrow while images run wide is a property
+of the page a seller otherwise cannot see until it is live.
+
+Image layout stays derived from adjacency and is never stored: "Two images side
+by side" inserts two plain `image` blocks. A stored group would be a container a
+delete can leave half-empty.
+
+### Emphasis is stored as marks, never as markup
+
+Paragraphs support bold and italic. There is still no sanitiser anywhere in this
+system, and `MARKUP_OPENER` still rejects markup-shaped input at the server
+boundary, so emphasis is **not** HTML. A paragraph carries an optional
+`runs: { text, marks }[]` alongside its `text`, `marks` is a closed enum
+(`strong`, `em`), and `InlineRunsText` maps each mark to a real React element.
+Nothing is ever handed to a parser, and there is no `dangerouslySetInnerHTML` on
+this path.
+
+Two properties make this safe to add before the storefront reads it:
+
+- **`text` stays canonical and `runs` stays optional.** A consumer that knows
+  nothing about marks renders every word and loses only the emphasis. Contrast
+  the `image` block, which the storefront's four-member union drops whole — an
+  additive-optional field degrades, an additive-required one disappears.
+- **`runs` must join to exactly `text`,** enforced by `descriptionDocumentSchema`
+  at the document level. Without it the two fields could describe different
+  sentences, and which one a buyer saw would depend on whether their renderer
+  understood marks. `prepareBlocksForSave` trims runs together with the text so
+  the invariant holds by construction rather than by two matching `.trim()`
+  calls.
+
+The editing surface is a `<textarea>` styled to the page's own type, not
+`contentEditable`. A textarea cannot hold markup, so the allow-list posture
+survives every paste; its selection API is plain integer offsets, which is what
+`inline-runs.ts` operates on; and `contentEditable="plaintext-only"` — the
+obvious future move — only reached Firefox in 136, which is not a version to
+gate a seller workflow on. Offsets are treated as UTF-16 code units to match
+`selectionStart`/`selectionEnd`, and a selection is widened rather than allowed
+to split a surrogate pair.
+
+**No new dependency was added for any of this.** No Tiptap, ProseMirror, Lexical,
+or Slate: the editor is the existing block document plus one pure module
+(`src/lib/products/inline-runs.ts`). Bundle and cost impact is neutral.
+
+### Known gap
+
+Description images do not reach buyers yet. `sals3-ecommerce`'s
+`ProductDescriptionBlock` union has four members with no `image`, and its
+`salvagedArray` parse drops any block that fails — silently, with no error and no
+log. Images authored here are stored correctly and will appear once the
+storefront reads them; the storefront change is deliberately a separate task.
 
 ## Catalog database (Drizzle + PostgreSQL)
 
@@ -2422,6 +2658,53 @@ the CJ `pid` the old feed leaked into every public URL. The slug and the
 publication flip are one statement, because
 `products_public_slug_key` is a partial index over `PUBLISHED` rows and a
 separately written slug could not conflict.
+
+## Buyer orders API and status sync
+
+The storefront's `/orders` pages read these two endpoints, added 2026-08-19:
+
+```text
+GET /api/storefront/orders                       # every order on one buyer account
+GET /api/storefront/orders/S3-YYYYMMDD-XXXXXXXXXX  # one order, if that buyer owns it
+```
+
+Both take the same `Authorization: Bearer <SALS3_STOREFRONT_API_TOKEN>` as the
+product feed, plus `X-Buyer-Email: <verified email>` — the storefront server
+puts its **session-verified** email there, never anything a request supplied,
+because that header is the authorisation. The detail endpoint answers the same
+404 for an unknown number and for a number another buyer owns, so whether a
+number exists is not learnable from it. The payload (assembled in
+`src/modules/orders/buyer-read.ts`) carries minor amounts + currency —
+formatting is the storefront's job — and deliberately never includes supplier
+connection ids, CJ order/shipment/pay ids, or `supplier_status_raw`.
+
+### Where the status and tracking come from
+
+`src/modules/orders/status-sync.ts` pulls each in-flight fulfillment group's
+CJ order detail (`/shopping/order/getOrderDetail`) and carrier scans
+(`/logistic/getTrackInfo`), translates them through the ADR-004 state machine
+(`parcelStateFromCj` + `reconcileDelivery` — a carrier "delivered" CJ disputes
+becomes `TRACKING_CONFLICT`, never a silent downgrade), and persists:
+
+- `fulfillment_groups.parcel_state`, `.tracking_number`,
+  `.supplier_status_raw`, `.carrier_delivered_at`, `.last_synced_at`
+- `parcel_tracking_events` — append-only, deduped by a hash of
+  (source, occurred-at, label), so re-syncing is idempotent
+
+The sync runs as a bounded batch (25 stale groups, terminal parcels skipped)
+behind `POST /api/internal/orders/status-sync`, `CRON_SECRET`-gated, called
+every 30 minutes by `.github/workflows/orders-status-sync.yml`
+(`workflow_dispatch` for a manual kick). Buyer reads never call CJ.
+
+Migration `0025` adds the columns above, the events table, and
+`sals3_order_lines.variant_label` — the option label frozen at intent
+creation from the provider variant reference, so a supplier rename never
+rewrites what an old order says was bought. **0025 is hand-edited to be
+idempotent**: it was applied to production on 2026-08-19 under an earlier
+number before `0024_spicy_nemesis` took that slot on `develop`, so its journal
+`when` is pinned to the production row and every statement is guarded.
+Production migrations remain manual: run `npm run db:migrate` against
+production **before** deploying code that reads these columns.
 
 ## Image delivery
 

@@ -18,9 +18,10 @@ import {
   blocksMatchSaved,
   descriptionBlocksToPlainText,
   prepareBlocksForSave,
+  type DescriptionBlock,
 } from '@/lib/products/description-blocks';
 import {
-  canBulkEnable,
+  autoListVariants,
   filledSpecificationCount,
   isCategoryAttributeUnresolved,
   issuesOfSeverity,
@@ -43,6 +44,12 @@ import {
   type VariantFixture,
 } from '@/lib/seller-center/product-editor/types';
 import { suggestMetaDescription } from '@/lib/seller-center/product-editor/suggest-meta-description';
+import { PUBLISH_GATES } from '@/lib/products/publish-gates';
+import predictPublishBlockers from '@/lib/seller-center/product-editor/publish-blockers';
+import {
+  initialDescriptionMode,
+  type DescriptionMode,
+} from '@/lib/products/simple-description';
 import BasicInformationSection from './BasicInformationSection';
 import BulkPricingDialog, { type BulkPricingMode } from './BulkPricingDialog';
 import CategoryAttributesSection from './category-attributes/CategoryAttributesSection';
@@ -91,6 +98,16 @@ type ProductEditorWorkspaceProps = {
           | 'image_not_stored'
           | 'failed';
       }
+  >;
+  /**
+   * The narrow description save, so its own section can save without committing
+   * a retail price the seller was still deciding on.
+   */
+  saveDescriptionAction?: (
+    input: unknown,
+  ) => Promise<
+    | { ok: true; revisionVersion: number; contentChecksum: string }
+    | { ok: false; reason: string; message: string }
   >;
   publishAction?: (input: unknown) => Promise<
     | {
@@ -216,6 +233,12 @@ type ProductEditorWorkspaceProps = {
 };
 
 const EXIT_HREF = '/products/pipeline?tab=ready';
+/** Titles the local gate predictor owns, so a server copy of one is dropped. */
+const PREDICTED_GATE_TITLES = new Set([
+  ...Object.values(PUBLISH_GATES).map((gate) => gate.title),
+  'No Sals3 category has been decided yet',
+]);
+
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -232,9 +255,15 @@ const PUBLISH_FAILURE_MESSAGES: Record<string, string> = {
   failed: 'No listing was published.',
 };
 
-function descriptionDocumentFrom(blocks: KeyedDescriptionBlock[]) {
+function descriptionDocumentFrom(
+  blocks: KeyedDescriptionBlock[],
+  mode: DescriptionMode,
+) {
   return {
     version: DESCRIPTION_DOCUMENT_VERSION,
+    // Saved with the document because the content can no longer imply it: a
+    // simple-text description legitimately retains photos it is not publishing.
+    mode,
     blocks: prepareBlocksForSave(blocks.map((entry) => entry.block)),
   };
 }
@@ -275,23 +304,6 @@ function retailPriceIssue(fixture: ProductEditorFixture): ReadinessIssue {
   };
 }
 
-function retailPriceNotAboveCostIssue(
-  fixture: ProductEditorFixture,
-): ReadinessIssue {
-  return {
-    id: `${fixture.fixtureKey}-retail-price-not-above-cost`,
-    severity: 'BLOCKER',
-    title: 'Retail price must include at least 2.5% markup',
-    explanation:
-      'Raise every listed variant to at least 2.5% above its supplier cost before publication.',
-    affectedScope: 'Variants & Pricing',
-    source: 'AUTOMATED_VALIDATION',
-    section: 'variants',
-    reasonCode: null,
-    resolution: 'Set a retail price at least 2.5% above the supplier cost.',
-  };
-}
-
 /**
  * A warning, not a blocker (owner decision 2026-08-15): a missing or wrong
  * Sals3 category is each seller's own business risk — a mistagged product
@@ -301,21 +313,6 @@ function retailPriceNotAboveCostIssue(
  * have ever gone through this picker; a warning still surfaces the reminder
  * without that disruption.
  */
-function sals3CategoryIssue(fixture: ProductEditorFixture): ReadinessIssue {
-  return {
-    id: `${fixture.fixtureKey}-sals3-category`,
-    severity: 'WARNING',
-    title: 'No Sals3 category has been decided yet',
-    explanation:
-      'Choosing a real Sals3 category from Basic Information helps buyers find and trust this listing. Publishing without one is allowed.',
-    affectedScope: 'Basic Information',
-    source: 'AUTOMATED_VALIDATION',
-    section: 'basic',
-    reasonCode: null,
-    resolution: 'Decide a Sals3 category.',
-  };
-}
-
 /**
  * Locally re-derived, the same way `retailPriceIssue` is: a lightweight
  * "is it filled" check the seller sees update as they type, not a re-run of
@@ -371,6 +368,7 @@ export default function ProductEditorWorkspace({
   marketsSection,
   initialLifecycle,
   saveDraftAction,
+  saveDescriptionAction,
   publishAction,
   optionMappingAction,
   recoverLabelsAction,
@@ -400,15 +398,48 @@ export default function ProductEditorWorkspace({
   const [descriptionBlocks, setDescriptionBlocks] = useState(() =>
     keyDescriptionBlocks(fixture.descriptionBlocks),
   );
+  const [descriptionMode, setDescriptionMode] = useState<DescriptionMode>(() =>
+    initialDescriptionMode(fixture.descriptionBlocks, fixture.descriptionMode),
+  );
+
+  /**
+   * What the description was last *saved* as, which stops being the value the
+   * page was rendered with the moment this section saves on its own.
+   *
+   * Without it, `Revert to last saved` would offer to restore the pre-save
+   * document and `Save description` would stay lit after succeeding — both
+   * telling the seller their saved work is unsaved.
+   */
+  const [savedDescriptionBlocks, setSavedDescriptionBlocks] = useState<
+    DescriptionBlock[]
+  >(fixture.descriptionBlocks);
 
   /**
    * Compared in prepared form, so a blank block someone added and abandoned
    * does not make Revert look available when nothing would actually change.
    */
-  const descriptionIsUnchanged = blocksMatchSaved(
-    descriptionBlocks.map((entry) => entry.block),
-    fixture.descriptionBlocks,
-  );
+  /**
+   * The mode is part of the saved document, so it is part of "unchanged".
+   *
+   * Comparing blocks alone left the foot of the page reading `No unsaved
+   * changes` after a seller switched editor — the stored `mode` differed from
+   * the one on screen and nothing said so, which is a screen asserting
+   * something it had not checked.
+   */
+  const [savedDescriptionMode, setSavedDescriptionMode] =
+    useState<DescriptionMode>(() =>
+      initialDescriptionMode(
+        fixture.descriptionBlocks,
+        fixture.descriptionMode,
+      ),
+    );
+
+  const descriptionIsUnchanged =
+    descriptionMode === savedDescriptionMode &&
+    blocksMatchSaved(
+      descriptionBlocks.map((entry) => entry.block),
+      savedDescriptionBlocks,
+    );
 
   /**
    * Seeded from the auto-suggestion seam (`suggest-meta-description.ts`,
@@ -473,7 +504,51 @@ export default function ProductEditorWorkspace({
     setPrevCategoryCode(fixture.sals3CategoryCode);
     setCategoryAttributes(fixture.categoryAttributes);
   }
-  const [variants, setVariants] = useState<VariantFixture[]>(fixture.variants);
+  /**
+   * Seeded through `autoListVariants`, which replaces the two bulk buttons that
+   * used to ask the seller to press for a state the data already settled.
+   */
+  const [variants, setVariants] = useState<VariantFixture[]>(() =>
+    autoListVariants(fixture.variants),
+  );
+
+  /**
+   * Option labels come back from the server after a rename; everything else in
+   * `variants` stays the seller's.
+   *
+   * Same defect as the category-attribute resync below, in a second place.
+   * `useState(fixture.variants)` reads its argument only on mount, and
+   * `handleRenameOptionMapping` calls `router.refresh()`, which re-renders this
+   * already-mounted client component with a fresh `fixture` but never remounts
+   * it. So "Save names" reported success while every row underneath — and the
+   * storefront preview beside them — kept showing the old label until a full
+   * page reload. The seller's only way to find out whether the save worked was
+   * to refresh and look, which is exactly the "did it save?" state a save button
+   * exists to remove.
+   *
+   * Only the label fields are copied across. Replacing the whole row would throw
+   * away retail prices and list toggles the seller has typed but not saved yet —
+   * a far worse bug than the one being fixed, and the reason this is keyed on a
+   * signature of the labels rather than on the fixture identity.
+   */
+  const optionLabelSignature = fixture.variants
+    .map((variant) => `${variant.id}:${variant.optionLabel}`)
+    .join('|');
+  const [prevOptionLabelSignature, setPrevOptionLabelSignature] =
+    useState(optionLabelSignature);
+
+  if (optionLabelSignature !== prevOptionLabelSignature) {
+    setPrevOptionLabelSignature(optionLabelSignature);
+    setVariants((current) =>
+      current.map((variant) => {
+        const fresh = fixture.variants.find((row) => row.id === variant.id);
+
+        return fresh === undefined
+          ? variant
+          : { ...variant, optionLabel: fresh.optionLabel };
+      }),
+    );
+  }
   const [media, setMedia] = useState<MediaItemFixture[]>(fixture.media);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [deletingMediaId, setDeletingMediaId] = useState<string | null>(null);
@@ -601,41 +676,34 @@ export default function ProductEditorWorkspace({
     const hasMissingRetailPrice = variants.some(
       (variant) => variant.retailPrice.amountMinor <= 0,
     );
-    const hasRetailPriceNotAboveCost = variants.some(
-      (variant) =>
-        variant.enabled &&
-        variant.retailPrice.amountMinor > 0 &&
-        variant.retailPrice.currency === variant.supplierCost.currency &&
-        variant.retailPrice.amountMinor <
-          minimumRetailAmountMinorForSupplierCost(
-            variant.supplierCost.amountMinor,
-          ),
-    );
-    // Keyed off `sals3CategoryDeclaredBySeller`, not `categoryMappingConfidence`:
-    // the CJ auto-mirror already resolves EXACT/ACCEPTABLE confidence for
-    // almost every CJ-sourced product before any seller ever opens the
-    // picker, which made confidence alone a no-op gate (see the review that
-    // caught this before the PR — twice: once for the retired draft L1
-    // dropdown, once for this).
-    const hasMissingSals3Category = !fixture.sals3CategoryDeclaredBySeller;
+
     const withoutLocalIssues = fixture.issues.filter(
       (issue) =>
         issue.title !== 'Selling price is not resolved' &&
         issue.title !== 'Retail price is required' &&
-        issue.title !== 'No Sals3 category has been decided yet' &&
+        // Locally re-derived gates replace any server copy of the same title,
+        // so one condition never renders twice.
+        !PREDICTED_GATE_TITLES.has(issue.title) &&
         issue.section !== 'specification',
     );
     const localIssues = [
+      // Every publication gate the editor can decide for itself, from one shared
+      // catalogue with `publish.ts`. The panel used to know three of eleven, so
+      // a seller could read Ready and be refused for a reason never shown.
+      // Live state, not `fixture`: these three change under the seller's hands,
+      // and a gate reading the page-load snapshot reports a state they have
+      // already left.
+      ...predictPublishBlockers(fixture, {
+        variants,
+        media,
+        showSupplierPhoto,
+      }),
       ...(hasMissingRetailPrice ? [retailPriceIssue(fixture)] : []),
-      ...(hasRetailPriceNotAboveCost
-        ? [retailPriceNotAboveCostIssue(fixture)]
-        : []),
-      ...(hasMissingSals3Category ? [sals3CategoryIssue(fixture)] : []),
       ...categoryAttributeIssues(fixture, categoryAttributes),
     ];
 
     return [...withoutLocalIssues, ...localIssues];
-  }, [fixture, variants, categoryAttributes]);
+  }, [fixture, variants, media, showSupplierPhoto, categoryAttributes]);
 
   const currentFixture = useMemo(
     () => ({
@@ -732,7 +800,10 @@ export default function ProductEditorWorkspace({
         // is now a read-only pass-through of whatever value was already
         // stored, never a value this screen can change.
         sals3CategoryL1: fixture.sals3CategoryL1,
-        descriptionDocument: descriptionDocumentFrom(descriptionBlocks),
+        descriptionDocument: descriptionDocumentFrom(
+          descriptionBlocks,
+          descriptionMode,
+        ),
         variantRetailPrices: variants
           .filter((variant) => UUID_PATTERN.test(variant.id))
           .map((variant) => ({
@@ -744,6 +815,10 @@ export default function ProductEditorWorkspace({
 
       if (result.ok) {
         setDraftRevisionVersion(result.revisionVersion);
+        setSavedDescriptionBlocks(
+          descriptionBlocks.map((entry) => entry.block),
+        );
+        setSavedDescriptionMode(descriptionMode);
         setLifecycle('SAVED');
         setIsDirty(false);
         toast('Draft saved.');
@@ -845,10 +920,14 @@ export default function ProductEditorWorkspace({
   // plus the supplier's original photos unless the seller has explicitly
   // turned that off (Basic Information's "Show supplier photo" switch).
   // Never either/or - a seller upload must not silently hide the
-  // supplier's photo; only the toggle should.
-  const effectivePreviewMedia = showSupplierPhoto
-    ? [...media, ...fixture.supplierMedia]
-    : media;
+  // supplier's photo; only the toggle should. And the toggle only starts
+  // hiding once a seller photo exists to show instead - the storefront read
+  // model falls back to the supplier photo for an empty gallery, so the
+  // preview must too rather than showing a blank the buyer would never see.
+  const effectivePreviewMedia =
+    showSupplierPhoto || media.length === 0
+      ? [...media, ...fixture.supplierMedia]
+      : media;
 
   const renderPreview = (showHeading: boolean) => (
     <DraftStorefrontPreview
@@ -924,11 +1003,62 @@ export default function ProductEditorWorkspace({
             axes,
           });
 
-          if (result.ok) router.refresh();
+          if (result.ok) {
+            // Same confirmation shape as `Draft saved.`: the inline message
+            // alone sat in a section the seller had usually scrolled past.
+            toast('Names saved.');
+            router.refresh();
+          }
 
           return result.ok
             ? { ok: true, message: 'Names saved.' }
             : { ok: false, message: result.message };
+        };
+
+  /**
+   * Saves the description on its own, from its own section.
+   *
+   * The narrow `saveDescriptionAction` rather than the whole-draft save: this
+   * button says "Save description" and must not also commit a retail price the
+   * seller was still deciding on. Same single-concern shape as the meta
+   * description's own save beside it.
+   *
+   * `setDraftRevisionVersion` on success is what keeps `Save Draft` working
+   * afterwards. That action compare-and-sets the revision version this screen
+   * last read, and a description save moves it — so without adopting the new
+   * one, the next `Save Draft` would be refused as stale against a change this
+   * very screen had just made.
+   */
+  const handleSaveDescription =
+    saveDescriptionAction === undefined ||
+    fixture.draftSaveTarget === null ||
+    draftRevisionVersion === null
+      ? undefined
+      : async () => {
+          const target = fixture.draftSaveTarget;
+
+          if (target === null) return { ok: false, message: 'No open draft.' };
+
+          const result = await saveDescriptionAction({
+            productId: target.productId,
+            revisionId: target.revisionId,
+            expectedRevisionVersion: draftRevisionVersion,
+            descriptionDocument: descriptionDocumentFrom(
+              descriptionBlocks,
+              descriptionMode,
+            ),
+          });
+
+          if (!result.ok) return { ok: false, message: result.message };
+
+          setDraftRevisionVersion(result.revisionVersion);
+          setSavedDescriptionBlocks(
+            descriptionBlocks.map((entry) => entry.block),
+          );
+          setSavedDescriptionMode(descriptionMode);
+          toast('Description saved.');
+
+          return { ok: true, message: 'Description saved.' };
         };
 
   /**
@@ -1274,6 +1404,7 @@ export default function ProductEditorWorkspace({
           >
             <BasicInformationSection
               fixture={fixture}
+              media={media}
               productName={productName}
               onProductNameChange={(value) => {
                 setProductName(value);
@@ -1337,8 +1468,9 @@ export default function ProductEditorWorkspace({
               isUnchanged={descriptionIsUnchanged}
               onRevert={() => {
                 setDescriptionBlocks(
-                  keyDescriptionBlocks(fixture.descriptionBlocks),
+                  keyDescriptionBlocks(savedDescriptionBlocks),
                 );
+                setDescriptionMode(savedDescriptionMode);
                 touch();
               }}
               productName={productName}
@@ -1355,6 +1487,26 @@ export default function ProductEditorWorkspace({
                 handleUploadDescriptionImage === undefined
                   ? 'Images can be uploaded once this draft is saved against a real product.'
                   : null
+              }
+              /*
+               * Only a database-backed draft can open the full editor: that
+               * screen saves through its own compare-and-set on a real revision,
+               * so a fixture preview has nothing for it to write to. Absent
+               * rather than disabled — a button that cannot work in this mode is
+               * not a feature the seller is missing.
+               */
+              mode={descriptionMode}
+              onModeChange={(next) => {
+                setDescriptionMode(next);
+                // Stored on the document, so switching is an unsaved change
+                // like any other edit in this section.
+                touch();
+              }}
+              onSave={handleSaveDescription}
+              fullEditorHref={
+                fixture.draftSaveTarget === null
+                  ? null
+                  : `/listings/${fixture.draftSaveTarget.productId}/description`
               }
             />
           </EditorSectionCard>
@@ -1431,30 +1583,6 @@ export default function ProductEditorWorkspace({
                   updateVariant(variantId, { sellerSku: value })
                 }
                 onBulkSetPrice={() => setBulkPricingMode('SET_PRICE')}
-                onBulkEnableInStock={() => {
-                  setVariants((current) =>
-                    current.map((variant) =>
-                      canBulkEnable(variant)
-                        ? { ...variant, enabled: true }
-                        : variant,
-                    ),
-                  );
-                  touch();
-                  toast('Blocked and paused variants were skipped.', {
-                    description:
-                      'A bulk action never re-enables a variant the supplier or policy has ruled out.',
-                  });
-                }}
-                onBulkDisableUnavailable={() => {
-                  setVariants((current) =>
-                    current.map((variant) =>
-                      variant.supplierStock === 0
-                        ? { ...variant, enabled: false }
-                        : variant,
-                    ),
-                  );
-                  touch();
-                }}
               />
             </div>
           </EditorSectionCard>

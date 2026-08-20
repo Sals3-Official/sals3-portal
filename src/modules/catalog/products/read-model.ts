@@ -63,7 +63,8 @@ import type {
 import { feedSnapshotSchema } from '@/modules/catalog/candidates/rules/contracts';
 import type { CategoryAttributeContract } from '@/modules/catalog/taxonomy/attribute-types';
 import { validateCategoryAttributeSubmission } from '@/modules/catalog/taxonomy/attribute-contract';
-import { suggestedAxisNamesForCategory } from '@/modules/catalog/taxonomy/variation-families';
+import { suggestedAxisNameOptionsForCategory } from '@/modules/catalog/taxonomy/variation-families';
+import type { DescriptionMode } from '@/lib/products/simple-description';
 import { descriptionDocumentSchema } from './description-document';
 import { deriveOptionSplit } from './option-split';
 import { deriveSourceChanges } from './source-changes';
@@ -440,12 +441,23 @@ function attentionFromUnpublished(
  * prose back as the document. Blocks the seller never touched were rewritten
  * by opening the page.
  */
-function descriptionBlocksOf(
-  revision: ProductRevisionRow | undefined,
-): DescriptionBlock[] {
+function descriptionOf(revision: ProductRevisionRow | undefined): {
+  blocks: DescriptionBlock[];
+  /**
+   * Which editor the seller last chose, or `undefined` for a document written
+   * before the field existed. The editor infers a mode for those rather than
+   * this function assuming one.
+   */
+  mode: DescriptionMode | undefined;
+} {
+  // One parse, both values. This runs per product while the catalogue list is
+  // built, so parsing the same JSONB document twice to read two of its fields
+  // would double that cost for every row on the page.
   const parsed = descriptionDocumentSchema.safeParse(revision?.contentDocument);
 
-  return parsed.success ? parsed.data.blocks : [];
+  if (!parsed.success) return { blocks: [], mode: undefined };
+
+  return { blocks: parsed.data.blocks, mode: parsed.data.mode };
 }
 
 function variantOrderKey(variant: CatalogueVariantFixture): string {
@@ -506,10 +518,10 @@ function mappedOptionLabel(
 function suggestedOptionAxisNames(
   proposal: { index: number }[],
   categoryCode: string | null,
-): (string | null)[] {
-  const byTier = suggestedAxisNamesForCategory(categoryCode);
+): string[][] {
+  const byTier = suggestedAxisNameOptionsForCategory(categoryCode);
 
-  return proposal.map((axis) => byTier[axis.index] ?? null);
+  return proposal.map((axis) => byTier[axis.index] ?? []);
 }
 
 async function listCoreRows(executor: Executor, sellerAccountId: string) {
@@ -961,17 +973,18 @@ function buildCatalogueProducts(
         })
         .sort(compareCatalogueVariants);
 
-      const descriptionBlocks = descriptionBlocksOf(revision);
+      const description = descriptionOf(revision);
 
       return {
         id: product.id,
         sals3ProductId: product.id,
         name: product.title,
-        descriptionBlocks,
+        descriptionBlocks: description.blocks,
+        descriptionMode: description.mode,
         // Derived, never stored twice: the plain-text projection is what the
         // meta-description suggestion and the content-readiness check want,
         // while `descriptionBlocks` above is what the editor writes back.
-        descriptionText: descriptionBlocksToPlainText(descriptionBlocks),
+        descriptionText: descriptionBlocksToPlainText(description.blocks),
         metaDescriptionText: product.metaDescription ?? '',
         hasImage: mediaImageUrls.length > 0,
         coverImageUrl: supplier.imageUrl,
@@ -1039,7 +1052,7 @@ function buildCatalogueProducts(
         ),
         mediaStatus: mediaStatusOf(media, product.showSupplierPhoto ?? true),
         contentReadiness:
-          descriptionBlocks.length === 0 ? 'NEEDS_IMPROVEMENT' : 'GOOD',
+          description.blocks.length === 0 ? 'NEEDS_IMPROVEMENT' : 'GOOD',
         pauseReason: status === 'AUTO_PAUSED' ? 'Listing is paused.' : null,
         storefrontUrl: status === 'LIVE' ? product.slug : null,
         attentionReasons,
@@ -1731,7 +1744,8 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
       suggestedAxisNames,
       // Mirrors `optionMappingRequiredButMissing`'s rule exactly, so the section
       // never shows a blocker the publish gate would not actually raise.
-      mappingBlocksPublish: (optionSplit?.labelWidth ?? 0) >= 2,
+      mappingBlocksPublish:
+        product.variants.length >= 2 && (optionSplit?.labelWidth ?? 0) >= 2,
       variantCount: product.variants.length,
       // Free: the raw column is already on every variant here, so telling a
       // missing label apart from a present one that simply does not form a grid
