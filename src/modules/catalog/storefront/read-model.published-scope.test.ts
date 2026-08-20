@@ -243,3 +243,78 @@ describe('findPublishedProductBySlug scope', () => {
     expect(rendered).toContain(`"slug" = `);
   });
 });
+
+/**
+ * The editor's "Show supplier photo" switch is a `WHERE` clause too, or it is
+ * not a gate: `products.show_supplier_photo` off must hide the supplier's
+ * original from buyers — but only once an approved seller upload exists, so a
+ * product whose seller has uploaded nothing yet still renders the supplier
+ * photo instead of an empty gallery. Seller uploads always outrank supplier
+ * originals, matching the editor preview's `[...media, ...supplierMedia]`.
+ */
+describe('buyer-visible media selection', () => {
+  async function renderedPrimaryImageSql(): Promise<string> {
+    const { executor } = recordingExecutor([[], [{ total: 0 }]]);
+
+    await listPublishedProducts(
+      { section: 'for-you', page: 1, limit: 14 },
+      executor as never,
+    );
+
+    const selection = executor.select.mock.calls[0] as unknown as
+      [{ primaryImageUrl: SQL }] | undefined;
+
+    expect(selection?.[0].primaryImageUrl).toBeDefined();
+
+    return dialect.sqlToQuery(selection?.[0].primaryImageUrl as SQL).sql;
+  }
+
+  it('gates the card image on the seller’s supplier-photo switch', async () => {
+    const rendered = await renderedPrimaryImageSql();
+
+    expect(rendered).toContain('"show_supplier_photo"');
+    expect(rendered).toContain(`= 'SELLER_UPLOAD'`);
+    // The fallback: with no approved seller upload, the switch hides nothing.
+    expect(rendered).toContain('not exists');
+  });
+
+  it('orders seller uploads ahead of supplier originals on the card', async () => {
+    const rendered = await renderedPrimaryImageSql();
+
+    expect(rendered).toMatch(/= 'SELLER_UPLOAD'\) desc/);
+  });
+
+  it('applies the same gate and precedence to the detail gallery', async () => {
+    const { executor, recorded } = recordingExecutor([
+      [
+        {
+          id: 'a',
+          slug: 'a-real-product',
+          title: 'A Real Product',
+          publishedAt: new Date('2026-08-13T01:02:03.000Z'),
+          priceMinor: '4299',
+          priceCurrency: 'USD',
+          availabilityState: 'AVAILABLE',
+          categoryCode: 'CAT-APP-100412',
+          categoryPath: "Apparel > Outerwear > Men's Jackets",
+          primaryImageUrl: 'https://cf.cjdropshipping.com/quick/product/a.jpg',
+        },
+      ],
+      // loadApprovedImages, loadDescriptionBlocks, loadPublishedVariants,
+      // loadSpecs — in the Promise.all order `findPublishedProductBySlug` uses.
+      [],
+      [],
+      [],
+      [],
+    ]);
+
+    await findPublishedProductBySlug('a-real-product', executor as never);
+
+    // recorded[0] is the base row's scope; recorded[1] is the gallery's WHERE.
+    const gallery = recorded[1]?.rendered ?? '';
+
+    expect(gallery).toContain('"show_supplier_photo"');
+    expect(gallery).toContain(`= 'SELLER_UPLOAD'`);
+    expect(gallery).toContain('not exists');
+  });
+});

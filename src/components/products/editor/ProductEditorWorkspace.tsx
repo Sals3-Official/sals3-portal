@@ -879,10 +879,14 @@ export default function ProductEditorWorkspace({
   // plus the supplier's original photos unless the seller has explicitly
   // turned that off (Basic Information's "Show supplier photo" switch).
   // Never either/or - a seller upload must not silently hide the
-  // supplier's photo; only the toggle should.
-  const effectivePreviewMedia = showSupplierPhoto
-    ? [...media, ...fixture.supplierMedia]
-    : media;
+  // supplier's photo; only the toggle should. And the toggle only starts
+  // hiding once a seller photo exists to show instead - the storefront read
+  // model falls back to the supplier photo for an empty gallery, so the
+  // preview must too rather than showing a blank the buyer would never see.
+  const effectivePreviewMedia =
+    showSupplierPhoto || media.length === 0
+      ? [...media, ...fixture.supplierMedia]
+      : media;
 
   const renderPreview = (showHeading: boolean) => (
     <DraftStorefrontPreview
@@ -1359,6 +1363,7 @@ export default function ProductEditorWorkspace({
           >
             <BasicInformationSection
               fixture={fixture}
+              media={media}
               productName={productName}
               onProductNameChange={(value) => {
                 setProductName(value);

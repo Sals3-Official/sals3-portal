@@ -69,9 +69,12 @@ const readFeedAcrossRequests = unstable_cache(
     page: number,
     limit: number,
   ): Promise<StorefrontPage> => listPublishedProducts({ section, page, limit }),
-  // Static parts only — the arguments key the entry. 'v1' is a manual bust
-  // handle for when the row shape changes.
-  ['storefront-catalog-feed', 'v1'],
+  // Static parts only — the arguments key the entry. The version suffix is a
+  // manual bust handle for when the row shape or its semantics change.
+  // Bumped to 'v2' on 2026-08-20: `primaryImageUrl` now honours
+  // `show_supplier_photo` and puts seller uploads first, so a warm 'v1' card
+  // could keep showing a photo the seller just hid.
+  ['storefront-catalog-feed', 'v2'],
   { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
 );
 
@@ -81,9 +84,10 @@ const readProductAcrossRequests = unstable_cache(
   // Bumped to 'v2' on 2026-08-15: `StorefrontVariant` gained `label`. Without the
   // bump, entries cached under 'v1' keep serving label-less variants for up to
   // REVALIDATE_SECONDS after deploy, which reads as "the feature did not ship".
-  // Only this key moves — the feed and categories row shapes are unchanged, and
-  // busting them would discard warm entries for nothing.
-  ['storefront-catalog-product', 'v2'],
+  // Bumped to 'v3' on 2026-08-20: `images` now honours `show_supplier_photo`
+  // and orders seller uploads first. Categories stay on 'v1' — their row shape
+  // is unchanged, and busting them would discard warm entries for nothing.
+  ['storefront-catalog-product', 'v3'],
   { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
 );
 
