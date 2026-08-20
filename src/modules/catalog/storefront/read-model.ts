@@ -174,9 +174,52 @@ function publishedScope() {
 }
 
 /**
- * One product's display image: the first approved media row, product-level
- * before variant-level, oldest observation first so the choice is stable
- * across requests rather than whatever the planner returns.
+ * True when the product has at least one approved, renderable photo the
+ * seller uploaded themselves. Correlated on `products.id`, so it works both
+ * inside the card's `primaryImageUrl` subquery and joined in
+ * `loadApprovedImages`.
+ */
+const hasApprovedSellerUpload = sql`exists (
+  select 1
+  from ${productMediaSources} as seller_media
+  where seller_media.product_id = ${products.id}
+    and seller_media.source_type = 'SELLER_UPLOAD'
+    and seller_media.review_state = 'APPROVED'
+    and seller_media.rights_basis <> 'UNKNOWN'
+    and seller_media.source_url is not null
+)`;
+
+/**
+ * Which approved media rows a buyer may actually see, honouring the editor's
+ * "Show supplier photo" switch (`products.show_supplier_photo`):
+ *
+ * - A seller's own upload always shows.
+ * - The supplier's original shows while the switch is on — the default.
+ * - The switch off hides the supplier's original **only once a seller upload
+ *   exists**. With nothing uploaded yet the supplier photo still renders,
+ *   because publish requires approved media and a deliberately imageless
+ *   product page misleads harder than the fallback the editor's own caption
+ *   already promises ("Buyers see the supplier's photo until you upload your
+ *   own").
+ */
+const mediaVisibleToBuyers = sql`(
+  ${productMediaSources.sourceType} = 'SELLER_UPLOAD'
+  or ${products.showSupplierPhoto}
+  or not ${hasApprovedSellerUpload}
+)`;
+
+/**
+ * Seller uploads outrank the supplier's originals — the same precedence the
+ * editor's draft preview shows (`[...media, ...supplierMedia]`), so the cover
+ * a seller sees there is the cover a buyer gets.
+ */
+const sellerUploadsFirst = sql`(${productMediaSources.sourceType} = 'SELLER_UPLOAD') desc`;
+
+/**
+ * One product's display image: the first approved media row a buyer may see
+ * (`mediaVisibleToBuyers`), seller uploads before supplier originals,
+ * product-level before variant-level, oldest observation first so the choice
+ * is stable across requests rather than whatever the planner returns.
  *
  * `review_state = 'APPROVED'` and `rights_basis <> 'UNKNOWN'` are both
  * required. `product_media_sources_approved_requires_rights` makes the pair
@@ -192,7 +235,9 @@ const primaryImageUrl = sql<string | null>`(
     and ${productMediaSources.reviewState} = 'APPROVED'
     and ${productMediaSources.rightsBasis} <> 'UNKNOWN'
     and ${productMediaSources.sourceUrl} is not null
-  order by (${productMediaSources.variantId} is null) desc,
+    and ${mediaVisibleToBuyers}
+  order by ${sellerUploadsFirst},
+           (${productMediaSources.variantId} is null) desc,
            ${productMediaSources.observedAt} asc,
            ${productMediaSources.id} asc
   limit 1
@@ -361,9 +406,11 @@ export async function listPublishedProducts(
  * endpoint.
  */
 /**
- * Every approved image for the product, product-level first, then by
- * observation order — the same precedence the card's single image uses, so the
- * gallery's lead photo is the one the card showed.
+ * Every approved image a buyer may see for the product — the same
+ * `mediaVisibleToBuyers` gate and seller-uploads-first precedence the card's
+ * single image uses, so the gallery's lead photo is the one the card showed.
+ * Joins `products` for `show_supplier_photo`; the join cannot fan out because
+ * `product_id` references one row.
  */
 async function loadApprovedImages(
   executor: DbExecutor,
@@ -372,15 +419,18 @@ async function loadApprovedImages(
   const rows = await executor
     .select({ url: productMediaSources.sourceUrl })
     .from(productMediaSources)
+    .innerJoin(products, eq(products.id, productMediaSources.productId))
     .where(
       and(
         eq(productMediaSources.productId, productId),
         eq(productMediaSources.reviewState, 'APPROVED'),
         ne(productMediaSources.rightsBasis, 'UNKNOWN'),
         isNotNull(productMediaSources.sourceUrl),
+        mediaVisibleToBuyers,
       ),
     )
     .orderBy(
+      sellerUploadsFirst,
       sql`(${productMediaSources.variantId} is null) desc`,
       asc(productMediaSources.observedAt),
       asc(productMediaSources.id),

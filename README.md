@@ -621,6 +621,26 @@ storefront already does. Requires the five `CLOUDFLARE_R2_*` variables (see
 [Environment setup](#setup)); with any of them unset, Upload stays visibly
 disabled with an honest reason instead of a fake success.
 
+**The storefront read model honours "Show supplier photo" and puts seller
+uploads first (2026-08-20).** `modules/catalog/storefront/read-model.ts`
+previously ignored `products.show_supplier_photo` and never distinguished
+`SELLER_UPLOAD` from `SUPPLIER_ORIGINAL`, so nothing a seller uploaded or
+toggled ever changed what a buyer saw. Both the card's `primaryImageUrl` and
+the detail gallery now share one `mediaVisibleToBuyers` predicate: a seller's
+own upload always shows, the supplier's original shows while the switch is
+on, and switching it off hides the supplier photo **only once an approved
+seller upload exists** — with nothing uploaded yet the supplier photo still
+renders, exactly what the editor's own caption promises. Seller uploads
+outrank supplier originals in both queries, matching the editor preview's
+`[...media, ...supplierMedia]` order. The `unstable_cache` keys were bumped
+(`feed` v1→v2, `product` v2→v3) so warm entries cannot keep serving a photo
+the seller just hid. Same change: the editor's "N of 12 photos" counter and
+photo grid now read the workspace's live media state instead of the
+server-rendered fixture, so an upload appears immediately rather than after a
+refresh, and the storefront contract's description block union gained the
+`image` block on the consumer side (`sals3-ecommerce`), so seller-placed
+description photos finally render on the product page.
+
 **A new `Specification` section sits between Basic Information and
 Description (2026-08-17)** — category-driven attribute controls
 (dropdowns, multi-selects, text/number/measurement/boolean/date fields)
