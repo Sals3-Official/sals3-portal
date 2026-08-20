@@ -5,9 +5,11 @@ import type {
 } from '@/modules/catalog/storefront/read-model';
 import {
   categoryLeafName,
+  categoryTopName,
   isPublicSlug,
   storefrontFeedQuerySchema,
   toStorefrontCategories,
+  toStorefrontDepartments,
   toStorefrontProduct,
   toStorefrontProductDetail,
   toStorefrontProductFeed,
@@ -310,22 +312,128 @@ describe('toStorefrontProductFeed', () => {
 });
 
 describe('toStorefrontCategories', () => {
-  it('names the leaf and derives a short display code', () => {
+  it('names the main (L1) category, not the published leaf', () => {
     expect(
       toStorefrontCategories([
         { code: 'CAT-HOM-100123', path: 'Home & Garden > Kitchen > Cookware' },
       ]),
-    ).toEqual([{ id: 'cat-hom-100123', code: 'CO', name: 'Cookware' }]);
+    ).toEqual([{ id: 'home-garden', code: 'HG', name: 'Home & Garden' }]);
   });
 
-  it('de-duplicates and skips codes the consumer regex would reject', () => {
+  it('rolls every leaf of one main category up into a single tile', () => {
     const categories = toStorefrontCategories([
-      { code: 'CAT-HOM-100123', path: 'Home > Cookware' },
-      { code: 'CAT-HOM-100123', path: 'Home > Cookware' },
-      { code: 'CAT_HOM_1', path: 'Home > Bad Code' },
+      {
+        code: 'CAT-GGL-2271',
+        path: 'Apparel & Accessories > Clothing > Dresses',
+      },
+      {
+        code: 'CAT-GGL-5598',
+        path: 'Apparel & Accessories > Clothing > Outerwear > Coats & Jackets',
+      },
+      {
+        code: 'CAT-GGL-212',
+        path: 'Apparel & Accessories > Clothing > Shirts & Tops',
+      },
+      {
+        code: 'CAT-GGL-6000',
+        path: 'Toys & Games > Toys > Scale Model Accessories',
+      },
     ]);
 
-    expect(categories).toHaveLength(1);
+    expect(categories).toEqual([
+      { id: 'apparel-accessories', code: 'AA', name: 'Apparel & Accessories' },
+      { id: 'toys-games', code: 'TG', name: 'Toys & Games' },
+    ]);
+  });
+
+  it('never emits a taxonomy code as the public id', () => {
+    const [category] = toStorefrontCategories([
+      {
+        code: 'CAT-GGL-5079',
+        path: 'Animals & Pet Supplies > Pet Supplies > Fish Supplies > Aquarium Lighting',
+      },
+    ]);
+
+    expect(category?.id).toBe('animals-pet-supplies');
+    expect(category?.id).not.toMatch(/cat-/);
+  });
+
+  it('treats a single-segment path as its own main category', () => {
+    expect(
+      toStorefrontCategories([{ code: 'CAT-X-1', path: 'Software' }]),
+    ).toEqual([{ id: 'software', code: 'SO', name: 'Software' }]);
+  });
+
+  it('skips a name that cannot reduce to a slug the consumer accepts', () => {
+    const categories = toStorefrontCategories([
+      { code: 'CAT-CJK-1', path: '\u5bb6\u5c45 > \u53a8\u623f' },
+      { code: 'CAT-GGL-1', path: 'Furniture > Chairs' },
+    ]);
+
+    expect(categories).toEqual([
+      { id: 'furniture', code: 'FU', name: 'Furniture' },
+    ]);
+  });
+});
+
+describe('toStorefrontDepartments', () => {
+  it('emits every department, including ones with no published product', () => {
+    expect(
+      toStorefrontDepartments([
+        { l1: 'Animals & Pet Supplies' },
+        { l1: 'Food, Beverages & Tobacco' },
+        { l1: 'Software' },
+      ]),
+    ).toEqual([
+      {
+        id: 'animals-pet-supplies',
+        code: 'AP',
+        name: 'Animals & Pet Supplies',
+      },
+      {
+        id: 'food-beverages-tobacco',
+        code: 'FB',
+        name: 'Food, Beverages & Tobacco',
+      },
+      { id: 'software', code: 'SO', name: 'Software' },
+    ]);
+  });
+
+  it('de-duplicates and drops a name that cannot become a public slug', () => {
+    expect(
+      toStorefrontDepartments([
+        { l1: 'Furniture' },
+        { l1: ' Furniture ' },
+        { l1: '\u5bb6\u5c45' },
+      ]),
+    ).toEqual([{ id: 'furniture', code: 'FU', name: 'Furniture' }]);
+  });
+
+  it('takes the department out of a mirrored row that stored a whole path', () => {
+    expect(
+      toStorefrontDepartments([
+        { l1: "Women's Clothing / Tops & Sets / Sweaters" },
+        { l1: "Men's Clothing > Outerwear & Jackets > Men's Jackets" },
+      ]),
+    ).toEqual([
+      { id: 'women-s-clothing', code: 'WC', name: "Women's Clothing" },
+      { id: 'men-s-clothing', code: 'MC', name: "Men's Clothing" },
+    ]);
+  });
+});
+
+describe('categoryTopName', () => {
+  it('returns the first non-empty segment', () => {
+    expect(categoryTopName('Apparel & Accessories > Clothing > Dresses')).toBe(
+      'Apparel & Accessories',
+    );
+    expect(categoryTopName('Furniture')).toBe('Furniture');
+  });
+
+  it('also splits the slash-separated paths CJ mirror rows carry', () => {
+    expect(
+      categoryTopName('Sports & Outdoors / Sportswear / Accessories'),
+    ).toBe('Sports & Outdoors');
   });
 });
 

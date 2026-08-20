@@ -1,5 +1,16 @@
-import { and, asc, count, desc, eq, isNotNull, ne, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  ne,
+  sql,
+} from 'drizzle-orm';
 import getDb, { type DbExecutor } from '@/lib/db/client';
+import SALS3_TAXONOMY_DEPARTMENTS from '@/modules/catalog/taxonomy/departments';
 import {
   productMediaSources,
   productOffers,
@@ -143,6 +154,11 @@ const MAX_DETAIL_IMAGES = 12;
 export type StorefrontCategoryRow = {
   code: string;
   path: string;
+};
+
+/** One main (L1) department of the taxonomy. */
+export type StorefrontDepartmentRow = {
+  l1: string;
 };
 
 /**
@@ -683,6 +699,34 @@ export async function findPublishedProductBySlug(
     ...(variants.length === 0 ? {} : { variants }),
     ...(specs === null ? {} : { specs }),
   };
+}
+
+/**
+ * Every main (L1) department in the taxonomy, published or not.
+ *
+ * This is the storefront's "All departments" list — the full shape of the
+ * catalogue, which a buyer is entitled to see even where nothing is stocked
+ * yet. It reads the taxonomy table directly and joins nothing, so a
+ * department with no live product still appears; `listPublishedCategories`
+ * below is the stock-backed list, and the two are deliberately different
+ * answers to different questions.
+ *
+ * Scoped to `SALS3_TAXONOMY_DEPARTMENTS` because the table also holds
+ * auto-mirrored CJ rows whose `l1` is a whole supplier path — see that
+ * constant for why no filter on the rows themselves separates them.
+ */
+export async function listCategoryDepartments(
+  executor: DbExecutor = getDb(),
+): Promise<StorefrontDepartmentRow[]> {
+  const rows = await executor
+    .selectDistinct({ l1: sals3Categories.l1 })
+    .from(sals3Categories)
+    .where(inArray(sals3Categories.l1, [...SALS3_TAXONOMY_DEPARTMENTS]))
+    .orderBy(asc(sals3Categories.l1));
+
+  return rows.filter(
+    (row): row is StorefrontDepartmentRow => row.l1 !== null && row.l1 !== '',
+  );
 }
 
 /**
