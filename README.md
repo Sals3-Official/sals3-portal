@@ -588,6 +588,11 @@ brand, variants, and publication controls remain local/editor-only until their
 dedicated persistence paths exist. The screen says which mode it loaded in the
 notice at the top.
 
+Retail prices must be **strictly above** the stored supplier cost for every
+listed variant. A price equal to supplier cost is a hard blocker in the editor
+and is refused again by `publishProduct`; the manual seller-price path cannot
+record a zero-spread offer as resolved.
+
 **A seller's own product photos persist for real (2026-08-17, Cloudflare R2 +
 sharp — migrated the same day from an initial Vercel Blob backend once
 durable object storage became the explicit requirement).** Basic

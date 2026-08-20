@@ -256,6 +256,23 @@ function retailPriceIssue(fixture: ProductEditorFixture): ReadinessIssue {
   };
 }
 
+function retailPriceNotAboveCostIssue(
+  fixture: ProductEditorFixture,
+): ReadinessIssue {
+  return {
+    id: `${fixture.fixtureKey}-retail-price-not-above-cost`,
+    severity: 'BLOCKER',
+    title: 'Retail price must be above supplier cost',
+    explanation:
+      'Raise every listed variant above its supplier cost before publication.',
+    affectedScope: 'Variants & Pricing',
+    source: 'AUTOMATED_VALIDATION',
+    section: 'variants',
+    reasonCode: null,
+    resolution: 'Set a retail price higher than the supplier cost.',
+  };
+}
+
 /**
  * A warning, not a blocker (owner decision 2026-08-15): a missing or wrong
  * Sals3 category is each seller's own business risk — a mistagged product
@@ -565,6 +582,13 @@ export default function ProductEditorWorkspace({
     const hasMissingRetailPrice = variants.some(
       (variant) => variant.retailPrice.amountMinor <= 0,
     );
+    const hasRetailPriceNotAboveCost = variants.some(
+      (variant) =>
+        variant.enabled &&
+        variant.retailPrice.amountMinor > 0 &&
+        variant.retailPrice.currency === variant.supplierCost.currency &&
+        variant.retailPrice.amountMinor <= variant.supplierCost.amountMinor,
+    );
     // Keyed off `sals3CategoryDeclaredBySeller`, not `categoryMappingConfidence`:
     // the CJ auto-mirror already resolves EXACT/ACCEPTABLE confidence for
     // almost every CJ-sourced product before any seller ever opens the
@@ -581,6 +605,9 @@ export default function ProductEditorWorkspace({
     );
     const localIssues = [
       ...(hasMissingRetailPrice ? [retailPriceIssue(fixture)] : []),
+      ...(hasRetailPriceNotAboveCost
+        ? [retailPriceNotAboveCostIssue(fixture)]
+        : []),
       ...(hasMissingSals3Category ? [sals3CategoryIssue(fixture)] : []),
       ...categoryAttributeIssues(fixture, categoryAttributes),
     ];
