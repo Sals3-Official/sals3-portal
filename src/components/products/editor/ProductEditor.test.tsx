@@ -10,6 +10,8 @@ import saveCategoryAttributesAction from '@/app/(portal)/listings/category-attri
 import saveMetaDescriptionAction from '@/app/(portal)/listings/meta-description-actions';
 import { publishProductAction } from '@/app/(portal)/listings/publish-actions';
 import { resolveProductEditorFixture } from '@/lib/seller-center/mock-data/product-editor';
+import { minorToDecimalString } from '@/lib/seller-center/product-editor/format';
+import { minimumRetailAmountMinorForSupplierCost } from '@/lib/pricing/retail-price-floor';
 import type {
   CategoryAttributeFieldFixture,
   EditorLifecycle,
@@ -270,7 +272,7 @@ describe('Product Editor - publication outcomes', () => {
       'No variant is listed',
       'No supplier cost on any listable variant',
       'No approved photo is on file',
-      'A retail price is below supplier cost',
+      'Retail price must include at least 2.5% markup',
       'Variant Matrix needs its option names',
     ].forEach((title) =>
       expect(screen.queryByText(title)).not.toBeInTheDocument(),
@@ -671,6 +673,34 @@ describe('Product Editor - money that is not known', () => {
     ).toBeGreaterThan(0);
   });
 
+  it('blocks publication when retail price equals supplier cost', () => {
+    const resolved = fixture('pass');
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          variants: resolved.variants.map((variant) => ({
+            ...variant,
+            retailPrice: {
+              ...variant.retailPrice,
+              amountMinor: variant.supplierCost.amountMinor,
+              currency: variant.supplierCost.currency,
+            },
+          })),
+        }}
+        initialLifecycle="IDLE"
+      />,
+    );
+
+    expect(
+      screen.getAllByText('Retail price must include at least 2.5% markup')
+        .length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /^Publish/ })).toBeDisabled();
+    expect(screen.getAllByText(/Minimum /).length).toBeGreaterThan(0);
+  });
+
   it('shows the supplier source currency in the source drawer', () => {
     renderEditor('pass');
 
@@ -844,6 +874,63 @@ describe('Product Editor - structure', () => {
 
     expect(screen.getByText(/Changes 0 variants/)).toBeInTheDocument();
     expect(screen.getByText(/Skips 6/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+  });
+
+  it('will not keep a manually-entered retail price equal to supplier cost', async () => {
+    const resolved = fixture('pass');
+    const target = resolved.variants[0];
+
+    render(<ProductEditor fixture={resolved} initialLifecycle="IDLE" />);
+
+    const retailInput = screen.getAllByLabelText(
+      /^Retail price for/,
+    )[0] as HTMLInputElement;
+    const supplierCost = minorToDecimalString(
+      target.supplierCost.amountMinor,
+      target.supplierCost.currency,
+    );
+    const minimumRetail = minorToDecimalString(
+      minimumRetailAmountMinorForSupplierCost(target.supplierCost.amountMinor),
+      target.supplierCost.currency,
+    );
+
+    fireEvent.focus(retailInput);
+    fireEvent.change(retailInput, { target: { value: supplierCost } });
+    fireEvent.blur(retailInput);
+
+    await waitFor(() => expect(retailInput).toHaveValue(minimumRetail));
+    expect(
+      screen.queryByText('Retail price must include at least 2.5% markup'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not apply a bulk retail price equal to the highest affected supplier cost', () => {
+    const resolved = fixture('pass');
+    const highestSupplierCost = Math.max(
+      ...resolved.variants.map((variant) => variant.supplierCost.amountMinor),
+    );
+    const currency = resolved.source.sourceCurrency;
+    const blockedPrice = minorToDecimalString(highestSupplierCost, currency);
+    const minimumRetailPrice = {
+      amountMinor: minimumRetailAmountMinorForSupplierCost(highestSupplierCost),
+      currency,
+    };
+
+    render(<ProductEditor fixture={resolved} initialLifecycle="IDLE" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set retail price…' }));
+    const bulkPriceInput = screen.getByLabelText(`Retail price (${currency})`);
+
+    expect(bulkPriceInput).toHaveAttribute(
+      'min',
+      minorToDecimalString(minimumRetailPrice.amountMinor, currency),
+    );
+
+    fireEvent.change(bulkPriceInput, {
+      target: { value: blockedPrice },
+    });
+
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
   });
 

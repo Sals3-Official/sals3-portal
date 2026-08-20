@@ -74,22 +74,23 @@ describe('deriveSourceChanges', () => {
   });
 
   /**
-   * The alarm this diff exists for. Nothing else in the editor tells a seller
-   * that every sale of a variant is now losing money.
+   * The alarm this diff exists for. Nothing else in the source-change panel
+   * tells a seller that a variant no longer clears the supplier-cost floor.
    */
-  it('raises action when supplier cost overtakes the retail price', () => {
+  it('raises action when supplier cost overtakes the retail floor', () => {
     const changes = derive(
-      [frozen({ retailPrice: { amountMinor: 700, currency: USD } })],
+      [frozen({ retailPrice: { amountMinor: 920, currency: USD } })],
       [current({ priceUsd: 9.0 })],
     );
 
-    expect(changes[0]?.title).toMatch(/costs more than it sells for/);
+    expect(changes[0]?.title).toMatch(/supplier-cost floor/);
     expect(changes[0]?.body).toMatch(/USD 9\.00/);
-    expect(changes[0]?.body).toMatch(/USD 7\.00/);
+    expect(changes[0]?.body).toMatch(/USD 9\.20/);
+    expect(changes[0]?.body).toMatch(/USD 9\.23/);
     expect(changes[0]?.sellerActionRequired).toBe(true);
   });
 
-  it('does not call a cost rise an alarm while it stays under retail', () => {
+  it('does not call a cost rise an alarm while it clears the floor', () => {
     const changes = derive(
       [frozen({ retailPrice: { amountMinor: 2000, currency: USD } })],
       [current({ priceUsd: 9.0 })],

@@ -1,4 +1,5 @@
 import { isSals3TaxonomyCode } from '@/lib/products/sals3-category-code';
+import { minimumRetailAmountMinorForSupplierCost } from '@/lib/pricing/retail-price-floor';
 import {
   PUBLISH_GATES,
   type PublishGateReason,
@@ -30,10 +31,10 @@ import type { ProductEditorFixture, ReadinessIssue } from './types';
  *   supplier photo is switched off. With it on, publication projects the
  *   supplier's own image and succeeds, so testing `media.length === 0` alone
  *   would block half the catalogue.
- * - `RETAIL_BELOW_SUPPLIER_COST` compares only within one currency. The server
- *   refuses an incomparable pair too, but the editor has no approved FX source,
- *   and inventing a conversion to raise a money blocker is worse than staying
- *   quiet.
+ * - `RETAIL_BELOW_SUPPLIER_COST` compares the 2.5% floor only within one
+ *   currency. The server refuses an incomparable pair too, but the editor has no
+ *   approved FX source, and inventing a conversion to raise a money blocker is
+ *   worse than staying quiet.
  */
 
 function issue(
@@ -132,7 +133,10 @@ export default function predictPublishBlockers(
       variant.enabled &&
       variant.retailPrice.currency === variant.supplierCost.currency &&
       variant.retailPrice.amountMinor > 0 &&
-      variant.retailPrice.amountMinor < variant.supplierCost.amountMinor,
+      variant.retailPrice.amountMinor <
+        minimumRetailAmountMinorForSupplierCost(
+          variant.supplierCost.amountMinor,
+        ),
   );
 
   if (belowCost.length > 0) {
