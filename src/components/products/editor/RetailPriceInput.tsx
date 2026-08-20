@@ -7,6 +7,7 @@ import {
   formatMoney,
   minorToDecimalString,
 } from '@/lib/seller-center/product-editor/format';
+import { minimumRetailAmountMinorForSupplierCost } from '@/lib/pricing/retail-price-floor';
 import type { MoneyValue } from '@/lib/seller-center/product-editor/types';
 
 type RetailPriceInputProps = {
@@ -41,10 +42,11 @@ type RetailPriceInputProps = {
  *
  * ## The floor is advisory here and authoritative on the server
  *
- * This shows the seller the problem while they are still in the field. It does not
- * enforce anything — `publish.ts` refuses `RETAIL_BELOW_SUPPLIER_COST` with the
- * same comparison, because a disabled control is never an authorization check and
- * this value reaches the server through a Server Action either way.
+ * This shows the seller the problem while they are still in the field. The
+ * workspace also clamps editor state, and `publish.ts` refuses
+ * `RETAIL_BELOW_SUPPLIER_COST` with the same comparison, because a disabled
+ * control is never an authorization check and this value reaches the server
+ * through a Server Action either way.
  */
 export default function RetailPriceInput({
   label,
@@ -71,11 +73,19 @@ export default function RetailPriceInput({
   }
 
   const comparable = value.currency === supplierCost.currency;
-  const belowCost =
+  const minimumAmountMinor = minimumRetailAmountMinorForSupplierCost(
+    supplierCost.amountMinor,
+  );
+  const minimumRetailPrice = {
+    amountMinor: minimumAmountMinor,
+    currency: supplierCost.currency,
+  };
+  const draftAmountMinor = decimalStringToMinor(draft, value.currency);
+  const belowFloor =
     comparable &&
-    value.amountMinor > 0 &&
-    value.amountMinor < supplierCost.amountMinor;
-  const errorId = belowCost ? `${label}-below-cost` : undefined;
+    ((value.amountMinor > 0 && value.amountMinor < minimumAmountMinor) ||
+      (draftAmountMinor > 0 && draftAmountMinor < minimumAmountMinor));
+  const errorId = belowFloor ? `${label}-below-floor` : undefined;
 
   return (
     <div className="flex flex-col gap-1">
@@ -84,10 +94,10 @@ export default function RetailPriceInput({
         inputMode="decimal"
         autoComplete="off"
         aria-label={label}
-        aria-invalid={belowCost}
+        aria-invalid={belowFloor}
         aria-describedby={errorId}
         className={`h-8 w-24 tabular-nums ${
-          belowCost ? 'border-destructive text-destructive' : ''
+          belowFloor ? 'border-destructive text-destructive' : ''
         }`}
         value={draft}
         onFocus={() => setFocused(true)}
@@ -106,9 +116,9 @@ export default function RetailPriceInput({
           onChange(decimalStringToMinor(next, value.currency));
         }}
       />
-      {belowCost ? (
+      {belowFloor ? (
         <span id={errorId} className="text-xs text-destructive">
-          Below {formatMoney(supplierCost)} cost
+          Minimum {formatMoney(minimumRetailPrice)}
         </span>
       ) : null}
     </div>

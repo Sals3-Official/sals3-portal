@@ -13,6 +13,12 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  decimalStringToMinor,
+  formatMoney,
+  minorToDecimalString,
+} from '@/lib/seller-center/product-editor/format';
+import type { MoneyValue } from '@/lib/seller-center/product-editor/types';
 
 export type BulkPricingMode = 'SET_PRICE';
 
@@ -22,8 +28,9 @@ type BulkPricingDialogProps = {
   /** How many variants the change will actually touch. */
   affectedCount: number;
   skippedCount: number;
+  minimumRetailPrice: MoneyValue | null;
   onCancel: () => void;
-  onApply: (value: number) => void;
+  onApply: (amountMinor: number) => void;
 };
 
 const COPY: Record<
@@ -64,13 +71,21 @@ function BulkPricingForm({
   currency,
   affectedCount,
   skippedCount,
+  minimumRetailPrice,
   onApply,
 }: BulkPricingFormProps) {
   const [value, setValue] = useState('');
 
   const copy = COPY[mode];
-  const parsed = Number.parseFloat(value);
-  const isValid = !Number.isNaN(parsed) && parsed > 0;
+  const amountMinor = decimalStringToMinor(value, currency);
+  const belowMinimum =
+    minimumRetailPrice !== null &&
+    amountMinor > 0 &&
+    amountMinor < minimumRetailPrice.amountMinor;
+  const isValid =
+    amountMinor > 0 &&
+    (minimumRetailPrice === null ||
+      amountMinor >= minimumRetailPrice.amountMinor);
 
   return (
     <>
@@ -86,7 +101,14 @@ function BulkPricingForm({
         <Input
           id="bulk-pricing-value"
           type="number"
-          min="0"
+          min={
+            minimumRetailPrice === null
+              ? '0.01'
+              : minorToDecimalString(
+                  minimumRetailPrice.amountMinor,
+                  minimumRetailPrice.currency,
+                )
+          }
           step="0.01"
           inputMode="decimal"
           value={value}
@@ -96,6 +118,16 @@ function BulkPricingForm({
         <p id="bulk-pricing-hint" className="text-xs text-muted-foreground">
           {copy.hint}
         </p>
+        {minimumRetailPrice !== null ? (
+          <p className="text-xs text-muted-foreground">
+            Minimum allowed: {formatMoney(minimumRetailPrice)}.
+          </p>
+        ) : null}
+        {belowMinimum ? (
+          <p className="text-xs text-destructive">
+            Retail price must be at least {formatMoney(minimumRetailPrice)}.
+          </p>
+        ) : null}
         <p className="text-xs text-muted-foreground">
           Changes {affectedCount} {affectedCount === 1 ? 'variant' : 'variants'}
           .
@@ -109,7 +141,7 @@ function BulkPricingForm({
         <AlertDialogCancel>Cancel</AlertDialogCancel>
         <AlertDialogAction
           disabled={!isValid || affectedCount === 0}
-          onClick={() => onApply(parsed)}
+          onClick={() => onApply(amountMinor)}
         >
           Apply
         </AlertDialogAction>
@@ -123,6 +155,7 @@ export default function BulkPricingDialog({
   currency,
   affectedCount,
   skippedCount,
+  minimumRetailPrice,
   onCancel,
   onApply,
 }: BulkPricingDialogProps) {
@@ -141,6 +174,7 @@ export default function BulkPricingDialog({
             currency={currency}
             affectedCount={affectedCount}
             skippedCount={skippedCount}
+            minimumRetailPrice={minimumRetailPrice}
             onApply={onApply}
           />
         )}

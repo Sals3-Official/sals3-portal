@@ -110,10 +110,10 @@ export const PUBLISH_GATES = {
     predictableInEditor: true,
   },
   RETAIL_BELOW_SUPPLIER_COST: {
-    title: 'A retail price is below supplier cost',
+    title: 'Retail price must include at least 2.5% markup',
     explanation:
-      'This variant would sell for less than it costs to buy, which is a loss on every order rather than a thin margin.',
-    resolution: 'Raise the retail price above the supplier cost.',
+      'This variant does not clear the required 2.5% supplier-cost floor, so the seller would publish a zero-spread or thin-spread offer.',
+    resolution: 'Raise the retail price to at least 2.5% above supplier cost.',
     section: 'variants',
     predictableInEditor: true,
   },
