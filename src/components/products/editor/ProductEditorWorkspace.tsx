@@ -242,6 +242,22 @@ function isBulkPriceable(variant: VariantFixture): boolean {
   );
 }
 
+function retailAmountAboveSupplierCost(
+  amountMinor: number,
+  retailCurrency: string,
+  supplierCost: VariantFixture['supplierCost'],
+): number {
+  if (
+    amountMinor <= 0 ||
+    retailCurrency !== supplierCost.currency ||
+    amountMinor > supplierCost.amountMinor
+  ) {
+    return amountMinor;
+  }
+
+  return supplierCost.amountMinor + 1;
+}
+
 function retailPriceIssue(fixture: ProductEditorFixture): ReadinessIssue {
   return {
     id: `${fixture.fixtureKey}-retail-price`,
@@ -637,8 +653,23 @@ export default function ProductEditorWorkspace({
     [variants],
   );
   const bulkAffected = useMemo(() => bulkPriceable, [bulkPriceable]);
+  const bulkMinimumRetailPrice = useMemo(() => {
+    const matchingCosts = bulkAffected
+      .filter(
+        (variant) =>
+          variant.supplierCost.currency === fixture.source.sourceCurrency,
+      )
+      .map((variant) => variant.supplierCost.amountMinor);
 
-  const applyBulkPricing = (value: number) => {
+    if (matchingCosts.length === 0) return null;
+
+    return {
+      amountMinor: Math.max(...matchingCosts) + 1,
+      currency: fixture.source.sourceCurrency,
+    };
+  }, [bulkAffected, fixture.source.sourceCurrency]);
+
+  const applyBulkPricing = (amountMinor: number) => {
     const affectedIds = new Set(bulkAffected.map((variant) => variant.id));
 
     setVariants((current) =>
@@ -648,11 +679,14 @@ export default function ProductEditorWorkspace({
         return {
           ...variant,
           retailPrice: {
-            amountMinor: Math.round(value * 100),
+            amountMinor: retailAmountAboveSupplierCost(
+              amountMinor,
+              variant.retailPrice.currency,
+              variant.supplierCost,
+            ),
             currency: variant.retailPrice.currency,
           },
-          attention:
-            Math.round(value * 100) <= 0 ? 'Retail price required' : null,
+          attention: amountMinor <= 0 ? 'Retail price required' : null,
         };
       }),
     );
@@ -1372,7 +1406,11 @@ export default function ProductEditorWorkspace({
 
                   updateVariant(variantId, {
                     retailPrice: {
-                      amountMinor,
+                      amountMinor: retailAmountAboveSupplierCost(
+                        amountMinor,
+                        target.retailPrice.currency,
+                        target.supplierCost,
+                      ),
                       currency: target.retailPrice.currency,
                     },
                     attention:
@@ -1530,6 +1568,7 @@ export default function ProductEditorWorkspace({
         currency={fixture.source.sourceCurrency}
         affectedCount={bulkAffected.length}
         skippedCount={variants.length - bulkAffected.length}
+        minimumRetailPrice={bulkMinimumRetailPrice}
         onCancel={() => setBulkPricingMode(null)}
         onApply={applyBulkPricing}
       />
