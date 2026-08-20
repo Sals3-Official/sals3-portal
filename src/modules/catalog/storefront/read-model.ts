@@ -20,6 +20,10 @@ import {
   descriptionDocumentSchema,
   type DescriptionDocument,
 } from '@/modules/catalog/products/description-document';
+import {
+  loadSpecification,
+  type StorefrontSpecification,
+} from '@/modules/catalog/storefront/specification';
 
 /**
  * The public storefront's read model — the only query path behind
@@ -135,6 +139,20 @@ export type StorefrontDetailRow = StorefrontListRow & {
   description?: StorefrontDescription;
   variants?: StorefrontVariant[];
   specs?: StorefrontSpecs;
+  /**
+   * The seller's own answers to their category's attribute set. Separate from
+   * `specs` on purpose — see `specification.ts` for why one table cannot carry
+   * both without misattributing a seller declaration to the supplier.
+   */
+  specification?: StorefrontSpecification[];
+  /**
+   * The seller-edited `<meta name="description">`.
+   *
+   * Hidden metadata, **not** the visible description: the consumer must never
+   * render it in the page body, and must never substitute the visible
+   * description for it when this is present.
+   */
+  metaDescription?: string;
 };
 
 /** Bounds one gallery. Beyond this nobody scrolls and nobody reviews. */
@@ -654,6 +672,28 @@ async function loadSpecs(
   return Object.keys(specs).length === 0 ? null : specs;
 }
 
+/**
+ * The seller's own `<meta name="description">`, when they have written one.
+ *
+ * A blank string is treated as absent: the column is nullable precisely so an
+ * unset value means "not decided yet", and an empty string reaching the
+ * consumer would beat its own fallback chain and produce a page with no meta
+ * description at all.
+ */
+async function loadMetaDescription(
+  executor: DbExecutor,
+  productId: string,
+): Promise<string | null> {
+  const rows = await executor
+    .select({ metaDescription: products.metaDescription })
+    .from(products)
+    .where(eq(products.id, productId))
+    .limit(1);
+  const value = rows[0]?.metaDescription?.trim();
+
+  return value === undefined || value === '' ? null : value;
+}
+
 export async function findPublishedProductBySlug(
   slug: string,
   executor: DbExecutor = getDb(),
@@ -666,12 +706,15 @@ export async function findPublishedProductBySlug(
 
   if (base === null) return null;
 
-  const [images, description, variants, specs] = await Promise.all([
-    loadApprovedImages(executor, base.id),
-    loadDescriptionBlocks(executor, base.id),
-    loadPublishedVariants(executor, base.id),
-    loadSpecs(executor, base.id),
-  ]);
+  const [images, description, variants, specs, specification, metaDescription] =
+    await Promise.all([
+      loadApprovedImages(executor, base.id),
+      loadDescriptionBlocks(executor, base.id),
+      loadPublishedVariants(executor, base.id),
+      loadSpecs(executor, base.id),
+      loadSpecification(executor, base.id),
+      loadMetaDescription(executor, base.id),
+    ]);
 
   return {
     ...base,
@@ -682,6 +725,8 @@ export async function findPublishedProductBySlug(
     ...(description === null ? {} : { description }),
     ...(variants.length === 0 ? {} : { variants }),
     ...(specs === null ? {} : { specs }),
+    ...(specification.length === 0 ? {} : { specification }),
+    ...(metaDescription === null ? {} : { metaDescription }),
   };
 }
 

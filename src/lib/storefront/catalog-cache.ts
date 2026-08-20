@@ -87,7 +87,11 @@ const readProductAcrossRequests = unstable_cache(
   // Bumped to 'v3' on 2026-08-20: `images` now honours `show_supplier_photo`
   // and orders seller uploads first. Categories stay on 'v1' — their row shape
   // is unchanged, and busting them would discard warm entries for nothing.
-  ['storefront-catalog-product', 'v3'],
+  // Bumped to 'v4' on 2026-08-21: the detail row gained `specification` and
+  // `metaDescription`. The feed key is deliberately left on 'v2' — a card row
+  // carries neither field, so busting it would discard warm entries for
+  // nothing.
+  ['storefront-catalog-product', 'v4'],
   { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
 );
 
