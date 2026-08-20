@@ -39,6 +39,7 @@ import {
 } from '@/lib/db/schema';
 import { ACTIVE_ATTRIBUTE_CONTROLS_VERSION } from '@/lib/db/schema/category-attribute-controls';
 import type {
+  AssignableMediaFixture,
   AttentionReasonFixture,
   Availability,
   CatalogueProductFixture,
@@ -912,11 +913,40 @@ function buildCatalogueProducts(
       const sellerMediaUrls = productImageUrls(
         media.filter((item) => item.sourceType === 'SELLER_UPLOAD'),
       );
+      /**
+       * Every stored photo with its row id, for pointing a variant at one.
+       *
+       * Not deduplicated by address, unlike the projections above: the write
+       * targets a row, and collapsing two rows that happen to share a URL would
+       * mean assigning "one of them".
+       */
+      const assignableMedia: AssignableMediaFixture[] = media.flatMap(
+        (item) => {
+          const url = allowedImageUrl(item.sourceUrl, item.sourceType);
+
+          return url === null
+            ? []
+            : [
+                {
+                  mediaId: item.id,
+                  url,
+                  sourceType: item.sourceType,
+                  variantId: item.variantId,
+                },
+              ];
+        },
+      );
 
       const catalogueVariants: CatalogueVariantFixture[] = variants
         .map((variant) => {
           const providerVariant = providerVariantByVariant.get(variant.id);
           const offer = offersByVariant.get(variant.id)?.[0];
+          // First recorded photo for this variant. `assignableMedia` keeps the
+          // row identity the URL projections drop, so the editor can render the
+          // photo and unlink it again.
+          const variantMedia = assignableMedia.find(
+            (item) => item.variantId === variant.id,
+          );
           const observedQuantity =
             providerVariant?.lastObservedInventory ?? null;
           const observedAt = providerVariant?.lastObservedAt ?? null;
@@ -950,7 +980,9 @@ function buildCatalogueProducts(
             sals3VariantId: variant.id,
             sellerSku: variant.sals3Sku,
             cjVariantId: providerVariant?.externalVariantId ?? 'Not recorded',
-            hasImage: media.some((item) => item.variantId === variant.id),
+            hasImage: variantMedia !== undefined,
+            imageUrl: variantMedia?.url ?? null,
+            imageMediaId: variantMedia?.mediaId ?? null,
             sellingPrice: money(
               offer?.priceAmountMinor ?? null,
               offer?.priceCurrency ?? null,
@@ -991,6 +1023,7 @@ function buildCatalogueProducts(
         mediaImageUrls,
         supplierMediaUrls,
         sellerMediaUrls,
+        assignableMedia,
         showSupplierPhoto: product.showSupplierPhoto,
         status,
         // The CJ category is the Sals3 category (owner decision 2026-08-14):
@@ -1429,6 +1462,8 @@ function editorVariants(product: CatalogueProductFixture): VariantFixture[] {
       supplierStock: variant.supplierObservedQuantity ?? 0,
       warehouseLabel: 'Not recorded',
       hasImage: variant.hasImage,
+      imageUrl: variant.imageUrl ?? null,
+      imageMediaId: variant.imageMediaId ?? null,
       // Same reasoning as the single-variant case above: eligibility
       // (in stock, not paused) decides the default, not whether the
       // product happens to be published yet.
@@ -1763,6 +1798,9 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
     marketsNotEnabledCount: 0,
     media: editorSellerMedia(product),
     supplierMedia: editorSupplierMedia(product),
+    // Both origins, in one list: which variant a photo depicts is a Sals3
+    // editorial fact, so a supplier original is as assignable as an upload.
+    assignableMedia: product.assignableMedia ?? [],
     showSupplierPhoto: product.showSupplierPhoto ?? true,
     policyVersion: 'database',
     draftSaveTarget:

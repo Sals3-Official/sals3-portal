@@ -1,6 +1,9 @@
 import type { DescriptionBlock } from '@/lib/products/description-blocks';
 import type { DescriptionMode } from '@/lib/products/simple-description';
-import type { MappedOptionAxis } from '@/lib/seller-center/product-catalogue/types';
+import type {
+  AssignableMediaFixture,
+  MappedOptionAxis,
+} from '@/lib/seller-center/product-catalogue/types';
 import type {
   EvaluationStatus,
   ReasonCode,
@@ -114,6 +117,14 @@ export type VariantFixture = {
   supplierStock: number;
   warehouseLabel: string;
   hasImage: boolean;
+  /**
+   * The photo recorded for this variant, and the media row that holds it.
+   *
+   * `hasImage` alone could only draw a placeholder. Both are optional so the
+   * illustrative fixtures, which carry no imagery at all, stay valid.
+   */
+  imageUrl?: string | null;
+  imageMediaId?: string | null;
   enabled: boolean;
   listingState: VariantListingState;
   /** Short attention label for the table's Attention column. */
@@ -438,6 +449,12 @@ export type ProductEditorFixture = {
    * Basic Information's Supplier Details, never in Media section.
    */
   supplierMedia: MediaItemFixture[];
+  /**
+   * Every stored photo a variant can be pointed at, with the real media row id
+   * the assignment writes to. Empty on the illustrative fixtures, which carry
+   * no imagery — the picker then explains that instead of offering nothing.
+   */
+  assignableMedia?: AssignableMediaFixture[];
   /**
    * Whether `supplierMedia` shows to buyers alongside `media`, not only as a
    * fallback when `media` is empty. Off hides the supplier's photo from

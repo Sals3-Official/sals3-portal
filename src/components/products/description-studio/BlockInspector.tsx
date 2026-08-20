@@ -18,6 +18,7 @@ import {
   describeBlockProblem,
   type DescriptionBlock,
 } from '@/lib/products/description-blocks';
+import { IMAGE_UPLOAD_LIMITS_COPY } from '@/lib/products/image-upload-limits';
 
 /**
  * Fields for the selected block, for everything the canvas cannot edit in
@@ -155,6 +156,13 @@ function ImageFields({
         >
           {uploadButtonLabel(isUploading, block.url)}
         </Button>
+        {/* Before the picker opens, not after a refusal: a phone photo is
+            routinely wider than 2000 px, and a seller who reads the ceiling
+            first resizes once instead of guessing at "that image is too
+            large." */}
+        <p className="mt-1.5 text-[11.5px] text-ink-subtle">
+          {IMAGE_UPLOAD_LIMITS_COPY}
+        </p>
         {uploadDisabledReason === null ? null : (
           <p className="mt-1.5 text-[11.5px] text-ink-subtle">
             {uploadDisabledReason}

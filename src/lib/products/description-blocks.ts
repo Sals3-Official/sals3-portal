@@ -390,3 +390,38 @@ export function blocksMatchSaved(
     JSON.stringify(prepareBlocksForSave(right))
   );
 }
+
+/**
+ * The first block the server would refuse, and why — the seller-facing
+ * pre-flight for a save.
+ *
+ * `describeBlockProblem` already existed and was already rendered beside the
+ * *selected* block, which is exactly the case a seller who never selected it
+ * does not see. So an uploaded photo with no alt text reached
+ * `descriptionDocumentSchema`, whose `alt` is `min(1)`, and came back as
+ * `invalid_input` — copy that reads "Remove any pasted formatting", naming a
+ * cause that was not the cause and an action that could not fix it.
+ *
+ * Blocks `prepareBlocksForSave` drops are skipped, so a half-added image row
+ * with no file is an editing state rather than a refusal — the same rule, read
+ * from the same predicate, so the two cannot disagree about which blocks are
+ * about to be stored.
+ *
+ * The index is the caller's own, not the prepared list's: the editor needs to
+ * select the offending block, and prepared indices no longer address it.
+ */
+export function firstBlockProblem(
+  blocks: readonly DescriptionBlock[],
+): { index: number; problem: string } | null {
+  const refused = blocks
+    .map((block, index) => ({
+      index,
+      problem: isBlockEmpty(block) ? null : describeBlockProblem(block),
+    }))
+    .filter(
+      (entry): entry is { index: number; problem: string } =>
+        entry.problem !== null,
+    );
+
+  return refused[0] ?? null;
+}

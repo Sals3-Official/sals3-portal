@@ -38,6 +38,11 @@ vi.mock('@/app/(portal)/listings/media-actions', () => ({
   deleteSellerMediaAction: vi.fn(),
 }));
 
+// Same reasoning: `assign-variant-media.ts` reaches the server-only db client.
+vi.mock('@/app/(portal)/listings/variant-media-actions', () => ({
+  default: vi.fn(),
+}));
+
 vi.mock('@/app/(portal)/listings/category-attributes-actions', () => ({
   default: vi.fn(),
 }));
@@ -95,6 +100,29 @@ async function saveDraft() {
     (input as { descriptionDocument: unknown }).descriptionDocument,
   );
 }
+
+/**
+ * A second value, for the case the arrows exist for: `S, M` is not the order
+ * the split produced.
+ */
+const SIZED_AXES = [
+  {
+    optionId: '55555555-5555-4555-8555-555555555555',
+    name: 'Size',
+    values: [
+      {
+        valueId: '66666666-6666-4666-8666-666666666666',
+        label: 'M',
+        supplierValue: 'm',
+      },
+      {
+        valueId: '77777777-7777-4777-8777-777777777777',
+        label: 'S',
+        supplierValue: 's',
+      },
+    ],
+  },
+];
 
 describe('Description section - block authoring', () => {
   it('saves a loaded document unchanged when nothing was edited', async () => {
@@ -235,6 +263,7 @@ describe('Variant Matrix - renaming a saved mapping', () => {
       ok: true,
       axisCount: 1,
       renamedValueCount: 1,
+      reorderedAxisCount: 0,
     });
 
     renderEditor(mappedFixture());
@@ -243,9 +272,14 @@ describe('Variant Matrix - renaming a saved mapping', () => {
     fireEvent.change(screen.getByLabelText('Option 1 name'), {
       target: { value: 'Colour' },
     });
-    fireEvent.change(screen.getByLabelText('Buyer label for army green'), {
-      target: { value: 'Olive' },
-    });
+    // One vocabulary in both editing modes: the first-time mapping and the
+    // later rename now render the same row component.
+    fireEvent.change(
+      screen.getByLabelText('Label shown to buyers for army green'),
+      {
+        target: { value: 'Olive' },
+      },
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Save names' }));
 
     await waitFor(() => expect(renameOptionMappingAction).toHaveBeenCalled());
@@ -281,6 +315,7 @@ describe('Variant Matrix - renaming a saved mapping', () => {
       ok: true,
       axisCount: 1,
       renamedValueCount: 1,
+      reorderedAxisCount: 0,
     });
 
     renderEditor(mappedFixture());
@@ -784,5 +819,86 @@ describe('Product editor - a mode switch is an unsaved change', () => {
     });
 
     expect(screen.getAllByText(/Empty description/)).toHaveLength(1);
+  });
+});
+
+/**
+ * The order values appear in is a seller decision the rename screen could not
+ * make. `S, M, L, XL, XXL` is alphabetically `L, M, S, XL, XXL`, which is what
+ * buyers were shown, and the only way to correct it was to never have mapped
+ * the product in the first place.
+ */
+describe('Product editor - reordering a saved Variant Matrix', () => {
+  function sizedFixture(): ProductEditorFixture {
+    const base = databaseBackedFixture();
+
+    return {
+      ...base,
+      mappedAxes: SIZED_AXES,
+      publishTarget: {
+        productId: '11111111-1111-4111-8111-111111111111',
+        expectedProductVersion: 7,
+      },
+      optionMapping: {
+        ...base.optionMapping,
+        mappedAxisNames: ['Size'],
+      },
+    };
+  }
+
+  it('sends the arranged order, because array order is the stored position', async () => {
+    vi.mocked(renameOptionMappingAction).mockResolvedValue({
+      ok: true,
+      axisCount: 1,
+      renamedValueCount: 2,
+      reorderedAxisCount: 1,
+    });
+
+    renderEditor(sizedFixture());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit names' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Move s up' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save names' }));
+
+    await waitFor(() => expect(renameOptionMappingAction).toHaveBeenCalled());
+
+    expect(renameOptionMappingAction).toHaveBeenCalledWith({
+      productId: '11111111-1111-4111-8111-111111111111',
+      expectedProductVersion: 7,
+      axes: [
+        {
+          optionId: SIZED_AXES[0].optionId,
+          name: 'Size',
+          values: [
+            { valueId: SIZED_AXES[0].values[1].valueId, label: 'S' },
+            { valueId: SIZED_AXES[0].values[0].valueId, label: 'M' },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('keeps focus on the row that just moved to a boundary', () => {
+    renderEditor(sizedFixture());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit names' }));
+
+    const up = screen.getByRole('button', { name: 'Move s up' });
+
+    up.focus();
+    fireEvent.click(up);
+
+    // `Move s up` is now disabled at the top of the list, so focus was handed
+    // to its sibling rather than dropped to `<body>`.
+    expect(screen.getByRole('button', { name: 'Move s down' })).toHaveFocus();
+  });
+
+  it('cannot move a value past either end', () => {
+    renderEditor(sizedFixture());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit names' }));
+
+    expect(screen.getByRole('button', { name: 'Move m up' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move s down' })).toBeDisabled();
   });
 });

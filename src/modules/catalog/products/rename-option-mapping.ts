@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import getDb, { type Database } from '@/lib/db/client';
 import { productOptionValues, productOptions, products } from '@/lib/db/schema';
 import { appendAuditEvent } from '@/modules/catalog/candidates/repository';
@@ -23,10 +23,25 @@ import { PRODUCT_AUDIT_ACTIONS } from './contracts';
  * can become `Olive`, with no row deleted, no key recomputed, no variant
  * identity moved, and nothing to reconcile against an order.
  *
+ * ## Order travels with the words
+ *
+ * The order values appear in is presentation, exactly like the label. `S, M, L,
+ * XL, XXL` is recoverable by no algorithm — the supplier sends one token per
+ * variant and nothing that ranks them — so a seller who cannot reorder is left
+ * with whatever first-seen order the split produced, which on this product read
+ * `L, M, S, XL, XXL`. Nothing joins on `position`:
+ * `product_variant_option_values` links by value id and
+ * `option_combination_key` is built from `normalized_value`, so moving a row
+ * changes what a buyer reads and nothing a cart or an accepted order holds.
+ *
+ * `values` arrives in the order the seller arranged, and the array index *is*
+ * the stored position. There is no separate order field to disagree with it.
+ *
  * What this deliberately cannot do: add or remove an axis, change which
  * supplier token sits at which position, or re-split a product. Those are
  * the structural changes, and they remain refused until they have their own
- * design.
+ * design. Axis order (`product_options.position`) is likewise untouched — that
+ * is which option comes first, which the matrix's own identity is built on.
  */
 
 export type RenameOptionMappingAxisInput = {
@@ -43,7 +58,13 @@ export type RenameOptionMappingRefusal =
   | 'DUPLICATE_AXIS_NAME';
 
 export type RenameOptionMappingResult =
-  | { ok: true; axisCount: number; renamedValueCount: number }
+  | {
+      ok: true;
+      axisCount: number;
+      renamedValueCount: number;
+      /** Axes whose value order the seller actually changed. */
+      reorderedAxisCount: number;
+    }
   | { ok: false; reason: RenameOptionMappingRefusal; detail?: string };
 
 function hasDuplicate(values: string[]): boolean {
@@ -112,6 +133,7 @@ export default async function renameOptionMapping(input: {
       .select({
         id: productOptionValues.id,
         optionId: productOptionValues.optionId,
+        position: productOptionValues.position,
       })
       .from(productOptionValues)
       .where(
@@ -135,6 +157,62 @@ export default async function renameOptionMapping(input: {
 
     if (misplaced) return { ok: false, reason: 'UNKNOWN_AXIS' };
 
+    /**
+     * Every value of every axis must be present, because the array index is
+     * now the stored position.
+     *
+     * A request missing one value used to be harmless — it simply went
+     * unrenamed. It is not harmless once order is written: the omitted row
+     * would keep the temporary offset position assigned below and sort after
+     * everything, so a partial payload would silently push a size to the end
+     * of the list. Refused as `UNKNOWN_AXIS`, whose seller-facing sentence
+     * already says the submitted options no longer match the saved matrix and
+     * to reload.
+     */
+    const storedCountByAxis = new Map<string, number>();
+
+    storedValues.forEach((value) => {
+      storedCountByAxis.set(
+        value.optionId,
+        (storedCountByAxis.get(value.optionId) ?? 0) + 1,
+      );
+    });
+
+    const incomplete = input.axes.some(
+      (axis) =>
+        axis.values.length !== (storedCountByAxis.get(axis.optionId) ?? 0) ||
+        new Set(axis.values.map((value) => value.valueId)).size !==
+          axis.values.length,
+    );
+
+    if (incomplete) return { ok: false, reason: 'UNKNOWN_AXIS' };
+
+    /**
+     * Positions are written in two passes, and the offset is why.
+     *
+     * `product_option_values_option_position_key` is a plain unique index, so
+     * it is checked per row as the statement runs and cannot be deferred; a
+     * straight swap of two rows collides on the first write. Moving every row
+     * of an axis above its own current maximum first empties the whole
+     * `0..n-1` range, so the second pass can assign final positions in any
+     * order. Negative sentinels would be simpler and are not available:
+     * `product_option_values_position_non_negative` forbids them.
+     */
+    const positionOffset =
+      Math.max(0, ...storedValues.map((value) => value.position)) + 1;
+
+    // Recorded in the audit event: "renamed" and "reordered" are different
+    // seller intents, and a history that cannot tell them apart cannot answer
+    // why a size list changed order.
+    const storedPosition = new Map(
+      storedValues.map((value) => [value.id, value.position]),
+    );
+    const reorderedAxisCount = input.axes.filter((axis) =>
+      axis.values.some(
+        (value, index) => storedPosition.get(value.valueId) !== index,
+      ),
+    ).length;
+
     let renamedValueCount = 0;
 
     // eslint-disable-next-line no-restricted-syntax -- sequential: small, bounded by axis count, and inside one transaction.
@@ -145,15 +223,26 @@ export default async function renameOptionMapping(input: {
         .set({ name: axis.name.trim() })
         .where(eq(productOptions.id, axis.optionId));
 
+      // Clear the `0..n-1` range before any final position is written — see
+      // the offset note above.
+      // eslint-disable-next-line no-await-in-loop
+      await tx
+        .update(productOptionValues)
+        .set({
+          position: sql`${productOptionValues.position} + ${positionOffset}`,
+        })
+        .where(eq(productOptionValues.optionId, axis.optionId));
+
       // eslint-disable-next-line no-restricted-syntax
-      for (const value of axis.values) {
-        // `label` only. `normalized_value` is the supplier's own token and
-        // the join key every variant link and the uniqueness index use — it
-        // is what makes this rename safe, and it must never be written here.
+      for (const [index, value] of axis.values.entries()) {
+        // `label` and `position` only. `normalized_value` is the supplier's
+        // own token and the join key every variant link and the uniqueness
+        // index use — it is what makes this rename safe, and it must never be
+        // written here.
         // eslint-disable-next-line no-await-in-loop
         await tx
           .update(productOptionValues)
-          .set({ label: value.label.trim() })
+          .set({ label: value.label.trim(), position: index })
           .where(eq(productOptionValues.id, value.valueId));
 
         renamedValueCount += 1;
@@ -174,9 +263,15 @@ export default async function renameOptionMapping(input: {
         sellerAccountId: input.sellerAccountId,
         axisNames: input.axes.map((axis) => axis.name.trim()),
         renamedValueCount,
+        reorderedAxisCount,
       },
     });
 
-    return { ok: true, axisCount: input.axes.length, renamedValueCount };
+    return {
+      ok: true,
+      axisCount: input.axes.length,
+      renamedValueCount,
+      reorderedAxisCount,
+    };
   });
 }

@@ -66,9 +66,11 @@ import EditorSheet from './EditorSheet';
 import EditorStateBanners from './EditorStateBanners';
 import ListingReadinessPanel from './ListingReadinessPanel';
 import ProductEditorHeader from './ProductEditorHeader';
+import PublishSuccessDialog from './PublishSuccessDialog';
 import ReviewPublishSection from './ReviewPublishSection';
 import SpecificationsSection from './SpecificationsSection';
 import SupplierSourceDrawer from './SupplierSourceDrawer';
+import VariantImagePicker from './VariantImagePicker';
 import VariantOptionMappingSection from './VariantOptionMappingSection';
 import VariantPricingTable from './VariantPricingTable';
 
@@ -180,6 +182,17 @@ type ProductEditorWorkspaceProps = {
           heightPixels: number;
         };
       }
+    | { ok: false; reason: string; message: string }
+  >;
+  /**
+   * Variant-photo assignment boundary — points a stored photo at one variant, or
+   * clears it. Omitted for fixture/design-preview mode, where the Image cell
+   * reports the state and offers no control.
+   */
+  assignVariantMediaAction?: (
+    input: unknown,
+  ) => Promise<
+    | { ok: true; mediaId: string; variantId: string | null }
     | { ok: false; reason: string; message: string }
   >;
   /** Seller-photo delete boundary. Omitted for fixture/design-preview mode. */
@@ -320,6 +333,33 @@ function retailPriceIssue(fixture: ProductEditorFixture): ReadinessIssue {
  * rules — that authoritative check happens server-side on save
  * (`saveCategoryAttributes`) and again at publish (`publish.ts`).
  */
+/**
+ * What a specification save would store, as one comparable string.
+ *
+ * The Specification section has its own Save button, and pressing Publish
+ * without pressing it first sent the publish request while every edited
+ * attribute stayed in the tab — the seller watched a value they had just typed
+ * fail to appear on the published listing, with nothing on screen having said
+ * it was unsaved. Publish now flushes first, and this is how it knows there is
+ * anything to flush.
+ *
+ * Sorted by attribute name so a re-render that returns the fields in a
+ * different order is not read as an edit.
+ */
+function categoryAttributeFingerprint(
+  fields: readonly CategoryAttributeFieldFixture[],
+): string {
+  return JSON.stringify(
+    [...fields]
+      .map((field) => ({
+        name: field.attributeName,
+        values: field.values,
+        isCustomValue: field.isCustomValue,
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+  );
+}
+
 function categoryAttributeIssues(
   fixture: ProductEditorFixture,
   fields: CategoryAttributeFieldFixture[],
@@ -376,6 +416,7 @@ export default function ProductEditorWorkspace({
   decideCategoryAction,
   uploadMediaAction,
   deleteMediaAction,
+  assignVariantMediaAction,
   saveCategoryAttributesAction,
   saveMetaDescriptionAction,
   saveShowSupplierPhotoAction,
@@ -500,9 +541,20 @@ export default function ProductEditorWorkspace({
     fixture.sals3CategoryCode,
   );
 
+  /**
+   * The last specification values known to be in the database, for telling an
+   * unsaved edit from a saved one. Resynced with `categoryAttributes` itself and
+   * on the same key, so the two never disagree about which category's fields
+   * they describe.
+   */
+  const [savedCategoryAttributes, setSavedCategoryAttributes] = useState<
+    CategoryAttributeFieldFixture[]
+  >(fixture.categoryAttributes);
+
   if (fixture.sals3CategoryCode !== prevCategoryCode) {
     setPrevCategoryCode(fixture.sals3CategoryCode);
     setCategoryAttributes(fixture.categoryAttributes);
+    setSavedCategoryAttributes(fixture.categoryAttributes);
   }
   /**
    * Seeded through `autoListVariants`, which replaces the two bulk buttons that
@@ -572,6 +624,18 @@ export default function ProductEditorWorkspace({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
   const [exitDialogOpen, setExitDialogOpen] = useState(false);
+  /**
+   * The published listing, once there is one. Null until a real publish
+   * succeeds, so design-preview mode can never raise this dialog.
+   */
+  /** The variant whose photo picker is open, if any. */
+  const [imagePickerVariantId, setImagePickerVariantId] = useState<
+    string | null
+  >(null);
+  const [published, setPublished] = useState<{
+    slug: string;
+    offerCount: number;
+  } | null>(null);
   const [bulkPricingMode, setBulkPricingMode] =
     useState<BulkPricingMode | null>(null);
   const [previewMarketCode, setPreviewMarketCode] = useState(
@@ -583,6 +647,30 @@ export default function ProductEditorWorkspace({
   const [draftRevisionVersion, setDraftRevisionVersion] = useState(
     fixture.draftSaveTarget?.expectedRevisionVersion ?? null,
   );
+
+  /**
+   * `products.version`, as this tab last observed it.
+   *
+   * Every product-level write here is a compare-and-set on it, and
+   * `router.refresh()` is asynchronous — so two writes in one interaction
+   * (specifications flushed, then publish) cannot both read the version the
+   * fixture rendered with: the second would be refused as `version_conflict`
+   * for having done exactly what it was asked to do.
+   *
+   * Resynced from the fixture only when the fixture is *ahead*. The column only
+   * ever increases, so a refresh that lands after a newer local write must not
+   * pull the token backwards.
+   */
+  const fixtureProductVersion =
+    fixture.publishTarget?.expectedProductVersion ?? null;
+  const [productVersion, setProductVersion] = useState(fixtureProductVersion);
+
+  if (
+    fixtureProductVersion !== null &&
+    (productVersion === null || fixtureProductVersion > productVersion)
+  ) {
+    setProductVersion(fixtureProductVersion);
+  }
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -782,8 +870,82 @@ export default function ProductEditorWorkspace({
     }
   };
 
+  /**
+   * The same compare-and-set token every product-level write on this screen
+   * uses. Captured in a local so its non-null narrowing survives into the
+   * closures below — `optionMappingTarget` further down is the same value, named
+   * for the section that needed it first.
+   */
+  const attributeSaveTarget = fixture.publishTarget;
+
+  const attributesAreUnsaved =
+    categoryAttributeFingerprint(categoryAttributes) !==
+    categoryAttributeFingerprint(savedCategoryAttributes);
+
+  /**
+   * The specification write itself, without the screen feedback around it.
+   *
+   * Separated from the section's own Save button because Publish needs the same
+   * write: the section's button was the only way these fields ever reached the
+   * database, so pressing Publish on freshly typed specifications published
+   * without them. Returning the resulting `products.version` is what lets the
+   * publish that follows compare-and-set against the row this write just left.
+   *
+   * It does not call `router.refresh()`. A caller that is about to publish must
+   * not race a re-render of the fixture it is publishing from.
+   */
+  const flushCategoryAttributes =
+    saveCategoryAttributesAction === undefined || attributeSaveTarget === null
+      ? undefined
+      : async (): Promise<
+          { ok: true; productVersion: number } | { ok: false; message: string }
+        > => {
+          // Every currently-rendered field is submitted, including an empty
+          // array for one the seller cleared. `saveCategoryAttributes`
+          // treats an attribute name absent from the payload as "untouched"
+          // and one present with no accepted value as "delete the stored
+          // row" — omitting a cleared field here left its old, now-stale
+          // value in the database after save and refresh.
+          const attributes = Object.fromEntries(
+            categoryAttributes.map((field) => [
+              field.attributeName,
+              field.values,
+            ]),
+          );
+
+          const result = await saveCategoryAttributesAction({
+            productId: attributeSaveTarget.productId,
+            expectedProductVersion:
+              productVersion ?? attributeSaveTarget.expectedProductVersion,
+            attributes,
+          });
+
+          if (!result.ok) return { ok: false, message: result.message };
+
+          setProductVersion(result.productVersion);
+          setSavedCategoryAttributes(categoryAttributes);
+
+          return { ok: true, productVersion: result.productVersion };
+        };
+
   const onSaveDraft = async () => {
     setLifecycle('SAVING');
+
+    // Same reasoning as the publish path: the seller pressed Save, so every
+    // pending edit on the screen is saved, including the ones that belong to a
+    // separate versioned write.
+    if (attributesAreUnsaved && flushCategoryAttributes !== undefined) {
+      const flushed = await flushCategoryAttributes();
+
+      if (!flushed.ok) {
+        setLifecycle('SAVE_FAILED');
+        toast('Draft save failed.', {
+          description: `The specifications were not saved. ${flushed.message}`,
+        });
+
+        return;
+      }
+    }
 
     if (
       saveDraftAction !== undefined &&
@@ -846,10 +1008,45 @@ export default function ProductEditorWorkspace({
   const onPublish = async () => {
     setLifecycle('VALIDATING');
 
-    if (publishAction !== undefined && fixture.publishTarget !== null) {
+    /**
+     * Specifications are flushed before the publish request, not left behind by
+     * it.
+     *
+     * The Specification section owns its own Save button, so a seller who typed
+     * a value and pressed Publish published the old value — or none — while the
+     * new one sat in the tab. Publishing is the strongest statement of intent on
+     * this screen; it cannot be the one action that discards an edit.
+     *
+     * A failed flush stops the publish. Publishing anyway would put a listing
+     * live that contradicts what the seller is looking at, which is worse than
+     * not publishing.
+     */
+    let expectedProductVersion =
+      productVersion ?? fixture.publishTarget?.expectedProductVersion ?? null;
+
+    if (attributesAreUnsaved && flushCategoryAttributes !== undefined) {
+      const flushed = await flushCategoryAttributes();
+
+      if (!flushed.ok) {
+        setLifecycle('VALIDATION_FAILED');
+        toast('Nothing was published.', {
+          description: `The specifications could not be saved first, so the publish was stopped. ${flushed.message}`,
+        });
+
+        return;
+      }
+
+      expectedProductVersion = flushed.productVersion;
+    }
+
+    if (
+      publishAction !== undefined &&
+      fixture.publishTarget !== null &&
+      expectedProductVersion !== null
+    ) {
       const result = await publishAction({
         productId: fixture.publishTarget.productId,
-        expectedProductVersion: fixture.publishTarget.expectedProductVersion,
+        expectedProductVersion,
         variantRetailPrices: variants
           .filter((variant) => UUID_PATTERN.test(variant.id))
           .map((variant) => ({
@@ -863,9 +1060,10 @@ export default function ProductEditorWorkspace({
         setLifecycle('IDLE');
         setIsDirty(false);
         router.refresh();
-        toast('Product published to storefront.', {
-          description: `/p/${result.slug} · ${result.offerCount} offer${result.offerCount === 1 ? '' : 's'}`,
-        });
+        // A dialog rather than a toast: this is the end of the task, it names a
+        // path worth reading, and the seller most likely wants to leave for the
+        // catalogue. See `PublishSuccessDialog`.
+        setPublished({ slug: result.slug, offerCount: result.offerCount });
 
         return;
       }
@@ -1143,33 +1341,68 @@ export default function ProductEditorWorkspace({
    * reasoning as `handleOptionMappingSave`.
    */
   const handleSaveCategoryAttributes =
-    saveCategoryAttributesAction === undefined || optionMappingTarget === null
+    flushCategoryAttributes === undefined
       ? undefined
       : async () => {
-          // Every currently-rendered field is submitted, including an empty
-          // array for one the seller cleared. `saveCategoryAttributes`
-          // treats an attribute name absent from the payload as "untouched"
-          // and one present with no accepted value as "delete the stored
-          // row" — omitting a cleared field here left its old, now-stale
-          // value in the database after save and refresh.
-          const attributes = Object.fromEntries(
-            categoryAttributes.map((field) => [
-              field.attributeName,
-              field.values,
-            ]),
-          );
-
-          const result = await saveCategoryAttributesAction({
-            productId: optionMappingTarget.productId,
-            expectedProductVersion: optionMappingTarget.expectedProductVersion,
-            attributes,
-          });
+          const result = await flushCategoryAttributes();
 
           if (result.ok) router.refresh();
 
           return result.ok
             ? { ok: true }
             : { ok: false, message: result.message };
+        };
+
+  /**
+   * Points one stored photo at one variant, or clears it.
+   *
+   * Not a compare-and-set: `assignVariantMediaAction` explains why one nullable
+   * column on one media row needs no version token. The variant row is updated
+   * locally so the thumbnail appears immediately, and `router.refresh()` re-reads
+   * the authoritative projection behind it — the local write is what the seller
+   * sees, never what anything else trusts.
+   */
+  const imagePickerVariant =
+    imagePickerVariantId === null
+      ? null
+      : (variants.find((item) => item.id === imagePickerVariantId) ?? null);
+
+  const handleAssignVariantMedia =
+    assignVariantMediaAction === undefined ||
+    attributeSaveTarget === null ||
+    imagePickerVariant === null
+      ? undefined
+      : async (mediaId: string | null) => {
+          const result = await assignVariantMediaAction({
+            productId: attributeSaveTarget.productId,
+            mediaId:
+              mediaId ??
+              imagePickerVariant.imageMediaId ??
+              // Clearing needs a row to clear; the picker only offers the
+              // control when the variant holds one, so this is unreachable.
+              '',
+            variantId: mediaId === null ? null : imagePickerVariant.id,
+          });
+
+          if (!result.ok) {
+            return { ok: false, message: result.message };
+          }
+
+          const assigned =
+            mediaId === null
+              ? null
+              : (fixture.assignableMedia?.find(
+                  (item) => item.mediaId === mediaId,
+                ) ?? null);
+
+          updateVariant(imagePickerVariant.id, {
+            hasImage: assigned !== null,
+            imageUrl: assigned?.url ?? null,
+            imageMediaId: assigned?.mediaId ?? null,
+          });
+          router.refresh();
+
+          return { ok: true };
         };
 
   /**
@@ -1583,6 +1816,11 @@ export default function ProductEditorWorkspace({
                   updateVariant(variantId, { sellerSku: value })
                 }
                 onBulkSetPrice={() => setBulkPricingMode('SET_PRICE')}
+                onPickImage={
+                  assignVariantMediaAction === undefined
+                    ? undefined
+                    : setImagePickerVariantId
+                }
               />
             </div>
           </EditorSectionCard>
@@ -1731,6 +1969,34 @@ export default function ProductEditorWorkspace({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {imagePickerVariant === null ||
+      handleAssignVariantMedia === undefined ? null : (
+        <VariantImagePicker
+          open
+          onOpenChange={(open) => {
+            if (!open) setImagePickerVariantId(null);
+          }}
+          variantLabel={imagePickerVariant.optionLabel}
+          variantId={imagePickerVariant.id}
+          media={fixture.assignableMedia ?? []}
+          currentMediaId={imagePickerVariant.imageMediaId ?? null}
+          onAssign={handleAssignVariantMedia}
+        />
+      )}
+
+      {published === null ? null : (
+        <PublishSuccessDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setPublished(null);
+          }}
+          productName={productName}
+          slug={published.slug}
+          offerCount={published.offerCount}
+          catalogueHref={EXIT_HREF}
+        />
+      )}
     </div>
   );
 }

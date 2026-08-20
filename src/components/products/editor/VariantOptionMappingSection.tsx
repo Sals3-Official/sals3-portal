@@ -2,13 +2,14 @@
 
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { ChevronDown, ChevronUp, Lock, Pencil } from 'lucide-react';
+import { Lock, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { MappedOptionAxis } from '@/lib/seller-center/product-catalogue/types';
 import type { IssueSeverity } from '@/lib/seller-center/product-editor/types';
 import EditorStatusPill from './EditorStatusPill';
+import VariantMatrixValueRow from './VariantMatrixValueRow';
 import { sectionBadge } from './presentation';
 
 /**
@@ -153,31 +154,11 @@ function proposalIdentity(proposal: OptionMappingProposalAxis[]): string {
 }
 
 /**
- * Reordering with the keyboard must not drop focus.
- *
- * Each arrow disables at its end of the list, and `disabled` on the element that
- * currently holds focus makes the browser drop focus to `<body>`. So the last
- * press of a run — the one that lands the value where the seller wanted it —
- * silently loses their place. That hurts most in exactly the case these buttons
- * exist for: `S, M, L, XL, XXL` is recoverable by no algorithm, so the order is
- * set by hand, and by keyboard for anyone not using a mouse.
- *
- * Focus moves to the opposite arrow in the same row, which is always enabled
- * after a move that lands on a boundary — an axis carries at least two values, so
- * the two ends are never the same row. It is handed over before the state update:
- * the sibling is not unmounted, so React keeps focus on it, and the row carries
- * that focus with it as it moves.
+ * The buyer-facing label ceiling, matching `option-mapping-actions`' own
+ * `max(120)` on both the mapping save and the rename. Enforced in the field so a
+ * seller is stopped at the limit rather than refused after typing past it.
  */
-function keepFocusOffDisabledArrow(
-  pressed: HTMLButtonElement,
-  willDisable: boolean,
-): void {
-  if (!willDisable) return;
-
-  const sibling = pressed.nextElementSibling ?? pressed.previousElementSibling;
-
-  if (sibling instanceof HTMLButtonElement) sibling.focus();
-}
+const MAX_VALUE_LABEL_LENGTH = 120;
 
 function move<T>(items: T[], from: number, to: number): T[] {
   if (to < 0 || to >= items.length) return items;
@@ -188,6 +169,27 @@ function move<T>(items: T[], from: number, to: number): T[] {
   if (lifted !== undefined) next.splice(to, 0, lifted);
 
   return next;
+}
+
+/**
+ * One value moved one place inside one axis, for either editing mode.
+ *
+ * Generic over the value shape because the two modes hold different ones — a
+ * proposal keyed by supplier token, a saved axis keyed by value id — while the
+ * move itself is the same operation on the same array. `position` is never a
+ * field here: array order is what both save paths read.
+ */
+function moveValue<V, A extends { values: V[] }>(
+  axes: readonly A[],
+  axisIndex: number,
+  from: number,
+  delta: -1 | 1,
+): A[] {
+  return axes.map((axis, index) =>
+    index === axisIndex
+      ? { ...axis, values: move(axis.values, from, from + delta) }
+      : axis,
+  );
 }
 
 /**
@@ -321,8 +323,8 @@ function MappedMatrixSummary({
               Edit names
             </Button>
             <span className="text-xs text-muted-foreground">
-              Names only. The number of options, and which supplier value sits
-              where, cannot change once variants exist.
+              Names and order only. The number of options, and which supplier
+              value sits where, cannot change once variants exist.
             </span>
           </div>
         ) : null}
@@ -337,8 +339,8 @@ function MappedMatrixSummary({
     <div className="flex flex-col gap-3 border-b border-border pb-5">
       <VariantMatrixHeader meta="Editing names" severity={null} />
       <p className="text-sm text-muted-foreground">
-        Change what buyers read. Each supplier value stays as received beside
-        the name you give it.
+        Change what buyers read, and the order they read it in. Each supplier
+        value stays as received beside the name you give it.
       </p>
 
       <div className="flex flex-col gap-4">
@@ -367,51 +369,56 @@ function MappedMatrixSummary({
               />
             </div>
 
-            <ul className="flex list-none flex-col gap-2 p-0">
+            {/* Same column rhythm as the first-time mapping above: the
+                supplier's token, the label buyers read, then the arrows that
+                place it. Two screens editing one matrix should not look like
+                two features. */}
+            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+              <span className="flex items-center justify-end gap-1 pr-3">
+                <Lock aria-hidden="true" className="size-3" />
+                Supplier value
+              </span>
+              <span>Shown to buyers</span>
+              <span className="sr-only">Reorder</span>
+            </div>
+            <div className="flex flex-col gap-2">
               {axis.values.map((value, valueIndex) => (
-                <li
+                <VariantMatrixValueRow
                   key={value.valueId}
-                  className="grid grid-cols-1 items-center gap-2 @min-[32rem]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
-                >
-                  <span className="truncate text-xs text-muted-foreground">
-                    {value.supplierValue}
-                  </span>
-                  <div>
-                    <Label
-                      htmlFor={`rename-value-${value.valueId}`}
-                      className="sr-only"
-                    >
-                      Buyer label for {value.supplierValue}
-                    </Label>
-                    <Input
-                      id={`rename-value-${value.valueId}`}
-                      value={value.label}
-                      maxLength={120}
-                      onChange={(event) =>
-                        setDrafts((current) =>
-                          current.map((item, index) =>
-                            index === axisIndex
-                              ? {
-                                  ...item,
-                                  values: item.values.map(
-                                    (existing, position) =>
-                                      position === valueIndex
-                                        ? {
-                                            ...existing,
-                                            label: event.target.value,
-                                          }
-                                        : existing,
-                                  ),
-                                }
-                              : item,
-                          ),
-                        )
-                      }
-                    />
-                  </div>
-                </li>
+                  supplierValue={value.supplierValue}
+                  label={value.label}
+                  maxLength={MAX_VALUE_LABEL_LENGTH}
+                  index={valueIndex}
+                  count={axis.values.length}
+                  onLabelChange={(label) =>
+                    setDrafts((current) =>
+                      current.map((item, index) =>
+                        index === axisIndex
+                          ? {
+                              ...item,
+                              values: item.values.map((existing, position) =>
+                                position === valueIndex
+                                  ? { ...existing, label }
+                                  : existing,
+                              ),
+                            }
+                          : item,
+                      ),
+                    )
+                  }
+                  onMoveUp={() =>
+                    setDrafts((current) =>
+                      moveValue(current, axisIndex, valueIndex, -1),
+                    )
+                  }
+                  onMoveDown={() =>
+                    setDrafts((current) =>
+                      moveValue(current, axisIndex, valueIndex, 1),
+                    )
+                  }
+                />
               ))}
-            </ul>
+            </div>
           </div>
         ))}
       </div>
@@ -775,110 +782,40 @@ export default function VariantOptionMappingSection({
                   <span className="sr-only">Reorder</span>
                 </div>
                 {axis.values.map((value, valueIndex) => (
-                  <div
+                  <VariantMatrixValueRow
                     key={value.raw}
-                    className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2"
-                  >
-                    {/*
-                      A ledger cell, not a field. Text rather than a disabled
-                      input; recessed surface and mono so it reads as the
-                      supplier's own immutable token; and right-aligned so it
-                      meets the editable label at the gutter — the two halves of
-                      one mapping in visual contact, which is the whole point of
-                      this row. Same h-9 keeps the baselines level.
-                    */}
-                    <span className="flex h-9 min-w-0 items-center justify-end rounded-md bg-muted/40 px-3">
-                      <span className="truncate font-mono text-xs text-muted-foreground">
-                        {value.raw}
-                      </span>
-                    </span>
-                    <Input
-                      value={value.label}
-                      aria-label={`Label shown to buyers for ${value.raw}`}
-                      className="h-9"
-                      onChange={(event) =>
-                        setAxes((current) =>
-                          current.map((item, index) =>
-                            index === axisIndex
-                              ? {
-                                  ...item,
-                                  values: item.values.map((existing, i) =>
-                                    i === valueIndex
-                                      ? {
-                                          ...existing,
-                                          label: event.target.value,
-                                        }
-                                      : existing,
-                                  ),
-                                }
-                              : item,
-                          ),
-                        )
-                      }
-                    />
-                    {/* gap-2, not gap-1: two opposite-action targets 4px apart
-                        invite a mis-tap that undoes the move just made. */}
-                    <span className="flex gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon-sm"
-                        aria-label={`Move ${value.raw} up`}
-                        disabled={valueIndex === 0}
-                        onClick={(event) => {
-                          keepFocusOffDisabledArrow(
-                            event.currentTarget,
-                            valueIndex - 1 === 0,
-                          );
-                          setAxes((current) =>
-                            current.map((item, index) =>
-                              index === axisIndex
-                                ? {
-                                    ...item,
-                                    values: move(
-                                      item.values,
-                                      valueIndex,
-                                      valueIndex - 1,
-                                    ),
-                                  }
-                                : item,
-                            ),
-                          );
-                        }}
-                      >
-                        <ChevronUp aria-hidden="true" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon-sm"
-                        aria-label={`Move ${value.raw} down`}
-                        disabled={valueIndex === axis.values.length - 1}
-                        onClick={(event) => {
-                          keepFocusOffDisabledArrow(
-                            event.currentTarget,
-                            valueIndex + 1 === axis.values.length - 1,
-                          );
-                          setAxes((current) =>
-                            current.map((item, index) =>
-                              index === axisIndex
-                                ? {
-                                    ...item,
-                                    values: move(
-                                      item.values,
-                                      valueIndex,
-                                      valueIndex + 1,
-                                    ),
-                                  }
-                                : item,
-                            ),
-                          );
-                        }}
-                      >
-                        <ChevronDown aria-hidden="true" />
-                      </Button>
-                    </span>
-                  </div>
+                    supplierValue={value.raw}
+                    label={value.label}
+                    maxLength={MAX_VALUE_LABEL_LENGTH}
+                    index={valueIndex}
+                    count={axis.values.length}
+                    onLabelChange={(label) =>
+                      setAxes((current) =>
+                        current.map((item, index) =>
+                          index === axisIndex
+                            ? {
+                                ...item,
+                                values: item.values.map((existing, i) =>
+                                  i === valueIndex
+                                    ? { ...existing, label }
+                                    : existing,
+                                ),
+                              }
+                            : item,
+                        ),
+                      )
+                    }
+                    onMoveUp={() =>
+                      setAxes((current) =>
+                        moveValue(current, axisIndex, valueIndex, -1),
+                      )
+                    }
+                    onMoveDown={() =>
+                      setAxes((current) =>
+                        moveValue(current, axisIndex, valueIndex, 1),
+                      )
+                    }
+                  />
                 ))}
               </div>
             </div>

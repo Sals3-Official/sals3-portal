@@ -223,3 +223,63 @@ describe('Description studio - paragraph emphasis', () => {
     );
   });
 });
+
+/**
+ * The refusal a seller actually hit: an uploaded photo with no alt text saved
+ * cleanly through the editor, failed `descriptionDocumentSchema` at the server,
+ * and came back as "That description could not be read. Remove any pasted
+ * formatting and try again." Nothing had been pasted, and no amount of removing
+ * formatting could fix it.
+ */
+describe('Description studio - save pre-flight', () => {
+  it('refuses an image with no alt text instead of sending it', async () => {
+    const { onSave } = renderStudio([
+      { type: 'paragraph', text: 'A packable 20L daypack.' },
+      { type: 'image', url: IMAGE_URL, alt: '' },
+    ]);
+
+    fireEvent.click(screen.getByRole('button', { name: /Save description/i }));
+
+    // Reported twice on purpose: once beside the Save button that refused, and
+    // once under the field that fixes it.
+    expect(
+      (await screen.findAllByText(/Alt text is required/i)).length,
+    ).toBeGreaterThan(0);
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('selects the offending block so its own field is on screen', async () => {
+    renderStudio([
+      { type: 'paragraph', text: 'A packable 20L daypack.' },
+      { type: 'image', url: IMAGE_URL, alt: '' },
+    ]);
+
+    fireEvent.click(screen.getByRole('button', { name: /Save description/i }));
+
+    // The inspector renders the alt field only for the selected block.
+    expect(await screen.findByLabelText(/Alt text/i)).toBeInTheDocument();
+  });
+
+  it('still saves when the only incomplete image has no file yet', async () => {
+    const { onSave } = renderStudio([
+      { type: 'paragraph', text: 'A packable 20L daypack.' },
+      { type: 'image', url: '', alt: '' },
+    ]);
+
+    // An image row with no file is dropped on save, so it is an editing state
+    // rather than a refusal.
+    expect((await save(onSave)).blocks).toEqual([
+      { type: 'paragraph', text: 'A packable 20L daypack.' },
+    ]);
+  });
+
+  it('tells the seller what an image upload may be before they pick one', async () => {
+    renderStudio();
+
+    // Adding an image block selects it, so the inspector opens on the upload
+    // control the caption belongs to.
+    fireEvent.click(screen.getByRole('button', { name: /^Image/ }));
+
+    expect(await screen.findByText(/2000 × 2000 px/)).toBeInTheDocument();
+  });
+});

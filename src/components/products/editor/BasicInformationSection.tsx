@@ -9,6 +9,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { IMAGE_UPLOAD_LIMITS_COPY } from '@/lib/products/image-upload-limits';
 import type {
   MediaItemFixture,
   ProductEditorFixture,
@@ -169,8 +170,8 @@ export default function BasicInformationSection({
         </div>
 
         <p className="mt-2 text-xs text-muted-foreground">
-          {photoManagerCaption(hasOwnPhotos)} Max 2000 × 2000 px · JPG, PNG, or
-          WebP, up to 5 MB each · compressed automatically on upload.
+          {photoManagerCaption(hasOwnPhotos)} {IMAGE_UPLOAD_LIMITS_COPY} ·
+          compressed automatically on upload.
         </p>
       </div>
 
