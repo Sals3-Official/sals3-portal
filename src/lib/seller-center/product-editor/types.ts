@@ -134,6 +134,35 @@ export type VariantFixture = {
   evidenceCapturedAt: string;
 };
 
+/**
+ * The photo shown against one Variant Matrix option value.
+ *
+ * There is no option-value media in the database and none is being added:
+ * `product_media_sources.variant_id` is the only link, and that table is
+ * written by draft creation, publication, every seller upload and the supplier
+ * mirror, so a new column there is DDL in front of four writers. A value's
+ * photo is therefore the photo of a variant carrying that value, and this
+ * records which variant that is so the screen can say so.
+ */
+export type VariantMatrixValuePhoto = {
+  /** The variant the photo is pinned to — the one an assignment writes. */
+  variantId: string;
+  /** That variant's buyer-facing label, so a stand-in can name its source. */
+  variantLabel: string;
+  imageUrl: string | null;
+  mediaId: string | null;
+  /**
+   * How many variants carry this option value.
+   *
+   * Exactly one means the value *is* a variant, the photo depicts precisely
+   * what the row shows, and choosing one here is exact. More than one means
+   * this is one variant's photo standing in for the value, so it is read-only
+   * and names whose photo it is — offering a picker there would tell a seller
+   * they had set a photo for `Black` when it is pinned to `Black / L`.
+   */
+  variantCount: number;
+};
+
 export type MarketEligibility =
   'ELIGIBLE' | 'ELIGIBLE_STALE_EVIDENCE' | 'NO_ROUTE' | 'BLOCKED';
 

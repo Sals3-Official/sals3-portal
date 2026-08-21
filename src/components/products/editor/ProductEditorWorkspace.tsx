@@ -50,6 +50,7 @@ import {
   initialDescriptionMode,
   type DescriptionMode,
 } from '@/lib/products/simple-description';
+import resolveVariantValuePhotos from '@/lib/seller-center/product-editor/variant-value-photos';
 import BasicInformationSection from './BasicInformationSection';
 import BulkPricingDialog, { type BulkPricingMode } from './BulkPricingDialog';
 import CategoryAttributesSection from './category-attributes/CategoryAttributesSection';
@@ -1367,6 +1368,13 @@ export default function ProductEditorWorkspace({
       ? null
       : (variants.find((item) => item.id === imagePickerVariantId) ?? null);
 
+  /**
+   * Derived from `variants`, not from `fixture`, so a photo assigned in the
+   * picker shows on the matrix chip immediately - `updateVariant` has already
+   * moved it in local state by the time `router.refresh()` lands.
+   */
+  const valuePhotos = resolveVariantValuePhotos(fixture.mappedAxes, variants);
+
   const handleAssignVariantMedia =
     assignVariantMediaAction === undefined ||
     attributeSaveTarget === null ||
@@ -1777,6 +1785,16 @@ export default function ProductEditorWorkspace({
                 onRecoverLabels={handleRecoverLabels}
                 mappedAxes={fixture.mappedAxes}
                 onRename={handleOptionMappingRename}
+                valuePhotos={valuePhotos}
+                // Same picker the variant table opens, and the same single
+                // `UPDATE product_media_sources SET variant_id` behind it.
+                // Withheld where that action does not exist, so a chip is
+                // never a control that cannot write.
+                onPickValuePhoto={
+                  assignVariantMediaAction === undefined
+                    ? undefined
+                    : setImagePickerVariantId
+                }
               />
 
               <VariantPricingTable

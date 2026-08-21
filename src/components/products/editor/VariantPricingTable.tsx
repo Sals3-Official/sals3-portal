@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import RetailPriceInput from '@/components/products/editor/RetailPriceInput';
+import { cn } from '@/lib/utils';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
 import {
   Table,
@@ -36,16 +37,49 @@ type VariantPricingTableProps = {
   onPickImage?: (variantId: string) => void;
 };
 
-const COLUMNS = [
-  'List',
-  'Image',
-  'Variant',
-  'Sals3 SKU',
-  'Supplier cost',
-  'Retail price',
-  'Supplier stock',
-  'Attention',
+/**
+ * The variant grid's columns: which of them a seller fills in, and which are
+ * supplier evidence.
+ *
+ * `required` marks a column the server really refuses on, not one that merely
+ * looks editable. Retail price is a publication gate — `publishProduct` refuses
+ * a listing without one, and refuses one under the supplier-cost floor. Sals3
+ * SKU is editable and gates nothing, so it carries no marker: a required mark on
+ * an optional field is the same defect as a blocker pill on a warning. The
+ * marker is the editor's own dot rather than a form asterisk, so this table and
+ * the Variant Matrix above it use one marker language.
+ *
+ * It is `aria-hidden` and deliberately carries no `sr-only` counterpart. A first
+ * attempt added one and it was wrong twice over: it made the header's accessible
+ * name `Retail price(required)`, which is what a table announces on every column
+ * move and what `ProductEditor.test.tsx` queries the header by, and a column
+ * heading is the wrong place for the claim anyway — required-ness belongs on the
+ * field. The authoritative signal is already text and already elsewhere: the
+ * readiness panel lists the publish gate by name, and `publishProduct` refuses
+ * with it.
+ *
+ * `evidence` recesses a cell onto the muted surface. That is not decoration and
+ * it is not a full grid of rules: `Supplier cost` and `Supplier stock` are the
+ * two read-only numbers sitting either side of the one number a seller does set,
+ * which is the only place in this table where read-only can be mistaken for a
+ * field. `VariantMatrixValueRow` already recesses the locked supplier token this
+ * exact way, so the table now says "supplier's, not yours" in the same visual
+ * language the matrix does. `Image`, `Variant` and `Attention` are read-only too
+ * and stay unrecessed — nothing about them invites typing.
+ */
+const COLUMNS: { label: string; required?: boolean; evidence?: boolean }[] = [
+  { label: 'List' },
+  { label: 'Image' },
+  { label: 'Variant' },
+  { label: 'Sals3 SKU' },
+  { label: 'Supplier cost', evidence: true },
+  { label: 'Retail price', required: true },
+  { label: 'Supplier stock', evidence: true },
+  { label: 'Attention' },
 ];
+
+/** The recessed surface, shared by the header cell and every body cell. */
+const EVIDENCE_CELL = 'bg-muted/40';
 
 /**
  * The Image cell: the variant's own photo, or the offer to choose one.
@@ -207,36 +241,70 @@ export default function VariantPricingTable({
 }: VariantPricingTableProps) {
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background px-3 py-2.5">
-        <span className="text-xs font-semibold text-ink-muted">
-          Bulk actions
-        </span>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onBulkSetPrice}
-        >
-          <Tag aria-hidden="true" />
-          Set retail price…
-        </Button>
-        <span className="text-xs text-muted-foreground">
-          Variants with stock are listed automatically. Blocked and paused ones
-          are never switched on for you.
-        </span>
-      </div>
+      {/*
+        The variant rows read as one list rather than as loose fields because
+        the header, the count and the bulk control sit inside the same bordered
+        box as the table. That grouping is the borrowed idea; the wording is
+        this editor's own - `Variants`, matching the section it lives in, not a
+        third noun for the same thing.
 
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <Table className="min-w-[68rem]">
+        The bulk control stays a dialog rather than an inline apply-to-all row.
+        That is deliberate: the dialog is one of the three places the 2.5%
+        retail-over-supplier-cost floor is enforced - it states its blast radius
+        and disables Apply against the highest affected cost. An inline field
+        would either duplicate that guard or quietly ship without it.
+      */}
+      <div className="overflow-hidden rounded-lg border border-border">
+        <div className="border-b border-border bg-muted/30 px-3 py-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="text-xs font-semibold tracking-wide uppercase text-ink-muted">
+              Variants
+            </h4>
+            <span className="text-xs text-muted-foreground">
+              {variants.length} {variants.length === 1 ? 'variant' : 'variants'}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="ms-auto"
+              onClick={onBulkSetPrice}
+            >
+              <Tag aria-hidden="true" />
+              Set retail price…
+            </Button>
+          </div>
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Variants with stock are listed automatically. Blocked and paused
+            ones are never switched on for you.
+          </p>
+        </div>
+
+        {/*
+          Taller rows, and no vertical rules. A full grid of cell edges is one
+          way to keep a dense row of inputs scannable, but it draws eight lines
+          to answer one question, and the portal's tables are ruled
+          horizontally only. The recessed `Supplier cost` and `Supplier stock`
+          columns answer that question instead - see `COLUMNS`.
+        */}
+        <Table className="min-w-[68rem] [&_td]:py-3">
           <TableHeader>
             <TableRow>
               {COLUMNS.map((column) => (
                 <TableHead
-                  key={column}
+                  key={column.label}
                   scope="col"
-                  className="whitespace-nowrap"
+                  className={cn(
+                    'whitespace-nowrap',
+                    column.evidence === true ? EVIDENCE_CELL : undefined,
+                  )}
                 >
-                  {column}
+                  {column.required === true ? (
+                    <span aria-hidden="true" className="mr-1 text-destructive">
+                      •
+                    </span>
+                  ) : null}
+                  {column.label}
                 </TableHead>
               ))}
               <TableHead scope="col">
@@ -289,7 +357,7 @@ export default function VariantPricingTable({
                       }
                     />
                   </TableCell>
-                  <TableCell>
+                  <TableCell className={EVIDENCE_CELL}>
                     <div className="flex flex-col gap-0.5 tabular-nums">
                       <span>{formatMoney(variant.supplierCost)}</span>
                       <span className="text-xs text-muted-foreground">
@@ -307,7 +375,7 @@ export default function VariantPricingTable({
                       }
                     />
                   </TableCell>
-                  <TableCell>
+                  <TableCell className={EVIDENCE_CELL}>
                     <div className="flex flex-col gap-0.5 tabular-nums">
                       {variant.supplierStock === 0 ? (
                         <span className="font-medium text-amber-600">0</span>
@@ -357,7 +425,7 @@ export default function VariantPricingTable({
 
       <div className="flex flex-col gap-2 text-xs text-muted-foreground">
         <p>
-          Supplier cost and stock use stored supplier evidence only. Retail
+          The shaded columns are stored supplier evidence and read-only. Retail
           prices are shown in the currency they are set in. The portal does not
           convert supplier prices — no approved exchange-rate source exists for
           this screen.

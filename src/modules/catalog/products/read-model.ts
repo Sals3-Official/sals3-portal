@@ -739,6 +739,17 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
         : executor
             .select({
               variantId: productVariantOptionValues.variantId,
+              /**
+               * The stored link itself, not just the words either side of it.
+               *
+               * This is what lets the Variant Matrix show a photo beside an
+               * option value without any schema change: media hangs off
+               * `product_media_sources.variant_id`, so a value's photo is the
+               * photo of a variant carrying it, and this id is the only thing
+               * needed to find them. Selected from a query that already runs
+               * and already joins both sides - no extra round trip.
+               */
+              optionValueId: productVariantOptionValues.optionValueId,
               optionName: productOptions.name,
               optionPosition: productOptions.position,
               optionValue: productOptionValues.label,
@@ -855,6 +866,16 @@ function buildCatalogueProducts(
   const optionValuesByVariant = groupBy(
     rows.variantOptionRows,
     (option) => option.variantId,
+  );
+  /**
+   * Which variants carry each option value.
+   *
+   * Option value ids are unique per option and an option belongs to one
+   * product, so grouping the whole batch by value id cannot mix products.
+   */
+  const variantsByOptionValue = groupBy(
+    rows.variantOptionRows,
+    (option) => option.optionValueId,
   );
   const attributeControlsByCategory = groupBy(
     rows.attributeControlRows,
@@ -1124,6 +1145,12 @@ function buildCatalogueProducts(
             valueId: value.id,
             label: value.label,
             supplierValue: value.normalizedValue,
+            // One entry per variant carrying this value. Exactly one means the
+            // value *is* a variant, which is what makes a photo assignable
+            // from the matrix rather than only viewable there.
+            variantIds: (variantsByOptionValue.get(value.id) ?? []).map(
+              (row) => row.variantId,
+            ),
           })),
         })),
         categoryAttributeControls: (

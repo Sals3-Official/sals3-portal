@@ -272,7 +272,26 @@ export type AssignableMediaFixture = {
 export type MappedOptionAxis = {
   optionId: string;
   name: string;
-  values: { valueId: string; label: string; supplierValue: string }[];
+  values: {
+    valueId: string;
+    label: string;
+    supplierValue: string;
+    /**
+     * Every variant carrying this value, from the stored
+     * `product_variant_option_values` link.
+     *
+     * Media attaches to a variant, never to an option value — there is no
+     * option-value media column and adding one would be DDL on a table written
+     * by draft creation, publication, every seller upload and the supplier
+     * mirror. So a value's photo is the photo of a variant carrying it, and
+     * this is what finds them. Exactly one id means the value *is* a variant,
+     * which is the only case where a photo chosen against the value is pinned
+     * to precisely what it depicts.
+     *
+     * Optional because the illustrative fixtures carry no stored links.
+     */
+    variantIds?: string[];
+  }[];
 };
 
 export type CatalogueProductFixture = {

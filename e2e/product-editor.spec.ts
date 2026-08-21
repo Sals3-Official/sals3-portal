@@ -290,3 +290,45 @@ test.describe('Listing Readiness - layout', () => {
     expect(documentOverflows).toBe(false);
   });
 });
+
+/**
+ * The variant table carries supplier-evidence columns that cannot fit a phone,
+ * so it owns a horizontal scroll container of its own. The 2026-08-22 Shopee
+ * restyle wrapped it in `overflow-hidden` to clip the rounded corners of the
+ * `Variation list` header above it — which is one CSS property away from
+ * clipping the table dead instead of letting it scroll. This asserts the
+ * property that matters: the table scrolls, the page does not.
+ */
+test.describe('Variants & Pricing on a phone', () => {
+  test.use({ viewport: { width: 375, height: 812 } });
+
+  test('the variant table scrolls itself, never the page', async ({ page }) => {
+    await page.goto('/listings/new?fixture=attention');
+
+    const section = page.locator('#sec-variants');
+
+    await section.waitFor();
+
+    const table = section.locator('[data-slot="table-container"]');
+    const overflows = await table.evaluate(
+      (node) => node.scrollWidth > node.clientWidth,
+    );
+
+    expect(overflows).toBe(true);
+
+    // Wider than its box only matters if the box actually scrolls. Assert the
+    // property that means the requirement rather than nudging `scrollLeft`:
+    // `overflow-hidden` on the new wrapper would clip this to `visible`.
+    const overflowX = await table.evaluate(
+      (node) => getComputedStyle(node).overflowX,
+    );
+
+    expect(['auto', 'scroll']).toContain(overflowX);
+
+    const pageOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    );
+
+    expect(pageOverflow).toBeLessThanOrEqual(1);
+  });
+});
