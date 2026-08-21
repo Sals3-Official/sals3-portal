@@ -82,11 +82,79 @@ export async function runOrderLineSnapshotDdl(
   return { statementsRun: 1 };
 }
 
+/**
+ * `drizzle/meta/_journal.json`'s entry for tag `0026_conscious_mockingbird`
+ * (`when`) and the sha256 of `drizzle/0026_conscious_mockingbird.sql`'s raw file
+ * content, computed exactly the way `drizzle-orm`'s own `readMigrationFiles()`
+ * does it. Hard-coded rather than read from disk at runtime: this endpoint must
+ * never depend on the migration file being present in the deployed serverless
+ * bundle. Re-derive with:
+ *   node -e "console.log(require('crypto').createHash('sha256').update(require('fs').readFileSync('drizzle/0026_conscious_mockingbird.sql').toString()).digest('hex'))"
+ * if this migration is ever regenerated (only then). Pinned to the file by
+ * `migrate-order-line-snapshot.test.ts`.
+ */
+const MIGRATION_0026_CREATED_AT = 1787309724616;
+const MIGRATION_0026_HASH =
+  '216774787bd58281bce871c99c0e8d3c4e5c96621a1b38f3166a63d7299d00da';
+
+export type MarkMigration0026AppliedResult = {
+  createdAt: number;
+  inserted: boolean;
+};
+
+/**
+ * Records `0026_conscious_mockingbird` as applied in
+ * `drizzle.__drizzle_migrations`, so a later real `npm run db:migrate` against
+ * this database does not try to run it again. Harmless if it did — the DDL is
+ * `ADD COLUMN IF NOT EXISTS` — but the ledger should stay a true history of what
+ * has actually been applied.
+ *
+ * Lives here rather than with the DDL because it names a migration file, and the
+ * file ships with the schema change, not with the DDL that precedes it.
+ *
+ * Idempotent by construction: only inserts when no row with this exact
+ * `created_at` exists. Values are fixed constants, not request input, so the raw
+ * SQL carries no injection risk.
+ */
+export async function markMigration0026Applied(
+  db: Database,
+): Promise<MarkMigration0026AppliedResult> {
+  await db.execute(sql.raw(`CREATE SCHEMA IF NOT EXISTS "drizzle"`));
+  await db.execute(
+    sql.raw(
+      `CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations" (
+        id SERIAL PRIMARY KEY,
+        hash text NOT NULL,
+        created_at bigint
+      )`,
+    ),
+  );
+
+  const existing = (await db.execute(
+    sql.raw(
+      `SELECT id FROM "drizzle"."__drizzle_migrations" WHERE created_at = ${MIGRATION_0026_CREATED_AT} LIMIT 1`,
+    ),
+  )) as unknown as unknown[];
+
+  if (existing.length > 0) {
+    return { createdAt: MIGRATION_0026_CREATED_AT, inserted: false };
+  }
+
+  await db.execute(
+    sql.raw(
+      `INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at") VALUES ('${MIGRATION_0026_HASH}', ${MIGRATION_0026_CREATED_AT})`,
+    ),
+  );
+
+  return { createdAt: MIGRATION_0026_CREATED_AT, inserted: true };
+}
+
 export type MigrateOrderLineSnapshotResult = {
   ok: true;
   /** The column's real state before this run — `true` means it was already a no-op. */
   columnExistedBefore: boolean;
   ddl: RunOrderLineSnapshotDdlResult;
+  migrationRecord: MarkMigration0026AppliedResult;
   /**
    * Re-read from `information_schema` *after* the DDL. This is the field the
    * operator should actually trust: a 200 with `columnExistsAfter: false` would
@@ -101,7 +169,14 @@ export async function migrateOrderLineSnapshot(
 ): Promise<MigrateOrderLineSnapshotResult> {
   const columnExistedBefore = await hasListingSnapshotColumn(db);
   const ddl = await runOrderLineSnapshotDdl(db);
+  const migrationRecord = await markMigration0026Applied(db);
   const columnExistsAfter = await hasListingSnapshotColumn(db);
 
-  return { ok: true, columnExistedBefore, ddl, columnExistsAfter };
+  return {
+    ok: true,
+    columnExistedBefore,
+    ddl,
+    migrationRecord,
+    columnExistsAfter,
+  };
 }

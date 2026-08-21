@@ -4,6 +4,10 @@ import { asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import getDb, { type DbExecutor } from '@/lib/db/client';
 import {
+  listingSnapshotSchema,
+  type ListingSnapshot,
+} from '@/modules/checkout/listing-snapshot';
+import {
   checkoutIntents,
   fulfillmentGroups,
   parcelTrackingEvents,
@@ -45,6 +49,25 @@ import {
  */
 
 /**
+ * The stored snapshot, or nothing at all.
+ *
+ * `safeParse`, never `parse`: this is a buyer looking at an order they have
+ * already paid for, and a snapshot written by a newer deployment — or an older
+ * one missing a field added since — must degrade to the three frozen columns
+ * rather than fail the page. Spread as an optional key so "not captured" and
+ * "captured and empty" stay distinguishable to the consumer.
+ */
+function frozenListing(
+  stored: unknown,
+): { listing: ListingSnapshot } | Record<string, never> {
+  if (stored === null || stored === undefined) return {};
+
+  const parsed = listingSnapshotSchema.safeParse(stored);
+
+  return parsed.success ? { listing: parsed.data } : {};
+}
+
+/**
  * Exactly the line columns a buyer's own order page is allowed to read.
  *
  * Everything absent here is absent on purpose: `supplier_connection_id`,
@@ -62,6 +85,7 @@ const BUYER_LINE_COLUMNS = {
   quantity: sals3OrderLines.quantity,
   unitAmountMinor: sals3OrderLines.unitAmountMinor,
   imageUrl: sals3OrderLines.imageUrl,
+  listingSnapshot: sals3OrderLines.listingSnapshot,
   createdAt: sals3OrderLines.createdAt,
 } as const;
 
@@ -73,6 +97,17 @@ export type BuyerOrderLinePayload = {
   unitAmountMinor: number;
   imageUrl: string | null;
   acceptedAt: string;
+  /**
+   * The listing as it was when this order was placed — the option axes in the
+   * seller's own words, the gallery, the description, the specifications, the
+   * category and the brand.
+   *
+   * Absent on orders accepted before the snapshot existed, and absent when the
+   * stored document cannot be read by this deployment. A consumer must treat
+   * absence as "we do not have this for this order" and fall back to `title`,
+   * `variantLabel` and `imageUrl`, which are frozen per line regardless.
+   */
+  listing?: ListingSnapshot;
 };
 
 export type BuyerTrackingEventPayload = {
@@ -268,6 +303,7 @@ async function assembleOrders(
             unitAmountMinor: Number(line.unitAmountMinor),
             imageUrl: line.imageUrl,
             acceptedAt: line.createdAt.toISOString(),
+            ...frozenListing(line.listingSnapshot),
           })),
         events: events
           .filter((event) => event.fulfillmentGroupId === group.id)
@@ -307,6 +343,7 @@ async function assembleOrders(
           unitAmountMinor: Number(line.unitAmountMinor),
           imageUrl: line.imageUrl,
           acceptedAt: line.createdAt.toISOString(),
+          ...frozenListing(line.listingSnapshot),
         })),
         events: [],
       });

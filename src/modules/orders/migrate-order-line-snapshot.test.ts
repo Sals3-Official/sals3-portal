@@ -1,12 +1,17 @@
 // @vitest-environment node
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   DDL_LOCK_TIMEOUT,
   hasListingSnapshotColumn,
+  markMigration0026Applied,
   migrateOrderLineSnapshot,
   runOrderLineSnapshotDdl,
   ORDER_LINE_SNAPSHOT_DDL_STATEMENT,
 } from '@/modules/orders/migrate-order-line-snapshot';
+
+const MIGRATION_0026_CREATED_AT = 1787309724616;
 
 /** Recovers the literal SQL text passed to `sql.raw(...)`. */
 function rawStatementText(query: unknown): string {
@@ -146,6 +151,7 @@ describe('migrateOrderLineSnapshot', () => {
    * so the before/after reads reflect real state rather than a fixed answer.
    */
   function fakeMigratingDb(startsWithColumn = false) {
+    const rows: { hash: string; created_at: number }[] = [];
     let columnExists = startsWithColumn;
 
     const execute = vi.fn((query: unknown) => {
@@ -163,6 +169,18 @@ describe('migrateOrderLineSnapshot', () => {
       if (raw.includes('information_schema.columns')) {
         return Promise.resolve(columnExists ? [{ present: 1 }] : []);
       }
+
+      if (text.startsWith('CREATE SCHEMA') || text.startsWith('CREATE TABLE')) {
+        return Promise.resolve(undefined);
+      }
+
+      if (text.startsWith('SELECT')) {
+        return Promise.resolve(
+          rows.filter((row) => row.created_at === MIGRATION_0026_CREATED_AT),
+        );
+      }
+
+      rows.push({ hash: 'test-hash', created_at: MIGRATION_0026_CREATED_AT });
 
       return Promise.resolve(undefined);
     });
@@ -184,6 +202,7 @@ describe('migrateOrderLineSnapshot', () => {
       ok: true,
       columnExistedBefore: false,
       ddl: { statementsRun: 1 },
+      migrationRecord: { createdAt: MIGRATION_0026_CREATED_AT, inserted: true },
       columnExistsAfter: true,
     });
   });
@@ -196,5 +215,95 @@ describe('migrateOrderLineSnapshot', () => {
 
     expect(result.columnExistedBefore).toBe(true);
     expect(result.columnExistsAfter).toBe(true);
+  });
+});
+
+describe('markMigration0026Applied', () => {
+  function fakeMigrationsDb() {
+    const rows: { hash: string; created_at: number }[] = [];
+
+    const db = {
+      execute: vi.fn((query: unknown) => {
+        const text = rawStatementText(query).toUpperCase();
+
+        if (
+          text.startsWith('CREATE SCHEMA') ||
+          text.startsWith('CREATE TABLE')
+        ) {
+          return Promise.resolve(undefined);
+        }
+
+        if (text.startsWith('SELECT')) {
+          return Promise.resolve(
+            rows.filter((row) => row.created_at === MIGRATION_0026_CREATED_AT),
+          );
+        }
+
+        rows.push({ hash: 'test-hash', created_at: MIGRATION_0026_CREATED_AT });
+
+        return Promise.resolve(undefined);
+      }),
+    };
+
+    return { db, rows };
+  }
+
+  it('inserts a migration record on a fresh database', async () => {
+    const { db, rows } = fakeMigrationsDb();
+
+    await expect(markMigration0026Applied(db as never)).resolves.toEqual({
+      createdAt: MIGRATION_0026_CREATED_AT,
+      inserted: true,
+    });
+    expect(rows).toHaveLength(1);
+  });
+
+  it('does not duplicate the record on a second call', async () => {
+    const { db, rows } = fakeMigrationsDb();
+
+    await markMigration0026Applied(db as never);
+
+    await expect(markMigration0026Applied(db as never)).resolves.toEqual({
+      createdAt: MIGRATION_0026_CREATED_AT,
+      inserted: false,
+    });
+    expect(rows).toHaveLength(1);
+  });
+});
+
+/**
+ * The two hard-coded ledger constants describe a file on disk. They are
+ * hard-coded so the endpoint never depends on the migration being in the
+ * deployed bundle, which means nothing but this test would notice them drifting.
+ */
+describe('migration ledger constants', () => {
+  const MODULE_TEXT = readFileSync(
+    'src/modules/orders/migrate-order-line-snapshot.ts',
+    'utf8',
+  );
+  const MIGRATION_SQL = readFileSync(
+    'drizzle/0026_conscious_mockingbird.sql',
+    'utf8',
+  );
+
+  it('match the migration file and its journal entry', () => {
+    const journal = JSON.parse(
+      readFileSync('drizzle/meta/_journal.json', 'utf8'),
+    ) as { entries: { tag: string; when: number }[] };
+    const entry = journal.entries.find(
+      (item) => item.tag === '0026_conscious_mockingbird',
+    );
+
+    expect(entry?.when).toBe(MIGRATION_0026_CREATED_AT);
+    expect(MODULE_TEXT).toContain(String(entry?.when));
+    expect(MODULE_TEXT).toContain(
+      createHash('sha256').update(MIGRATION_SQL).digest('hex'),
+    );
+  });
+
+  it('ships a migration whose SQL adds exactly this column', () => {
+    expect(MIGRATION_SQL).toContain('sals3_order_lines');
+    expect(MIGRATION_SQL).toContain('listing_snapshot');
+    expect(MIGRATION_SQL).toContain('jsonb');
   });
 });

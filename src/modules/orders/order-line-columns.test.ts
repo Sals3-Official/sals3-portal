@@ -60,13 +60,15 @@ describe('sals3_order_lines reads', () => {
  * "define it now, write it later".
  *
  * This was found by running `toSQL()` while checking whether the column could
- * ship a release ahead of its reader. It could not: the first draft of that
- * change added `listingSnapshot` to the schema and claimed to read and write
- * nothing, and it would have failed every paid checkout with
- * `column "listing_snapshot" does not exist` until the migration ran.
+ * ship a release ahead of its reader. It could not: the first draft added
+ * `listingSnapshot` to the schema, claimed to read and write nothing, and would
+ * have failed every paid checkout with
+ * `column "listing_snapshot" does not exist` until the migration ran. The DDL
+ * therefore ships in its own change, and the schema column arrives here — in the
+ * change that also reads it, deployed afterwards.
  *
- * The assertion is the general rule, not the specific column: any column present
- * in the schema must already exist in production before that schema ships.
+ * The rule this pins is general: any column present in the Drizzle table must
+ * already exist in production before that table ships.
  */
 describe('order line inserts', () => {
   it('name every schema column, so a new column changes acceptance SQL', () => {
@@ -91,14 +93,16 @@ describe('order line inserts', () => {
       })
       .toSQL();
 
-    // `variant_label` and `image_url` were not passed above, and are named
-    // anyway — which is the whole point.
+    // None of these three were passed above, and all are named anyway — which
+    // is the whole point.
     expect(statement).toContain('"variant_label"');
     expect(statement).toContain('"image_url"');
+    expect(statement).toContain('"listing_snapshot"');
 
-    // Therefore: nothing in the schema may be absent from production. This is
-    // the guard on the ordering, and it fails the moment a column is added to
-    // the Drizzle table before its DDL has been applied.
-    expect(statement).not.toContain('"listing_snapshot"');
+    // So `listing_snapshot` appearing here is not a problem to fix — it is the
+    // reason this change must not deploy until the break-glass migration has
+    // reported `columnExistsAfter: true`. Every column in the Drizzle table has
+    // to exist in production before that table ships.
+    expect(statement).toContain('default');
   });
 });

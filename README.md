@@ -2850,6 +2850,34 @@ is cheaper and would freeze the description exactly, but it makes a two-year-old
 order depend on a revision row and an R2 object still existing — so a future
 media cleanup would blank the very history the column exists to protect.
 
+**What is captured, and from where.** `checkout/listing-snapshot.ts` reads
+`findPublishedProductBySlug` — the exact projection `/api/storefront` served the
+buyer — rather than re-deriving the same facts from the catalogue tables. Two
+queries meant to agree about what a product page says would drift, and the one
+that drifted would be this one, silently, because nothing renders it until
+someone opens an old order. The snapshot therefore holds: the option axes in the
+seller's own words and order (`Colour: Army Green`, `Size: L` — not the
+supplier's `army green-L` token, which stays in `variant_label`), the whole
+gallery, the published description blocks, the seller's specification answers,
+the category path, the brand, the condition, and the physical facts. One read per
+_distinct product_, so three sizes of one shirt is one read.
+
+It is captured at **intent creation**, where `variant_label` and `image_url`
+already freeze, and acceptance only copies it. That ordering is the point: a
+seller edit landing between payment and webhook delivery must not decide what the
+order says was bought. `snapshot-at-intent.test.ts` pins that, because
+`createCheckoutIntent` has no behavioural test in this repository (it reaches CJ
+freight, the token manager and a governed fetch, and nothing fakes that chain
+today).
+
+`GET /api/storefront/orders` and `/orders/{orderNumber}` return it as an optional
+`listing` on each line. Optional, and read with `safeParse`: an order accepted
+before the column existed has none, and a document this deployment cannot read
+degrades to `title` / `variantLabel` / `imageUrl` rather than failing the page of
+a buyer who has already paid. **The storefront does not render it yet** — that is
+`sals3-ecommerce` work, and until it lands the API carries the record while the
+order page still shows the three frozen fields.
+
 **The DDL ships one release ahead of any code that names the column — including
 the Drizzle schema itself.** `sals3_order_lines` is the order table, and the
 constraint is stronger than "do not query it yet": **Drizzle names every column

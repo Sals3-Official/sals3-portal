@@ -1,0 +1,1 @@
+ALTER TABLE "sals3_order_lines" ADD COLUMN "listing_snapshot" jsonb;
