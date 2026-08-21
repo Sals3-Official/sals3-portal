@@ -108,15 +108,16 @@ export function filterAndSortProducts(
       return false;
     }
 
-    const availability = productAvailability(product);
-
+    // Only the out-of-stock quick filter reads derived availability now; the
+    // Availability column and its `Any availability` select were removed on
+    // 2026-08-22. Kept lazy so the derivation runs for the one filter that
+    // needs it rather than on every row of every unrelated query.
     if (
-      filters.availability !== null &&
-      availability !== filters.availability
+      filters.outOfStockOnly &&
+      productAvailability(product) !== 'OUT_OF_STOCK'
     ) {
       return false;
     }
-    if (filters.outOfStockOnly && availability !== 'OUT_OF_STOCK') return false;
     if (filters.needsAttentionOnly && product.attentionReasons.length === 0) {
       return false;
     }

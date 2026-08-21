@@ -41,7 +41,6 @@ export default function CatalogueProductTable({
             <TableHead>Product</TableHead>
             <TableHead>Listing Status</TableHead>
             <TableHead>Selling Price</TableHead>
-            <TableHead>Availability</TableHead>
             <TableHead>Media</TableHead>
             <TableHead>Listing quality</TableHead>
             <TableHead>Attention</TableHead>
@@ -65,7 +64,7 @@ export default function CatalogueProductTable({
           {products.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={9}
+                colSpan={8}
                 className="py-10 text-center text-sm text-muted-foreground"
               >
                 No listings match the current filters.

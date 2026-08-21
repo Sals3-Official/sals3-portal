@@ -20,7 +20,12 @@ const TONE_BY_MEDIA_STATUS: Record<MediaStatus, StatusPillTone> = {
   OWN_PICTURES: 'success',
   SUPPLIER_PICTURES: 'info',
   MIXED_PICTURES: 'info',
-  SUPPLIER_FALLBACK: 'warning',
+  // `info`, not `warning`: this is what nearly every published row reads, and
+  // an amber pill on the ordinary case trains sellers to ignore the column.
+  // It stays distinct from `OWN_PICTURES`'s `success` because whose photo is
+  // live is still the thing this column answers. Owner decision 2026-08-22 —
+  // see `MEDIA_STATUS_LABELS`.
+  SUPPLIER_FALLBACK: 'info',
   NEEDS_MEDIA_REVIEW: 'warning',
   NO_USABLE_PICTURES: 'danger',
 };

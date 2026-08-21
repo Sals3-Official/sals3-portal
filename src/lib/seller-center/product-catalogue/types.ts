@@ -155,11 +155,23 @@ export const MEDIA_STATUSES = [
 
 export type MediaStatus = (typeof MEDIA_STATUSES)[number];
 
+/**
+ * `SUPPLIER_FALLBACK` reads **Supplier photo**, not ADR-011's own
+ * `Supplier fallback` — owner decision 2026-08-22. Do not reconcile it back.
+ *
+ * The state code and its meaning are unchanged; only the seller-facing words
+ * are. "Fallback" describes the *resolution rule* (no eligible seller picture
+ * exists, so the approved supplier picture is used) and reads to a seller as a
+ * problem with their listing. It is the normal state of almost every row in
+ * production — `mediaStatusOf` returns it for any published product carrying
+ * only the supplier's own photo — so the column was flagging the ordinary case.
+ * The tone moved off `warning` for the same reason; see `MediaStatusBadge`.
+ */
 export const MEDIA_STATUS_LABELS: Record<MediaStatus, string> = {
   OWN_PICTURES: 'Own pictures',
   SUPPLIER_PICTURES: 'Supplier pictures',
   MIXED_PICTURES: 'Mixed pictures',
-  SUPPLIER_FALLBACK: 'Supplier fallback',
+  SUPPLIER_FALLBACK: 'Supplier photo',
   NEEDS_MEDIA_REVIEW: 'Needs media review',
   NO_USABLE_PICTURES: 'No usable pictures',
 };

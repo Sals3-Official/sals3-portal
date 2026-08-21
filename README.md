@@ -1010,6 +1010,54 @@ its own column or join table, its DDL applied to production **before** the
 Drizzle schema learns it, plus the storefront read model and PDP to consume it.
 Recorded as an open note in `VariantMatrixAxisCard`.
 
+## Product Catalogue: narrower table, Live landing tab (2026-08-22)
+
+Four owner-reported changes to `/listings`. Presentation and default state only —
+no schema, migration, server action, publish gate, permission, or supplier call
+changed, and no CJ request was added.
+
+- **Row actions collapsed into `More`.** The Actions cell was `Edit` +
+  a `Publish to storefront` / `Pause listing` button + a `More` menu, which made
+  it the widest column on a nine-column table and pushed it past the right edge
+  at anything below 100% browser zoom. It is now `Edit` + `More`, with publish and
+  pause as the menu's first item. The cell moved into its own
+  `CatalogueRowActions` component, which owns the transition: a
+  `DropdownMenuItem` unmounts the instant the menu closes on click, and
+  dispatching a transition from a component unmounting in the same commit is the
+  defect that reached production on 2026-08-19. That is also why the outcome
+  arrives as a toast rather than a pending label — the menu is gone by the time
+  the server answers. **One row now has one meaning of Pause**: a persisted row
+  (`productVersion` present, the compare-and-set token the action requires)
+  pauses through `unpublishProductAction` and genuinely leaves the storefront; an
+  illustrative fixture row pauses in memory and says so. Both used to be offered
+  on the same row at once, the real one as a button and the preview one as a menu
+  item.
+- **The `Availability` column and its `Any availability` select are gone.** The
+  derived state itself is untouched: `deriveProductAvailability` still runs for
+  the `Out of stock (N)` quick filter and its count, and the expanded variant rows
+  still show availability per variant with the supplier-observed quantity and
+  last-checked time beside it — which is the level the evidence is observed at,
+  and costs the header no width. This narrows what ADR-013 §5 and the 2026-08-10
+  dropshipping correction put on the screen as separate dimensions; the dimension
+  is still separate in the data and still filterable by stock, just not as its own
+  parent column.
+- **`Media` reads `Supplier photo`, not ADR-011's `Supplier fallback`.** The code
+  and meaning are unchanged. "Fallback" names the resolution rule, and reads to a
+  seller as a fault in their listing — while `mediaStatusOf` returns
+  `SUPPLIER_FALLBACK` for any published product carrying only the supplier's
+  photo, which is nearly every row in production. Its badge tone dropped from
+  `warning` to `info` for the same reason: an amber pill on the ordinary case
+  trains sellers to ignore the column. Recorded on `MEDIA_STATUS_LABELS` so it is
+  not reconciled back to the ADR's wording. Note `SUPPLIER_PICTURES` still reads
+  `Supplier pictures` and now sits close to it in the media filter — the real read
+  model never produces that status (only fixtures do), so the two never appear
+  together on a production row.
+- **The screen opens on `Live`, not `All`.** `All` is still the leftmost tab and
+  the counts are unchanged. Consequence accepted deliberately: a seller whose
+  catalogue is entirely drafts lands on the empty state and has to pick a tab —
+  preferred over a data-dependent landing tab that would silently change the
+  first time a listing went live.
+
 ## Description: simple text or a designed layout
 
 The Description section offers two editors and the seller picks with a toggle.
@@ -2866,7 +2914,8 @@ prerequisites:
    UI that spends CJ points (three requests per candidate), so it always takes a
    press, is `product:import`-gated, rate-limited, and audited.
 5. Re-run the draft flow so variants, per-variant costs, and supplier bindings
-   materialise, then press **Publish to storefront** on the Product Catalogue row.
+   materialise, then choose **Publish to storefront** from the Product Catalogue
+   row's **More** menu (it was a button in the row until 2026-08-22).
 
 `publishProduct` refuses with a specific reason rather than a constraint error
 whenever a fact is missing: `NO_ACTIVE_VARIANT`, `CATEGORY_UNMAPPED`,
