@@ -4,6 +4,10 @@ import { asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import getDb, { type DbExecutor } from '@/lib/db/client';
 import {
+  listLineReviewStates,
+  type LineReviewState,
+} from '@/modules/reviews/eligibility';
+import {
   listingSnapshotSchema,
   type ListingSnapshot,
 } from '@/modules/checkout/listing-snapshot';
@@ -108,6 +112,18 @@ export type BuyerOrderLinePayload = {
    * `variantLabel` and `imageUrl`, which are frozen per line regardless.
    */
   listing?: ListingSnapshot;
+  /**
+   * Whether this buyer can write a review of this line right now — the line's
+   * own package delivered, inside the window, and not already reviewed.
+   *
+   * Resolved by `modules/reviews/eligibility.ts`, which is the single place
+   * that decides it. Carried on the order payload rather than fetched per row
+   * by the storefront: the gate is per line, and a query per row on an order
+   * page is the N+1 the code rules forbid.
+   */
+  reviewable: boolean;
+  /** This buyer's own review of this line, when they have written one. */
+  review?: { id: string; rating: number; createdAt: string };
 };
 
 export type BuyerTrackingEventPayload = {
@@ -220,9 +236,37 @@ function arrivalDaysByPackage(intent: {
   );
 }
 
+/**
+ * Folds one line's review state into the payload shape.
+ *
+ * `reviewable` is always present (a boolean the consumer can branch on without
+ * an existence check), while `review` is omitted rather than `null` — the same
+ * rule the rest of this payload follows, where an absent key says "there is no
+ * such thing" and a present one carries a real value.
+ *
+ * A line missing from the map is not reviewable. That is the safe direction: a
+ * review the buyer is not entitled to write would be refused by
+ * `resolveReviewableLine` anyway, so the worst this can do is hide a control
+ * that would have worked, never offer one that writes something invalid.
+ */
+function reviewStateOf(
+  states: Map<string, LineReviewState>,
+  lineId: string,
+): Pick<BuyerOrderLinePayload, 'reviewable' | 'review'> {
+  const state = states.get(lineId);
+
+  if (state === undefined) return { reviewable: false };
+
+  return {
+    reviewable: state.reviewable,
+    ...(state.review === null ? {} : { review: state.review }),
+  };
+}
+
 async function assembleOrders(
   executor: DbExecutor,
   orders: Sals3OrderRow[],
+  buyerEmail: string,
 ): Promise<BuyerOrderPayload[]> {
   if (orders.length === 0) return [];
 
@@ -269,6 +313,15 @@ async function assembleOrders(
 
   const intentById = new Map(intents.map((intent) => [intent.id, intent]));
 
+  // One query for every line on the page, keyed by line id. The eligibility
+  // rules live in `modules/reviews/eligibility.ts` and are not restated here —
+  // this reader consumes the answer, it does not decide it.
+  const reviewStates = new Map(
+    (await listLineReviewStates({ buyerEmail, orderIds }, executor)).map(
+      (state) => [state.orderLineId, state],
+    ),
+  );
+
   return orders.flatMap((order) => {
     const intent = intentById.get(order.checkoutIntentId);
 
@@ -304,6 +357,7 @@ async function assembleOrders(
             imageUrl: line.imageUrl,
             acceptedAt: line.createdAt.toISOString(),
             ...frozenListing(line.listingSnapshot),
+            ...reviewStateOf(reviewStates, line.id),
           })),
         events: events
           .filter((event) => event.fulfillmentGroupId === group.id)
@@ -344,6 +398,11 @@ async function assembleOrders(
           imageUrl: line.imageUrl,
           acceptedAt: line.createdAt.toISOString(),
           ...frozenListing(line.listingSnapshot),
+          // An unassigned line has no package, so it has no delivered state
+          // and cannot be reviewable. Spread the same helper anyway rather
+          // than hardcoding `false`: one source for the answer means a later
+          // change to what "reviewable" is cannot leave this branch behind.
+          ...reviewStateOf(reviewStates, line.id),
         })),
         events: [],
       });
@@ -382,7 +441,7 @@ export async function listBuyerOrders(
     .orderBy(desc(sals3Orders.createdAt))
     .limit(MAX_ORDERS);
 
-  return assembleOrders(executor, orders);
+  return assembleOrders(executor, orders, normalized);
 }
 
 export async function readBuyerOrder(
@@ -409,7 +468,7 @@ export async function readBuyerOrder(
     return null;
   }
 
-  const assembled = await assembleOrders(executor, [order]);
+  const assembled = await assembleOrders(executor, [order], normalized);
 
   return assembled[0] ?? null;
 }

@@ -10,6 +10,8 @@ import {
   sql,
 } from 'drizzle-orm';
 import getDb, { type DbExecutor } from '@/lib/db/client';
+import type { RatingSummary } from '@/modules/reviews/contracts';
+import { readRatingSummaries } from '@/modules/reviews/repository';
 import SALS3_TAXONOMY_DEPARTMENTS from '@/modules/catalog/taxonomy/departments';
 import {
   productMediaSources,
@@ -95,6 +97,14 @@ export type StorefrontListRow = {
   primaryImageUrl: string | null;
   /** ISO 8601. A `Date` here would not survive `unstable_cache`'s JSON round-trip. */
   publishedAt: string;
+  /**
+   * Buyer ratings, absent when nobody has reviewed this product.
+   *
+   * Absent rather than a zeroed summary: `{average: 0, count: 0}` renders as a
+   * nought-star product unless every consumer remembers to special-case it,
+   * while an absent key cannot be mistaken for a verdict.
+   */
+  rating?: RatingSummary;
 };
 
 export type StorefrontPage = {
@@ -399,6 +409,84 @@ function toListRow(row: ListQueryRow): StorefrontListRow | null {
  *   price is read and none is published (ADR-003 forbids a was/now pair that
  *   no sale ever happened at).
  */
+/**
+ * Attaches rating summaries to rows that have one, in a single extra query.
+ *
+ * ## Why this is a separate query and not a join
+ *
+ * A join would fan one product into one row per review, on top of the
+ * offer/variant fan-out `listBase` already carries — the same over-counting
+ * `listPublishedProducts` already works around for its own total. One grouped
+ * lookup keyed by product id avoids that and costs one statement per page, not
+ * one per card.
+ *
+ * ## Why a failure here does not fail the read
+ *
+ * A rating is decorative. A card without stars is a card; a catalogue that
+ * answers 503 is a shop nobody can buy from, which is exactly what PR #102
+ * produced when a feature's tables were missing in production. So a failure is
+ * logged once and the products are returned without ratings.
+ *
+ * This is **not** a substitute for running the migration before deploying. It
+ * exists because the blast radius of an optional aggregate should be the
+ * aggregate, and because that is true of any decorative read — not because a
+ * missing table here is expected or acceptable.
+ */
+async function safeRatingSummaries(
+  productIds: string[],
+  executor: DbExecutor,
+): Promise<Map<string, RatingSummary>> {
+  try {
+    return await readRatingSummaries(productIds, executor);
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[storefront] rating summaries unavailable', {
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+
+    return new Map();
+  }
+}
+
+async function withRatings(
+  rows: StorefrontListRow[],
+  executor: DbExecutor,
+): Promise<StorefrontListRow[]> {
+  if (rows.length === 0) return rows;
+
+  const summaries = await safeRatingSummaries(
+    rows.map((row) => row.id),
+    executor,
+  );
+
+  return rows.map((row) => {
+    const rating = summaries.get(row.id);
+
+    return rating === undefined || rating.count === 0
+      ? row
+      : { ...row, rating };
+  });
+}
+
+/**
+ * One product's rating, for the detail path.
+ *
+ * Kept separate from `withRatings` so it can ride the detail loader's existing
+ * `Promise.all` rather than adding a serial round trip before it — and so it
+ * cannot shift the query order `read-model.published-scope.test.ts` reads by
+ * index. That test's own note says a loader appended to that list is safe;
+ * a query issued *before* it is not.
+ */
+async function loadRatingSummary(
+  executor: DbExecutor,
+  productId: string,
+): Promise<RatingSummary | undefined> {
+  const summaries = await safeRatingSummaries([productId], executor);
+  const rating = summaries.get(productId);
+
+  return rating === undefined || rating.count === 0 ? undefined : rating;
+}
+
 export async function listPublishedProducts(
   input: { section: StorefrontSection; page: number; limit: number },
   executor: DbExecutor = getDb(),
@@ -428,9 +516,12 @@ export async function listPublishedProducts(
   ]);
 
   return {
-    rows: rows
-      .map(toListRow)
-      .filter((row): row is StorefrontListRow => row !== null),
+    rows: await withRatings(
+      rows
+        .map(toListRow)
+        .filter((row): row is StorefrontListRow => row !== null),
+      executor,
+    ),
     total: totals[0]?.total ?? 0,
   };
 }
@@ -792,15 +883,23 @@ export async function findPublishedProductBySlug(
 
   if (base === null) return null;
 
-  const [images, description, variants, specs, specification, metaDescription] =
-    await Promise.all([
-      loadApprovedImages(executor, base.id),
-      loadDescriptionBlocks(executor, base.id),
-      loadPublishedVariants(executor, base.id),
-      loadSpecs(executor, base.id),
-      loadSpecification(executor, base.id),
-      loadMetaDescription(executor, base.id),
-    ]);
+  const [
+    images,
+    description,
+    variants,
+    specs,
+    specification,
+    metaDescription,
+    rating,
+  ] = await Promise.all([
+    loadApprovedImages(executor, base.id),
+    loadDescriptionBlocks(executor, base.id),
+    loadPublishedVariants(executor, base.id),
+    loadSpecs(executor, base.id),
+    loadSpecification(executor, base.id),
+    loadMetaDescription(executor, base.id),
+    loadRatingSummary(executor, base.id),
+  ]);
 
   return {
     ...base,
@@ -813,6 +912,7 @@ export async function findPublishedProductBySlug(
     ...(specs === null ? {} : { specs }),
     ...(specification.length === 0 ? {} : { specification }),
     ...(metaDescription === null ? {} : { metaDescription }),
+    ...(rating === undefined ? {} : { rating }),
   };
 }
 
