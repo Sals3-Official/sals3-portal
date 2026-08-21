@@ -183,13 +183,6 @@
       "when": 1787151319369,
       "tag": "0025_perfect_lily_hollister",
       "breakpoints": true
-    },
-    {
-      "idx": 26,
-      "version": "7",
-      "when": 1787303522694,
-      "tag": "0026_daily_blockbuster",
-      "breakpoints": true
     }
   ]
 }
