@@ -1093,49 +1093,54 @@ still is; `Supplier cost` and `Supplier stock` are still read-only evidence
 from. The axis values are identity derived from the mapping, not fields — they
 take neither the white of an input nor the recess of evidence.
 
-**One colour, one row of its own: the first axis and its photo merge down their
-group (2026-08-22).** Owner request — a colour repeated on four size rows says
-nothing the first one did not, and it hides how many sizes that colour actually
-carries. `Black` is now written once, spanning its rows the way a spreadsheet
-merges a repeated label, with `4 × Size` under it. The `Image` cell merges with
-it, because three sizes of one colour are almost always one photograph.
+**The variant table leads with a colour rail (2026-08-22).** Owner-picked from
+three drafted directions. The first option axis moves to the **front** of the
+table and its cell becomes a rail: the group's photograph beside the colour name,
+recessed onto the page background, closed with a rule, and edged with the same
+brand gradient the Variant Matrix cards and the listing switch use. Rows for one
+colour merge into it the way a spreadsheet merges a repeated label, with
+`4 × Size` under the name.
+
+Column order for a mapped product is now
+`Colour · List · Size · Sals3 SKU · Supplier cost · Retail price · Supplier stock
+· Attention`. Two things went away with it:
+
+- **The `Image` column.** One colour is one photograph, so a separate 36px cell
+  beside a colour name was two cells saying one thing. The rail's thumbnail is
+  44px, because 36px is right in a dense row and reads as dropped in a cell as
+  tall as a whole group.
+- **The chips.** The axis name is the header; the cell holds the value alone.
 
 `× Size`, not `4 sizes`: an axis name cannot be safely pluralised — `Capacity`
 would become `capacitys` — and `×` is already this editor's word for it in
 "Mapped as Colour × Size".
 
 **Runs are consecutive, deliberately.** A `rowSpan` can only merge adjacent
-rows, so a run closes the moment the value changes. Collecting every `Black`
-wherever it sits would produce a span reaching across rows it does not cover and
-break the table. The read-model already orders variants by matrix position, so
-the first axis varies slowest and the runs come out whole; if that ever changes
-this degrades to more, shorter groups rather than to a wrong table. Merging is
-also skipped entirely for a single-axis product, where every group would be one
-row.
+rows, so a run closes the moment the value changes; collecting every `Black`
+wherever it sits would span rows it does not cover and break the table. The
+read-model orders variants by matrix position so the runs come out whole, and if
+that changes this degrades to more, shorter groups rather than a wrong table.
+Merging is skipped for a single-axis product, where every group would be one row
+— the rail still leads, carrying that value's own photo.
 
-**A group stops merging while one of its own rows is expanded.** Found by
-looking at it rather than by reading the diff: the span otherwise has to cover
-the injected supplier-evidence row, and a cell centred across that lands
-_inside_ it — the colour label and its thumbnail printed over the evidence text.
-Top-aligning only hides the collision. Expansion is transient and the merge is
-not what a seller is reading with the evidence open, so the group falls back to
-one cell per row until it closes, which also removes the span arithmetic the
-evidence row otherwise forces. Pinned by a browser test that sums `colSpan`
-across every body row, merged and expanded, because a broken table is a shape
-error rather than a missing string.
+**A group stops merging while one of its own rows is expanded.** The span would
+otherwise have to cover the injected supplier-evidence row, and a cell centred
+across that lands _inside_ it, printing the colour over the evidence text;
+top-aligning only hides it. Expansion is transient, so the group falls back to one
+cell per row until it closes.
 
-**What the merged photo cell does and does not claim.** It is still one media
-row against one variant — `product_media_sources.variant_id`, and
-`product_media_sources_product_checksum_key` makes the same file unrepeatable
-inside a product, so one photo cannot belong to four variants without new DDL.
-The cell is named after the colour and its tooltip says which variant the file is
-stored against, so both truths are on screen. The consequence is narrower than
-it first appears: the storefront gallery is **product-level** (variant-tagged
-media only sorts after it), so this does not leave a colour's other sizes
-pictureless for buyers. Where it does show is the frozen order-line image — a
-line for a different size of the same colour falls back to the product primary.
-Closing that needs option-value media, its DDL applied to production before the
-Drizzle schema learns it.
+**An unmapped product is untouched** — `BASE_COLUMNS` with `Image` and a single
+`Variant` column, the supplier's label whole. There is no axis to lead with.
+
+**What the rail's photo does and does not claim.** Still one media row against one
+variant (`product_media_sources.variant_id`, with
+`product_media_sources_product_checksum_key` making the same file unrepeatable
+inside a product), so one photo cannot belong to four variants without new DDL.
+The cell is named after the colour and its tooltip says which variant holds the
+file. The consequence is narrow: the storefront gallery is **product-level**, so
+no colour's other sizes go pictureless for buyers; where it shows is the frozen
+order-line image, which falls back to the product primary for a different size of
+the same colour.
 
 ## Product Catalogue: narrower table, Live landing tab (2026-08-22)
 
