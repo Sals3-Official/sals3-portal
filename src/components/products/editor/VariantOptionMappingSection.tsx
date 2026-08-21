@@ -15,6 +15,7 @@ import EditorStatusPill from './EditorStatusPill';
 import VariantMatrixAxisCard from './VariantMatrixAxisCard';
 import VariantMatrixValueRow from './VariantMatrixValueRow';
 import VariantValuePhotoStrip from './VariantValuePhotoStrip';
+import useVariantValueDrag from './use-variant-value-drag';
 import { sectionBadge } from './presentation';
 
 /**
@@ -195,17 +196,34 @@ function move<T>(items: T[], from: number, to: number): T[] {
  * move itself is the same operation on the same array. `position` is never a
  * field here: array order is what both save paths read.
  */
+/**
+ * The same move, to an arbitrary position rather than one step.
+ *
+ * What a drop produces: the dragged value takes the index of the row it landed
+ * on. `move` handles that already — it lifts before it inserts, so the
+ * post-removal shift is accounted for — which is why dragging needed no second
+ * reorder implementation, only a second way to say where.
+ */
+function moveValueTo<V, A extends { values: V[] }>(
+  axes: readonly A[],
+  axisIndex: number,
+  from: number,
+  to: number,
+): A[] {
+  return axes.map((axis, index) =>
+    index === axisIndex
+      ? { ...axis, values: move(axis.values, from, to) }
+      : axis,
+  );
+}
+
 function moveValue<V, A extends { values: V[] }>(
   axes: readonly A[],
   axisIndex: number,
   from: number,
   delta: -1 | 1,
 ): A[] {
-  return axes.map((axis, index) =>
-    index === axisIndex
-      ? { ...axis, values: move(axis.values, from, from + delta) }
-      : axis,
-  );
+  return moveValueTo(axes, axisIndex, from, from + delta);
 }
 
 /**
@@ -275,6 +293,9 @@ function MappedMatrixSummary({
   const [drafts, setDrafts] = useState<MappedOptionAxis[]>(mappedAxes);
   const [state, setState] = useState<'IDLE' | 'SAVING' | 'FAILED'>('IDLE');
   const [message, setMessage] = useState<string | null>(null);
+  const drag = useVariantValueDrag((axisIndex, from, to) =>
+    setDrafts((current) => moveValueTo(current, axisIndex, from, to)),
+  );
 
   const canEdit = onRename !== undefined && mappedAxes.length > 0;
   const isComplete =
@@ -412,6 +433,7 @@ function MappedMatrixSummary({
                 maxLength={MAX_VALUE_LABEL_LENGTH}
                 index={valueIndex}
                 count={axis.values.length}
+                drag={drag.rowHandlers(axisIndex, valueIndex)}
                 onLabelChange={(label) =>
                   setDrafts((current) =>
                     current.map((item, index) =>
@@ -546,6 +568,9 @@ export default function VariantOptionMappingSection({
    * elsewhere) replaces it with the server's own answer.
    */
   const [savedAxisNames, setSavedAxisNames] = useState<string[] | null>(null);
+  const valueDrag = useVariantValueDrag((axisIndex, from, to) =>
+    setAxes((current) => moveValueTo(current, axisIndex, from, to)),
+  );
   const [recoverState, setRecoverState] = useState<
     'IDLE' | 'RECOVERING' | 'DONE'
   >('IDLE');
@@ -808,6 +833,7 @@ export default function VariantOptionMappingSection({
                   maxLength={MAX_VALUE_LABEL_LENGTH}
                   index={valueIndex}
                   count={axis.values.length}
+                  drag={valueDrag.rowHandlers(axisIndex, valueIndex)}
                   onLabelChange={(label) =>
                     setAxes((current) =>
                       current.map((item, index) =>

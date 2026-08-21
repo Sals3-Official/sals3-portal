@@ -857,7 +857,9 @@ describe('Product editor - reordering a saved Variant Matrix', () => {
     renderEditor(sizedFixture());
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit names' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Move s up' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: /^Reposition s/ }), {
+      key: 'ArrowUp',
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Save names' }));
 
     await waitFor(() => expect(renameOptionMappingAction).toHaveBeenCalled());
@@ -878,19 +880,24 @@ describe('Product editor - reordering a saved Variant Matrix', () => {
     });
   });
 
-  it('keeps focus on the row that just moved to a boundary', () => {
+  it('keeps the grip usable on the row that just moved to a boundary', () => {
     renderEditor(sizedFixture());
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit names' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: /^Reposition s/ }), {
+      key: 'ArrowUp',
+    });
 
-    const up = screen.getByRole('button', { name: 'Move s up' });
+    // The old `Move s up` arrow disabled itself at the top of the list, which
+    // dropped focus to `<body>` in a real browser. One grip that is never
+    // disabled removes that failure mode instead of handing focus around it.
+    const grip = screen.getByRole('button', { name: /^Reposition s/ });
 
-    up.focus();
-    fireEvent.click(up);
+    expect(grip).not.toBeDisabled();
 
-    // `Move s up` is now disabled at the top of the list, so focus was handed
-    // to its sibling rather than dropped to `<body>`.
-    expect(screen.getByRole('button', { name: 'Move s down' })).toHaveFocus();
+    grip.focus();
+
+    expect(grip).toHaveFocus();
   });
 
   it('cannot move a value past either end', () => {
@@ -898,7 +905,21 @@ describe('Product editor - reordering a saved Variant Matrix', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit names' }));
 
-    expect(screen.getByRole('button', { name: 'Move m up' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Move s down' })).toBeDisabled();
+    const labels = () =>
+      screen
+        .getAllByLabelText(/^Label shown to buyers for/)
+        .map((node) => (node as HTMLInputElement).value);
+    const before = labels();
+
+    // `m` is at the top and `s` at the bottom of this two-value axis, so
+    // neither move is possible and both are ignored rather than refused.
+    fireEvent.keyDown(screen.getByRole('button', { name: /^Reposition m/ }), {
+      key: 'ArrowUp',
+    });
+    fireEvent.keyDown(screen.getByRole('button', { name: /^Reposition s/ }), {
+      key: 'ArrowDown',
+    });
+
+    expect(labels()).toEqual(before);
   });
 });

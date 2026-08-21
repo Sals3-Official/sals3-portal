@@ -402,69 +402,73 @@ describe('VariantOptionMappingSection', () => {
   });
 
   /**
-   * The regression this file exists for. Moving a value to the top disables the
-   * arrow that was just pressed, and `disabled` on the focused element makes the
-   * browser drop focus to `<body>` — so a keyboard seller loses their place at
-   * the exact moment the move succeeds.
+   * What replaced the arrow pair, and why the regression this file used to guard
+   * cannot recur.
+   *
+   * The old up/down `Button`s disabled at their end of the list, and `disabled`
+   * on the focused element makes a real browser drop focus to `<body>` — so a
+   * keyboard seller lost their place at the exact moment the move succeeded.
+   * `keepFocusOffDisabledArrow` handed focus to the opposite arrow to cover it.
+   *
+   * By owner decision on 2026-08-22 the row carries one grip and nothing else.
+   * It is never disabled — a move off either end is ignored — so the failure
+   * mode is removed rather than handled, and the arrow keys on the grip carry
+   * what the arrow buttons used to.
    */
-  it('keeps focus on a usable arrow when the pressed one disables at the top', () => {
+  it('reorders a value with the arrow keys on its grip', () => {
     render(
       <VariantOptionMappingSection proposal={PROPOSAL} variantCount={6} />,
     );
 
-    const up = screen.getByRole('button', { name: 'Move Army Green up' });
+    // Only the value fields: `getAllByRole('textbox')` would also pick up the
+    // two axis-name inputs, which are empty and are not what is reordering.
+    const labels = () =>
+      screen
+        .getAllByLabelText(/^Label shown to buyers for/)
+        .map((node) => (node as HTMLInputElement).value);
 
-    up.focus();
-    expect(up).toHaveFocus();
+    expect(labels()).toEqual(['Black', 'Army Green', 'S', 'M', 'L']);
 
-    fireEvent.click(up);
+    fireEvent.keyDown(
+      screen.getByRole('button', { name: /^Reposition Army Green/ }),
+      { key: 'ArrowUp' },
+    );
 
-    // Landed at index 0, so "up" is now disabled and must not hold focus.
-    //
-    // Asserted as "the disabled arrow does not have focus" rather than "focus is
-    // not on `<body>`": a real browser drops focus to `<body>` when the focused
-    // element is disabled, but jsdom leaves it on the disabled element, so the
-    // body check would pass here while the bug shipped.
-    const disabledUp = screen.getByRole('button', {
-      name: 'Move Army Green up',
+    expect(labels()).toEqual(['Army Green', 'Black', 'S', 'M', 'L']);
+  });
+
+  it('keeps the grip focusable after a move that lands at an end', () => {
+    render(
+      <VariantOptionMappingSection proposal={PROPOSAL} variantCount={6} />,
+    );
+
+    fireEvent.keyDown(
+      screen.getByRole('button', { name: /^Reposition Army Green/ }),
+      { key: 'ArrowUp' },
+    );
+
+    // Landed at index 0. The old `Move up` arrow would now be disabled and
+    // could not hold focus; the grip is never disabled.
+    const grip = screen.getByRole('button', {
+      name: /^Reposition Army Green/,
     });
 
-    expect(disabledUp).toBeDisabled();
-    expect(disabledUp).not.toHaveFocus();
+    expect(grip).not.toBeDisabled();
+
+    grip.focus();
+
+    expect(grip).toHaveFocus();
+  });
+
+  it('offers one grip per value, and no arrows anywhere', () => {
+    render(
+      <VariantOptionMappingSection proposal={PROPOSAL} variantCount={6} />,
+    );
+
     expect(
-      screen.getByRole('button', { name: 'Move Army Green down' }),
-    ).toHaveFocus();
-  });
-
-  it('keeps focus on a usable arrow when the pressed one disables at the bottom', () => {
-    render(
-      <VariantOptionMappingSection proposal={PROPOSAL} variantCount={6} />,
-    );
-
-    const down = screen.getByRole('button', { name: 'Move M down' });
-
-    down.focus();
-    fireEvent.click(down);
-
-    const disabledDown = screen.getByRole('button', { name: 'Move M down' });
-
-    expect(disabledDown).toBeDisabled();
-    expect(disabledDown).not.toHaveFocus();
-    expect(screen.getByRole('button', { name: 'Move M up' })).toHaveFocus();
-  });
-
-  it('leaves focus alone on a move that lands nowhere near an end', () => {
-    render(
-      <VariantOptionMappingSection proposal={PROPOSAL} variantCount={6} />,
-    );
-
-    const down = screen.getByRole('button', { name: 'Move S down' });
-
-    down.focus();
-    fireEvent.click(down);
-
-    // S moved 0 -> 1 of three, so its own arrow stays enabled and keeps focus.
-    expect(screen.getByRole('button', { name: 'Move S down' })).toHaveFocus();
+      screen.getAllByRole('button', { name: /^Reposition / }),
+    ).toHaveLength(5);
+    expect(screen.queryByRole('button', { name: /^Move / })).toBeNull();
   });
 });
 

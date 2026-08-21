@@ -1010,6 +1010,58 @@ its own column or join table, its DDL applied to production **before** the
 Drizzle schema learns it, plus the storefront read model and PDP to consume it.
 Recorded as an open note in `VariantMatrixAxisCard`.
 
+**A Variant Matrix value is repositioned by one grip (2026-08-22).** Requested
+as "para madali i-reposition", then "alisin mo na yung upward downward arrow kung
+may drag button na", then "⋮⋮ grip - eto lang dapat meron". The up/down arrow
+pair is gone and the row carries a single control.
+
+- **Mouse:** drag the grip onto another row to take that row's position. The
+  dragged row recedes to 40% while it moves and the landing row takes a
+  brand-blue outline — the row is outlined rather than an insertion line drawn,
+  because a drop takes over that row's position rather than sliding in beside it.
+- **Keyboard:** focus the grip and press the up or down arrow key. Its accessible
+  name says so, because a grip hints at nothing on its own.
+
+**The grip is a `<span role="button">`, not a `<button>`, and that is not a
+style choice.** A bare `<button draggable="true">` with nothing else on it never
+fired `dragstart` in Chromium — proven by a spike — while identical markup as a
+`<span>` did; Chromium treats a button's mousedown as a press rather than the
+start of a drag. The same finding killed an intermediate design in which one
+element was both a menu trigger and the drag source, and the menu library was not
+at fault.
+
+**Known gap, accepted with the one-control decision: the order of values cannot
+be changed on a phone.** Native HTML5 drag events do not fire from a touchscreen
+and a touchscreen has no arrow keys, so neither route is available there. WCAG
+2.5.7 asks for a single-pointer alternative to dragging and there is none.
+Closing it needs pointer-event dragging (`pointerdown`/`pointermove` with
+`touch-action: none`) instead of the native API — a real change rather than a
+prop. Recorded in `VariantMatrixValueRow`.
+
+**A failure mode was removed rather than handled.**
+`keepFocusOffDisabledArrow` existed because an arrow disables at its end of the
+list, and `disabled` on the focused element makes a browser drop focus to
+`<body>` — so a keyboard seller lost their place at the moment the move
+succeeded. The grip is never disabled; a move off either end is simply ignored.
+The helper is deleted. `DescriptionBlockEditor` still renders a
+disabled-at-the-ends arrow pair and still has the underlying problem; it never
+used this helper, and fixing it there is its own change.
+
+No dependency was added — `draggable` plus four event handlers; no `dnd-kit`, no
+`react-beautiful-dnd`. `useVariantValueDrag` holds the source row rather than
+putting it in `dataTransfer`, because the browser exposes transfer contents only
+on `drop`, which is too late to stop a _hover_ highlight appearing on a row in
+the wrong axis card. A drag started in `Colour` therefore never highlights, and
+never lands on, a row in `Size`.
+
+Reordering needed no new write path. `move()` already lifted before it inserted,
+so it accounts for the post-removal shift and handles an arbitrary from→to;
+`moveValueTo` only adds a second way to say where. And `renameOptionMapping`
+already writes positions in two passes — every value of the axis is lifted above
+its own maximum before final positions are assigned, which empties the whole
+`0..n-1` range — so it accepts any permutation, not only the adjacent swaps the
+arrows could produce.
+
 ## Description: simple text or a designed layout
 
 The Description section offers two editors and the seller picks with a toggle.
