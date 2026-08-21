@@ -1058,6 +1058,69 @@ changed, and no CJ request was added.
   preferred over a data-dependent landing tab that would silently change the
   first time a listing went live.
 
+## Product reviews — schema and DDL only (2026-08-22)
+
+Migration `0028_icy_sally_floyd.sql` creates `sals3_product_reviews` and
+`sals3_product_review_replies` (`src/lib/db/schema/reviews.ts`). **Nothing reads
+or writes either table yet.** The review domain, its server actions, the Seller
+Center screen, and the storefront surfaces are separate changes that follow only
+once the DDL has actually run against production — the ordering PR #102 got wrong
+when it 404'd the whole Product Catalogue by shipping a feature whose migration
+had only ever run locally.
+
+Apply it the way every other post-`0019` migration is applied: trigger the
+`Reviews Migrate Product Reviews` GitHub Actions workflow (`workflow_dispatch`,
+`CRON_SECRET`-authenticated), which calls
+`POST /api/internal/reviews/migrate-product-reviews` on the deployed app itself.
+`GET` on the same route reports table existence without writing. Both are
+idempotent and safe to run more than once; the workflow fails the run unless the
+response proves both tables exist afterwards. Production is never migrated from a
+laptop — `npm run db:migrate` only ever reaches `localhost`, and
+`scripts/guard-remote-db.mts` refuses anything else.
+
+Design decisions worth knowing before building on it:
+
+- **Eligibility is derived, never stored.** A buyer may review an item when that
+  item's own `fulfillment_groups.parcel_state` is `DELIVERED`. There is no
+  invitation table and no flag on the order line. `TRACKING_CONFLICT` is
+  deliberately **not** eligible: ADR-004 §5 gives that state to a carrier
+  "delivered" the supplier disputes, so nobody yet knows the item arrived.
+- **One review per `sals3_order_lines` row**, enforced by
+  `sals3_product_reviews_line_key`. Not per product, not per order, and not per
+  unit — quantity 2 on one line is still one review.
+- **Nothing was added to `sals3_order_lines`.** The relationship lives on the
+  review side only, because Drizzle names every column of a schema in an
+  `INSERT` and both order-line readers use a bare `.select()` — see
+  `src/modules/orders/migrate-order-line-snapshot.ts` and
+  `order-line-columns.test.ts`. New tables cannot do that to an existing writer,
+  which is why this migration ships its schema, its `drizzle/` file, and its
+  ledger row together where the snapshot column could not.
+- **Each DDL statement runs in its own transaction with a 5s `lock_timeout`.**
+  Three of the six foreign keys reference `sals3_order_lines`, `sals3_orders`,
+  and `products`; `ADD CONSTRAINT ... FOREIGN KEY` takes a `SHARE ROW EXCLUSIVE`
+  lock on the referenced table, so a lock it cannot get must abort the run rather
+  than queue paid checkout behind DDL. Every statement is individually
+  idempotent, so a retry resumes instead of restarting.
+- **A rating gates nothing.** ADR-010 reserves `products.score` and leaves it
+  unwritten. Nothing here writes to `products`, and a rating must not become a
+  publication input, an evaluation signal, or a ranking key without its own
+  owner decision.
+- **Supplier reviews are not these reviews.** CJ's `listedNum` and
+  `/product/productComments` are evidence about CJ's own marketplace, not Sals3
+  ratings (ADR-013 §7). No row here can originate from a supplier and no supplier
+  call produces one (ADR-017).
+- **`buyer_email` is authorisation data**, stored lower-cased and matched the way
+  `buyer-read.ts` matches it. It is never projected to the storefront or to the
+  Seller Center. `display_name` stores the **already-masked** string the buyer
+  consented to ("Hezekiah A."), so no read path can leak a surname it was never
+  given; `null` means they chose to stay anonymous.
+- **A seller can answer a review, never hide one.** `HIDDEN_BY_PLATFORM` exists
+  for a holder of `review:moderate` (a permission that already existed in
+  `PORTAL_PERMISSIONS`); ADR-014 puts platform moderation in the Admin Portal.
+  Replies are versioned with `supersedes_id` and a partial unique index rather
+  than updated in place — PR #80 shipped the opposite on pricing overrides, and
+  the history a dispute would be settled from never recorded the replacement.
+
 ## Description: simple text or a designed layout
 
 The Description section offers two editors and the seller picks with a toggle.

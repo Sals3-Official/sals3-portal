@@ -18,3 +18,4 @@ export * from './category-attribute-controls';
 export * from './seller-market-profile';
 export * from './product-catalog';
 export * from './orders';
+export * from './reviews';

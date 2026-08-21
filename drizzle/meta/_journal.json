@@ -197,6 +197,13 @@
       "when": 1787314656435,
       "tag": "0027_many_lockjaw",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1787337923216,
+      "tag": "0028_icy_sally_floyd",
+      "breakpoints": true
     }
   ]
 }
