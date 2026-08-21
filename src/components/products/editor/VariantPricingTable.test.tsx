@@ -40,8 +40,10 @@ describe('VariantPricingTable', () => {
     expect(
       screen.getAllByText('Observed Aug 8, 2026, 6:05 AM UTC'),
     ).toHaveLength(2);
+    // The footnote names the recessed columns, because the recess is the only
+    // thing on screen saying those two numbers are not fields.
     expect(
-      screen.getByText(/stored supplier evidence only/),
+      screen.getByText(/shaded columns are stored supplier evidence/),
     ).toBeInTheDocument();
   });
 

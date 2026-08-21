@@ -910,6 +910,106 @@ Catalogue** as a real link and **Stay on this listing** beside it. The panel
 itself stays near-opaque: text over a live blur cannot hold a contrast ratio,
 because whatever scrolls behind it decides the ratio.
 
+**Variants & Pricing reworked (2026-08-22).** Presentation only — no schema,
+server action, validation, publish gate or read-only rule changed. Three
+marketplace seller-centre patterns were taken as _ideas_, then expressed in this
+editor's own vocabulary and visual language rather than transcribed; where the
+reference UI and Sals3's data model disagree, the model won.
+
+- **One card per axis, from one component.** `VariantMatrixAxisCard` renders the
+  card chrome for both editing modes; the first-time mapping form and **Edit
+  names** had each carried their own copy, which is how they drifted apart once
+  already. The header is a gradient ordinal chip plus the axis name **once the
+  seller supplies one** — a named card reads `1 · Colour`, and only an unnamed
+  one falls back to `Option 1`, because the field directly below it already says
+  `Option 1 name`. The word `Variation` is deliberately not used: seller-facing
+  copy was moved off "Option groups" onto **Variant Matrix** on 2026-08-17, and a
+  third noun for the same thing would undo that. No remove-axis control: axis
+  count and which supplier token sits at which position are what variants, carts
+  and accepted orders depend on, and mapping stays insert-only.
+- **Option values two-up instead of one tall column.** A four-colour, four-size
+  product ran the matrix down the whole viewport and pushed the variant table
+  below the fold. Values are chunked **column-major** into two `flex-col`
+  columns — not a grid with `grid-auto-flow: column` — so array order, which is
+  the order the reorder arrows walk, still runs downwards inside each visible
+  column. A row-major grid would have made ▲ move a value _left_. Three values or
+  fewer stay in one column, and below `lg` both columns stack (the duplicate
+  column header is `hidden` there, or it reads as a second option group).
+- **The table header, count and bulk control inside the table's own box**,
+  titled `Variants` to match the section it sits in. Rows are taller, and there
+  are **no vertical rules** — the portal's tables are ruled horizontally, and a
+  full grid draws eight lines to answer one question. Instead `Supplier cost` and
+  `Supplier stock` are **recessed onto the muted surface**: they are the two
+  read-only numbers sitting either side of the one number a seller does set, the
+  only place in the table where read-only can be mistaken for a field, and
+  `VariantMatrixValueRow` already recesses the locked supplier token this exact
+  way. `Retail price` carries the editor's own dot rather than a form asterisk,
+  so the table and the matrix above it use one marker language, and it is marked
+  only because `publishProduct` genuinely gates on it — `Sals3 SKU` is editable
+  and gates nothing, so it is unmarked. The footnote names the recess, because
+  the recess is the only thing on screen saying those numbers are not fields.
+
+Two reference patterns were **not** adopted. An inline `Price / Stock / SKU` +
+Apply-to-all row: supplier stock is read-only evidence here rather than a number
+a seller sets, and the bulk control is one of the three places the 2.5%
+retail-over-supplier-cost floor is enforced — it states its blast radius and
+disables **Apply** against the highest affected cost, so an inline field would
+either duplicate that guard or ship without it. And a per-option-value
+thumbnail: media attaches to a _variant_ (`product_media_sources.variant_id`,
+one nullable column, with `product_media_sources_product_checksum_key` making
+the same file unrepeatable within a product), so one photo cannot stand for
+every variant carrying a colour. See the open question in
+`VariantMatrixAxisCard`'s notes.
+
+**Photos against Variant Matrix values, with no schema change (2026-08-22).**
+Requested as "upload variation pictures here". `VariantValuePhotoStrip` renders
+one row of thumbnail chips per axis in the mapped Variant Matrix, and pressing a
+chip opens the **same** `VariantImagePicker` the variant table's Image column
+opens — so the only write is the one that already existed,
+`assignVariantMedia`'s single `UPDATE product_media_sources SET variant_id`,
+inside a transaction, tenant-checked on the product's own id, audited, and
+reversed by assigning `null`.
+
+**No DDL, and deliberately so.** `product_media_sources` is written by draft
+creation, publication, every seller upload and the supplier mirror; Drizzle names
+every column of a table in its `INSERT`, so a new column there changes the SQL
+all four emit the moment it enters the schema file — the reason that file already
+carries a `Neither column may be added to this schema before its DDL is applied
+to production` warning, and the reason three production outages came from
+migrating out of order. Nothing was generated, nothing was applied, and the local
+database was not touched.
+
+What made it possible without a column: `product_variant_option_values` already
+records which variants carry which option value, and the read model already joins
+it to build `optionLabel`. One field — `optionValueId` — was added to that
+existing `select`, no extra query, and `mappedAxes[].values[].variantIds` now
+carries the link. `resolveVariantValuePhotos` then derives each value's photo from
+`variants`, which is client state, so a chip updates the moment the picker writes
+rather than waiting for `router.refresh()`.
+
+Three honest limits, each visible on screen rather than papered over:
+
+- **A chip is a control only where the value resolves to exactly one variant** —
+  a colour-only product, the commonest shape. There the value _is_ a variant and
+  the write is exactly what the chip shows.
+- **A value shared by several variants is read-only and names the variant its
+  photo came from.** Making it a control would set the photo on `Black / L` under
+  a label reading `Black`, leaving the other three Black variants photoless on
+  the storefront.
+- **An axis with nothing exact in it is not rendered at all.** On a Colour × Size
+  product no chip could be a control, and a `Size photos` row is noise — nothing
+  about a _size_ has a picture, and Sals3 cannot know which axis carries
+  appearance, the same limit that stops it naming the axes. When that empties the
+  strip, one sentence points at the variant list's Image column instead.
+
+An unmapped product gets no strip: option values are written by
+`saveOptionMapping`, so before the matrix is saved there is no row for a photo to
+hang from. A true per-value photo — one picture for `Black` regardless of size,
+which is what a buyer-facing colour swatch would need — remains unbuilt and needs
+its own column or join table, its DDL applied to production **before** the
+Drizzle schema learns it, plus the storefront read model and PDP to consume it.
+Recorded as an open note in `VariantMatrixAxisCard`.
+
 ## Description: simple text or a designed layout
 
 The Description section offers two editors and the seller picks with a toggle.

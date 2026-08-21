@@ -2,14 +2,19 @@
 
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { Lock, Pencil } from 'lucide-react';
+import { Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { MappedOptionAxis } from '@/lib/seller-center/product-catalogue/types';
-import type { IssueSeverity } from '@/lib/seller-center/product-editor/types';
+import type {
+  IssueSeverity,
+  VariantMatrixValuePhoto,
+} from '@/lib/seller-center/product-editor/types';
 import EditorStatusPill from './EditorStatusPill';
+import VariantMatrixAxisCard from './VariantMatrixAxisCard';
 import VariantMatrixValueRow from './VariantMatrixValueRow';
+import VariantValuePhotoStrip from './VariantValuePhotoStrip';
 import { sectionBadge } from './presentation';
 
 /**
@@ -123,6 +128,17 @@ export type VariantOptionMappingSectionProps = {
   unlabelledVariantCount?: number;
   /** Offered only where those labels can actually be recovered. */
   onRecoverLabels?: () => Promise<{ ok: boolean; message: string }>;
+  /**
+   * The photo standing against each saved option value, keyed by `valueId`.
+   *
+   * Present only for a mapped product: option values are written by
+   * `saveOptionMapping`, so before that there is no row for a photo to hang
+   * from. See `VariantValuePhotoStrip` for why this is derived from variant
+   * media rather than stored per value.
+   */
+  valuePhotos?: Record<string, VariantMatrixValuePhoto>;
+  /** Opens the photo picker for one variant. Omitted in fixture mode. */
+  onPickValuePhoto?: (variantId: string) => void;
 };
 
 type ValueDraft = { raw: string; label: string };
@@ -237,11 +253,15 @@ function VariantMatrixHeader({
 function MappedMatrixSummary({
   axisNames,
   mappedAxes,
+  valuePhotos,
+  onPickValuePhoto,
   onRename,
   onRenamed,
 }: {
   axisNames: string[];
   mappedAxes: MappedOptionAxis[];
+  valuePhotos: Record<string, VariantMatrixValuePhoto>;
+  onPickValuePhoto?: (variantId: string) => void;
   onRename?: (
     axes: {
       optionId: string;
@@ -307,6 +327,16 @@ function MappedMatrixSummary({
           and are what CJ fulfillment still matches on; the display names above
           are only what buyers see on the storefront.
         </p>
+        {/*
+          Photos sit here rather than only behind `Edit names`: a mapped product
+          spends its life in this view, and a seller looking for a colour's
+          picture should not have to open a rename form to find it.
+        */}
+        <VariantValuePhotoStrip
+          axes={mappedAxes}
+          photos={valuePhotos}
+          onPick={onPickValuePhoto}
+        />
         {canEdit ? (
           <div className="flex flex-wrap items-center gap-3">
             <Button
@@ -345,81 +375,72 @@ function MappedMatrixSummary({
 
       <div className="flex flex-col gap-4">
         {drafts.map((axis, axisIndex) => (
-          <div
+          /* Same card as the first-time mapping, from the same component: two
+             screens editing one matrix should not look like two features. No
+             required marker here — a mapped matrix already publishes. */
+          <VariantMatrixAxisCard
             key={axis.optionId}
-            className="flex flex-col gap-2 rounded-lg border border-border p-3"
-          >
-            <div className="flex flex-col gap-1">
-              <Label htmlFor={`rename-${axis.optionId}`} className="text-xs">
-                Option {axisIndex + 1} name
-              </Label>
-              <Input
-                id={`rename-${axis.optionId}`}
-                value={axis.name}
-                maxLength={60}
-                onChange={(event) =>
-                  setDrafts((current) =>
-                    current.map((item, index) =>
-                      index === axisIndex
-                        ? { ...item, name: event.target.value }
-                        : item,
-                    ),
-                  )
-                }
-              />
-            </div>
-
-            {/* Same column rhythm as the first-time mapping above: the
-                supplier's token, the label buyers read, then the arrows that
-                place it. Two screens editing one matrix should not look like
-                two features. */}
-            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-              <span className="flex items-center justify-end gap-1 pr-3">
-                <Lock aria-hidden="true" className="size-3" />
-                Supplier value
-              </span>
-              <span>Shown to buyers</span>
-              <span className="sr-only">Reorder</span>
-            </div>
-            <div className="flex flex-col gap-2">
-              {axis.values.map((value, valueIndex) => (
-                <VariantMatrixValueRow
-                  key={value.valueId}
-                  supplierValue={value.supplierValue}
-                  label={value.label}
-                  maxLength={MAX_VALUE_LABEL_LENGTH}
-                  index={valueIndex}
-                  count={axis.values.length}
-                  onLabelChange={(label) =>
+            ordinal={axisIndex + 1}
+            axisName={axis.name}
+            nameField={
+              <div className="flex flex-col gap-1">
+                <Label htmlFor={`rename-${axis.optionId}`} className="text-xs">
+                  Option {axisIndex + 1} name
+                </Label>
+                <Input
+                  id={`rename-${axis.optionId}`}
+                  value={axis.name}
+                  maxLength={60}
+                  className="h-9 max-w-xs"
+                  onChange={(event) =>
                     setDrafts((current) =>
                       current.map((item, index) =>
                         index === axisIndex
-                          ? {
-                              ...item,
-                              values: item.values.map((existing, position) =>
-                                position === valueIndex
-                                  ? { ...existing, label }
-                                  : existing,
-                              ),
-                            }
+                          ? { ...item, name: event.target.value }
                           : item,
                       ),
                     )
                   }
-                  onMoveUp={() =>
-                    setDrafts((current) =>
-                      moveValue(current, axisIndex, valueIndex, -1),
-                    )
-                  }
-                  onMoveDown={() =>
-                    setDrafts((current) =>
-                      moveValue(current, axisIndex, valueIndex, 1),
-                    )
-                  }
                 />
-              ))}
-            </div>
-          </div>
+              </div>
+            }
+            valueRows={axis.values.map((value, valueIndex) => (
+              <VariantMatrixValueRow
+                key={value.valueId}
+                supplierValue={value.supplierValue}
+                label={value.label}
+                maxLength={MAX_VALUE_LABEL_LENGTH}
+                index={valueIndex}
+                count={axis.values.length}
+                onLabelChange={(label) =>
+                  setDrafts((current) =>
+                    current.map((item, index) =>
+                      index === axisIndex
+                        ? {
+                            ...item,
+                            values: item.values.map((existing, position) =>
+                              position === valueIndex
+                                ? { ...existing, label }
+                                : existing,
+                            ),
+                          }
+                        : item,
+                    ),
+                  )
+                }
+                onMoveUp={() =>
+                  setDrafts((current) =>
+                    moveValue(current, axisIndex, valueIndex, -1),
+                  )
+                }
+                onMoveDown={() =>
+                  setDrafts((current) =>
+                    moveValue(current, axisIndex, valueIndex, 1),
+                  )
+                }
+              />
+            ))}
+          />
         ))}
       </div>
 
@@ -478,6 +499,8 @@ export default function VariantOptionMappingSection({
   onRecoverLabels,
   mappedAxes = [],
   onRename,
+  valuePhotos = {},
+  onPickValuePhoto,
 }: VariantOptionMappingSectionProps) {
   const [axes, setAxes] = useState<AxisDraft[]>(() => initialDrafts(proposal));
   /**
@@ -550,6 +573,8 @@ export default function VariantOptionMappingSection({
       <MappedMatrixSummary
         axisNames={effectiveMappedAxisNames}
         mappedAxes={mappedAxes}
+        valuePhotos={valuePhotos}
+        onPickValuePhoto={onPickValuePhoto}
         onRename={onRename}
         onRenamed={(names) => setSavedAxisNames(names)}
       />
@@ -702,123 +727,116 @@ export default function VariantOptionMappingSection({
           const suggestions = suggestedAxisNames[axisIndex] ?? [];
 
           return (
-            <div
+            <VariantMatrixAxisCard
               key={proposal[axisIndex]?.values.join('|') ?? axisIndex}
-              className="relative overflow-hidden rounded-lg border border-border bg-background/60 p-3 pt-4"
-            >
-              <span
-                aria-hidden="true"
-                className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-[#018CC9] to-[#002B53]"
-              />
-              <Label htmlFor={nameId}>Option {axisIndex + 1} name</Label>
-              <Input
-                id={nameId}
-                value={axis.name}
-                placeholder={axisIndex === 0 ? 'e.g. Colour' : 'e.g. Size'}
-                aria-invalid={missingName}
-                aria-describedby={missingName ? `${nameId}-error` : undefined}
-                className="mt-1 h-9 max-w-xs"
-                onBlur={() =>
-                  setTouched((current) => ({ ...current, [axisIndex]: true }))
-                }
-                onChange={(event) =>
-                  setAxes((current) =>
-                    current.map((item, index) =>
-                      index === axisIndex
-                        ? { ...item, name: event.target.value }
-                        : item,
-                    ),
-                  )
-                }
-              />
-              {missingName ? (
-                <p
-                  id={`${nameId}-error`}
-                  className="mt-1 text-xs text-destructive"
-                >
-                  Give this option a name before saving.
-                </p>
-              ) : null}
-
-              {/*
-                Offered only while the field is empty. Once a name exists — typed
-                or accepted — repeating the suggestion beside it would read as a
-                correction of the seller's own choice.
-              */}
-              {suggestions.length > 0 && axis.name.trim() === '' ? (
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    {suggestions.length === 1
-                      ? 'Suggested for this category:'
-                      : 'Suggested for this category — pick one:'}
-                  </span>
-                  {suggestions.map((suggestion) => (
-                    <Button
-                      key={suggestion}
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-6 px-2 text-xs"
-                      onClick={() => applyAxisName(axisIndex, suggestion)}
-                    >
-                      Use &ldquo;{suggestion}&rdquo;
-                    </Button>
-                  ))}
-                </div>
-              ) : null}
-
-              <div className="mt-3 flex flex-col gap-2">
-                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 text-xs text-muted-foreground">
-                  {/*
-                    Each header sits over its own column's alignment: the
-                    supplier ledger is right-aligned to the gutter, so its label
-                    is too.
-                  */}
-                  <span className="flex items-center justify-end gap-1 pr-3">
-                    <Lock aria-hidden="true" className="size-3" />
-                    Supplier value
-                  </span>
-                  <span>Shown to buyers</span>
-                  <span className="sr-only">Reorder</span>
-                </div>
-                {axis.values.map((value, valueIndex) => (
-                  <VariantMatrixValueRow
-                    key={value.raw}
-                    supplierValue={value.raw}
-                    label={value.label}
-                    maxLength={MAX_VALUE_LABEL_LENGTH}
-                    index={valueIndex}
-                    count={axis.values.length}
-                    onLabelChange={(label) =>
+              ordinal={axisIndex + 1}
+              axisName={axis.name}
+              // The marker only appears where the server really refuses: a
+              // single-axis product is nameable but publishes either way, and a
+              // required dot on it would promise a gate that does not exist.
+              required={mappingBlocksPublish}
+              nameField={
+                <div>
+                  <Label htmlFor={nameId}>Option {axisIndex + 1} name</Label>
+                  <Input
+                    id={nameId}
+                    value={axis.name}
+                    placeholder={axisIndex === 0 ? 'e.g. Colour' : 'e.g. Size'}
+                    aria-invalid={missingName}
+                    aria-describedby={
+                      missingName ? `${nameId}-error` : undefined
+                    }
+                    className="mt-1 h-9 max-w-xs"
+                    onBlur={() =>
+                      setTouched((current) => ({
+                        ...current,
+                        [axisIndex]: true,
+                      }))
+                    }
+                    onChange={(event) =>
                       setAxes((current) =>
                         current.map((item, index) =>
                           index === axisIndex
-                            ? {
-                                ...item,
-                                values: item.values.map((existing, i) =>
-                                  i === valueIndex
-                                    ? { ...existing, label }
-                                    : existing,
-                                ),
-                              }
+                            ? { ...item, name: event.target.value }
                             : item,
                         ),
                       )
                     }
-                    onMoveUp={() =>
-                      setAxes((current) =>
-                        moveValue(current, axisIndex, valueIndex, -1),
-                      )
-                    }
-                    onMoveDown={() =>
-                      setAxes((current) =>
-                        moveValue(current, axisIndex, valueIndex, 1),
-                      )
-                    }
                   />
-                ))}
-              </div>
-            </div>
+                  {missingName ? (
+                    <p
+                      id={`${nameId}-error`}
+                      className="mt-1 text-xs text-destructive"
+                    >
+                      Give this option a name before saving.
+                    </p>
+                  ) : null}
+
+                  {/*
+                    Offered only while the field is empty. Once a name exists —
+                    typed or accepted — repeating the suggestion beside it would
+                    read as a correction of the seller's own choice.
+                  */}
+                  {suggestions.length > 0 && axis.name.trim() === '' ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {suggestions.length === 1
+                          ? 'Suggested for this category:'
+                          : 'Suggested for this category — pick one:'}
+                      </span>
+                      {suggestions.map((suggestion) => (
+                        <Button
+                          key={suggestion}
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-xs"
+                          onClick={() => applyAxisName(axisIndex, suggestion)}
+                        >
+                          Use &ldquo;{suggestion}&rdquo;
+                        </Button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              }
+              valueRows={axis.values.map((value, valueIndex) => (
+                <VariantMatrixValueRow
+                  key={value.raw}
+                  supplierValue={value.raw}
+                  label={value.label}
+                  maxLength={MAX_VALUE_LABEL_LENGTH}
+                  index={valueIndex}
+                  count={axis.values.length}
+                  onLabelChange={(label) =>
+                    setAxes((current) =>
+                      current.map((item, index) =>
+                        index === axisIndex
+                          ? {
+                              ...item,
+                              values: item.values.map((existing, i) =>
+                                i === valueIndex
+                                  ? { ...existing, label }
+                                  : existing,
+                              ),
+                            }
+                          : item,
+                      ),
+                    )
+                  }
+                  onMoveUp={() =>
+                    setAxes((current) =>
+                      moveValue(current, axisIndex, valueIndex, -1),
+                    )
+                  }
+                  onMoveDown={() =>
+                    setAxes((current) =>
+                      moveValue(current, axisIndex, valueIndex, 1),
+                    )
+                  }
+                />
+              ))}
+            />
           );
         })}
       </div>
