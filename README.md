@@ -1185,7 +1185,95 @@ changed, and no CJ request was added.
   preferred over a data-dependent landing tab that would silently change the
   first time a listing went live.
 
-## Product reviews — schema and DDL only (2026-08-22)
+## Product reviews
+
+Buyer reviews of purchased items: `/reviews` in the Seller Center, plus the
+storefront endpoints `sals3-ecommerce` reads and writes through.
+
+### The gate is the parcel, not the order
+
+A buyer may review an item once **that item's own**
+`fulfillment_groups.parcel_state` is `DELIVERED`, and for
+`REVIEW_WINDOW_DAYS` (90) after. ADR-008 splits one checkout into per-provider
+fulfillment groups and CJ has no partial-shipment status, so one order can hold
+a delivered package beside one still moving — eligibility belongs to the line.
+
+`TRACKING_CONFLICT` deliberately does **not** qualify. ADR-004 §5 gives that
+state to a carrier "delivered" the supplier disputes, so its buyer-facing
+meaning is "we do not yet know this arrived".
+
+Eligibility is **derived, never stored**: no invitation table, no flag on the
+order line, no job writing rows when a parcel lands. A second table holding
+"eligible" would be a second source of truth able to disagree with the parcel it
+describes. The accepted cost is that a review-reminder email has nowhere to hang
+yet. `modules/reviews/eligibility.ts` is the only place that decides it, in one
+`WHERE` — `eligibility.test.ts` renders the real SQL and asserts every
+condition, because a fake returning a row proves the mapping and not the gate.
+
+There is no `parcel_state_at` column, so the window is measured from
+`coalesce(carrier_delivered_at, updated_at)`. The fallback is the sync's own last
+write, which can only be _later_ than real delivery, so the window can only ever
+be generous and never unfairly short — that asymmetry is why the fallback is
+acceptable.
+
+### Endpoints
+
+| Route                                       |                                                                                                                                                                                                                                                     |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/storefront/reviews`              | Submit. Bearer token plus `X-Buyer-Email`, which **is** the authorisation — the storefront verifies the session and puts the verified address there. Rate-limited per address (rule 29). `404` for anything ineligible, `409` for already-reviewed. |
+| `GET /api/storefront/products/[id]/reviews` | One product's reviews by public slug, capped at 50. Separate from the product payload: the summary is cached with the product, the list is unbounded and read only on scroll.                                                                       |
+
+`rating` (`{average, count}`) rides on both the feed and the detail payload;
+`ratingBreakdown` is detail-only. The deprecated `ratingLine` is now **derived
+from** `rating` rather than being a fixed non-claim — shipping
+`rating.average: 4.6` beside `ratingLine: "No reviews yet"` would put two
+contradictory answers in one payload. Cache keys bumped: feed `v2`→`v3`, product
+`v4`→`v5`.
+
+The aggregate is a `GROUP BY`, not a rollup table. It cannot drift from the list
+beneath it, and a hidden review leaves the list and stops counting in the same
+breath. Revisit at roughly 50k reviews or if the feed's p95 regresses. Its read
+is also **fail-safe**: a failure logs once and the products return without
+ratings, because a card without stars is a card and a catalogue answering 503 is
+a shop nobody can buy from. That is not a substitute for running the migration
+first — it is that the blast radius of a decorative aggregate should be the
+aggregate.
+
+### Seller Center
+
+`/reviews` sits under **Dropship Catalogue**, gated on `review:reply` — a
+permission that had existed in `PORTAL_PERMISSIONS` with no caller. Filters,
+paging and search all live in the URL (`review-params.ts`), so a view is
+shareable and the back button behaves; a filter change resets `page`, which is
+the bug `buildQueryString` shipped on the sourcing screens.
+
+A seller can answer a review **once, editable** — versioned with
+`supersedes_id` behind the partial unique index, never updated in place, because
+PR #80 shipped the opposite on pricing overrides and lost the replacement
+history. `expectedReplyVersion` is a compare-and-set, so two tabs answering one
+review get a stated conflict instead of a silent overwrite.
+
+A seller **cannot** hide or delete a review. `HIDDEN_BY_PLATFORM` is for a
+holder of `review:moderate`, and ADR-014 puts platform moderation in the Admin
+Portal. The reply dialog says so rather than leaving sellers to discover it.
+
+Product name, variant and photo on every row come from the **order line**, not
+the live listing (ADR-007): a seller who has since renamed or re-photographed
+the product still sees the review against what the buyer received.
+
+`display_name` stores the **already-masked** string the buyer consented to
+("Hezekiah A."), never their full name — so no read path can leak a surname it
+was never given, and the masking is applied once where the choice was made.
+`null` means anonymous, and no display copy is stored for it, so changing that
+wording never becomes a data migration. `buyer_email` is authorisation data:
+lower-cased, matched as `buyer-read.ts` matches it, never projected to a seller
+or a buyer.
+
+A rating **gates nothing**. ADR-010 reserves `products.score` and nothing here
+writes to `products`. No row can originate from a supplier and no supplier call
+produces one (ADR-013 §7, ADR-017).
+
+### Migration and DDL (2026-08-22)
 
 Migration `0028_icy_sally_floyd.sql` creates `sals3_product_reviews` and
 `sals3_product_review_replies` (`src/lib/db/schema/reviews.ts`). **Nothing reads

@@ -105,6 +105,18 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           'The Product Editor, prefilled from a qualified supplier product - currently a design preview on fictional data. The blank essentials-first wizard is still reachable at /listings/new directly.',
       },
+      {
+        href: '/reviews',
+        label: 'Product Reviews',
+        icon: 'star',
+        // `review:reply` existed in PORTAL_PERMISSIONS with no caller until
+        // this screen. Deliberately not `review:moderate`: reading and
+        // answering reviews is a seller's own business, while withholding one
+        // is platform authority and belongs to the Admin Portal (ADR-014).
+        permission: 'review:reply',
+        description:
+          'What customers wrote about items you sold them. A customer can only review an item after the parcel that carried it is delivered; you can answer each review once and change your answer later.',
+      },
     ],
   },
   {

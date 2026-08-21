@@ -76,7 +76,10 @@ const readFeedAcrossRequests = unstable_cache(
   // Bumped to 'v2' on 2026-08-20: `primaryImageUrl` now honours
   // `show_supplier_photo` and puts seller uploads first, so a warm 'v1' card
   // could keep showing a photo the seller just hid.
-  ['storefront-catalog-feed', 'v2'],
+  // Bumped to 'v3' on 2026-08-22: a card row now carries `rating` and its
+  // `ratingLine` is derived from it, so a warm 'v2' entry would keep serving
+  // "No reviews yet" over a product that has been reviewed.
+  ['storefront-catalog-feed', 'v3'],
   { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
 );
 
@@ -93,7 +96,9 @@ const readProductAcrossRequests = unstable_cache(
   // `metaDescription`. The feed key is deliberately left on 'v2' — a card row
   // carries neither field, so busting it would discard warm entries for
   // nothing.
-  ['storefront-catalog-product', 'v4'],
+  // Bumped to 'v5' on 2026-08-22: the detail row gained `rating` and
+  // `ratingBreakdown`.
+  ['storefront-catalog-product', 'v5'],
   { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
 );
 

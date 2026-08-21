@@ -4,6 +4,10 @@ import { asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import getDb, { type DbExecutor } from '@/lib/db/client';
 import {
+  listLineReviewStates,
+  type LineReviewState,
+} from '@/modules/reviews/eligibility';
+import {
   listingSnapshotSchema,
   type ListingSnapshot,
 } from '@/modules/checkout/listing-snapshot';
@@ -108,6 +112,18 @@ export type BuyerOrderLinePayload = {
    * `variantLabel` and `imageUrl`, which are frozen per line regardless.
    */
   listing?: ListingSnapshot;
+  /**
+   * Whether this buyer can write a review of this line right now — the line's
+   * own package delivered, inside the window, and not already reviewed.
+   *
+   * Resolved by `modules/reviews/eligibility.ts`, which is the single place
+   * that decides it. Carried on the order payload rather than fetched per row
+   * by the storefront: the gate is per line, and a query per row on an order
+   * page is the N+1 the code rules forbid.
+   */
+  reviewable: boolean;
+  /** This buyer's own review of this line, when they have written one. */
+  review?: { id: string; rating: number; createdAt: string };
 };
 
 export type BuyerTrackingEventPayload = {
@@ -220,9 +236,84 @@ function arrivalDaysByPackage(intent: {
   );
 }
 
+/**
+ * Folds one line's review state into the payload shape.
+ *
+ * `reviewable` is always present (a boolean the consumer can branch on without
+ * an existence check), while `review` is omitted rather than `null` — the same
+ * rule the rest of this payload follows, where an absent key says "there is no
+ * such thing" and a present one carries a real value.
+ *
+ * A line missing from the map is not reviewable. That is the safe direction: a
+ * review the buyer is not entitled to write would be refused by
+ * `resolveReviewableLine` anyway, so the worst this can do is hide a control
+ * that would have worked, never offer one that writes something invalid.
+ */
+function reviewStateOf(
+  states: Map<string, LineReviewState>,
+  lineId: string,
+): Pick<BuyerOrderLinePayload, 'reviewable' | 'review'> {
+  const state = states.get(lineId);
+
+  if (state === undefined) return { reviewable: false };
+
+  return {
+    reviewable: state.reviewable,
+    ...(state.review === null ? {} : { review: state.review }),
+  };
+}
+
+/**
+ * Review state for every line on the page — and never a reason this page fails.
+ *
+ * ## Why this read is allowed to fail and the others are not
+ *
+ * An order page is a receipt. A buyer who has paid is entitled to read what they
+ * bought, what it cost and where it is, and none of that depends on whether they
+ * can also leave a star rating. So a failure here costs the review controls and
+ * nothing else.
+ *
+ * This is not defensive noise. `sals3_product_reviews` reaches a deployed
+ * database through a `workflow_dispatch`, not through the deploy, so there is a
+ * real window in which this table does not exist while this code does — and
+ * without this catch a missing relation (`42P01`) would take down order history
+ * for every buyer, which is exactly the shape of the PR #102 outage.
+ *
+ * `readOrUnavailable` is deliberately not used and deliberately not widened: it
+ * treats only connection-class errors as unavailable and rethrows the rest,
+ * which is correct, because a portal-wide helper that swallowed
+ * `undefined_table` would hide genuine schema drift everywhere. The narrow catch
+ * belongs at the one call site that has decided it can live without the answer.
+ */
+async function readReviewStates(
+  executor: DbExecutor,
+  buyerEmail: string,
+  orderIds: string[],
+): Promise<Map<string, LineReviewState>> {
+  try {
+    const states = await listLineReviewStates(
+      { buyerEmail, orderIds },
+      executor,
+    );
+
+    return new Map(states.map((state) => [state.orderLineId, state]));
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] buyer review state unavailable', {
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+
+    // Empty, not partial: `reviewStateOf` reads a miss as "not reviewable",
+    // which hides a control that would have worked rather than offering one
+    // that cannot.
+    return new Map();
+  }
+}
+
 async function assembleOrders(
   executor: DbExecutor,
   orders: Sals3OrderRow[],
+  buyerEmail: string,
 ): Promise<BuyerOrderPayload[]> {
   if (orders.length === 0) return [];
 
@@ -269,6 +360,11 @@ async function assembleOrders(
 
   const intentById = new Map(intents.map((intent) => [intent.id, intent]));
 
+  // One query for every line on the page, keyed by line id. The eligibility
+  // rules live in `modules/reviews/eligibility.ts` and are not restated here —
+  // this reader consumes the answer, it does not decide it.
+  const reviewStates = await readReviewStates(executor, buyerEmail, orderIds);
+
   return orders.flatMap((order) => {
     const intent = intentById.get(order.checkoutIntentId);
 
@@ -304,6 +400,7 @@ async function assembleOrders(
             imageUrl: line.imageUrl,
             acceptedAt: line.createdAt.toISOString(),
             ...frozenListing(line.listingSnapshot),
+            ...reviewStateOf(reviewStates, line.id),
           })),
         events: events
           .filter((event) => event.fulfillmentGroupId === group.id)
@@ -344,6 +441,11 @@ async function assembleOrders(
           imageUrl: line.imageUrl,
           acceptedAt: line.createdAt.toISOString(),
           ...frozenListing(line.listingSnapshot),
+          // An unassigned line has no package, so it has no delivered state
+          // and cannot be reviewable. Spread the same helper anyway rather
+          // than hardcoding `false`: one source for the answer means a later
+          // change to what "reviewable" is cannot leave this branch behind.
+          ...reviewStateOf(reviewStates, line.id),
         })),
         events: [],
       });
@@ -382,7 +484,7 @@ export async function listBuyerOrders(
     .orderBy(desc(sals3Orders.createdAt))
     .limit(MAX_ORDERS);
 
-  return assembleOrders(executor, orders);
+  return assembleOrders(executor, orders, normalized);
 }
 
 export async function readBuyerOrder(
@@ -409,7 +511,7 @@ export async function readBuyerOrder(
     return null;
   }
 
-  const assembled = await assembleOrders(executor, [order]);
+  const assembled = await assembleOrders(executor, [order], normalized);
 
   return assembled[0] ?? null;
 }

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { DescriptionBlock } from '@/modules/catalog/products/description-document';
 import { slugBaseFromTitle } from '@/modules/catalog/products/slug';
+import type { RatingSummary } from '@/modules/reviews/contracts';
 import type {
   StorefrontCategoryRow,
   StorefrontDepartmentRow,
@@ -111,10 +112,21 @@ export type StorefrontProduct = {
   oldPriceMinor: number;
   imageUrl: string | null;
   imageAlt: string;
-  /** @deprecated See the module doc. */
+  /**
+   * @deprecated Superseded by `rating`. Kept because the consumer's schema
+   * still requires a non-empty string, and now **derived from `rating`** rather
+   * than being a fixed non-claim — a payload whose two rating fields disagreed
+   * would let either half be quoted as current.
+   */
   ratingLine: string;
   /** @deprecated See the module doc. */
   shipLine: string;
+  /**
+   * Real Sals3 buyer ratings, omitted entirely when nobody has reviewed this
+   * product. Never a supplier's: CJ's `listedNum` and `productComments` are
+   * evidence about CJ's own marketplace (ADR-013 §7).
+   */
+  rating?: { average: number; count: number };
   category: string;
   /** Which currency `priceMinor` is denominated in. ADR-003 phase 1: `USD`. */
   currency: string;
@@ -158,6 +170,12 @@ export type StorefrontProductDetail = StorefrontProduct & {
    * chain when present.
    */
   metaDescription?: string;
+  /**
+   * The star distribution behind `rating.average`, index 0 being one star.
+   * Detail only: a card shows an average, a product page shows the shape, and
+   * sending five numbers with every card would grow the feed for nothing.
+   */
+  ratingBreakdown?: [number, number, number, number, number];
 };
 
 /** One seller-entered category attribute, already display-mapped by the portal. */
@@ -252,6 +270,23 @@ function displayCode(name: string): string {
   return raw.toUpperCase();
 }
 
+/**
+ * The legacy one-line rating, now a rendering of the real aggregate.
+ *
+ * When nobody has reviewed the product this still reads "No reviews yet", which
+ * is the same non-claim it always was. When somebody has, it says so — because
+ * shipping `rating: {average: 4.6}` beside `ratingLine: "No reviews yet"` would
+ * put two contradictory answers in one payload, and either half could be quoted
+ * as current.
+ */
+function ratingLineFor(rating: RatingSummary | undefined): string {
+  if (rating === undefined || rating.count === 0) return NO_REVIEWS_LINE;
+
+  return rating.count === 1
+    ? `${rating.average.toFixed(1)} from 1 review`
+    : `${rating.average.toFixed(1)} from ${rating.count} reviews`;
+}
+
 export function toStorefrontProduct(
   row: StorefrontListRow,
 ): StorefrontProduct | null {
@@ -275,7 +310,10 @@ export function toStorefrontProduct(
     // `alt` would fail the consumer's schema; a made-up one would mislead a
     // screen-reader user about what the image shows.
     imageAlt: row.title,
-    ratingLine: NO_REVIEWS_LINE,
+    ratingLine: ratingLineFor(row.rating),
+    ...(row.rating === undefined
+      ? {}
+      : { rating: { average: row.rating.average, count: row.rating.count } }),
     shipLine: DELIVERY_AT_CHECKOUT_LINE,
     category,
     currency: row.priceCurrency,
@@ -311,6 +349,9 @@ export function toStorefrontProductDetail(
     ...base,
     publishedAt: row.publishedAt,
     ...(row.categoryPath === null ? {} : { categoryPath: row.categoryPath }),
+    ...(row.rating === undefined
+      ? {}
+      : { ratingBreakdown: row.rating.breakdown }),
     // The product title as alt text for every photo. Numbering them ("image 2
     // of 5") would describe the gallery, not the picture; inventing a
     // description of each one would be a claim about content nobody looked at.
