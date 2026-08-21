@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import type { VariantFixture } from './types';
-import resolveVariantAxisColumns from './variant-axis-columns';
+import resolveVariantAxisColumns, {
+  resolveFirstAxisGroups,
+} from './variant-axis-columns';
 
 function variant(id: string, optionLabel: string): VariantFixture {
   return {
@@ -87,5 +89,66 @@ describe('resolveVariantAxisColumns', () => {
 
     expect(axes?.names).toEqual(['Colour']);
     expect(axes?.valuesByVariantId.v2).toEqual(['Camel']);
+  });
+});
+
+describe('resolveFirstAxisGroups', () => {
+  const axes = {
+    names: ['Colour', 'Size'],
+    valuesByVariantId: {
+      v1: ['Black', 'S'],
+      v2: ['Black', 'M'],
+      v3: ['Camel', 'S'],
+      v4: ['Black', 'L'],
+    },
+  };
+
+  it('groups a consecutive run and names its representative', () => {
+    const groups = resolveFirstAxisGroups(
+      [variant('v1', 'x'), variant('v2', 'x')],
+      axes,
+    );
+
+    expect(groups).toEqual([
+      {
+        value: 'Black',
+        variantIds: ['v1', 'v2'],
+        representativeVariantId: 'v1',
+      },
+    ]);
+  });
+
+  it('closes a run when the value changes, and opens a new one', () => {
+    const groups = resolveFirstAxisGroups(
+      [variant('v1', 'x'), variant('v2', 'x'), variant('v3', 'x')],
+      axes,
+    );
+
+    expect(groups.map((group) => [group.value, group.variantIds])).toEqual([
+      ['Black', ['v1', 'v2']],
+      ['Camel', ['v3']],
+    ]);
+  });
+
+  it('does not reach across a gap to rejoin the same value', () => {
+    // A rowSpan can only merge adjacent rows, so a run that resumes later is a
+    // second group. Rejoining would produce a span covering rows it does not
+    // cover and break the table.
+    const groups = resolveFirstAxisGroups(
+      [variant('v1', 'x'), variant('v3', 'x'), variant('v4', 'x')],
+      axes,
+    );
+
+    expect(groups.map((group) => [group.value, group.variantIds])).toEqual([
+      ['Black', ['v1']],
+      ['Camel', ['v3']],
+      ['Black', ['v4']],
+    ]);
+  });
+
+  it('skips a variant with no resolved first-axis value', () => {
+    const groups = resolveFirstAxisGroups([variant('unknown', 'x')], axes);
+
+    expect(groups).toEqual([]);
   });
 });
