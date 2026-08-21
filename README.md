@@ -2829,6 +2829,40 @@ number before `0024_spicy_nemesis` took that slot on `develop`, so its journal
 Production migrations remain manual: run `npm run db:migrate` against
 production **before** deploying code that reads these columns.
 
+### Per-order listing snapshot (`sals3_order_lines.listing_snapshot`)
+
+Owner decision 2026-08-21: **an order must freeze every buyer-visible listing
+detail, not only its name.** A seller may rename a product, replace its photos,
+rewrite its description, or reorder its option axes — and must be able to — but
+that has to apply to new orders only. A customer looking at an order from last
+month has to see what they actually bought.
+
+`title`, `variant_label`, and `image_url` were already frozen per line. Nothing
+else was: the option axes as the seller had named and ordered them, the rest of
+the gallery, the published description, the specification answers, the category
+path, and the brand were all read live, so a "360 degree" edit to a live listing
+rewrote a past buyer's order history. `listing_snapshot` is the nullable `jsonb`
+column that closes that, written once at intent creation exactly where
+`variant_label` and `image_url` already freeze.
+
+The bytes are copied rather than a `product_revisions` id referenced. A pointer
+is cheaper and would freeze the description exactly, but it makes a two-year-old
+order depend on a revision row and an R2 object still existing — so a future
+media cleanup would blank the very history the column exists to protect.
+
+**Migration `0026_daily_blockbuster` adds the column, and it ships one release
+ahead of the code that uses it.** `sals3_order_lines` is the order table: a
+deployment that inserts or selects a column production does not have breaks paid
+checkout, not a catalogue page (the PR #102 / PR #113 failure class, in front of
+money). Production is never migrated from a laptop — `npm run db:migrate` only
+ever reaches `localhost`, and `scripts/guard-remote-db.mts` refuses anything
+else. Apply it with the **Orders Migrate Line Snapshot** GitHub Actions workflow
+(`workflow_dispatch`, `CRON_SECRET`-authenticated), which calls
+`POST /api/internal/orders/migrate-order-line-snapshot` on the deployed app
+itself and fails the run unless the response proves
+`columnExistsAfter: true`. Idempotent; safe to run more than once. `GET` on the
+same route reports the column's state without writing anything.
+
 ## Image delivery
 
 Every `next/image` in the portal is resolved by a custom loader,

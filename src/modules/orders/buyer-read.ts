@@ -44,6 +44,27 @@ import {
  * twice.
  */
 
+/**
+ * Exactly the line columns a buyer's own order page is allowed to read.
+ *
+ * Everything absent here is absent on purpose: `supplier_connection_id`,
+ * `external_product_id`, `external_variant_id`, and `external_sku` are supplier
+ * facts ADR-004 §6 keeps out of a buyer payload, and the previous bare
+ * `.select()` fetched all four on every request and relied on the projection
+ * below to drop them.
+ */
+const BUYER_LINE_COLUMNS = {
+  id: sals3OrderLines.id,
+  orderId: sals3OrderLines.orderId,
+  fulfillmentGroupId: sals3OrderLines.fulfillmentGroupId,
+  title: sals3OrderLines.title,
+  variantLabel: sals3OrderLines.variantLabel,
+  quantity: sals3OrderLines.quantity,
+  unitAmountMinor: sals3OrderLines.unitAmountMinor,
+  imageUrl: sals3OrderLines.imageUrl,
+  createdAt: sals3OrderLines.createdAt,
+} as const;
+
 export type BuyerOrderLinePayload = {
   id: string;
   title: string;
@@ -180,7 +201,14 @@ async function assembleOrders(
       .where(inArray(fulfillmentGroups.orderId, orderIds))
       .orderBy(asc(fulfillmentGroups.packageId)),
     executor
-      .select()
+      // Named columns, not a bare `.select()`. That expands to every column the
+      // Drizzle schema declares, so a schema gaining a column would change this
+      // query's SQL — and a deployment carrying a column production has not
+      // migrated yet would fail every buyer's order page with
+      // `column ... does not exist`. Naming them also keeps supplier-only
+      // columns (`supplier_connection_id`, the CJ ids) out of a payload that
+      // must never carry them (ADR-004 §6).
+      .select(BUYER_LINE_COLUMNS)
       .from(sals3OrderLines)
       .where(inArray(sals3OrderLines.orderId, orderIds))
       .orderBy(asc(sals3OrderLines.createdAt)),
