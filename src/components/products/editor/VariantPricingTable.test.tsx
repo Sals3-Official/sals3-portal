@@ -91,7 +91,7 @@ describe('VariantPricingTable', () => {
     expect(onToggleEnabled).toHaveBeenCalledWith(VARIANT.id);
   });
 
-  it('splits a mapped Variant Matrix label into per-axis chips', () => {
+  it('gives each option axis its own column, with the value alone in the cell', () => {
     render(
       <VariantPricingTable
         variants={[VARIANT]}
@@ -104,8 +104,44 @@ describe('VariantPricingTable', () => {
       />,
     );
 
-    expect(screen.getByText('Color: Black')).toBeInTheDocument();
-    expect(screen.getByText('Size: M')).toBeInTheDocument();
+    // The axis name is the header; it is not repeated into the cell, which is
+    // the readability win over the chips this replaced.
+    expect(
+      screen.getByRole('columnheader', { name: 'Color' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('columnheader', { name: 'Size' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'Black' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'M' })).toBeInTheDocument();
+    expect(screen.queryByText('Color: Black')).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: 'Variant' })).toBeNull();
+  });
+
+  it('keeps one Variant column when the rows disagree about their axes', () => {
+    // Columns taken from the first row would drop a value from any row shaped
+    // differently, with nothing on screen saying a column is missing.
+    render(
+      <VariantPricingTable
+        variants={[
+          VARIANT,
+          { ...VARIANT, id: 'variant-2', optionLabel: 'Color: Camel' },
+        ]}
+        expandedVariantId={null}
+        onToggleExpanded={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onRetailChange={vi.fn()}
+        onSellerSkuChange={vi.fn()}
+        onBulkSetPrice={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole('columnheader', { name: 'Variant' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('cell', { name: 'Color: Black, Size: M' }),
+    ).toBeInTheDocument();
   });
 
   it('renders an unmapped raw supplier label as plain text', () => {

@@ -1062,6 +1062,37 @@ its own maximum before final positions are assigned, which empties the whole
 `0..n-1` range — so it accepts any permutation, not only the adjacent swaps the
 arrows could produce.
 
+**Each option axis gets its own column in the variant table (2026-08-22).**
+Presentation only — no schema, no migration, no server action, and nothing new is
+written or sent. The single `Variant` cell that rendered `Colour: Black`
+`Size: M` as two chips is replaced by one column per axis.
+
+The shape is borrowed; the layout is not. The axis columns replace `Variant`
+**in place** rather than moving to the front, because `List` and `Image` are what
+a seller scans down first. The axis **name lives in the header and only the value
+is in the cell** — `Black`, not `Colour: Black` — which is the actual readability
+win over the chips, since the name stopped repeating on all sixteen rows. And the
+table now reads as **three zones** rather than one grid: identity ruled on both
+edges, the seller's own fields on white, supplier evidence recessed. That split
+comes from who owns each value, which is why the table still needs no vertical
+rules.
+
+`resolveVariantAxisColumns` derives the columns from `optionLabel`, and **refuses
+rather than guesses**: the split is offered only when every variant parses into
+the same axis names in the same order. Columns taken from the first row would
+silently drop a value from any row shaped differently, with nothing on screen
+saying a column is missing — so one disagreement and the whole table falls back
+to a single `Variant` column showing the label whole. That also covers the
+unmapped product for free, because a raw supplier token (`Army Green-XL`) has no
+`": "` pairs and never parses. Only the first `": "` splits a pair, so a value
+containing a colon survives.
+
+Nothing about ownership moved. `Retail price` was already the seller's to set and
+still is; `Supplier cost` and `Supplier stock` are still read-only evidence
+(ADR-013) and are not editable here, unlike the marketplace table this borrows
+from. The axis values are identity derived from the mapping, not fields — they
+take neither the white of an input nor the recess of evidence.
+
 ## Product Catalogue: narrower table, Live landing tab (2026-08-22)
 
 Four owner-reported changes to `/listings`. Presentation and default state only —
