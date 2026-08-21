@@ -60,7 +60,31 @@ type CjStep =
   | 'PAY_BALANCE_V2';
 
 type Group = typeof fulfillmentGroups.$inferSelect;
-type Line = typeof sals3OrderLines.$inferSelect;
+/**
+ * The line fields this worker sends to CJ, and only those.
+ *
+ * Deliberately not `typeof sals3OrderLines.$inferSelect` behind a bare
+ * `.select()`. That pair expands to every column the Drizzle schema declares, so
+ * adding a column to the schema immediately changes the SQL this worker
+ * emits — and a deployment carrying a column production has not migrated yet
+ * would fail every supplier order with `column ... does not exist`. Naming the
+ * columns makes the query independent of the schema growing.
+ */
+type Line = {
+  externalVariantId: string;
+  externalSku: string | null;
+  quantity: number;
+  unitAmountMinor: bigint;
+  storeLineItemId: string;
+};
+
+const LINE_COLUMNS = {
+  externalVariantId: sals3OrderLines.externalVariantId,
+  externalSku: sals3OrderLines.externalSku,
+  quantity: sals3OrderLines.quantity,
+  unitAmountMinor: sals3OrderLines.unitAmountMinor,
+  storeLineItemId: sals3OrderLines.storeLineItemId,
+} as const;
 
 function timeoutSignal(): AbortSignal {
   return AbortSignal.timeout(CJ_ORDER_TIMEOUT_MS);
@@ -418,7 +442,7 @@ export default async function handleFulfillOrder(
   for (const group of groups) {
     if (group.status !== 'CJ_PAID') {
       const lines = await db
-        .select()
+        .select(LINE_COLUMNS)
         .from(sals3OrderLines)
         .where(eq(sals3OrderLines.fulfillmentGroupId, group.id));
 

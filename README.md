@@ -2829,6 +2829,49 @@ number before `0024_spicy_nemesis` took that slot on `develop`, so its journal
 Production migrations remain manual: run `npm run db:migrate` against
 production **before** deploying code that reads these columns.
 
+### Per-order listing snapshot (`sals3_order_lines.listing_snapshot`)
+
+Owner decision 2026-08-21: **an order must freeze every buyer-visible listing
+detail, not only its name.** A seller may rename a product, replace its photos,
+rewrite its description, or reorder its option axes — and must be able to — but
+that has to apply to new orders only. A customer looking at an order from last
+month has to see what they actually bought.
+
+`title`, `variant_label`, and `image_url` were already frozen per line. Nothing
+else was: the option axes as the seller had named and ordered them, the rest of
+the gallery, the published description, the specification answers, the category
+path, and the brand were all read live, so a "360 degree" edit to a live listing
+rewrote a past buyer's order history. `listing_snapshot` is the nullable `jsonb`
+column that closes that, written once at intent creation exactly where
+`variant_label` and `image_url` already freeze.
+
+The bytes are copied rather than a `product_revisions` id referenced. A pointer
+is cheaper and would freeze the description exactly, but it makes a two-year-old
+order depend on a revision row and an R2 object still existing — so a future
+media cleanup would blank the very history the column exists to protect.
+
+**The DDL ships one release ahead of any code that names the column — including
+the Drizzle schema itself.** `sals3_order_lines` is the order table, and the
+constraint is stronger than "do not query it yet": **Drizzle names every column
+of the schema in an `INSERT`**, filling omitted ones with `default`, so adding
+`listingSnapshot` to `schema/orders.ts` alone makes order acceptance emit
+`insert into sals3_order_lines (..., "listing_snapshot", ...)` and fail every
+paid checkout with `column ... does not exist`. Verified with `toSQL()` and
+pinned by `order-line-columns.test.ts`. So the first change carries the raw DDL,
+the break-glass route and the workflow and _no_ schema change; the column enters
+the Drizzle table in the same change as the code that reads it, which deploys
+only after a run has reported `columnExistsAfter: true`. The `drizzle/` migration
+file and its `__drizzle_migrations` bookkeeping travel with that schema change,
+because a ledger row pointing at a file that does not exist yet is worse than no
+row. Production is never migrated from a laptop — `npm run db:migrate` only
+ever reaches `localhost`, and `scripts/guard-remote-db.mts` refuses anything
+else. Apply it with the **Orders Migrate Line Snapshot** GitHub Actions workflow
+(`workflow_dispatch`, `CRON_SECRET`-authenticated), which calls
+`POST /api/internal/orders/migrate-order-line-snapshot` on the deployed app
+itself and fails the run unless the response proves
+`columnExistsAfter: true`. Idempotent; safe to run more than once. `GET` on the
+same route reports the column's state without writing anything.
+
 ## Image delivery
 
 Every `next/image` in the portal is resolved by a custom loader,
