@@ -13,8 +13,6 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import {
-  AVAILABILITY_LABELS,
-  AVAILABILITY_STATES,
   CATALOGUE_SEARCH_FIELD_LABELS,
   CATALOGUE_SORT_LABELS,
   EVIDENCE_FRESHNESS_LABELS,
@@ -22,7 +20,6 @@ import {
   MEDIA_STATUS_LABELS,
   SUPPLIER_CONNECTION_HEALTH_LABELS,
   SUPPLIER_CONNECTION_HEALTH_STATES,
-  type Availability,
   type CatalogueSearchField,
   type CatalogueSortKey,
   type EvidenceFreshness,
@@ -35,12 +32,16 @@ export type CatalogueFilters = {
   searchTerm: string;
   category: string | null;
   supplierProviderCode: string | null;
-  availability: Availability | null;
   mediaStatus: MediaStatus | null;
   /**
-   * Independent from `availability` - the connection can be `DEGRADED`
-   * while individual products still read `AVAILABLE` from their last
-   * trusted evidence. Never derive one filter from the other.
+   * Connection health, not product stock. The connection can be `DEGRADED`
+   * while individual products still read `AVAILABLE` from their last trusted
+   * evidence, so this is never derived from a product's own availability.
+   *
+   * There is deliberately no `availability` filter beside it any more (owner
+   * decision 2026-08-22, with the Availability column). The derived state is
+   * still computed — `outOfStockOnly` and the out-of-stock count read it, and
+   * the expanded variant rows still show it per variant.
    */
   supplierConnectionHealth: SupplierConnectionHealth | null;
   evidenceFreshness: EvidenceFreshness | null;
@@ -250,42 +251,6 @@ export default function CatalogueFilterBar({
         <span className="pb-2 text-xs font-medium text-muted-foreground">
           Refine by:
         </span>
-
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="catalogue-availability" className="sr-only">
-            Availability
-          </Label>
-          <Select
-            items={{
-              [ANY_VALUE]: 'Any availability',
-              ...Object.fromEntries(
-                AVAILABILITY_STATES.map((state) => [
-                  state,
-                  AVAILABILITY_LABELS[state],
-                ]),
-              ),
-            }}
-            value={filters.availability ?? ANY_VALUE}
-            onValueChange={(value) =>
-              onChange({
-                availability:
-                  value === ANY_VALUE ? null : (value as Availability),
-              })
-            }
-          >
-            <SelectTrigger id="catalogue-availability" className="w-48 bg-card">
-              <SelectValue placeholder="Availability" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ANY_VALUE}>Any availability</SelectItem>
-              {AVAILABILITY_STATES.map((state) => (
-                <SelectItem key={state} value={state}>
-                  {AVAILABILITY_LABELS[state]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
 
         <div className="flex flex-col gap-1">
           <Label htmlFor="catalogue-media" className="sr-only">

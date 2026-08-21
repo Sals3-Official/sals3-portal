@@ -40,7 +40,6 @@ const DEFAULT_FILTERS: CatalogueFilters = {
   searchTerm: '',
   category: null,
   supplierProviderCode: null,
-  availability: null,
   mediaStatus: null,
   supplierConnectionHealth: null,
   evidenceFreshness: null,
@@ -67,7 +66,16 @@ export default function ProductCatalogueWorkspace({
   initialProducts,
 }: ProductCatalogueWorkspaceProps) {
   const [products, setProducts] = useState(initialProducts);
-  const [activeTab, setActiveTab] = useState<ListingStatus | 'ALL'>('ALL');
+  /**
+   * Opens on **Live**, not `All` — owner decision 2026-08-22. The screen's
+   * everyday job is the listings a buyer can currently see; drafts are one
+   * click away and `All` is still the leftmost tab. Consequence to accept: a
+   * seller whose catalogue is entirely drafts lands on the empty state and has
+   * to pick a tab. That is deliberate rather than a silent fallback to `All`,
+   * which would make the landing tab depend on data and read as a bug the
+   * first time a published listing changed it.
+   */
+  const [activeTab, setActiveTab] = useState<ListingStatus | 'ALL'>('LIVE');
   const [filters, setFilters] = useState<CatalogueFilters>(DEFAULT_FILTERS);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());

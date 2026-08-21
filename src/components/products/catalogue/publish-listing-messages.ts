@@ -1,26 +1,13 @@
-'use client';
-
-import { useTransition } from 'react';
-import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
-import {
-  publishProductAction,
-  unpublishProductAction,
-  type PublishActionFailureReason,
-} from '@/app/(portal)/listings/publish-actions';
-
-type PublishProductButtonProps = {
-  productId: string;
-  /** `products.version` — the compare-and-set token this screen read. */
-  productVersion: number;
-  /** Live products get the pause control instead. */
-  isLive: boolean;
-};
+import type { PublishActionFailureReason } from '@/app/(portal)/listings/publish-actions';
 
 /**
+ * Seller-facing words for every way publishing a listing can be refused.
+ *
  * Every refusal names the missing fact, because "publish failed" gives an
  * operator nowhere to go. These are stable codes from the domain module, not
- * database messages.
+ * database messages. Kept out of the component so the copy is one import for
+ * any surface that offers the action, and so it stays plain data — the row's
+ * action menu is the only caller today.
  */
 const FAILURE_MESSAGES: Record<PublishActionFailureReason, string> = {
   invalid_input: 'That product reference was not in an expected format.',
@@ -65,66 +52,19 @@ const PRICING_DETAIL_MESSAGES: Record<string, string> = {
   INVALID_MARGIN_RATE: 'the margin rate on the policy is invalid',
 };
 
-export default function PublishProductButton({
-  productId,
-  productVersion,
-  isLive,
-}: PublishProductButtonProps) {
-  const [isPending, startTransition] = useTransition();
+/**
+ * One sentence for a refusal, with the resolver's reason appended when it
+ * supplied one. An unrecognised `detail` is dropped rather than shown raw —
+ * it is a domain code, not seller-facing copy.
+ */
+export default function describePublishFailure(
+  reason: PublishActionFailureReason,
+  detail?: string,
+): string {
+  const because =
+    detail === undefined ? undefined : PRICING_DETAIL_MESSAGES[detail];
 
-  return (
-    <Button
-      type="button"
-      variant={isLive ? 'outline' : 'default'}
-      size="sm"
-      disabled={isPending}
-      onClick={() => {
-        startTransition(async () => {
-          const payload = {
-            productId,
-            expectedProductVersion: productVersion,
-          };
-
-          if (isLive) {
-            const result = await unpublishProductAction(payload);
-
-            toast(
-              result.ok
-                ? 'Product paused. It is no longer on the storefront.'
-                : FAILURE_MESSAGES[result.reason],
-            );
-
-            return;
-          }
-
-          const result = await publishProductAction(payload);
-
-          if (result.ok) {
-            toast(
-              `Published at /p/${result.slug} with ${result.offerCount} offer(s).`,
-            );
-            return;
-          }
-
-          const detail =
-            result.detail === undefined
-              ? undefined
-              : PRICING_DETAIL_MESSAGES[result.detail];
-
-          toast(
-            detail === undefined
-              ? FAILURE_MESSAGES[result.reason]
-              : `${FAILURE_MESSAGES[result.reason]} Reason: ${detail}.`,
-          );
-        });
-      }}
-    >
-      {/* eslint-disable-next-line no-nested-ternary -- three states, one label. */}
-      {isPending
-        ? 'Working…'
-        : isLive
-          ? 'Pause listing'
-          : 'Publish to storefront'}
-    </Button>
-  );
+  return because === undefined
+    ? FAILURE_MESSAGES[reason]
+    : `${FAILURE_MESSAGES[reason]} Reason: ${because}.`;
 }

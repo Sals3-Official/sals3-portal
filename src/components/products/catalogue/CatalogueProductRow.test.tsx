@@ -106,7 +106,9 @@ describe('CatalogueProductRow', () => {
     // Supplier pictures only, so it cannot read High however complete the
     // text is - and the media column says why in the same row.
     expect(screen.getByText('Medium')).toBeInTheDocument();
-    expect(screen.getByText('Supplier fallback')).toBeInTheDocument();
+    // `Supplier photo`, not ADR-011's `Supplier fallback` - owner decision
+    // 2026-08-22, recorded on `MEDIA_STATUS_LABELS`.
+    expect(screen.getByText('Supplier photo')).toBeInTheDocument();
   });
 
   it('reads Low while a listing still cannot sell', () => {

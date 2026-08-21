@@ -8,15 +8,8 @@ import StatusPill, {
   type StatusPillTone,
 } from '@/components/seller-center/shared/StatusPill';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { TableCell, TableRow } from '@/components/ui/table';
 import copyToClipboard from '@/lib/seller-center/clipboard';
-import { deriveProductAvailability } from '@/lib/seller-center/product-catalogue/derive';
 import { formatMoney } from '@/lib/seller-center/product-editor/format';
 import {
   LISTING_STATUS_LABELS,
@@ -24,12 +17,11 @@ import {
   type ListingStatus,
 } from '@/lib/seller-center/product-catalogue/types';
 import AttentionBadge from './AttentionBadge';
-import AvailabilityBadge from './AvailabilityBadge';
+import CatalogueRowActions from './CatalogueRowActions';
 import CatalogueVariantRow from './CatalogueVariantRow';
 import ContentScoreBadge from './ContentScoreBadge';
 import ListingQualityBadge from './ListingQualityBadge';
 import MediaStatusBadge from './MediaStatusBadge';
-import PublishProductButton from './PublishProductButton';
 import SupplierConnectionHealthBadge from './SupplierConnectionHealthBadge';
 
 type CatalogueProductRowProps = {
@@ -81,13 +73,6 @@ export default function CatalogueProductRow({
   const hasVariants = product.variants.length > 0;
   const editHref =
     product.editorHref ?? `/listings/new?fixture=${product.editorFixtureKey}`;
-  const availability = deriveProductAvailability(
-    product.variants,
-    product.availability,
-  );
-  const isLive =
-    product.status === 'LIVE' || product.status === 'LIVE_NEEDS_ATTENTION';
-  const canViewLive = isLive && product.storefrontUrl !== null;
 
   return (
     <>
@@ -201,9 +186,6 @@ export default function CatalogueProductRow({
           </div>
         </TableCell>
         <TableCell>
-          <AvailabilityBadge availability={availability} />
-        </TableCell>
-        <TableCell>
           <MediaStatusBadge mediaStatus={product.mediaStatus} />
         </TableCell>
         <TableCell>
@@ -213,99 +195,12 @@ export default function CatalogueProductRow({
           <AttentionBadge reasons={product.attentionReasons} />
         </TableCell>
         <TableCell>
-          <div className="flex items-center gap-3">
-            <Link
-              href={editHref}
-              className="text-sm font-medium text-primary hover:underline"
-            >
-              Edit
-            </Link>
-            {/*
-              Only for a real persisted row. `productVersion` is the
-              compare-and-set token the publish action requires, and an
-              illustrative fixture has no row to contend with — offering the
-              control there would send a guessed version at a product that does
-              not exist.
-            */}
-            {product.productVersion === undefined ? null : (
-              <PublishProductButton
-                productId={product.sals3ProductId}
-                productVersion={product.productVersion}
-                isLive={isLive}
-              />
-            )}
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label={`More actions for ${product.name}`}
-                    className="inline-flex items-center gap-0.5 text-sm text-muted-foreground hover:text-foreground"
-                  >
-                    More
-                    <ChevronDown aria-hidden="true" className="size-3.5" />
-                  </button>
-                }
-              />
-              <DropdownMenuContent align="end">
-                {isLive ? (
-                  <DropdownMenuItem onClick={() => onPauseListing(product.id)}>
-                    Pause listing
-                  </DropdownMenuItem>
-                ) : null}
-                {product.status === 'AUTO_PAUSED' ? (
-                  <DropdownMenuItem
-                    onClick={() =>
-                      announceUnbuilt('Review & resume', product.name)
-                    }
-                  >
-                    Review & resume
-                  </DropdownMenuItem>
-                ) : null}
-                {product.status === 'DRAFT' ? (
-                  <DropdownMenuItem
-                    onClick={() => announceUnbuilt('Publish', product.name)}
-                  >
-                    Publish
-                  </DropdownMenuItem>
-                ) : null}
-                {product.status === 'ARCHIVED' ? (
-                  <DropdownMenuItem
-                    onClick={() =>
-                      announceUnbuilt('Restore as new draft', product.name)
-                    }
-                  >
-                    Restore as new draft
-                  </DropdownMenuItem>
-                ) : null}
-                <DropdownMenuItem
-                  onClick={() =>
-                    announceUnbuilt('Duplicate as new draft', product.name)
-                  }
-                >
-                  Duplicate as new draft
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={!canViewLive}
-                  onClick={() => {
-                    if (canViewLive)
-                      announceUnbuilt('View Live Page', product.name);
-                  }}
-                >
-                  View Live Page
-                  {canViewLive ? null : ' (not live)'}
-                </DropdownMenuItem>
-                {product.status !== 'ARCHIVED' ? (
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onClick={() => onArchive(product.id)}
-                  >
-                    Archive
-                  </DropdownMenuItem>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+          <CatalogueRowActions
+            product={product}
+            editHref={editHref}
+            onPauseListing={onPauseListing}
+            onArchive={onArchive}
+          />
         </TableCell>
       </TableRow>
 
