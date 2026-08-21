@@ -10,6 +10,10 @@ import {
   sals3Orders,
   type CheckoutIntentRow,
 } from '@/lib/db/schema';
+import {
+  listingSnapshotKey,
+  loadListingSnapshots,
+} from '@/modules/checkout/listing-snapshot';
 import { insertOutboxIntents } from '@/modules/catalog/discovery/outbox-repository';
 import PostgresSupplierSecretStore from '@/lib/secrets/postgres-supplier-secret-store';
 import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
@@ -165,14 +169,26 @@ export async function createCheckoutIntent(
     (connectionId) => createGovernedFetch(connectionId),
     tokenManager,
   );
+  /**
+   * The listing as the buyer saw it, frozen here rather than at acceptance.
+   *
+   * Intent creation is the moment the buyer committed: it is already where
+   * `variantLabel` and `imageUrl` freeze, and it is before payment, so the record
+   * cannot be affected by a seller edit that lands while Stripe is processing.
+   * Acceptance only copies what this stored.
+   */
+  const listingSnapshots = await loadListingSnapshots(lines, executor);
   const lineSnapshots = lines.map((line) => {
     const group = groupForLine(packages, line);
+    const listingSnapshot =
+      listingSnapshots.get(listingSnapshotKey(line)) ?? null;
 
     return {
       ...line,
       storeLineItemId: lineStoreId(line),
       packageId: group.packageId,
       priceMinor: Number(line.priceMinor),
+      listingSnapshot,
     };
   });
   const subtotal = lineSnapshots.reduce(
@@ -225,6 +241,14 @@ function snapshotLines(
           variantLabel: z.string().nullable().optional(),
           // Same deploy-boundary tolerance as variantLabel.
           imageUrl: z.string().nullable().optional(),
+          /**
+           * Parsed loosely on purpose: `unknown` here, validated by
+           * `listingSnapshotSchema` when it is read. An intent created before
+           * this field existed has none, and a snapshot whose shape this
+           * deployment does not recognise must not be able to fail acceptance
+           * of an order the buyer has already paid for.
+           */
+          listingSnapshot: z.unknown().optional(),
           packageId: z.string(),
         }),
       ),
@@ -246,6 +270,7 @@ function snapshotLines(
     sals3Sku: line.sals3Sku,
     variantLabel: line.variantLabel ?? null,
     imageUrl: line.imageUrl ?? null,
+    listingSnapshot: line.listingSnapshot ?? null,
   }));
 }
 

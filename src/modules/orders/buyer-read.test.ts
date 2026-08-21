@@ -78,6 +78,34 @@ const LINE_ROW = {
   createdAt: new Date('2026-08-12T14:09:00Z'),
 };
 
+/**
+ * A line whose listing snapshot was captured. The fake executor returns rows
+ * verbatim, so this is the shape the real column holds.
+ */
+const SNAPSHOT = {
+  version: 1,
+  productSlug: 'solar-wall-lamp',
+  title: 'Solar wall lamp',
+  categoryPath: 'Hardware > Lighting',
+  options: [
+    { name: 'Colour temperature', value: 'Warm white' },
+    { name: 'Plug', value: 'EU' },
+  ],
+  imageUrls: ['https://media.example-r2.dev/lamp.webp'],
+  description: { blocks: [{ type: 'paragraph', text: 'A solar lamp.' }] },
+  specification: [{ label: 'Material', value: 'Aluminium' }],
+  specs: {
+    weightGrams: 400,
+    lengthMillimeters: null,
+    widthMillimeters: null,
+    heightMillimeters: null,
+    gtins: null,
+    mpn: null,
+    brand: 'Generic',
+    condition: 'NEW',
+  },
+};
+
 const INTENT_ROW = {
   id: INTENT_ID,
   addressSnapshot: {
@@ -108,11 +136,11 @@ const EVENT_ROW = {
 
 // Statements awaited in order: orders select, then Promise.all(groups, lines,
 // intents) in declaration order, then events.
-function arrange(orderRows: unknown[]) {
+function arrange(orderRows: unknown[], lineRows: unknown[] = [LINE_ROW]) {
   const { db } = fakeDb([
     orderRows,
     [GROUP_ROW],
-    [LINE_ROW],
+    lineRows,
     [INTENT_ROW],
     [EVENT_ROW],
   ]);
@@ -194,5 +222,70 @@ describe('readBuyerOrder', () => {
     await expect(
       readBuyerOrder('buyer@example.com', 'S3-19990101-0000000000'),
     ).resolves.toBeNull();
+  });
+});
+
+/**
+ * Owner decision 2026-08-21: an order shows the listing as it was bought, so a
+ * seller who renames a product or replaces its photos afterwards changes nothing
+ * a past buyer sees.
+ */
+describe('frozen listing snapshot', () => {
+  it('returns the captured listing beside the frozen columns', async () => {
+    arrange([ORDER_ROW], [{ ...LINE_ROW, listingSnapshot: SNAPSHOT }]);
+
+    const orders = await listBuyerOrders('buyer@example.com');
+    const line = orders[0]!.packages[0]!.lines[0]!;
+
+    expect(line.listing?.options).toEqual([
+      { name: 'Colour temperature', value: 'Warm white' },
+      { name: 'Plug', value: 'EU' },
+    ]);
+    expect(line.listing?.description?.blocks).toHaveLength(1);
+    expect(line.listing?.imageUrls).toEqual([
+      'https://media.example-r2.dev/lamp.webp',
+    ]);
+    // The three columns that were always frozen are still there and unchanged.
+    expect(line.title).toBe('Solar wall lamp');
+    expect(line.variantLabel).toBe('Warm white-EU');
+  });
+
+  /** Orders accepted before the column existed. */
+  it('omits the listing entirely when nothing was captured', async () => {
+    arrange([ORDER_ROW], [{ ...LINE_ROW, listingSnapshot: null }]);
+
+    const orders = await listBuyerOrders('buyer@example.com');
+
+    expect(orders[0]!.packages[0]!.lines[0]!.listing).toBeUndefined();
+  });
+
+  /**
+   * A snapshot this deployment cannot read must not fail the page of a buyer who
+   * has already paid. It degrades to the frozen columns.
+   */
+  it('omits an unreadable snapshot rather than throwing', async () => {
+    arrange(
+      [ORDER_ROW],
+      [{ ...LINE_ROW, listingSnapshot: { version: 1, nonsense: true } }],
+    );
+
+    const orders = await listBuyerOrders('buyer@example.com');
+    const line = orders[0]!.packages[0]!.lines[0]!;
+
+    expect(line.listing).toBeUndefined();
+    expect(line.title).toBe('Solar wall lamp');
+  });
+
+  /** ADR-004 section 6 — the snapshot must not become a leak of supplier facts. */
+  it('never exposes supplier identity through the snapshot', async () => {
+    arrange([ORDER_ROW], [{ ...LINE_ROW, listingSnapshot: SNAPSHOT }]);
+
+    const serialised = JSON.stringify(
+      await listBuyerOrders('buyer@example.com'),
+    );
+
+    expect(serialised).not.toContain(LINE_ROW.supplierConnectionId);
+    expect(serialised).not.toContain(LINE_ROW.externalProductId);
+    expect(serialised).not.toContain(LINE_ROW.externalVariantId);
   });
 });
