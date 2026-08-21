@@ -1,0 +1,74 @@
+# Bounded, idempotent, manual-only. Takes a durable Sals3 copy of the supplier
+# photos on already-published products, so an accepted order keeps showing the
+# media it was accepted with even after CJ replaces the file behind its own URL
+# (ADR-007 Media locking).
+#
+# Not on a schedule, deliberately: the set only shrinks, each run reports how many
+# products are left, and a one-off bandwidth spend belongs under a human's
+# control (ADR-013 section 12's no-cron rule).
+#
+# Run it repeatedly until "remaining" is 0. Safe to re-run at any time — a photo
+# that already has a copy is not selected again.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin.
+
+name: Products Backfill Media Copies
+
+on:
+  workflow_dispatch:
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the supplier-media backfill endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/catalog/products/backfill-media-copies"
+
+          status=$(curl -sS -o /tmp/backfill-response.json -w '%{http_code}' \
+            -X POST "$endpoint" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/backfill-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "media backfill returned HTTP $status" >&2
+            echo "Nothing is left half-done: each photo is mirrored and recorded" >&2
+            echo "one at a time, so a failed run simply leaves the rest for the" >&2
+            echo "next one. Safe to re-run." >&2
+            exit 1
+          fi
+
+          # A run that mirrors nothing and leaves nothing is the finished state.
+          # A run that mirrors nothing while work remains means every attempt
+          # failed, which must not read as success.
+          remaining=$(grep -o '"remaining":[0-9]*' /tmp/backfill-response.json | head -1 | cut -d: -f2)
+          mirrored=$(grep -o '"mirrored":[0-9]*' /tmp/backfill-response.json | head -1 | cut -d: -f2)
+
+          echo "mirrored=$mirrored remaining=$remaining"
+
+          if [ "${remaining:-0}" -gt 0 ] && [ "${mirrored:-0}" -eq 0 ]; then
+            echo "Work remains but nothing was mirrored — check the failures" >&2
+            echo "array above before re-running." >&2
+            exit 1
+          fi
+
+          if [ "${remaining:-0}" -gt 0 ]; then
+            echo "$remaining product(s) still to mirror — run this again."
+          else
+            echo "Every published product's supplier media now has a Sals3 copy."
+          fi

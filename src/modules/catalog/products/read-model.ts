@@ -160,6 +160,26 @@ function allowedImageUrl(
   return parsed.success ? parsed.data : null;
 }
 
+/**
+ * The address to render for one media row, durable copy first.
+ *
+ * The allow-list is keyed on **which column supplied the value**, not on
+ * `source_type`. A mirrored supplier photo lives in R2 (`mirror-supplier-media`
+ * put it there), so checking it against the CJ host list — as `source_type`
+ * alone would — would reject exactly the copy that exists to be durable.
+ */
+function displayableMediaUrl(row: {
+  storedUrl: string | null;
+  sourceUrl: string | null;
+  sourceType: ProductMediaSourceRow['sourceType'];
+}): string | null {
+  const stored = r2PublicImageUrl.safeParse(row.storedUrl);
+
+  if (stored.success && stored.data !== null) return stored.data;
+
+  return allowedImageUrl(row.sourceUrl, row.sourceType);
+}
+
 function supplierFacts(
   feedSnapshot: unknown,
   evidence: z.infer<typeof evidenceSchema> | null,
@@ -197,7 +217,7 @@ function supplierFacts(
 
 function productImageUrls(media: ProductMediaSourceRow[]): string[] {
   const urls = media
-    .map((item) => allowedImageUrl(item.sourceUrl, item.sourceType))
+    .map((item) => displayableMediaUrl(item))
     .filter((url): url is string => url !== null);
 
   return [...new Set(urls)];
@@ -922,7 +942,7 @@ function buildCatalogueProducts(
        */
       const assignableMedia: AssignableMediaFixture[] = media.flatMap(
         (item) => {
-          const url = allowedImageUrl(item.sourceUrl, item.sourceType);
+          const url = displayableMediaUrl(item);
 
           return url === null
             ? []
