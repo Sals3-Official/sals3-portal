@@ -20,7 +20,9 @@ import {
   formatMoney,
 } from '@/lib/seller-center/product-editor/format';
 import type { VariantFixture } from '@/lib/seller-center/product-editor/types';
-import resolveVariantAxisColumns from '@/lib/seller-center/product-editor/variant-axis-columns';
+import resolveVariantAxisColumns, {
+  resolveFirstAxisGroups,
+} from '@/lib/seller-center/product-editor/variant-axis-columns';
 
 type VariantPricingTableProps = {
   variants: VariantFixture[];
@@ -141,9 +143,16 @@ const AXIS_LAST_CELL = 'border-r border-border';
 function VariantImageCell({
   variant,
   onPick,
+  groupLabel,
 }: {
   variant: VariantFixture;
   onPick?: (() => void) | undefined;
+  /**
+   * Set when this cell is merged down a first-axis group — the colour it stands
+   * for. The photo is still stored against one variant, so the cell says which
+   * one rather than implying the whole group holds it.
+   */
+  groupLabel?: string | undefined;
 }) {
   const content =
     variant.imageUrl === null || variant.imageUrl === undefined ? (
@@ -161,12 +170,15 @@ function VariantImageCell({
       />
     );
 
+  const subject = groupLabel === undefined ? variant.optionLabel : groupLabel;
+
   if (onPick === undefined) {
     return (
       <span title={variant.hasImage ? undefined : 'No variant image'}>
         {content}
         <span className="sr-only">
-          {variant.hasImage ? 'Variant photo' : 'No variant image'}
+          {variant.hasImage ? 'Variant photo' : 'No variant image'} for{' '}
+          {subject}
         </span>
       </span>
     );
@@ -178,7 +190,15 @@ function VariantImageCell({
       onClick={onPick}
       // The accessible name carries the variant, because a table of ten
       // identical "Choose photo" buttons names none of them.
-      aria-label={`${variant.hasImage ? 'Change' : 'Choose'} photo for ${variant.optionLabel}`}
+      aria-label={`${variant.hasImage ? 'Change' : 'Choose'} photo for ${subject}`}
+      // Named after the group when merged, but the tooltip still says which
+      // variant the file is stored against - the seller thinks in colours and
+      // the database stores per variant, and both are true at once.
+      title={
+        groupLabel === undefined
+          ? undefined
+          : `One photo for ${groupLabel}. Stored against ${variant.optionLabel}.`
+      }
       className="rounded-md outline-offset-2 transition hover:brightness-95 focus-visible:outline-2"
     >
       {content}
@@ -254,6 +274,16 @@ export default function VariantPricingTable({
    */
   const axes = resolveVariantAxisColumns(variants);
   const columns = buildColumns(axes === null ? null : axes.names);
+  /**
+   * Merging is only meaningful past one axis: with a single axis every value
+   * has exactly one variant, so every group would be one row.
+   */
+  const groups =
+    axes !== null && axes.names.length > 1
+      ? resolveFirstAxisGroups(variants, axes).filter(
+          (group) => group.variantIds.length > 1,
+        )
+      : [];
   const firstAxis = columns.findIndex((column) => column.axis === true);
   const lastAxis = columns.reduce(
     (last, column, index) => (column.axis === true ? index : last),
@@ -338,6 +368,34 @@ export default function VariantPricingTable({
           <TableBody>
             {variants.map((variant) => {
               const isExpanded = expandedVariantId === variant.id;
+              /**
+               * A group stops merging while one of its own rows is expanded.
+               *
+               * The span would otherwise have to cover the injected evidence
+               * row, and a cell centred across that lands *inside* it — the
+               * colour label and its thumbnail printed over the evidence text.
+               * Top-aligning instead only hides the collision. Expansion is
+               * transient, and the merge is not what a seller is reading while
+               * the evidence is open, so the group falls back to one cell per
+               * row until it closes. It also removes the span arithmetic the
+               * evidence row otherwise forces.
+               */
+              const merged =
+                groups.find(
+                  (group) =>
+                    group.variantIds.includes(variant.id) &&
+                    (expandedVariantId === null ||
+                      !group.variantIds.includes(expandedVariantId)),
+                ) ?? null;
+              const isGroupStart =
+                merged !== null && merged.variantIds[0] === variant.id;
+              const groupSpan = merged === null ? 1 : merged.variantIds.length;
+              const imageVariant =
+                merged === null
+                  ? variant
+                  : (variants.find(
+                      (item) => item.id === merged.representativeVariantId,
+                    ) ?? variant);
               const lockedOut =
                 variant.listingState === 'BLOCKED' ||
                 variant.listingState === 'PAUSED' ||
@@ -357,16 +415,34 @@ export default function VariantPricingTable({
                       className="data-checked:bg-[#018CC9] data-unchecked:bg-[#002B53]"
                     />
                   </TableCell>
-                  <TableCell>
-                    <VariantImageCell
-                      variant={variant}
-                      onPick={
-                        onPickImage === undefined
-                          ? undefined
-                          : () => onPickImage(variant.id)
-                      }
-                    />
-                  </TableCell>
+                  {/*
+                    Image and the first axis merge down their group, the way a
+                    spreadsheet merges a repeated label. Four sizes of one
+                    colour are one colour: writing `Black` four times says
+                    nothing the first one did not, and it hides how many sizes
+                    that colour actually carries.
+                  */}
+                  {merged === null || isGroupStart ? (
+                    <TableCell
+                      rowSpan={merged === null ? undefined : groupSpan}
+                      // Centred, not top-aligned. A merged cell is as tall as
+                      // its whole group - taller again when a row inside it is
+                      // expanded - and a thumbnail pinned to the top of that
+                      // reads as stranded rather than as belonging to the rows
+                      // beside it.
+                      className={merged === null ? undefined : 'text-center'}
+                    >
+                      <VariantImageCell
+                        variant={imageVariant}
+                        onPick={
+                          onPickImage === undefined
+                            ? undefined
+                            : () => onPickImage(imageVariant.id)
+                        }
+                        groupLabel={merged === null ? undefined : merged.value}
+                      />
+                    </TableCell>
+                  ) : null}
                   {axes === null ? (
                     <TableCell className="max-w-56 font-medium">
                       {/* Unmapped: the supplier's label whole, never split. */}
@@ -374,20 +450,43 @@ export default function VariantPricingTable({
                     </TableCell>
                   ) : (
                     (axes.valuesByVariantId[variant.id] ?? []).map(
-                      (value, axisIndex) => (
-                        <TableCell
-                          key={axes.names[axisIndex] ?? axisIndex}
-                          className={cn(
-                            'max-w-40 font-medium',
-                            axisIndex === 0 ? AXIS_FIRST_CELL : undefined,
-                            axisIndex === axes.names.length - 1
-                              ? AXIS_LAST_CELL
-                              : undefined,
-                          )}
-                        >
-                          <span className="truncate">{value}</span>
-                        </TableCell>
-                      ),
+                      (value, axisIndex) => {
+                        const isMergedAxis = axisIndex === 0 && merged !== null;
+
+                        if (isMergedAxis && !isGroupStart) return null;
+
+                        return (
+                          <TableCell
+                            key={axes.names[axisIndex] ?? axisIndex}
+                            rowSpan={isMergedAxis ? groupSpan : undefined}
+                            className={cn(
+                              'max-w-40 font-medium',
+                              // Same reason as the image cell above: the label
+                              // sits with its rows, not above them.
+                              isMergedAxis ? 'text-center' : undefined,
+                              axisIndex === 0 ? AXIS_FIRST_CELL : undefined,
+                              axisIndex === axes.names.length - 1
+                                ? AXIS_LAST_CELL
+                                : undefined,
+                            )}
+                          >
+                            <span className="truncate">{value}</span>
+                            {isMergedAxis ? (
+                              <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                                {/*
+                                  `2 × Size`, not `2 sizes`: an axis name
+                                  cannot be safely pluralised — `Capacity`
+                                  would become `capacitys` — and `×` is
+                                  already this editor's word for it in
+                                  "Mapped as Colour × Size".
+                                */}
+                                {merged.variantIds.length} ×{' '}
+                                {axes.names[1] ?? 'variants'}
+                              </span>
+                            ) : null}
+                          </TableCell>
+                        );
+                      },
                     )
                   )}
                   <TableCell>
@@ -458,6 +557,9 @@ export default function VariantPricingTable({
                   <VariantEvidenceRow
                     key={`${variant.id}-evidence`}
                     variant={variant}
+                    // Full width: the expanded row's own group is never
+                    // merged (see above) and a span never crosses groups, so
+                    // no cell from elsewhere reaches this row.
                     columnCount={columns.length}
                   />
                 ) : null,

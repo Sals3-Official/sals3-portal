@@ -1093,6 +1093,50 @@ still is; `Supplier cost` and `Supplier stock` are still read-only evidence
 from. The axis values are identity derived from the mapping, not fields — they
 take neither the white of an input nor the recess of evidence.
 
+**One colour, one row of its own: the first axis and its photo merge down their
+group (2026-08-22).** Owner request — a colour repeated on four size rows says
+nothing the first one did not, and it hides how many sizes that colour actually
+carries. `Black` is now written once, spanning its rows the way a spreadsheet
+merges a repeated label, with `4 × Size` under it. The `Image` cell merges with
+it, because three sizes of one colour are almost always one photograph.
+
+`× Size`, not `4 sizes`: an axis name cannot be safely pluralised — `Capacity`
+would become `capacitys` — and `×` is already this editor's word for it in
+"Mapped as Colour × Size".
+
+**Runs are consecutive, deliberately.** A `rowSpan` can only merge adjacent
+rows, so a run closes the moment the value changes. Collecting every `Black`
+wherever it sits would produce a span reaching across rows it does not cover and
+break the table. The read-model already orders variants by matrix position, so
+the first axis varies slowest and the runs come out whole; if that ever changes
+this degrades to more, shorter groups rather than to a wrong table. Merging is
+also skipped entirely for a single-axis product, where every group would be one
+row.
+
+**A group stops merging while one of its own rows is expanded.** Found by
+looking at it rather than by reading the diff: the span otherwise has to cover
+the injected supplier-evidence row, and a cell centred across that lands
+_inside_ it — the colour label and its thumbnail printed over the evidence text.
+Top-aligning only hides the collision. Expansion is transient and the merge is
+not what a seller is reading with the evidence open, so the group falls back to
+one cell per row until it closes, which also removes the span arithmetic the
+evidence row otherwise forces. Pinned by a browser test that sums `colSpan`
+across every body row, merged and expanded, because a broken table is a shape
+error rather than a missing string.
+
+**What the merged photo cell does and does not claim.** It is still one media
+row against one variant — `product_media_sources.variant_id`, and
+`product_media_sources_product_checksum_key` makes the same file unrepeatable
+inside a product, so one photo cannot belong to four variants without new DDL.
+The cell is named after the colour and its tooltip says which variant the file is
+stored against, so both truths are on screen. The consequence is narrower than
+it first appears: the storefront gallery is **product-level** (variant-tagged
+media only sorts after it), so this does not leave a colour's other sizes
+pictureless for buyers. Where it does show is the frozen order-line image — a
+line for a different size of the same colour falls back to the product primary.
+Closing that needs option-value media, its DDL applied to production before the
+Drizzle schema learns it.
+
 ## Product Catalogue: narrower table, Live landing tab (2026-08-22)
 
 Four owner-reported changes to `/listings`. Presentation and default state only —

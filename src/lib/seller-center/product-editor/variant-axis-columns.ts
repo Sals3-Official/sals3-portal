@@ -101,3 +101,58 @@ export default function resolveVariantAxisColumns(
     ),
   };
 }
+
+export type VariantAxisGroup = {
+  /** The shared first-axis value, e.g. `Black`. */
+  value: string;
+  /** Variant ids in this run, in table order. */
+  variantIds: string[];
+  /** The variant a group-level control writes to: the first in the run. */
+  representativeVariantId: string;
+};
+
+/**
+ * Consecutive runs of the same first-axis value — the `Black`, `Camel`, `Pink`
+ * groups a seller sees when the table is ordered colour-then-size.
+ *
+ * ## Consecutive, deliberately
+ *
+ * A `rowSpan` can only merge adjacent rows, so a run is closed the moment the
+ * value changes. Grouping by value instead — collecting every `Black` wherever
+ * it sits — would produce a span that reaches across rows it does not cover and
+ * break the table. The read-model already orders variants by matrix position, so
+ * the first axis varies slowest and the runs come out whole; if that ever
+ * changes, this degrades to more, shorter groups rather than to a wrong table.
+ *
+ * ## Only worth it past one axis
+ *
+ * With a single axis every value has exactly one variant, so every group is one
+ * row and merging would draw a border for nothing. Callers check that.
+ */
+export function resolveFirstAxisGroups(
+  variants: VariantFixture[],
+  axes: VariantAxisColumns,
+): VariantAxisGroup[] {
+  return variants.reduce<VariantAxisGroup[]>((groups, variant) => {
+    const value = axes.valuesByVariantId[variant.id]?.[0];
+
+    if (value === undefined) return groups;
+
+    const open = groups.at(-1);
+
+    if (open !== undefined && open.value === value) {
+      open.variantIds.push(variant.id);
+
+      return groups;
+    }
+
+    return [
+      ...groups,
+      {
+        value,
+        variantIds: [variant.id],
+        representativeVariantId: variant.id,
+      },
+    ];
+  }, []);
+}
