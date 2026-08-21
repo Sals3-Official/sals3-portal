@@ -48,6 +48,7 @@ const ROW = {
   variantId: 'variant-1',
   sellerAccountId: 'seller-1',
   deliveredAt: new Date('2026-08-17T00:00:00.000Z'),
+  addressSnapshot: { fullName: 'Hezekiah Aranador' },
   existingReviewId: null,
 };
 
@@ -166,8 +167,26 @@ describe('resolveReviewableLine outcomes', () => {
         variantId: 'variant-1',
         sellerAccountId: 'seller-1',
         deliveredAt: ROW.deliveredAt,
+        buyerName: 'Hezekiah Aranador',
       },
     });
+  });
+
+  /**
+   * The published name comes from the order, so an unreadable snapshot has to
+   * mean anonymous. Falling back to anything else would publish a guess.
+   */
+  it('reports no buyer name when the ship-to snapshot cannot be read', async () => {
+    const { executor } = recordingExecutor([
+      { ...ROW, addressSnapshot: { postcode: '2000' } },
+    ]);
+
+    const outcome = await resolveReviewableLine(
+      { buyerEmail: 'buyer@example.com', orderLineId: 'line-1' },
+      executor as never,
+    );
+
+    expect(outcome.ok && outcome.line.buyerName).toBeNull();
   });
 });
 

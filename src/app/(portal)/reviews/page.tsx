@@ -6,7 +6,7 @@ import ReviewList from '@/components/reviews/ReviewList';
 import ReviewSummaryBand from '@/components/reviews/ReviewSummaryBand';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { readOrUnavailable } from '@/lib/db/availability';
-import { isDatabaseConfigured } from '@/lib/db/client';
+import getDb, { isDatabaseConfigured } from '@/lib/db/client';
 import {
   parseReviewView,
   REVIEWS_PAGE_SIZE,
@@ -26,6 +26,32 @@ export const metadata: Metadata = {
 export const dynamic = 'force-dynamic';
 
 const DESCRIPTION = 'What customers wrote about the items you sold them.';
+
+/**
+ * Distinguishes "not migrated yet" from "the database is down".
+ *
+ * `sals3_product_reviews` reaches a deployed database through a
+ * `workflow_dispatch`, not through the deploy, so there is a real window where
+ * this screen exists and its tables do not. Without this the seller would meet
+ * an error page on a brand-new menu item, and `readOrUnavailable` would not
+ * catch it either: that helper treats only connection-class errors as
+ * unavailable and rethrows the rest, which is correct — a portal-wide helper
+ * that swallowed `undefined_table` would hide genuine schema drift everywhere.
+ *
+ * So the check is here, it is explicit, and its copy names the workflow. A
+ * missing table is deliberately **not** dressed up as an outage: the whole
+ * lesson of the PR #102 incident is that a migration gap has to be legible as a
+ * migration gap.
+ */
+const NOT_MIGRATED = 'NOT_MIGRATED' as const;
+
+async function reviewTablesExist(): Promise<boolean> {
+  const { readExistingReviewTables } =
+    await import('@/modules/reviews/migrate-product-reviews');
+  const tables = await readExistingReviewTables(getDb());
+
+  return tables.productReviews && tables.productReviewReplies;
+}
 
 /**
  * Product Reviews.
@@ -59,6 +85,8 @@ export default async function ProductReviewsPage({
   const resolved = await readOrUnavailable('product reviews', async () => {
     const { sellerAccount } = await requireDropshipperAccount();
 
+    if (!(await reviewTablesExist())) return NOT_MIGRATED;
+
     // Both reads are scoped to this session's seller account. The summary is
     // not derived from the filtered page: the headline numbers must describe
     // the whole account, or "31 need a reply" would silently mean "31 on this
@@ -83,6 +111,18 @@ export default async function ProductReviewsPage({
         <SourcingEmptyState
           title="Cannot reach the database right now"
           description="Reviews could not be loaded because the database did not respond. Nothing was changed."
+        />
+      </div>
+    );
+  }
+
+  if (resolved.data === NOT_MIGRATED) {
+    return (
+      <div className="flex flex-col gap-4">
+        <PageHeader title="Product Reviews" description={DESCRIPTION} />
+        <SourcingEmptyState
+          title="Reviews are not set up in this environment yet"
+          description="The review tables have not been created in this database. Run the Reviews Migrate Product Reviews workflow, then reload. No review can exist until it has run, so there is nothing to see here and nothing was changed."
         />
       </div>
     );

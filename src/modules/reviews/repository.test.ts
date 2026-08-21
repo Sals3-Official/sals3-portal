@@ -17,12 +17,13 @@ const LINE = {
   variantId: 'variant-1',
   sellerAccountId: 'seller-1',
   deliveredAt: new Date('2026-08-17T00:00:00.000Z'),
+  buyerName: 'Hezekiah Aranador',
 };
 
 const INPUT = {
   orderLineId: 'line-1',
   rating: 5 as const,
-  attribution: { kind: 'named' as const, displayName: 'Hezekiah A.' },
+  attribution: { kind: 'named' as const },
   buyerEmail: 'Buyer@Example.com',
 };
 
@@ -76,6 +77,41 @@ describe('submitReview', () => {
         sellerAccountId: LINE.sellerAccountId,
         deliveredAt: LINE.deliveredAt,
       }),
+    );
+  });
+
+  /**
+   * The published name is derived from the order's ship-to, never sent. A
+   * caller-supplied string would let anyone publish any name against any
+   * purchase.
+   */
+  it('masks the order’s own ship-to name rather than trusting the request', async () => {
+    asMock(resolveReviewableLine).mockResolvedValue({ ok: true, line: LINE });
+
+    const { executor, values } = insertingExecutor('ok');
+
+    await submitReview(
+      { ...INPUT, displayName: 'Somebody Else' } as never,
+      executor as never,
+    );
+
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({ displayName: 'Hezekiah A.' }),
+    );
+  });
+
+  it('publishes anonymously when the order has no readable name', async () => {
+    asMock(resolveReviewableLine).mockResolvedValue({
+      ok: true,
+      line: { ...LINE, buyerName: null },
+    });
+
+    const { executor, values } = insertingExecutor('ok');
+
+    await submitReview(INPUT, executor as never);
+
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({ displayName: null }),
     );
   });
 

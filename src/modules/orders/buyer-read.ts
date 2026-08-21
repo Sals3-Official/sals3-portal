@@ -263,6 +263,53 @@ function reviewStateOf(
   };
 }
 
+/**
+ * Review state for every line on the page — and never a reason this page fails.
+ *
+ * ## Why this read is allowed to fail and the others are not
+ *
+ * An order page is a receipt. A buyer who has paid is entitled to read what they
+ * bought, what it cost and where it is, and none of that depends on whether they
+ * can also leave a star rating. So a failure here costs the review controls and
+ * nothing else.
+ *
+ * This is not defensive noise. `sals3_product_reviews` reaches a deployed
+ * database through a `workflow_dispatch`, not through the deploy, so there is a
+ * real window in which this table does not exist while this code does — and
+ * without this catch a missing relation (`42P01`) would take down order history
+ * for every buyer, which is exactly the shape of the PR #102 outage.
+ *
+ * `readOrUnavailable` is deliberately not used and deliberately not widened: it
+ * treats only connection-class errors as unavailable and rethrows the rest,
+ * which is correct, because a portal-wide helper that swallowed
+ * `undefined_table` would hide genuine schema drift everywhere. The narrow catch
+ * belongs at the one call site that has decided it can live without the answer.
+ */
+async function readReviewStates(
+  executor: DbExecutor,
+  buyerEmail: string,
+  orderIds: string[],
+): Promise<Map<string, LineReviewState>> {
+  try {
+    const states = await listLineReviewStates(
+      { buyerEmail, orderIds },
+      executor,
+    );
+
+    return new Map(states.map((state) => [state.orderLineId, state]));
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] buyer review state unavailable', {
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+
+    // Empty, not partial: `reviewStateOf` reads a miss as "not reviewable",
+    // which hides a control that would have worked rather than offering one
+    // that cannot.
+    return new Map();
+  }
+}
+
 async function assembleOrders(
   executor: DbExecutor,
   orders: Sals3OrderRow[],
@@ -316,11 +363,7 @@ async function assembleOrders(
   // One query for every line on the page, keyed by line id. The eligibility
   // rules live in `modules/reviews/eligibility.ts` and are not restated here —
   // this reader consumes the answer, it does not decide it.
-  const reviewStates = new Map(
-    (await listLineReviewStates({ buyerEmail, orderIds }, executor)).map(
-      (state) => [state.orderLineId, state],
-    ),
-  );
+  const reviewStates = await readReviewStates(executor, buyerEmail, orderIds);
 
   return orders.flatMap((order) => {
     const intent = intentById.get(order.checkoutIntentId);

@@ -54,18 +54,23 @@ export type ReviewRating = (typeof REVIEW_RATINGS)[number];
 export const LOW_RATING_CEILING = 2;
 
 /**
- * How the buyer wants to be credited.
+ * How the buyer wants to be credited — a **choice**, never a name.
  *
- * `named` carries the display string the buyer saw and accepted; `anonymous`
- * stores no name at all. The storefront renders its own wording for the second
- * case rather than a stored "A Sals3 customer", so changing that copy never
+ * The wire deliberately carries no string. If it did, this endpoint would be a
+ * way to publish any name against any purchase, and no amount of validation
+ * fixes that: the value would still be caller-supplied. So `named` means
+ * "credit me", and the server derives *which* name from the order's own
+ * checkout ship-to, masked by `maskDisplayName`.
+ *
+ * The storefront shows the buyer exactly what that will render as before they
+ * press, so the choice is informed — but the stored string is the server's.
+ *
+ * `anonymous` stores no name at all, and the storefront renders its own wording
+ * for that rather than a stored "A Sals3 customer", so changing that copy never
  * becomes a data migration.
  */
 export const reviewAttributionSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('named'),
-    displayName: z.string().trim().min(1).max(REVIEW_DISPLAY_NAME_MAX_LENGTH),
-  }),
+  z.object({ kind: z.literal('named') }),
   z.object({ kind: z.literal('anonymous') }),
 ]);
 

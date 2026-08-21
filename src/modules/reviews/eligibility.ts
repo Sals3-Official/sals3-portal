@@ -1,6 +1,8 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import getDb, { type DbExecutor } from '@/lib/db/client';
 import {
+  checkoutIntents,
   fulfillmentGroups,
   sals3OrderLines,
   sals3Orders,
@@ -43,6 +45,23 @@ import { REVIEW_WINDOW_DAYS, REVIEWABLE_PARCEL_STATE } from './contracts';
 /** The delivery instant, with the fallback `contracts.ts` explains. */
 const deliveredAt = sql<Date>`coalesce(${fulfillmentGroups.carrierDeliveredAt}, ${fulfillmentGroups.updatedAt})`;
 
+/**
+ * The ship-to `fullName` from a checkout snapshot, or `null`.
+ *
+ * Parsed narrowly rather than through the full address schema: this needs one
+ * field, and a snapshot whose postcode has drifted must not cost the buyer their
+ * name. Bounded because it becomes a published string.
+ */
+const shipToNameSchema = z.object({
+  fullName: z.string().trim().min(1).max(200),
+});
+
+function shipToNameOf(snapshot: unknown): string | null {
+  const parsed = shipToNameSchema.safeParse(snapshot);
+
+  return parsed.success ? parsed.data.fullName : null;
+}
+
 export type ReviewableLine = {
   orderLineId: string;
   orderId: string;
@@ -50,6 +69,15 @@ export type ReviewableLine = {
   variantId: string;
   sellerAccountId: string;
   deliveredAt: Date;
+  /**
+   * The ship-to name the buyer entered at checkout, raw and unmasked.
+   *
+   * The source for a `named` review's display string, so the stored name comes
+   * from the order rather than from the request. `null` when the snapshot cannot
+   * be read, which the writer must treat as the anonymous case — never as a
+   * reason to fall back to something else.
+   */
+  buyerName: string | null;
 };
 
 export type EligibilityOutcome =
@@ -87,10 +115,17 @@ export default async function resolveReviewableLine(
       variantId: sals3OrderLines.variantId,
       sellerAccountId: supplierConnections.sellerAccountId,
       deliveredAt,
+      addressSnapshot: checkoutIntents.addressSnapshot,
       existingReviewId: productReviews.id,
     })
     .from(sals3OrderLines)
     .innerJoin(sals3Orders, eq(sals3Orders.id, sals3OrderLines.orderId))
+    // The order's own checkout snapshot, for the ship-to name. Inner because
+    // `checkout_intent_id` is NOT NULL on every order.
+    .innerJoin(
+      checkoutIntents,
+      eq(checkoutIntents.id, sals3Orders.checkoutIntentId),
+    )
     .innerJoin(
       fulfillmentGroups,
       eq(fulfillmentGroups.id, sals3OrderLines.fulfillmentGroupId),
@@ -132,6 +167,7 @@ export default async function resolveReviewableLine(
       variantId: row.variantId,
       sellerAccountId: row.sellerAccountId,
       deliveredAt: row.deliveredAt,
+      buyerName: shipToNameOf(row.addressSnapshot),
     },
   };
 }

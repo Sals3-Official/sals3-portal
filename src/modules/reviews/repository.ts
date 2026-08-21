@@ -10,6 +10,7 @@ import {
   type ReviewRefusal,
   type SubmitReviewInput,
 } from './contracts';
+import maskDisplayName from './display-name';
 import resolveReviewableLine from './eligibility';
 
 /** Bounds one product's review list. Beyond this nobody reads. */
@@ -64,9 +65,13 @@ export async function submitReview(
         // Lower-cased to satisfy the column's own CHECK, and because every
         // lookup compares it that way.
         buyerEmail: input.buyerEmail.trim().toLowerCase(),
+        // Masked here, from the order's own ship-to name — never from the
+        // request. A caller-supplied string would let anyone publish any name
+        // against any purchase, and an unreadable snapshot falls through to
+        // anonymous rather than to a guess.
         displayName:
-          input.attribution.kind === 'named'
-            ? input.attribution.displayName
+          input.attribution.kind === 'named' && line.buyerName !== null
+            ? maskDisplayName(line.buyerName)
             : null,
         rating: input.rating,
         body: input.body === undefined || input.body === '' ? null : input.body,

@@ -33,7 +33,7 @@ const BODY = {
   orderLineId: '11111111-1111-4111-8111-111111111111',
   rating: 5,
   body: 'Fits exactly like the size chart said.',
-  attribution: { kind: 'named', displayName: 'Hezekiah A.' },
+  attribution: { kind: 'named' },
 };
 
 function request(
