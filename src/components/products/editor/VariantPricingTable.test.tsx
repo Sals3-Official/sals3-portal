@@ -91,7 +91,7 @@ describe('VariantPricingTable', () => {
     expect(onToggleEnabled).toHaveBeenCalledWith(VARIANT.id);
   });
 
-  it('gives each option axis its own column, with the value alone in the cell', () => {
+  it('leads the row with the first axis and gives the second its own column', () => {
     render(
       <VariantPricingTable
         variants={[VARIANT]}
@@ -104,18 +104,31 @@ describe('VariantPricingTable', () => {
       />,
     );
 
-    // The axis name is the header; it is not repeated into the cell, which is
-    // the readability win over the chips this replaced.
-    expect(
-      screen.getByRole('columnheader', { name: 'Color' }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('columnheader', { name: 'Size' }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('cell', { name: 'Black' })).toBeInTheDocument();
+    const headers = screen
+      .getAllByRole('columnheader')
+      .map((node) => node.textContent);
+
+    // `Colour` leads; `Image` is gone because the rail carries the photo. The
+    // axis name is the header, so the cell never repeats `Color: Black`.
+    expect(headers).toEqual([
+      'Color',
+      'List',
+      'Size',
+      'Sals3 SKU',
+      'Supplier cost',
+      '•Retail price',
+      'Supplier stock',
+      'Attention',
+      'Supplier evidence',
+    ]);
     expect(screen.getByRole('cell', { name: 'M' })).toBeInTheDocument();
     expect(screen.queryByText('Color: Black')).toBeNull();
-    expect(screen.queryByRole('columnheader', { name: 'Variant' })).toBeNull();
+
+    // The rail says the colour and how many of the second axis it carries.
+    const rail = screen.getAllByRole('cell')[0];
+
+    expect(rail?.textContent).toContain('Black');
+    expect(rail?.textContent).toContain('1 × Size');
   });
 
   it('keeps one Variant column when the rows disagree about their axes', () => {

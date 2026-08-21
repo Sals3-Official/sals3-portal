@@ -76,6 +76,8 @@ type VariantColumn = {
   evidence?: boolean;
   /** An option axis, from the mapped Variant Matrix. Identity, not a field. */
   axis?: boolean;
+  /** The leading axis, whose cell is the rail and carries the group photo. */
+  lead?: boolean;
 };
 
 const BASE_COLUMNS: VariantColumn[] = [
@@ -90,29 +92,36 @@ const BASE_COLUMNS: VariantColumn[] = [
 ];
 
 /**
- * One column per option axis, replacing `Variant` **in place**.
+ * Columns for a mapped product: the first axis LEADS, the rest sit where the
+ * single `Variant` column used to.
  *
- * The axis columns sit where the single `Variant` column sat rather than being
- * moved to the front: `List` and `Image` are what a seller scans down first, and
- * reordering the whole table to put identity leftmost would be a different table
- * for no gain. The axis *name* lives in the header and only the value is in the
- * cell — `Black`, not `Colour: Black` — which is the actual readability win over
- * the chips this replaced, because the name stopped repeating on every row.
+ * The first axis is what a seller actually navigates by — they think in colours
+ * and then in sizes — so it is the first thing read and the last thing to scroll
+ * out of reach on a table this wide. Its cell also absorbs the `Image` column,
+ * because one colour is one photograph: a separate 36px cell beside a colour
+ * name was two cells saying one thing.
  *
- * `axis: true` marks them as the identity zone. The table then reads as three
- * zones rather than one grid: identity plain, the seller's own fields on white,
- * and supplier evidence recessed. That split comes from the data model — who
- * owns each value — and it is the reason no vertical rules are needed.
+ * `axis: true` marks the identity zone. The table reads as three zones rather
+ * than one grid — identity on the page background behind a rule, the seller's
+ * own fields on white, supplier evidence recessed — a split that follows who
+ * owns each value, and the reason the table needs no vertical rules of its own.
+ *
+ * An unmapped product keeps `BASE_COLUMNS` untouched, `Image` and all: there is
+ * no axis to lead with, and the supplier's label stays whole.
  */
 function buildColumns(axisNames: string[] | null): VariantColumn[] {
-  if (axisNames === null) return BASE_COLUMNS;
+  if (axisNames === null || axisNames.length === 0) return BASE_COLUMNS;
 
-  const at = BASE_COLUMNS.findIndex((column) => column.label === 'Variant');
+  const [lead, ...rest] = axisNames;
+  const tail = BASE_COLUMNS.slice(
+    BASE_COLUMNS.findIndex((column) => column.label === 'Variant') + 1,
+  );
 
   return [
-    ...BASE_COLUMNS.slice(0, at),
-    ...axisNames.map((label) => ({ label, axis: true })),
-    ...BASE_COLUMNS.slice(at + 1),
+    { label: lead ?? '', axis: true, lead: true },
+    { label: 'List' },
+    ...rest.map((label) => ({ label, axis: true })),
+    ...tail,
   ];
 }
 
@@ -120,12 +129,15 @@ function buildColumns(axisNames: string[] | null): VariantColumn[] {
 const EVIDENCE_CELL = 'bg-muted/40';
 
 /**
- * The identity zone's edges. Marked with a rule on each side rather than a fill:
- * these values are neither the seller's to type nor the supplier's evidence, so
- * they take neither the white of a field nor the recess of a read-only number.
+ * The leading identity rail.
+ *
+ * Recessed onto the page's own background and closed with a rule, so the rail
+ * reads as the column the rows hang off rather than as another field. The
+ * gradient edge is the same pair the editor uses on the Variant Matrix cards and
+ * the listing switch — it ties the table to the section around it, and it is the
+ * only colour in the table that is not a status.
  */
-const AXIS_FIRST_CELL = 'border-l border-border';
-const AXIS_LAST_CELL = 'border-r border-border';
+const RAIL_CELL = 'relative bg-background border-r border-border p-0';
 
 /**
  * The Image cell: the variant's own photo, or the offer to choose one.
@@ -140,13 +152,22 @@ const AXIS_LAST_CELL = 'border-r border-border';
  * for a full-size render per row would download twelve product photos to draw
  * twelve small squares.
  */
+const IMAGE_CELL_SIZE = { sm: 'size-9', lg: 'size-11' } as const;
+
 function VariantImageCell({
   variant,
   onPick,
   groupLabel,
+  size = 'sm',
 }: {
   variant: VariantFixture;
   onPick?: (() => void) | undefined;
+  /**
+   * `lg` in the rail. A 36px thumbnail is right in a dense cell and wrong in a
+   * cell as tall as a whole colour group, where it reads as dropped rather than
+   * placed.
+   */
+  size?: 'sm' | 'lg';
   /**
    * Set when this cell is merged down a first-axis group — the colour it stands
    * for. The photo is still stored against one variant, so the cell says which
@@ -156,7 +177,12 @@ function VariantImageCell({
 }) {
   const content =
     variant.imageUrl === null || variant.imageUrl === undefined ? (
-      <span className="flex size-9 items-center justify-center rounded-md border border-dashed border-border-strong text-amber-600">
+      <span
+        className={cn(
+          'flex items-center justify-center rounded-md border border-dashed border-border-strong text-amber-600',
+          IMAGE_CELL_SIZE[size],
+        )}
+      >
         <ImageOff aria-hidden="true" className="size-3.5" />
       </span>
     ) : (
@@ -166,7 +192,10 @@ function VariantImageCell({
         width={72}
         height={72}
         loading="lazy"
-        className="size-9 rounded-md border border-border object-cover"
+        className={cn(
+          'rounded-md border border-border object-cover',
+          IMAGE_CELL_SIZE[size],
+        )}
       />
     );
 
@@ -284,11 +313,6 @@ export default function VariantPricingTable({
           (group) => group.variantIds.length > 1,
         )
       : [];
-  const firstAxis = columns.findIndex((column) => column.axis === true);
-  const lastAxis = columns.reduce(
-    (last, column, index) => (column.axis === true ? index : last),
-    -1,
-  );
 
   return (
     <div className="flex flex-col gap-3">
@@ -341,15 +365,16 @@ export default function VariantPricingTable({
         <Table className="min-w-[68rem] [&_td]:py-3">
           <TableHeader>
             <TableRow>
-              {columns.map((column, index) => (
+              {columns.map((column) => (
                 <TableHead
                   key={column.label}
                   scope="col"
                   className={cn(
                     'whitespace-nowrap',
                     column.evidence === true ? EVIDENCE_CELL : undefined,
-                    index === firstAxis ? AXIS_FIRST_CELL : undefined,
-                    index === lastAxis ? AXIS_LAST_CELL : undefined,
+                    column.lead === true
+                      ? 'w-40 bg-background pl-4 border-r border-border'
+                      : undefined,
                   )}
                 >
                   {column.required === true ? (
@@ -389,6 +414,7 @@ export default function VariantPricingTable({
                 ) ?? null;
               const isGroupStart =
                 merged !== null && merged.variantIds[0] === variant.id;
+              const isFirstGroup = merged !== null && merged === groups[0];
               const groupSpan = merged === null ? 1 : merged.variantIds.length;
               const imageVariant =
                 merged === null
@@ -396,13 +422,87 @@ export default function VariantPricingTable({
                   : (variants.find(
                       (item) => item.id === merged.representativeVariantId,
                     ) ?? variant);
+              /** The leading axis's value for this row - the rail's subject. */
+              const leadValue =
+                axes === null
+                  ? variant.optionLabel
+                  : (axes.valuesByVariantId[variant.id]?.[0] ??
+                    variant.optionLabel);
               const lockedOut =
                 variant.listingState === 'BLOCKED' ||
                 variant.listingState === 'PAUSED' ||
                 variant.supplierStock === 0;
 
               return [
-                <TableRow key={variant.id}>
+                <TableRow
+                  key={variant.id}
+                  // A heavier rule opens each colour, so the merge reads as
+                  // structure rather than as leftover whitespace.
+                  className={
+                    isGroupStart && !isFirstGroup
+                      ? 'border-t border-border-strong'
+                      : undefined
+                  }
+                >
+                  {/*
+                    The rail: identity first, and the group's photo inside it.
+                    A colour and its picture are one fact, so they are one cell —
+                    and it merges down its sizes the way a spreadsheet merges a
+                    repeated label, because writing `Black` four times says
+                    nothing the first one did not and hides how many sizes that
+                    colour carries.
+                  */}
+                  {axes === null || merged === null || isGroupStart ? (
+                    <TableCell
+                      rowSpan={merged === null ? undefined : groupSpan}
+                      className={axes === null ? undefined : RAIL_CELL}
+                    >
+                      {axes === null ? (
+                        <VariantImageCell
+                          variant={variant}
+                          onPick={
+                            onPickImage === undefined
+                              ? undefined
+                              : () => onPickImage(variant.id)
+                          }
+                        />
+                      ) : (
+                        <>
+                          <span
+                            aria-hidden="true"
+                            className="absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-[#018CC9] to-[#002B53]"
+                          />
+                          <div className="flex items-center gap-2.5 py-3 pr-3 pl-4">
+                            <VariantImageCell
+                              variant={imageVariant}
+                              size="lg"
+                              onPick={
+                                onPickImage === undefined
+                                  ? undefined
+                                  : () => onPickImage(imageVariant.id)
+                              }
+                              groupLabel={leadValue}
+                            />
+                            <div className="flex min-w-0 flex-col gap-0.5">
+                              <span className="truncate font-display text-sm font-semibold">
+                                {leadValue}
+                              </span>
+                              {/*
+                                `2 × Size`, not `2 sizes`: an axis name cannot
+                                be safely pluralised — `Capacity` would become
+                                `capacitys` — and `×` is already this editor's
+                                word for it in "Mapped as Colour × Size".
+                              */}
+                              <span className="text-[11px] whitespace-nowrap text-muted-foreground">
+                                {merged === null ? 1 : merged.variantIds.length}{' '}
+                                × {axes.names[1] ?? axes.names[0]}
+                              </span>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </TableCell>
+                  ) : null}
                   <TableCell>
                     <Switch
                       checked={variant.enabled}
@@ -415,79 +515,22 @@ export default function VariantPricingTable({
                       className="data-checked:bg-[#018CC9] data-unchecked:bg-[#002B53]"
                     />
                   </TableCell>
-                  {/*
-                    Image and the first axis merge down their group, the way a
-                    spreadsheet merges a repeated label. Four sizes of one
-                    colour are one colour: writing `Black` four times says
-                    nothing the first one did not, and it hides how many sizes
-                    that colour actually carries.
-                  */}
-                  {merged === null || isGroupStart ? (
-                    <TableCell
-                      rowSpan={merged === null ? undefined : groupSpan}
-                      // Centred, not top-aligned. A merged cell is as tall as
-                      // its whole group - taller again when a row inside it is
-                      // expanded - and a thumbnail pinned to the top of that
-                      // reads as stranded rather than as belonging to the rows
-                      // beside it.
-                      className={merged === null ? undefined : 'text-center'}
-                    >
-                      <VariantImageCell
-                        variant={imageVariant}
-                        onPick={
-                          onPickImage === undefined
-                            ? undefined
-                            : () => onPickImage(imageVariant.id)
-                        }
-                        groupLabel={merged === null ? undefined : merged.value}
-                      />
-                    </TableCell>
-                  ) : null}
                   {axes === null ? (
                     <TableCell className="max-w-56 font-medium">
                       {/* Unmapped: the supplier's label whole, never split. */}
                       <span className="truncate">{variant.optionLabel}</span>
                     </TableCell>
                   ) : (
-                    (axes.valuesByVariantId[variant.id] ?? []).map(
-                      (value, axisIndex) => {
-                        const isMergedAxis = axisIndex === 0 && merged !== null;
-
-                        if (isMergedAxis && !isGroupStart) return null;
-
-                        return (
-                          <TableCell
-                            key={axes.names[axisIndex] ?? axisIndex}
-                            rowSpan={isMergedAxis ? groupSpan : undefined}
-                            className={cn(
-                              'max-w-40 font-medium',
-                              // Same reason as the image cell above: the label
-                              // sits with its rows, not above them.
-                              isMergedAxis ? 'text-center' : undefined,
-                              axisIndex === 0 ? AXIS_FIRST_CELL : undefined,
-                              axisIndex === axes.names.length - 1
-                                ? AXIS_LAST_CELL
-                                : undefined,
-                            )}
-                          >
-                            <span className="truncate">{value}</span>
-                            {isMergedAxis ? (
-                              <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
-                                {/*
-                                  `2 × Size`, not `2 sizes`: an axis name
-                                  cannot be safely pluralised — `Capacity`
-                                  would become `capacitys` — and `×` is
-                                  already this editor's word for it in
-                                  "Mapped as Colour × Size".
-                                */}
-                                {merged.variantIds.length} ×{' '}
-                                {axes.names[1] ?? 'variants'}
-                              </span>
-                            ) : null}
-                          </TableCell>
-                        );
-                      },
-                    )
+                    (axes.valuesByVariantId[variant.id] ?? [])
+                      .slice(1)
+                      .map((value, index) => (
+                        <TableCell
+                          key={axes.names[index + 1] ?? index}
+                          className="max-w-40 font-medium"
+                        >
+                          <span className="truncate">{value}</span>
+                        </TableCell>
+                      ))
                   )}
                   <TableCell>
                     <Input
