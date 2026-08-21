@@ -2878,11 +2878,20 @@ a buyer who has already paid. **The storefront does not render it yet** — that
 `sals3-ecommerce` work, and until it lands the API carries the record while the
 order page still shows the three frozen fields.
 
-**Migration `0026_daily_blockbuster` adds the column, and it ships one release
-ahead of the code that uses it.** `sals3_order_lines` is the order table: a
-deployment that inserts or selects a column production does not have breaks paid
-checkout, not a catalogue page (the PR #102 / PR #113 failure class, in front of
-money). Production is never migrated from a laptop — `npm run db:migrate` only
+**The DDL ships one release ahead of any code that names the column — including
+the Drizzle schema itself.** `sals3_order_lines` is the order table, and the
+constraint is stronger than "do not query it yet": **Drizzle names every column
+of the schema in an `INSERT`**, filling omitted ones with `default`, so adding
+`listingSnapshot` to `schema/orders.ts` alone makes order acceptance emit
+`insert into sals3_order_lines (..., "listing_snapshot", ...)` and fail every
+paid checkout with `column ... does not exist`. Verified with `toSQL()` and
+pinned by `order-line-columns.test.ts`. So the first change carries the raw DDL,
+the break-glass route and the workflow and _no_ schema change; the column enters
+the Drizzle table in the same change as the code that reads it, which deploys
+only after a run has reported `columnExistsAfter: true`. The `drizzle/` migration
+file and its `__drizzle_migrations` bookkeeping travel with that schema change,
+because a ledger row pointing at a file that does not exist yet is worse than no
+row. Production is never migrated from a laptop — `npm run db:migrate` only
 ever reaches `localhost`, and `scripts/guard-remote-db.mts` refuses anything
 else. Apply it with the **Orders Migrate Line Snapshot** GitHub Actions workflow
 (`workflow_dispatch`, `CRON_SECRET`-authenticated), which calls

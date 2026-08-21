@@ -166,20 +166,25 @@ export const sals3OrderLines = pgTable(
      * creation (ADR-007, extended to seller-side edits by owner decision
      * 2026-08-21).
      *
-     * `title`, `variant_label`, and `image_url` above already froze three
-     * facts. Every other buyer-visible detail — the option axes as the seller
-     * had named and ordered them, the whole photo gallery, the published
-     * description, the specification answers, the category path, the brand —
-     * was read live, so a seller who renamed a product, replaced its photos, or
-     * rewrote its description changed what a past buyer was shown they had
-     * bought. A seller may legitimately change any of that; it must apply to
-     * new orders only.
+     * `title`, `variant_label`, and `image_url` above already froze three facts.
+     * Every other buyer-visible detail — the option axes as the seller had named
+     * and ordered them, the whole photo gallery, the published description, the
+     * specification answers, the category path, the brand — was read live, so a
+     * seller who renamed a product, replaced its photos, or rewrote its
+     * description changed what a past buyer was shown they had bought. A seller
+     * may legitimately change any of that; it must apply to new orders only.
      *
      * The bytes are copied rather than a revision id referenced. A pointer is
      * cheaper and would freeze the description exactly, but it makes an old
      * order depend on a `product_revisions` row and an R2 object still
-     * existing — so a media cleanup or a revision prune two years from now
-     * would blank the very history this column exists to protect.
+     * existing — so a media cleanup or a revision prune two years from now would
+     * blank the very history this column exists to protect.
+     *
+     * **This column may not be added to this schema before its DDL has been
+     * applied to production.** Drizzle names every column of the table in an
+     * `INSERT`, so a schema ahead of the database fails every paid checkout —
+     * see `order-line-columns.test.ts`. It arrives here in the same change as
+     * the code that reads it, deployed after the break-glass migration ran.
      *
      * Nullable: rows accepted before this column existed have no snapshot, and
      * the buyer projection falls back to the three frozen columns for them.

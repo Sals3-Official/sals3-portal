@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import { describe, expect, it } from 'vitest';
+import { sals3OrderLines } from '@/lib/db/schema/orders';
 
 /**
  * `sals3_order_lines` must never be read with a bare `.select()`.
@@ -48,5 +50,59 @@ describe('sals3_order_lines reads', () => {
     expect(source).not.toMatch(/sals3OrderLines\.externalProductId/u);
     expect(source).not.toMatch(/sals3OrderLines\.externalVariantId/u);
     expect(source).not.toMatch(/sals3OrderLines\.externalSku/u);
+  });
+});
+
+/**
+ * Drizzle names **every** column of the schema in an `INSERT`, filling the ones
+ * the caller omitted with `default`. So adding a column to `schema/orders.ts` is
+ * by itself enough to change the SQL order acceptance emits — there is no
+ * "define it now, write it later".
+ *
+ * This was found by running `toSQL()` while checking whether the column could
+ * ship a release ahead of its reader. It could not: the first draft added
+ * `listingSnapshot` to the schema, claimed to read and write nothing, and would
+ * have failed every paid checkout with
+ * `column "listing_snapshot" does not exist` until the migration ran. The DDL
+ * therefore ships in its own change, and the schema column arrives here — in the
+ * change that also reads it, deployed afterwards.
+ *
+ * The rule this pins is general: any column present in the Drizzle table must
+ * already exist in production before that table ships.
+ */
+describe('order line inserts', () => {
+  it('name every schema column, so a new column changes acceptance SQL', () => {
+    // No connection is opened — `toSQL()` only builds the statement.
+    const db = drizzle({} as never);
+    const { sql: statement } = db
+      .insert(sals3OrderLines)
+      .values({
+        orderId: '00000000-0000-4000-8000-000000000000',
+        storeLineItemId: 'sli-1',
+        productId: '00000000-0000-4000-8000-000000000001',
+        variantId: '00000000-0000-4000-8000-000000000002',
+        title: 'x',
+        quantity: 1,
+        unitAmountMinor: BigInt(1),
+        currency: 'USD',
+        supplierConnectionId: '00000000-0000-4000-8000-000000000003',
+        externalProductId: 'p',
+        externalVariantId: 'v',
+        externalSku: null,
+        sals3Sku: 's',
+      })
+      .toSQL();
+
+    // None of these three were passed above, and all are named anyway — which
+    // is the whole point.
+    expect(statement).toContain('"variant_label"');
+    expect(statement).toContain('"image_url"');
+    expect(statement).toContain('"listing_snapshot"');
+
+    // So `listing_snapshot` appearing here is not a problem to fix — it is the
+    // reason this change must not deploy until the break-glass migration has
+    // reported `columnExistsAfter: true`. Every column in the Drizzle table has
+    // to exist in production before that table ships.
+    expect(statement).toContain('default');
   });
 });
