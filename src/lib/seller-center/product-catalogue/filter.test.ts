@@ -88,7 +88,6 @@ const DEFAULT_FILTERS: CatalogueFilters = {
   searchTerm: '',
   category: null,
   supplierProviderCode: null,
-  availability: null,
   mediaStatus: null,
   supplierConnectionHealth: null,
   evidenceFreshness: null,
@@ -279,32 +278,37 @@ describe('filterAndSortProducts', () => {
     expect(connected.map((p) => p.id)).toEqual(['connected-out-of-stock']);
   });
 
-  it('composes supplier connection health with availability (AND, not either/or)', () => {
+  it('composes two refine filters (AND, not either/or)', () => {
+    // Was written against `availability`, which stopped being a filter on
+    // 2026-08-22 when the column and its select were removed. The property
+    // under test is composition, not that particular pair, so it now pairs
+    // connection health with media status - two dimensions that genuinely
+    // cross, with a row matching each one alone to prove it is not an OR.
     const mixed = [
       product({
-        id: 'degraded-available',
+        id: 'degraded-own',
         supplierConnectionHealth: 'DEGRADED',
-        availability: 'AVAILABLE',
+        mediaStatus: 'OWN_PICTURES',
       }),
       product({
-        id: 'connected-available',
+        id: 'connected-own',
         supplierConnectionHealth: 'CONNECTED',
-        availability: 'AVAILABLE',
+        mediaStatus: 'OWN_PICTURES',
       }),
       product({
-        id: 'degraded-stale',
+        id: 'degraded-supplier',
         supplierConnectionHealth: 'DEGRADED',
-        availability: 'UNKNOWN_OR_STALE',
+        mediaStatus: 'SUPPLIER_FALLBACK',
       }),
     ];
 
     const result = filterAndSortProducts(mixed, 'ALL', {
       ...DEFAULT_FILTERS,
       supplierConnectionHealth: 'DEGRADED',
-      availability: 'AVAILABLE',
+      mediaStatus: 'OWN_PICTURES',
     });
 
-    expect(result.map((p) => p.id)).toEqual(['degraded-available']);
+    expect(result.map((p) => p.id)).toEqual(['degraded-own']);
   });
 
   it('filters by media status', () => {

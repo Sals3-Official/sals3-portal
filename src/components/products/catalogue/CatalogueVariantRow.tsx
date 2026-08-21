@@ -151,10 +151,12 @@ export default function CatalogueVariantRow({
           )}
         </div>
       </TableCell>
-      {/* Availability + Media + Listing quality. Quality is a product-level
-          reading, so a variant row shows none of its own rather than repeating
-          the parent's. */}
-      <TableCell colSpan={3}>
+      {/* Media + Listing quality. Quality is a product-level reading, so a
+          variant row shows none of its own rather than repeating the parent's.
+          The parent's Availability column was removed on 2026-08-22; per-variant
+          availability stays here, which is the level the evidence is actually
+          observed at and costs the table no header width. */}
+      <TableCell colSpan={2}>
         <div className="flex flex-col gap-1">
           <AvailabilityBadge availability={variant.availability} />
           <p className="text-xs text-muted-foreground">
