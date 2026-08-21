@@ -20,6 +20,7 @@ import {
   formatMoney,
 } from '@/lib/seller-center/product-editor/format';
 import type { VariantFixture } from '@/lib/seller-center/product-editor/types';
+import resolveVariantAxisColumns from '@/lib/seller-center/product-editor/variant-axis-columns';
 
 type VariantPricingTableProps = {
   variants: VariantFixture[];
@@ -67,7 +68,15 @@ type VariantPricingTableProps = {
  * language the matrix does. `Image`, `Variant` and `Attention` are read-only too
  * and stay unrecessed — nothing about them invites typing.
  */
-const COLUMNS: { label: string; required?: boolean; evidence?: boolean }[] = [
+type VariantColumn = {
+  label: string;
+  required?: boolean;
+  evidence?: boolean;
+  /** An option axis, from the mapped Variant Matrix. Identity, not a field. */
+  axis?: boolean;
+};
+
+const BASE_COLUMNS: VariantColumn[] = [
   { label: 'List' },
   { label: 'Image' },
   { label: 'Variant' },
@@ -78,8 +87,43 @@ const COLUMNS: { label: string; required?: boolean; evidence?: boolean }[] = [
   { label: 'Attention' },
 ];
 
+/**
+ * One column per option axis, replacing `Variant` **in place**.
+ *
+ * The axis columns sit where the single `Variant` column sat rather than being
+ * moved to the front: `List` and `Image` are what a seller scans down first, and
+ * reordering the whole table to put identity leftmost would be a different table
+ * for no gain. The axis *name* lives in the header and only the value is in the
+ * cell — `Black`, not `Colour: Black` — which is the actual readability win over
+ * the chips this replaced, because the name stopped repeating on every row.
+ *
+ * `axis: true` marks them as the identity zone. The table then reads as three
+ * zones rather than one grid: identity plain, the seller's own fields on white,
+ * and supplier evidence recessed. That split comes from the data model — who
+ * owns each value — and it is the reason no vertical rules are needed.
+ */
+function buildColumns(axisNames: string[] | null): VariantColumn[] {
+  if (axisNames === null) return BASE_COLUMNS;
+
+  const at = BASE_COLUMNS.findIndex((column) => column.label === 'Variant');
+
+  return [
+    ...BASE_COLUMNS.slice(0, at),
+    ...axisNames.map((label) => ({ label, axis: true })),
+    ...BASE_COLUMNS.slice(at + 1),
+  ];
+}
+
 /** The recessed surface, shared by the header cell and every body cell. */
 const EVIDENCE_CELL = 'bg-muted/40';
+
+/**
+ * The identity zone's edges. Marked with a rule on each side rather than a fill:
+ * these values are neither the seller's to type nor the supplier's evidence, so
+ * they take neither the white of a field nor the recess of a read-only number.
+ */
+const AXIS_FIRST_CELL = 'border-l border-border';
+const AXIS_LAST_CELL = 'border-r border-border';
 
 /**
  * The Image cell: the variant's own photo, or the offer to choose one.
@@ -142,48 +186,13 @@ function VariantImageCell({
   );
 }
 
-/**
- * `optionLabel` arrives pre-formatted by the read-model: `"Colour: Army
- * Green, Size: XL"` once the Variant Matrix is mapped, or the supplier's raw
- * concatenated token (`"Army Green-XL"`) when it is not. Splitting the mapped
- * form into per-axis chips makes the buyer-facing identity easy to scan at a
- * glance instead of reading one run-on string; an unmapped label has no
- * `": "` pairs and renders as plain text, unchanged.
- */
-function optionLabelParts(label: string): string[] | null {
-  const parts = label.split(', ').filter((part) => part.includes(': '));
-
-  return parts.length > 0 && parts.length === label.split(', ').length
-    ? parts
-    : null;
-}
-
-function VariantIdentity({ optionLabel }: { optionLabel: string }) {
-  const parts = optionLabelParts(optionLabel);
-
-  if (parts === null) {
-    return <span className="truncate">{optionLabel}</span>;
-  }
-
-  return (
-    <span className="flex flex-wrap gap-1">
-      {parts.map((part) => (
-        <span
-          key={part}
-          className="rounded bg-muted px-1.5 py-0.5 text-xs whitespace-nowrap text-ink-muted"
-        >
-          {part}
-        </span>
-      ))}
-    </span>
-  );
-}
-
 type VariantEvidenceRowProps = {
   variant: VariantFixture;
+  /** Header cells above it, which now varies with the axis count. */
+  columnCount: number;
 };
 
-function VariantEvidenceRow({ variant }: VariantEvidenceRowProps) {
+function VariantEvidenceRow({ variant, columnCount }: VariantEvidenceRowProps) {
   const rows: Array<[string, string]> = [
     ['Supplier variant ID', variant.supplierVariantId],
     [
@@ -200,7 +209,7 @@ function VariantEvidenceRow({ variant }: VariantEvidenceRowProps) {
 
   return (
     <TableRow>
-      <TableCell colSpan={COLUMNS.length + 1} className="bg-background p-3.5">
+      <TableCell colSpan={columnCount + 1} className="bg-background p-3.5">
         <h4 className="mb-2 text-xs font-bold tracking-wide uppercase text-ink-muted">
           Supplier evidence for {variant.optionLabel}
         </h4>
@@ -239,6 +248,18 @@ export default function VariantPricingTable({
   onBulkSetPrice,
   onPickImage,
 }: VariantPricingTableProps) {
+  /**
+   * Presentation only, and derived from `variants` rather than from the fixture,
+   * so it follows the same rows the table is about to render.
+   */
+  const axes = resolveVariantAxisColumns(variants);
+  const columns = buildColumns(axes === null ? null : axes.names);
+  const firstAxis = columns.findIndex((column) => column.axis === true);
+  const lastAxis = columns.reduce(
+    (last, column, index) => (column.axis === true ? index : last),
+    -1,
+  );
+
   return (
     <div className="flex flex-col gap-3">
       {/*
@@ -290,13 +311,15 @@ export default function VariantPricingTable({
         <Table className="min-w-[68rem] [&_td]:py-3">
           <TableHeader>
             <TableRow>
-              {COLUMNS.map((column) => (
+              {columns.map((column, index) => (
                 <TableHead
                   key={column.label}
                   scope="col"
                   className={cn(
                     'whitespace-nowrap',
                     column.evidence === true ? EVIDENCE_CELL : undefined,
+                    index === firstAxis ? AXIS_FIRST_CELL : undefined,
+                    index === lastAxis ? AXIS_LAST_CELL : undefined,
                   )}
                 >
                   {column.required === true ? (
@@ -344,9 +367,29 @@ export default function VariantPricingTable({
                       }
                     />
                   </TableCell>
-                  <TableCell className="max-w-56 font-medium">
-                    <VariantIdentity optionLabel={variant.optionLabel} />
-                  </TableCell>
+                  {axes === null ? (
+                    <TableCell className="max-w-56 font-medium">
+                      {/* Unmapped: the supplier's label whole, never split. */}
+                      <span className="truncate">{variant.optionLabel}</span>
+                    </TableCell>
+                  ) : (
+                    (axes.valuesByVariantId[variant.id] ?? []).map(
+                      (value, axisIndex) => (
+                        <TableCell
+                          key={axes.names[axisIndex] ?? axisIndex}
+                          className={cn(
+                            'max-w-40 font-medium',
+                            axisIndex === 0 ? AXIS_FIRST_CELL : undefined,
+                            axisIndex === axes.names.length - 1
+                              ? AXIS_LAST_CELL
+                              : undefined,
+                          )}
+                        >
+                          <span className="truncate">{value}</span>
+                        </TableCell>
+                      ),
+                    )
+                  )}
                   <TableCell>
                     <Input
                       value={variant.sellerSku}
@@ -415,6 +458,7 @@ export default function VariantPricingTable({
                   <VariantEvidenceRow
                     key={`${variant.id}-evidence`}
                     variant={variant}
+                    columnCount={columns.length}
                   />
                 ) : null,
               ];
