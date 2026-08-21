@@ -2915,6 +2915,38 @@ copy's address and capture time go. `source_url` is left untouched: it is
 provenance (ADR-011 §6 — where the asset came from), and overwriting it would
 trade one gap for another.
 
+**How the copy is taken.** `mirror-supplier-media.ts` fetches each approved
+supplier photo once, re-encodes it through the **same** pipeline every seller
+upload passes (`prepareUploadedImage` — magic-byte check, 2000 px ceiling, WebP
+at q82, which also strips whatever metadata rode along), stores it in R2 under
+`supplier-media/<productId>/<sha256>.webp`, and records `stored_url`,
+`stored_at`, and the checksum/dimensions the projection deliberately left null
+because no bytes had been read. It only fetches addresses `cjImageUrl` accepts:
+a stored URL is still an address this server is about to open, and being in our
+own database is not a reason to skip the host check. Bounded at 12 images per
+product with a 10 s timeout, sequential, and **no CJ API call — no points**
+(ADR-017); this reads CJ's CDN.
+
+Two photos that re-encode to identical bytes share one object: the second row
+points at the first's `stored_url` and leaves `checksum` null, which is also what
+keeps the `(product_id, checksum)` unique index from turning a duplicated photo
+into a failure.
+
+**When it runs.** On publication, through `after()` so the seller's publish
+response never waits on a dozen CDN reads — and best-effort, not a publish gate:
+a listing that is otherwise ready should not become unpublishable because a CDN
+blinked. For everything published before this existed, the **Products Backfill
+Media Copies** workflow sweeps in bounded batches, oldest listing first, and
+reports `remaining` so it is obvious whether to run it again. A run that mirrors
+nothing while work remains fails the workflow rather than reading as success.
+
+**What still falls back.** Until a copy exists, `coalesce(stored_url,
+source_url)` serves the supplier address — on the card, in the PDP gallery, and
+on the thumbnail frozen onto an order line. That is the old behaviour, so nothing
+regresses; it just means the guarantee holds for mirrored media, and the sweeper
+is how "mirrored" becomes "all of it". A product published and ordered in the
+seconds before its mirror finishes keeps a CJ address on that line.
+
 **This DDL ships with no Drizzle schema change**, for the reason the order-line
 snapshot column established: Drizzle names every column of the schema in an
 `INSERT`, so adding `storedUrl` to `schema/product-catalog.ts` alone would make

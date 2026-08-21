@@ -261,9 +261,16 @@ const sellerUploadsFirst = sql`(${productMediaSources.sourceType} = 'SELLER_UPLO
  * has a recorded rights basis behind it (ADR-011 §6), and a product whose
  * media has not been reviewed renders a placeholder rather than a supplier
  * asset nobody cleared.
+ *
+ * `coalesce(stored_url, source_url)` prefers the durable Sals3 copy when one has
+ * been taken (`mirror-supplier-media.ts`) and falls back to the observed
+ * supplier address when it has not. Both are allow-listed at their own write
+ * boundary — R2 by construction for a stored copy, the CJ host list for an
+ * observed one — so this needs no third check, and it means a photo CJ later
+ * replaces stops being what a buyer is served.
  */
 const primaryImageUrl = sql<string | null>`(
-  select ${productMediaSources.sourceUrl}
+  select coalesce(${productMediaSources.storedUrl}, ${productMediaSources.sourceUrl})
   from ${productMediaSources}
   where ${productMediaSources.productId} = ${products.id}
     and ${productMediaSources.reviewState} = 'APPROVED'
@@ -451,7 +458,12 @@ async function loadApprovedImages(
   productId: string,
 ): Promise<StorefrontImage[]> {
   const rows = await executor
-    .select({ url: productMediaSources.sourceUrl })
+    // The durable copy first — same reasoning as `primaryImageUrl`.
+    .select({
+      url: sql<
+        string | null
+      >`coalesce(${productMediaSources.storedUrl}, ${productMediaSources.sourceUrl})`,
+    })
     .from(productMediaSources)
     .innerJoin(products, eq(products.id, productMediaSources.productId))
     .where(

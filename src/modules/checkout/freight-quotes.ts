@@ -331,9 +331,15 @@ export class CheckoutFreightQuoteError extends Error {
  * Mirrors `read-model.ts`'s `primaryImageUrl` gating — approved, rights known —
  * with one difference: a row recorded for the line's own variant wins over the
  * product-level primary, because the thumbnail sits beside a variant label.
+ *
+ * `coalesce(stored_url, source_url)` matters more here than anywhere: this value
+ * is frozen onto the order line and must still resolve years later, which a CJ
+ * CDN address is not guaranteed to (ADR-007 `Media locking`). A line frozen
+ * before its product was mirrored keeps the supplier address — the fallback is
+ * the old behaviour, not a new failure.
  */
 const lineImageUrl = sql<string | null>`(
-  select ${productMediaSources.sourceUrl}
+  select coalesce(${productMediaSources.storedUrl}, ${productMediaSources.sourceUrl})
   from ${productMediaSources}
   where ${productMediaSources.productId} = ${products.id}
     and (${productMediaSources.variantId} = ${productVariants.id}

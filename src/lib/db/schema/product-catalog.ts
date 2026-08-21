@@ -1087,6 +1087,28 @@ export const productMediaSources = pgTable(
     sourceUrl: text('source_url'),
     /** Stable supplier-side identity when one exists, so a URL change is detectable. */
     sourceExternalId: text('source_external_id'),
+    /**
+     * The Sals3-hosted copy of this asset, and when it was taken.
+     *
+     * `source_url` above stays as observed — it is provenance (ADR-011 §6),
+     * and a supplier address is the answer to "where did this come from".
+     * `stored_url` is the answer to "what will we still be able to show in two
+     * years", which for a `SUPPLIER_ORIGINAL` row is a different question: CJ
+     * may replace or delete the file behind its own URL at any time, and
+     * ADR-007's `Media locking` requires an accepted order to keep showing the
+     * media it was accepted with.
+     *
+     * Null means no durable copy has been taken yet, which is the honest state
+     * for every row written before mirroring existed. Read paths prefer this
+     * when it is set and fall back to `source_url` when it is not.
+     *
+     * **Neither column may be added to this schema before its DDL is applied
+     * to production** — Drizzle names every column of the table in an
+     * `INSERT`, and this table is written by draft creation, publication, and
+     * every seller upload. See `migrate-media-stored-copy.ts`.
+     */
+    storedUrl: text('stored_url'),
+    storedAt: timestamp('stored_at', { withTimezone: true }),
     /** SHA-256 of the observed bytes when they have actually been read. */
     checksum: text('checksum'),
     contentType: text('content_type'),

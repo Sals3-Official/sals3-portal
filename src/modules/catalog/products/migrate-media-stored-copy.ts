@@ -96,11 +96,68 @@ export async function runMediaStoredCopyDdl(
   return { statementsRun: MEDIA_STORED_COPY_DDL_STATEMENTS.length };
 }
 
+/**
+ * `drizzle/meta/_journal.json`'s entry for tag `0027_many_lockjaw` (`when`) and
+ * the sha256 of `drizzle/0027_many_lockjaw.sql`'s raw file content, computed the
+ * way `drizzle-orm`'s own `readMigrationFiles()` does it. Hard-coded so this
+ * endpoint never depends on the migration file being in the deployed bundle.
+ * Re-derive with:
+ *   node -e "console.log(require('crypto').createHash('sha256').update(require('fs').readFileSync('drizzle/0027_many_lockjaw.sql').toString()).digest('hex'))"
+ * only if the migration is regenerated. Pinned to the file by its own test.
+ */
+const MIGRATION_0027_CREATED_AT = 1787314656435;
+const MIGRATION_0027_HASH =
+  '0316d197d16d7828b771fcb18d9924498000d1ecf0c21764f785ea5b5c26ed73';
+
+export type MarkMigration0027AppliedResult = {
+  createdAt: number;
+  inserted: boolean;
+};
+
+/**
+ * Records `0027_many_lockjaw` as applied, so a later real `npm run db:migrate`
+ * does not try to run it again. Idempotent by construction; the values are fixed
+ * constants, not request input, so the raw SQL carries no injection risk.
+ */
+export async function markMigration0027Applied(
+  db: Database,
+): Promise<MarkMigration0027AppliedResult> {
+  await db.execute(sql.raw(`CREATE SCHEMA IF NOT EXISTS "drizzle"`));
+  await db.execute(
+    sql.raw(
+      `CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations" (
+        id SERIAL PRIMARY KEY,
+        hash text NOT NULL,
+        created_at bigint
+      )`,
+    ),
+  );
+
+  const existing = (await db.execute(
+    sql.raw(
+      `SELECT id FROM "drizzle"."__drizzle_migrations" WHERE created_at = ${MIGRATION_0027_CREATED_AT} LIMIT 1`,
+    ),
+  )) as unknown as unknown[];
+
+  if (existing.length > 0) {
+    return { createdAt: MIGRATION_0027_CREATED_AT, inserted: false };
+  }
+
+  await db.execute(
+    sql.raw(
+      `INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at") VALUES ('${MIGRATION_0027_HASH}', ${MIGRATION_0027_CREATED_AT})`,
+    ),
+  );
+
+  return { createdAt: MIGRATION_0027_CREATED_AT, inserted: true };
+}
+
 export type MigrateMediaStoredCopyResult = {
   ok: true;
   /** `true` means this run was already a no-op. */
   columnsExistedBefore: boolean;
   ddl: RunMediaStoredCopyDdlResult;
+  migrationRecord: MarkMigration0027AppliedResult;
   /**
    * Re-read from `information_schema` *after* the DDL. This is the field an
    * operator should trust: a 200 with `columnsExistAfter: false` would mean the
@@ -114,7 +171,14 @@ export async function migrateMediaStoredCopy(
 ): Promise<MigrateMediaStoredCopyResult> {
   const columnsExistedBefore = await hasStoredCopyColumns(db);
   const ddl = await runMediaStoredCopyDdl(db);
+  const migrationRecord = await markMigration0027Applied(db);
   const columnsExistAfter = await hasStoredCopyColumns(db);
 
-  return { ok: true, columnsExistedBefore, ddl, columnsExistAfter };
+  return {
+    ok: true,
+    columnsExistedBefore,
+    ddl,
+    migrationRecord,
+    columnsExistAfter,
+  };
 }
