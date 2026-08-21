@@ -2900,6 +2900,34 @@ itself and fails the run unless the response proves
 `columnExistsAfter: true`. Idempotent; safe to run more than once. `GET` on the
 same route reports the column's state without writing anything.
 
+### Durable copies of supplier photos (`stored_url` / `stored_at`)
+
+ADR-007's `Media locking` promises that if a supplier replaces or removes a file
+at the same URL, an order keeps showing the media it was accepted with. **That is
+false for a supplier original today**, and the per-order listing snapshot did not
+change it: `source_url` on a `SUPPLIER_ORIGINAL` row is a CJ CDN address, and the
+snapshot freezes the _address_, not the bytes. If CJ replaces that file, a
+two-year-old order's gallery silently changes — the exact failure that section
+exists to prevent, in the one case nobody sees until a dispute.
+
+`product_media_sources.stored_url` and `stored_at` are where the Sals3-hosted
+copy's address and capture time go. `source_url` is left untouched: it is
+provenance (ADR-011 §6 — where the asset came from), and overwriting it would
+trade one gap for another.
+
+**This DDL ships with no Drizzle schema change**, for the reason the order-line
+snapshot column established: Drizzle names every column of the schema in an
+`INSERT`, so adding `storedUrl` to `schema/product-catalog.ts` alone would make
+every media write name a column the database may not have — and
+`product_media_sources` is written by draft creation, by publication, and by
+every seller upload, so that breaks importing and publishing rather than one
+page. Apply it with the **Products Migrate Media Stored Copy** workflow
+(`workflow_dispatch`, `CRON_SECRET`-authenticated), which calls
+`POST /api/internal/catalog/products/migrate-media-stored-copy` on the deployed
+app and fails the run unless the response proves `columnsExistAfter: true`. Both
+`ALTER TABLE`s run in one transaction, so the table can never be left with
+`stored_url` and no `stored_at`. Idempotent; safe to run more than once.
+
 ## Image delivery
 
 Every `next/image` in the portal is resolved by a custom loader,
