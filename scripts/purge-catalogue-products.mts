@@ -2,9 +2,9 @@
 /**
  * One-off operation: permanently removes every Sals3 catalogue product and all
  * of its dependent rows - revisions, variants, options, provider references,
- * offers, supplier bindings, media sources - plus the draft-creation
- * idempotency records that would otherwise replay a result for a product that
- * no longer exists.
+ * offers, supplier bindings, media sources, buyer reviews and their replies -
+ * plus the draft-creation idempotency records that would otherwise replay a
+ * result for a product that no longer exists.
  *
  * Why this exists: PR #64 shipped a "bulk add to Product Catalogue" flow that
  * wrote real rows, and PR #65 built on it. Both were reverted (PR #66) at the
@@ -250,7 +250,21 @@ async function main(): Promise<void> {
     const optionValues = await tx`delete from product_option_values`;
     const options = await tx`delete from product_options`;
 
-    // 11-13.
+    // 11-12. Buyer reviews of these products, replies first because a reply
+    // references its review. `sals3_product_reviews.product_id` is a RESTRICT
+    // edge onto `products`, so omitting these raises the same foreign-key
+    // violation as omitting any other edge above. Deliberately deleted rather
+    // than preserved: a review of a product that no longer exists has nothing
+    // left to be a review of, and its own order line keeps the frozen record of
+    // what was actually bought (ADR-007).
+    //
+    // Note this does NOT reach `sals3_order_lines` or `sals3_orders` - reviews
+    // reference those too, but this script deletes no orders, so those edges
+    // never come under strain here.
+    const reviewReplies = await tx`delete from sals3_product_review_replies`;
+    const reviews = await tx`delete from sals3_product_reviews`;
+
+    // 13-15.
     const variants = await tx`delete from product_variants`;
     const revisions = await tx`delete from product_revisions`;
     const products = await tx`delete from products`;
@@ -283,6 +297,8 @@ async function main(): Promise<void> {
       productVariantOptionValues: variantOptionValues.count,
       productOptionValues: optionValues.count,
       productOptions: options.count,
+      sals3ProductReviewReplies: reviewReplies.count,
+      sals3ProductReviews: reviews.count,
       productVariants: variants.count,
       productRevisions: revisions.count,
       products: products.count,
