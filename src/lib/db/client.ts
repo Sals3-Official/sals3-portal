@@ -30,7 +30,18 @@ if (typeof window !== 'undefined') {
 
 const POOL_MAX = 10;
 const IDLE_TIMEOUT_SECONDS = 20;
-const CONNECT_TIMEOUT_SECONDS = 10;
+/**
+ * Generous on purpose: Neon suspends an idle compute, and the connection that
+ * wakes it pays for the cold start. Measured from a developer machine on
+ * 2026-08-25, a warm connect is 1.4-2.5s while a cold one routinely passed 10s
+ * — so the previous 10s budget did not protect against a hung network, it
+ * turned Neon's normal resume into `CONNECT_TIMEOUT` and a 503 from every
+ * storefront route. The first request after an idle period was the one that
+ * failed, which is exactly the request a visitor makes.
+ *
+ * This bounds a genuinely stuck connection, not a slow one.
+ */
+const CONNECT_TIMEOUT_SECONDS = 30;
 
 export type Database = ReturnType<typeof drizzle<typeof schema>>;
 
