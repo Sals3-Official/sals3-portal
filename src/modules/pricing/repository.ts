@@ -6,8 +6,10 @@ import {
   inArray,
   isNotNull,
   isNull,
+  like,
   or,
 } from 'drizzle-orm';
+import { TAXONOMY_V1_CODE_PREFIX } from '@/lib/products/sals3-category-code';
 import type { Executor } from '@/modules/catalog/candidates/repository';
 import {
   pricingCategoryPolicies,
@@ -324,11 +326,43 @@ export async function listCategoryMarginOverview(
         eq(pricingCategoryPolicies.status, 'ACTIVE'),
       ),
     )
-    // Depth <= 2, plus anything already carrying a policy — see the doc
-    // comment. `l3 IS NULL` is the depth test: `path` is denormalized but
-    // `l1`/`l2`/`l3` are the real level columns.
+    /**
+     * Depth <= 2, plus anything already carrying a policy — see the doc
+     * comment. `l3 IS NULL` is the depth test: `path` is denormalized but
+     * `l1`/`l2`/`l3` are the real level columns.
+     *
+     * **And never a `CJ-` mirror as a fresh row.** `cj-mirror.ts` inserts
+     * `{ code: 'CJ-<uuid>', path, l1: path }`, leaving `l2`/`l3` null — so
+     * every supplier mirror passed the depth test and appeared on this screen
+     * beside the real departments, wearing the supplier's own raw path
+     * (`Men's Clothing / Outerwear & Jackets / Man Ho…`). The category picker
+     * already filters these (`v1-reference.ts`); this screen never got the
+     * same rule.
+     *
+     * It is not cosmetic. `publishProduct` **refuses** a `CJ-<uuid>` category
+     * (owner decision 2026-08-20), so a product filed under one can never
+     * reach a live listing — which makes a margin set against it a number
+     * that is guaranteed never to price anything. Offering `Set` on that row
+     * invites a seller to configure nothing and believe they configured
+     * something.
+     *
+     * A mirror that **already** carries a policy still shows, deliberately:
+     * hiding it would strand a real, versioned row where nobody could
+     * deactivate it. So the rule is "never offered fresh", not "never shown".
+     *
+     * Written as an **allow list** on the v1 prefix rather than a block list on
+     * `CJ-`: the rule this screen wants is "a real Sals3 category", which is
+     * `isSals3TaxonomyCode`'s rule, and a block list would silently admit
+     * whatever the third code convention turns out to be.
+     */
     .where(
-      or(isNull(sals3Categories.l3), isNotNull(pricingCategoryPolicies.id)),
+      and(
+        or(isNull(sals3Categories.l3), isNotNull(pricingCategoryPolicies.id)),
+        or(
+          like(sals3Categories.code, `${TAXONOMY_V1_CODE_PREFIX}%`),
+          isNotNull(pricingCategoryPolicies.id),
+        ),
+      ),
     )
     .orderBy(
       sals3Categories.l1,
