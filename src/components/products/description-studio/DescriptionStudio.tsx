@@ -20,6 +20,7 @@ import {
   MAX_BLOCKS,
   emptyBlockOfType,
   firstBlockProblem,
+  imageRunLengthAt,
   prepareBlocksForSave,
   type DescriptionBlock,
   type DescriptionBlockType,
@@ -231,8 +232,19 @@ export default function DescriptionStudio({
     />
   );
 
+  /**
+   * The selected image's adjacency run, so the inspector can name the ratio the
+   * page will actually crop it to. Derived from the same rule the canvas groups
+   * by rather than a second copy of it.
+   */
+  const selectedRunLength = imageRunLengthAt(
+    blocks.map((entry) => entry.block),
+    blocks.findIndex((entry) => entry.key === selectedKey),
+  );
+
   const inspector = (
     <BlockInspector
+      runLength={selectedRunLength}
       block={selected?.block ?? null}
       uploadImage={uploadImage}
       uploadDisabledReason={uploadDisabledReason}

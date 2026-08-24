@@ -8,6 +8,7 @@
 
 import Image from 'next/image';
 import InlineRunsText from '@/components/products/editor/InlineRunsText';
+import { describeDescriptionImageSpec } from '@/lib/products/description-blocks';
 import type { DescriptionBlock } from '@/lib/products/description-blocks';
 import {
   plainTextOfRuns,
@@ -49,8 +50,13 @@ function ImageFigure({
         className={`${ratio} relative overflow-hidden rounded-xl border border-border bg-surface-sunken`}
       >
         {block.url === '' ? (
-          <span className="absolute inset-0 grid place-items-center px-3 text-center text-[12.5px] text-ink-subtle">
-            No image yet. Upload one in the panel on the right.
+          <span className="absolute inset-0 grid flex-col place-items-center gap-1 px-3 text-center text-[12.5px] text-ink-subtle">
+            <span>No image yet. Upload one in the panel on the right.</span>
+            {/* The frame crops with `object-cover`, so the ratio is not advice
+                — it is what the seller loses if they ignore it. */}
+            <span className="font-medium text-ink-muted">
+              {describeDescriptionImageSpec(runLength)}
+            </span>
           </span>
         ) : (
           <Image

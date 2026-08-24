@@ -63,7 +63,7 @@ export const PALETTE_IMAGES: PaletteEntry[] = [
     label: 'Image',
     type: 'image',
     count: 1,
-    hint: 'Full width',
+    hint: 'Full width · 16:9',
     icon: ImageIcon,
   },
   {
@@ -71,7 +71,7 @@ export const PALETTE_IMAGES: PaletteEntry[] = [
     label: 'Two images',
     type: 'image',
     count: 2,
-    hint: 'Side by side',
+    hint: 'Side by side · 4:3',
     icon: Images,
   },
   {
@@ -79,7 +79,7 @@ export const PALETTE_IMAGES: PaletteEntry[] = [
     label: 'Three images',
     type: 'image',
     count: 3,
-    hint: 'Row of three',
+    hint: 'Row of three · 4:3',
     icon: LayoutGrid,
   },
 ];

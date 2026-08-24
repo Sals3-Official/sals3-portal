@@ -18,6 +18,7 @@ import {
   describeBlockProblem,
   type DescriptionBlock,
 } from '@/lib/products/description-blocks';
+import { descriptionImageSpec } from '@/lib/products/description-blocks';
 import { IMAGE_UPLOAD_LIMITS_COPY } from '@/lib/products/image-upload-limits';
 
 /**
@@ -97,12 +98,15 @@ function ImageFields({
   onChange,
   uploadImage,
   uploadDisabledReason,
+  runLength,
 }: {
   block: Extract<DescriptionBlock, { type: 'image' }>;
   onChange: (block: DescriptionBlock) => void;
   uploadImage?: DescriptionImageUpload;
   uploadDisabledReason: string | null;
+  runLength: number;
 }) {
+  const spec = descriptionImageSpec(runLength);
   const fileRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -160,7 +164,14 @@ function ImageFields({
             routinely wider than 2000 px, and a seller who reads the ceiling
             first resizes once instead of guessing at "that image is too
             large." */}
-        <p className="mt-1.5 text-[11.5px] text-ink-subtle">
+        {/* The shape, before the picker opens and before any crop happens.
+            The storefront renders this slot with `object-cover`, so a photo of
+            the wrong ratio is not letterboxed — the difference is cut off, and
+            nothing afterwards tells the seller what they lost. */}
+        <p className="mt-1.5 text-[11.5px] font-medium text-ink-muted">
+          {spec.layout} · {spec.ratio} · best at {spec.width} × {spec.height} px
+        </p>
+        <p className="mt-1 text-[11.5px] text-ink-subtle">
           {IMAGE_UPLOAD_LIMITS_COPY}
         </p>
         {uploadDisabledReason === null ? null : (
@@ -219,6 +230,11 @@ type BlockInspectorProps = {
   onChange: (block: DescriptionBlock) => void;
   uploadImage?: DescriptionImageUpload;
   uploadDisabledReason: string | null;
+  /**
+   * Images in the selected block's consecutive run, which is what decides its
+   * ratio. 1 for a text block or a lone image.
+   */
+  runLength: number;
 };
 
 export default function BlockInspector({
@@ -226,6 +242,7 @@ export default function BlockInspector({
   onChange,
   uploadImage,
   uploadDisabledReason,
+  runLength,
 }: BlockInspectorProps) {
   if (block === null) {
     return (
@@ -387,6 +404,7 @@ export default function BlockInspector({
           onChange={onChange}
           uploadImage={uploadImage}
           uploadDisabledReason={uploadDisabledReason}
+          runLength={runLength}
         />
       ) : null}
     </div>

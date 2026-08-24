@@ -425,3 +425,77 @@ export function firstBlockProblem(
 
   return refused[0] ?? null;
 }
+
+/**
+ * What a description photo should actually be, per layout.
+ *
+ * The storefront renders these with `object-cover` inside a fixed aspect box
+ * (`sals3-ecommerce/src/components/product/DescriptionImageRow.tsx`), so a
+ * mis-shaped upload is **cropped, not letterboxed** — a seller who uploads a
+ * tall photo into a 16:9 slot loses the top and bottom of it and is never told.
+ * Naming the ratio at the point of upload is the only place that can prevent it.
+ *
+ * ## Where the numbers come from
+ *
+ * Ratio and rendered width are read off the consumer, not chosen here:
+ *
+ * - **Alone** — `aspect-video` (16:9), `sizes="(min-width: 1024px) 720px, 100vw"`.
+ * - **Two or three in a row** — `aspect-[4/3]`, `sizes="(min-width: 640px) 33vw, 100vw"`,
+ *   in a `minmax(240px, 1fr)` grid.
+ *
+ * The recommendation is 2x the rendered width, which is what a high-density
+ * screen asks `next/image` for. Above that is wasted: `upload-seller-media.ts`
+ * re-encodes every upload to WebP at a 2000px long edge, so a larger original
+ * is downscaled on the way in and buys the seller nothing.
+ *
+ * `runLength` is the adjacency the page derives — the same number
+ * `CanvasBlock` already uses to pick the ratio — so the spec and the frame it
+ * describes can never disagree.
+ */
+export type DescriptionImageSpec = {
+  /** Human ratio, e.g. `16:9`. */
+  ratio: string;
+  /** Recommended upload width in pixels. */
+  width: number;
+  /** Recommended upload height in pixels. */
+  height: number;
+  /** Short label for the layout this spec belongs to. */
+  layout: string;
+};
+
+export function descriptionImageSpec(runLength: number): DescriptionImageSpec {
+  return runLength > 1
+    ? { ratio: '4:3', width: 960, height: 720, layout: 'Side by side' }
+    : { ratio: '16:9', width: 1440, height: 810, layout: 'Full width' };
+}
+
+/** `16:9 · 1440 × 810 px` — one string, so every surface says it identically. */
+export function describeDescriptionImageSpec(runLength: number): string {
+  const spec = descriptionImageSpec(runLength);
+
+  return `${spec.ratio} · ${spec.width} × ${spec.height} px`;
+}
+
+/**
+ * How many images sit in the consecutive run containing `index`.
+ *
+ * The product page derives image layout from adjacency, so this is the number
+ * that decides a photo's ratio — and it is the same rule `StudioCanvas`
+ * already groups by. Kept here rather than in a component so the canvas and
+ * the upload panel cannot disagree about which spec a photo needs; a
+ * non-image block, or an index out of range, is a run of one.
+ */
+export function imageRunLengthAt(
+  blocks: readonly DescriptionBlock[],
+  index: number,
+): number {
+  if (blocks[index]?.type !== 'image') return 1;
+
+  let start = index;
+  let end = index;
+
+  while (start > 0 && blocks[start - 1]?.type === 'image') start -= 1;
+  while (end < blocks.length - 1 && blocks[end + 1]?.type === 'image') end += 1;
+
+  return end - start + 1;
+}
