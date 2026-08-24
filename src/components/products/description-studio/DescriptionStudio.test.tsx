@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { DescriptionBlock } from '@/lib/products/description-blocks';
 import { descriptionDocumentSchema } from '@/modules/catalog/products/description-document';
+import { DEFAULT_DESIGN_LAYOUT } from './BlockPalette';
 import DescriptionStudio from './DescriptionStudio';
 
 /**
@@ -46,6 +47,50 @@ async function save(onSave: ReturnType<typeof vi.fn>) {
     (input as { descriptionDocument: unknown }).descriptionDocument,
   );
 }
+
+describe('Description studio - the default designed layout', () => {
+  it('opens a never-written description in the canvas layout', () => {
+    renderStudio();
+
+    // The order `Sals3 PDP Redesign v3.1.dc.html` draws: sub-heading, opening
+    // paragraph, one full-width photo, features, two detail photos, specifics.
+    // Asserted as the sequence rather than as a count, because the pair of
+    // consecutive images IS the side-by-side row - a count would still pass if
+    // they drifted apart and the page stopped rendering them as a pair.
+    expect(DEFAULT_DESIGN_LAYOUT).toEqual([
+      'heading',
+      'paragraph',
+      'image',
+      'bulletList',
+      'image',
+      'image',
+      'keyValueList',
+    ]);
+    expect(screen.getAllByRole('figure')).toHaveLength(3);
+  });
+
+  it('stores nothing when the seller opens the layout and saves untouched', async () => {
+    const { onSave } = renderStudio();
+
+    // The claim the seeding rests on. Structure is not content: every seeded
+    // block is empty, `prepareBlocksForSave` drops it, and a seller who looked
+    // and left saves exactly the empty document they arrived with. If this ever
+    // fails, the editor has begun publishing a layout nobody wrote.
+    expect((await save(onSave)).blocks).toEqual([]);
+  });
+
+  it('leaves a description that was already written exactly as stored', async () => {
+    const stored: DescriptionBlock[] = [
+      { type: 'paragraph', text: 'A packable 20L daypack.' },
+    ];
+    const { onSave } = renderStudio(stored);
+
+    // The seeding is strictly the empty case. Seeding over saved work would
+    // reshape a description the seller had already finished.
+    expect(screen.queryAllByRole('figure')).toHaveLength(0);
+    expect((await save(onSave)).blocks).toEqual(stored);
+  });
+});
 
 describe('Description studio - block authoring', () => {
   it('saves a loaded document unchanged when nothing was edited', async () => {
@@ -114,12 +159,17 @@ describe('Description studio - block authoring', () => {
 
   it('adds two consecutive image blocks for the side-by-side preset', async () => {
     const { onSave } = renderStudio();
+    // Counted as a delta, because a new description already opens in the
+    // designed layout and that layout carries images of its own. A hard total
+    // here would be asserting the default layout's shape by accident, in a test
+    // about what one button does.
+    const before = screen.getAllByRole('figure').length;
 
     fireEvent.click(screen.getByRole('button', { name: /Two images/ }));
 
     // The layout is adjacency, not a stored group: two plain image blocks, which
     // is what makes a delete unable to leave a half-empty container behind.
-    expect(screen.getAllByRole('figure')).toHaveLength(2);
+    expect(screen.getAllByRole('figure')).toHaveLength(before + 2);
     expect(
       screen.getByText(/Images run wider than the text measure/),
     ).toBeInTheDocument();
