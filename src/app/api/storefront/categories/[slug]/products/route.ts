@@ -36,6 +36,28 @@ import {
  * happens to be empty, which is the same lie the storefront's own
  * "Nothing published yet" panel would then repeat.
  *
+ * ## Why there is no rate limiter (rule 29, considered and declined)
+ *
+ * Rule 29 names search among the abuse-sensitive endpoints, and a
+ * department-plus-price-plus-sort query is close enough to one to be worth
+ * deciding rather than defaulting. It is declined on this route for the same
+ * reason `reviews/route.ts` keys its limiter on the buyer's address instead of
+ * the caller: the only caller is `sals3-ecommerce`'s server, so every request
+ * arrives from one address and a per-caller bucket would throttle the entire
+ * storefront the moment one page got busy — while doing nothing about a
+ * determined client, who is already behind the shared bearer token.
+ *
+ * The cost of an unthrottled request is also bounded by construction: `limit`
+ * is capped at 30, `page` at 10,000, the department must be one of 21
+ * allow-listed values, and a repeated query is answered from
+ * `catalog-cache.ts` rather than the database. The sibling read endpoints
+ * (`products`, `categories`) carry no limiter for the same reasons, and one
+ * read route quietly disagreeing with the others would be the surprise.
+ *
+ * This changes if the storefront ever proxies the query string from a buyer's
+ * own URL to an uncached backend, or if this endpoint is opened to callers
+ * other than the storefront.
+ *
  * `force-dynamic` because the response is per-request authorized; the caching
  * that matters happens in `catalog-cache.ts`, behind the auth check.
  */
