@@ -1,12 +1,12 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
 import saveMetaDescription from '@/modules/catalog/products/save-meta-description';
+import revalidateListingViews from './revalidate-listing-views';
 
 /**
  * The protected boundary for a seller's own Meta Description edit.
@@ -126,7 +126,7 @@ export default async function saveMetaDescriptionAction(
 
   if (!result.ok) return refuse(result.reason);
 
-  revalidatePath('/listings');
+  revalidateListingViews();
 
   return { ok: true, productVersion: result.productVersion };
 }

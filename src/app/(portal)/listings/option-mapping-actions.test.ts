@@ -143,7 +143,7 @@ describe('saveOptionMappingAction', () => {
     const result = await saveOptionMappingAction(VALID_INPUT);
 
     expect(result).toEqual({ ok: true, axisCount: 1, mappedVariantCount: 10 });
-    expect(revalidatePath).toHaveBeenCalledWith('/listings');
+    expect(revalidatePath).toHaveBeenCalledWith('/listings', 'layout');
     // A mapped product renders different axes on its PDP, so a live product's
     // cached payload must not survive the save.
     expect(updateTag).toHaveBeenCalledWith(CATALOG_TAG);

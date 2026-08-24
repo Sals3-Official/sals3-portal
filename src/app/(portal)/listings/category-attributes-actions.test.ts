@@ -85,7 +85,7 @@ describe('saveCategoryAttributesAction', () => {
     const result = await saveCategoryAttributesAction(VALID_INPUT);
 
     expect(result).toEqual(VALID_RESULT);
-    expect(revalidatePath).toHaveBeenCalledWith('/listings');
+    expect(revalidatePath).toHaveBeenCalledWith('/listings', 'layout');
   });
 
   it('does not revalidate when the domain module refuses', async () => {

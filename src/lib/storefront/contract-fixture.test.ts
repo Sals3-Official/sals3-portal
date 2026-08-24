@@ -80,6 +80,10 @@ const ROW: StorefrontDetailRow = {
         { name: 'Size', value: 'XL' },
       ],
       label: 'Black-XL',
+      // Present on one variant and absent on the other, so the fixture pins
+      // both halves of an optional field: a consumer that assumes it is always
+      // there fails against Navy.
+      imageUrl: 'https://media.example.com/seller-media/p/black.webp',
     },
     {
       id: '1a2b3c4d-5e6f-7089-9807-f6e5d4c3b2a1',

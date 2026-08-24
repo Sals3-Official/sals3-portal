@@ -1,6 +1,6 @@
 'use server';
 
-import { revalidatePath, updateTag } from 'next/cache';
+import { updateTag } from 'next/cache';
 import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
@@ -11,6 +11,7 @@ import { STOREFRONT_CATALOG_TAG } from '@/lib/storefront/catalog-cache';
 import { recoverSupplierLabels } from '@/modules/catalog/products/recover-supplier-labels';
 import renameOptionMapping from '@/modules/catalog/products/rename-option-mapping';
 import saveOptionMapping from '@/modules/catalog/products/save-option-mapping';
+import revalidateListingViews from './revalidate-listing-views';
 
 /**
  * The protected boundary for naming a product's option axes.
@@ -234,7 +235,7 @@ export default async function saveOptionMappingAction(
 
   // The editor reads the Variant Matrix through the catalogue read-model, so the
   // listing views must re-read rather than serve the pre-mapping render.
-  revalidatePath('/listings');
+  revalidateListingViews();
 
   /**
    * The storefront cache must expire too, and this is not theoretical.
@@ -338,7 +339,7 @@ export async function recoverSupplierLabelsAction(
   // renders, so both caches must expire — same reasoning as the mapping save
   // above, and for the same reason it is done outside the transaction.
   if (result.recoveredCount > 0) {
-    revalidatePath('/listings');
+    revalidateListingViews();
     updateTag(STOREFRONT_CATALOG_TAG);
   }
 
@@ -383,7 +384,7 @@ export async function renameOptionMappingAction(
 
   // Same reasoning as the mapping save: the editor reads the matrix through
   // the catalogue read-model, so the listing views must re-read.
-  revalidatePath('/listings');
+  revalidateListingViews();
 
   return {
     ok: true,

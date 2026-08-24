@@ -64,17 +64,16 @@ describe('VariantValuePhotoStrip', () => {
     ).toBeInTheDocument();
   });
 
-  it('refuses to make a shared value a control, and names the variant it borrowed from', () => {
+  it('makes a shared value a control, and names the variant it lands on', () => {
     const onPick = vi.fn();
 
     render(
       <VariantValuePhotoStrip
         axes={AXES}
         photos={{
-          // Pink is exact, so the axis renders; Black is shared, so its own
-          // chip must not become a control inside it.
           'val-pink': photo({ variantId: 'v9' }),
           'val-black': photo({
+            variantId: 'v-black-m',
             variantCount: 4,
             variantLabel: 'Colour: Black, Size: M',
           }),
@@ -83,35 +82,46 @@ describe('VariantValuePhotoStrip', () => {
       />,
     );
 
-    // A picker on Black would set the photo on `Black / M` under a label
-    // reading `Black`, leaving three Black variants photoless.
+    /**
+     * The lock this replaces existed because a shared value's photo would leave
+     * the group's other variants photoless on the storefront. It does not any
+     * more - `shareFirstAxisPhotos` resolves a variant's photo across its first
+     * axis - so refusing here would forbid from this panel exactly what the
+     * Variants & Pricing rail has always allowed.
+     */
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Choose photo for Black' }),
+    );
+
+    // The write still lands on one row, and the chip says which.
+    expect(onPick).toHaveBeenCalledWith('v-black-m');
     expect(
-      screen.queryByRole('button', { name: /photo for Black/ }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Choose photo for Pink' }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Photo shown from variant Colour: Black, Size: M/),
+      screen.getByText(/stored against variant Colour: Black, Size: M/),
     ).toBeInTheDocument();
   });
 
-  it('drops an axis in which nothing is exact, and says where photos live instead', () => {
+  it('renders a Colour x Size product rather than hiding the whole strip', () => {
     render(
       <VariantValuePhotoStrip
         axes={AXES}
         photos={{
-          'val-black': photo({ variantCount: 4 }),
-          'val-pink': photo({ variantCount: 4 }),
+          'val-black': photo({ variantId: 'v-black', variantCount: 4 }),
+          'val-pink': photo({ variantId: 'v-pink', variantCount: 4 }),
         }}
         onPick={vi.fn()}
       />,
     );
 
-    // A `Size photos` row on a Colour × Size product is noise: nothing about a
-    // size has a picture.
-    expect(screen.queryByText('Colour photos')).toBeNull();
-    expect(screen.getByText(/shared by several variants/)).toBeInTheDocument();
+    // Previously every value here was shared, so no chip could be a control and
+    // the axis was dropped - which hid the panel on the commonest shape there
+    // is. Both are controls now.
+    expect(screen.getByText('Colour photos')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Choose photo for Black' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Choose photo for Pink' }),
+    ).toBeInTheDocument();
   });
 
   it('offers no control at all when no assignment is possible', () => {

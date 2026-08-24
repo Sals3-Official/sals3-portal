@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { ImagePlus, Lock } from 'lucide-react';
+import { ImagePlus } from 'lucide-react';
 import type { MappedOptionAxis } from '@/lib/seller-center/product-catalogue/types';
 import type { VariantMatrixValuePhoto } from '@/lib/seller-center/product-editor/types';
 
@@ -28,27 +28,25 @@ import type { VariantMatrixValuePhoto } from '@/lib/seller-center/product-editor
  * this reads the link that already exists: a value's photo is the photo of a
  * variant carrying it.
  *
- * That leaves two honestly different cases, and the strip does not blur them:
+ * ## Every value is a control, including a shared one — changed 2026-08-24
  *
- * - **One variant carries the value** (a colour-only product — the commonest
- *   shape). The value *is* a variant, so the chip is a real control and what it
- *   writes is exactly what it shows.
- * - **Several variants carry it.** The chip shows one of their photos, says
- *   whose it is, and is not a control. Making it one would set the photo on
- *   `Black / L` under a label reading `Black`, leaving the other three Black
- *   variants photoless on the storefront — a buyer-facing defect, not a
- *   labelling nicety.
+ * This used to lock a chip whose value several variants carry, on the reasoning
+ * that setting the photo on `Black / L` under a label reading `Black` would
+ * "leave the other three Black variants photoless on the storefront". **That is
+ * no longer true and the lock went with it.** The storefront read model now
+ * resolves a variant's photo across its first option axis
+ * (`shareFirstAxisPhotos`), so one photo assigned against `Black / S` is what a
+ * buyer sees for every size of Black. The buyer-facing defect the lock existed
+ * to prevent cannot happen.
  *
- * ## An axis with nothing exact in it is not rendered
+ * Leaving it locked would also have put two controls for one fact in
+ * disagreement: the Variants & Pricing rail has always written a group photo
+ * this way, so a seller could do from the table exactly what this panel told
+ * them was impossible.
  *
- * On a Colour × Size product every colour is carried by four variants and every
- * size by three, so no chip could be a control and a `Size photos` row would be
- * pure noise: nothing about a *size* has a picture, and Sals3 cannot know which
- * axis carries appearance — the same thing that stops it naming the axes in the
- * first place. An axis is rendered only if at least one of its values resolves
- * to exactly one variant. When that removes everything, the strip says where
- * photos do live rather than vanishing, so a seller looking for them is not left
- * searching an empty panel.
+ * The chip still says which variant the file is stored against when the value is
+ * shared. That is a true and useful thing to know — the row it lands on is the
+ * one an order line freezes — and it is a hint rather than a refusal.
  *
  * A product whose matrix is not saved yet gets no strip at all: option values
  * are written by `saveOptionMapping`, so before that there is nothing in the
@@ -118,7 +116,7 @@ function ValueChip({
 }) {
   const url = presentableUrl(photo?.imageUrl);
   const shared = photo !== undefined && photo.variantCount > 1;
-  const assignable = photo !== undefined && !shared && onPick !== undefined;
+  const assignable = photo !== undefined && onPick !== undefined;
 
   const body = (
     <>
@@ -137,34 +135,40 @@ function ValueChip({
         // The value is in the name, because a strip of identical
         // "Choose photo" buttons names none of them.
         aria-label={`${url === null ? 'Choose' : 'Change'} photo for ${label}`}
+        // Said on the control rather than after the fact: the file lands on one
+        // variant and an order line freezes that row, so a seller who cares
+        // which one can see it before pressing.
+        title={
+          shared
+            ? `One photo for ${label}. Stored against ${photo.variantLabel}, and shown for all ${photo.variantCount} variants carrying ${label}.`
+            : undefined
+        }
         className="flex items-center gap-2 rounded-lg border border-border bg-background px-2 py-1.5 text-left outline-offset-2 transition hover:border-border-strong hover:brightness-95 focus-visible:outline-2"
       >
         {body}
+        {shared ? (
+          <span className="sr-only">
+            One photo for {label}, stored against variant {photo.variantLabel}{' '}
+            and shown for all {photo.variantCount} variants carrying {label}.
+          </span>
+        ) : null}
       </button>
     );
   }
 
+  /**
+   * No `onPick` — fixture mode, or a product with no stored photos to choose
+   * from. It reports what it shows and offers no dead control.
+   *
+   * The lock icon and the "set it on the variant rows below" copy that used to
+   * live here are gone with the lock itself: this branch is no longer a refusal
+   * to edit a shared value, it is the absence of anything to edit *with*, and
+   * pointing a seller at the variant rows would send them somewhere equally
+   * empty.
+   */
   return (
-    <span
-      className="flex items-center gap-2 rounded-lg border border-dashed border-border px-2 py-1.5"
-      title={
-        shared && photo !== undefined
-          ? `Shown from ${photo.variantLabel}. ${photo.variantCount} variants use this value, so its photo is set on the variant rows below.`
-          : undefined
-      }
-    >
+    <span className="flex items-center gap-2 rounded-lg border border-dashed border-border px-2 py-1.5">
       {body}
-      {shared && photo !== undefined ? (
-        <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-          <Lock aria-hidden="true" className="size-3" />
-          <span className="sr-only">
-            Read-only. Photo shown from variant {photo.variantLabel}, one of{' '}
-            {photo.variantCount} variants carrying {label}. Set it on the
-            variant rows below.
-          </span>
-          <span aria-hidden="true">{photo.variantLabel}</span>
-        </span>
-      ) : null}
     </span>
   );
 }
@@ -175,28 +179,18 @@ export default function VariantValuePhotoStrip({
   onPick,
 }: VariantValuePhotoStripProps) {
   /**
-   * Axes carrying at least one value that resolves to exactly one variant —
-   * the only values a photo can be set against here. See the note above.
+   * Axes carrying at least one value that resolved to a variant at all.
+   *
+   * Was `variantCount === 1` while shared values were locked, which hid the
+   * whole strip on a Colour × Size product — the shape this panel is most
+   * useful for. A value with no entry has no variant link recorded, so there is
+   * nothing for a photo to hang from and nothing to draw.
    */
   const shown = axes.filter((axis) =>
-    axis.values.some((value) => photos[value.valueId]?.variantCount === 1),
+    axis.values.some((value) => photos[value.valueId] !== undefined),
   );
 
-  if (shown.length === 0) {
-    const linked = axes.some((axis) =>
-      axis.values.some((value) => photos[value.valueId] !== undefined),
-    );
-
-    if (!linked) return null;
-
-    return (
-      <p className="text-sm text-muted-foreground">
-        Every option on this product is shared by several variants, so a photo
-        belongs to a variant rather than to one option value. Set them in the
-        Image column of the variant list below.
-      </p>
-    );
-  }
+  if (shown.length === 0) return null;
 
   return (
     <div className="flex flex-col gap-3">

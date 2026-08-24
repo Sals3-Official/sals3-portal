@@ -315,7 +315,7 @@ describe('bulkCreateProductDraftsAction', () => {
     });
 
     expect(revalidatePath).toHaveBeenCalledWith('/products/pipeline');
-    expect(revalidatePath).toHaveBeenCalledWith('/listings');
+    expect(revalidatePath).toHaveBeenCalledWith('/listings', 'layout');
   });
 
   it('rejects an unbounded batch before authorizing', async () => {

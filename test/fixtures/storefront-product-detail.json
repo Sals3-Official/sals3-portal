@@ -62,7 +62,8 @@
           { "name": "Colour", "value": "Black" },
           { "name": "Size", "value": "XL" }
         ],
-        "label": "Black-XL"
+        "label": "Black-XL",
+        "imageUrl": "https://media.example.com/seller-media/p/black.webp"
       },
       {
         "id": "1a2b3c4d-5e6f-7089-9807-f6e5d4c3b2a1",

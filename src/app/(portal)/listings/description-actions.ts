@@ -1,6 +1,5 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
@@ -8,6 +7,7 @@ import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { descriptionDocumentSchema } from '@/modules/catalog/products/description-document';
 import saveDescriptionDocument from '@/modules/catalog/products/save-description-document';
+import revalidateListingViews from './revalidate-listing-views';
 
 /**
  * The protected boundary for a seller's own description edit.
@@ -131,8 +131,7 @@ export default async function saveDescriptionAction(
 
   // Both surfaces read this document: the catalogue row's content-readiness
   // signal and the product editor the seller returns to.
-  revalidatePath('/listings');
-  revalidatePath('/listings/new');
+  revalidateListingViews();
 
   return {
     ok: true,

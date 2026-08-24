@@ -1,6 +1,5 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
@@ -8,6 +7,7 @@ import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { deleteSellerProductMedia } from '@/modules/catalog/products/delete-seller-media';
 import { uploadSellerProductMedia } from '@/modules/catalog/products/upload-seller-media';
+import revalidateListingViews from './revalidate-listing-views';
 
 /**
  * The authorized entry points for a seller managing their own product
@@ -158,7 +158,7 @@ export async function uploadSellerMediaAction(
   // this action's own return value - see `ProductEditorWorkspace.tsx`'s
   // `handleUploadMedia`, which appends the new tile to local state rather
   // than waiting on a cache-busted re-render.
-  revalidatePath('/listings');
+  revalidateListingViews();
 
   return { ok: true, media: result.media };
 }
@@ -183,7 +183,7 @@ export async function deleteSellerMediaAction(
 
   if (!result.ok) return refuse(result.reason);
 
-  revalidatePath('/listings');
+  revalidateListingViews();
 
   return { ok: true };
 }

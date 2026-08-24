@@ -1,12 +1,12 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
 import assignVariantMedia from '@/modules/catalog/products/assign-variant-media';
+import revalidateListingViews from './revalidate-listing-views';
 
 /**
  * The protected boundary for pointing a stored photo at one variant.
@@ -131,7 +131,7 @@ export default async function assignVariantMediaAction(
   // The editor reads variant media through the catalogue read-model, so the
   // listing views must re-read. No storefront tag: a variant photo is not part
   // of the published feed until the listing is published again.
-  revalidatePath('/listings');
+  revalidateListingViews();
 
   return { ok: true, mediaId: result.mediaId, variantId: result.variantId };
 }
