@@ -19,6 +19,7 @@ import {
 import createProductDraftFromCandidate from '@/modules/catalog/products/create-draft';
 import saveProductDraft from '@/modules/catalog/products/save-draft';
 import type { PortalPermission } from '@/lib/auth/permissions';
+import revalidateListingViews from './revalidate-listing-views';
 
 /**
  * The protected boundary for the canonical catalog draft flow.
@@ -282,7 +283,7 @@ export async function bulkCreateProductDraftsAction(
     }
 
     revalidatePath('/products/pipeline');
-    revalidatePath('/listings');
+    revalidateListingViews();
 
     return { ok: true, created, replayed, failed };
   } catch (error) {

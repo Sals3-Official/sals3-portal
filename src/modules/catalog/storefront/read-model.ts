@@ -132,6 +132,33 @@ export type StorefrontVariant = {
    * (`create-draft.ts` records the same rule at the write side).
    */
   label?: string;
+  /**
+   * The photo to show when this variant is the buyer's current selection.
+   *
+   * Absent when nothing in the variant's own option group carries one, which is
+   * the normal case — a product page falls back to the gallery it already has,
+   * and a consumer that ignores this field renders exactly what it rendered
+   * before the field existed.
+   *
+   * ## It is a group's photo, not strictly this row's
+   *
+   * `product_media_sources.variant_id` is one column and
+   * `product_media_sources_product_checksum_key` makes one file unrepeatable
+   * inside a product, so a single photo genuinely cannot belong to the four
+   * variants carrying `Black`. The Portal's own control writes it to the first
+   * variant of the group and says so. Serving only that row's own photo would
+   * put a picture on `Black · S` and nothing on `Black · M`, which reads to a
+   * buyer as a broken page rather than as a storage detail — so a variant with
+   * no photo of its own inherits one from a variant sharing its **first option
+   * axis** (`shareFirstAxisPhotos` below).
+   *
+   * That axis is whichever the seller arranged first, not a colour: Sals3 does
+   * not know which axis carries appearance, and guessing is the same mistake
+   * `label` exists to avoid. First is the one the seller led with, and a seller
+   * who leads with Size gets size photos, which is a defensible answer to a
+   * question nobody else can answer either.
+   */
+  imageUrl?: string;
 };
 
 export type StorefrontDescription = {
@@ -258,6 +285,35 @@ const mediaVisibleToBuyers = sql`(
  * a seller sees there is the cover a buyer gets.
  */
 const sellerUploadsFirst = sql`(${productMediaSources.sourceType} = 'SELLER_UPLOAD') desc`;
+
+/**
+ * One variant's own photo, under the same visibility rules as the cover.
+ *
+ * A correlated scalar subquery rather than a join, so it cannot multiply the
+ * variant × option rows `loadPublishedVariants` folds — a variant with three
+ * assigned photos must stay one row with one address, not become three rows
+ * that quietly triple its option list.
+ *
+ * `variant_id` is the only difference from `primaryImageUrl`: same
+ * `APPROVED`/rights/`mediaVisibleToBuyers` gate, same seller-uploads-first
+ * precedence, same `coalesce(stored_url, source_url)` so a mirrored copy is
+ * served over the supplier's CDN address once one has been taken. There is no
+ * `(variant_id is null)` term here, because the whole point of this subquery is
+ * the rows that *have* one.
+ */
+const variantImageUrl = sql<string | null>`(
+  select coalesce(${productMediaSources.storedUrl}, ${productMediaSources.sourceUrl})
+  from ${productMediaSources}
+  where ${productMediaSources.variantId} = ${productVariants.id}
+    and ${productMediaSources.reviewState} = 'APPROVED'
+    and ${productMediaSources.rightsBasis} <> 'UNKNOWN'
+    and ${productMediaSources.sourceUrl} is not null
+    and ${mediaVisibleToBuyers}
+  order by ${sellerUploadsFirst},
+           ${productMediaSources.observedAt} asc,
+           ${productMediaSources.id} asc
+  limit 1
+)`;
 
 /**
  * One product's display image: the first approved media row a buyer may see
@@ -658,6 +714,69 @@ function compareMatrixOrder(
 }
 
 /**
+ * A variant with no photo of its own borrows one from its first-axis group.
+ *
+ * ## Why the wire carries the answer and not the raw column
+ *
+ * The Portal's group control sets `variant_id` on one variant per colour — it
+ * has no choice, the column holds one id and the checksum index forbids a second
+ * row for the same file. Handing a consumer that raw fact would make every
+ * consumer re-derive this, and the first one to skip it ships a page where
+ * `Black · S` has a photo and `Black · M` does not. Deriving it once, here,
+ * beside the option positions that define a group, is the same argument that
+ * put `rating` on the payload instead of a rollup: one answer that cannot
+ * disagree with itself.
+ *
+ * ## Groups are positional, not by name
+ *
+ * `options` is already ordered by the seller's axis position when a variant is
+ * folded, so `options[0]` is the leading axis and its `value` is the group key.
+ * Keyed on `name` *and* `value` so two axes that happen to share a value —
+ * `Colour: Natural` and `Material: Natural` — cannot pool their photos.
+ *
+ * A variant with no options at all is the single implicit variant of an
+ * axis-less product; it has no group, keeps whatever it has, and borrows
+ * nothing.
+ *
+ * ## Never overwrites
+ *
+ * A variant that carries its own photo keeps it. This only fills absences, so a
+ * seller who does assign every size individually gets exactly what they
+ * assigned, and this pass becomes invisible.
+ */
+export function shareFirstAxisPhotos(
+  variants: StorefrontVariant[],
+): StorefrontVariant[] {
+  const groupPhoto = new Map<string, string>();
+
+  variants.forEach((variant) => {
+    const lead = variant.options[0];
+
+    if (lead === undefined || variant.imageUrl === undefined) return;
+
+    const key = `${lead.name} ${lead.value}`;
+
+    // First in the seller's arranged order wins, which is the same variant the
+    // Portal's group control writes to.
+    if (!groupPhoto.has(key)) groupPhoto.set(key, variant.imageUrl);
+  });
+
+  if (groupPhoto.size === 0) return variants;
+
+  return variants.map((variant) => {
+    const lead = variant.options[0];
+
+    if (lead === undefined || variant.imageUrl !== undefined) return variant;
+
+    const inherited = groupPhoto.get(`${lead.name} ${lead.value}`);
+
+    return inherited === undefined
+      ? variant
+      : { ...variant, imageUrl: inherited };
+  });
+}
+
+/**
  * The published variants, each with the option values that identify it, in the
  * order the seller arranged them.
  *
@@ -685,8 +804,13 @@ async function loadPublishedVariants(
       // `external_variant_id`, `external_sku` and the observed supplier cost —
       // none of which may reach a public feed, so none of which is selected.
       supplierLabel: providerVariantReferences.sourceOptionLabel,
+      imageUrl: variantImageUrl,
     })
     .from(productVariants)
+    // `mediaVisibleToBuyers` reads `products.show_supplier_photo`, so the
+    // product has to be in scope for `variantImageUrl` to compile. One row per
+    // variant by the foreign key, so the fold below is unaffected.
+    .innerJoin(products, eq(products.id, productVariants.productId))
     .innerJoin(productOffers, eq(productOffers.variantId, productVariants.id))
     // Safe to join without changing the row count: `variant_id` carries the
     // unique index `provider_variant_references_variant_key`, so this matches at
@@ -755,6 +879,7 @@ async function loadPublishedVariants(
       ...(supplierLabel === undefined || supplierLabel === ''
         ? {}
         : { label: supplierLabel }),
+      ...(row.imageUrl === null ? {} : { imageUrl: row.imageUrl }),
     };
 
     if (row.optionName !== null && row.optionValue !== null) {
@@ -771,12 +896,14 @@ async function loadPublishedVariants(
     byVariant.set(row.id, existing);
   });
 
-  return [...byVariant.values()].sort((left, right) =>
-    compareMatrixOrder(
-      orderKeys.get(left.id) ?? [],
-      orderKeys.get(right.id) ?? [],
-      left.sku,
-      right.sku,
+  return shareFirstAxisPhotos(
+    [...byVariant.values()].sort((left, right) =>
+      compareMatrixOrder(
+        orderKeys.get(left.id) ?? [],
+        orderKeys.get(right.id) ?? [],
+        left.sku,
+        right.sku,
+      ),
     ),
   );
 }

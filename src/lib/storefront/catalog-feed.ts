@@ -206,6 +206,21 @@ export type StorefrontProductVariant = {
    * authority on what the wire carries.
    */
   label?: string;
+  /**
+   * The photo to show while this variant is the buyer's selection.
+   *
+   * Omitted when the variant's own option group carries none, which is the
+   * ordinary case — a consumer that omits this field renders the product
+   * gallery exactly as it did before the field existed, so adopting it is
+   * optional on the consumer's side and adds no empty state.
+   *
+   * Already resolved per group by the producer (`shareFirstAxisPhotos`), so
+   * every variant sharing a leading option value reports the same address and a
+   * consumer must not re-derive that. The address is allow-listed at its write
+   * boundary and is the same host family as `images[]`, so it needs no separate
+   * entry in the consumer's `next.config.ts`.
+   */
+  imageUrl?: string;
 };
 
 /**
@@ -335,6 +350,7 @@ function toStorefrontVariant(
     ...(variant.label === undefined
       ? {}
       : { label: variant.label.slice(0, MAX_VARIANT_LABEL_LENGTH) }),
+    ...(variant.imageUrl === undefined ? {} : { imageUrl: variant.imageUrl }),
   };
 }
 

@@ -105,7 +105,7 @@ describe('saveMetaDescriptionAction', () => {
     const result = await saveMetaDescriptionAction(VALID_INPUT);
 
     expect(result).toEqual({ ok: true, productVersion: 2 });
-    expect(revalidatePath).toHaveBeenCalledWith('/listings');
+    expect(revalidatePath).toHaveBeenCalledWith('/listings', 'layout');
   });
 
   it('does not revalidate when the domain module refuses', async () => {

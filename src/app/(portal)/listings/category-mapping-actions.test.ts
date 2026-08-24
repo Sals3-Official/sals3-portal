@@ -117,7 +117,7 @@ describe('decideCategoryMappingAction', () => {
       categoryCode: 'CAT-GGL-100230',
       categoryPath: 'Apparel & Accessories > Clothing > Outerwear > Jackets',
     });
-    expect(revalidatePath).toHaveBeenCalledWith('/listings');
+    expect(revalidatePath).toHaveBeenCalledWith('/listings', 'layout');
     expect(updateTag).toHaveBeenCalledWith(CATALOG_TAG);
   });
 

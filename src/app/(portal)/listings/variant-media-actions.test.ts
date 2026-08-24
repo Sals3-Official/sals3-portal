@@ -23,6 +23,7 @@ vi.mock('@/modules/catalog/products/assign-variant-media', () => ({
 }));
 
 /* eslint-disable import/first */
+import { revalidatePath } from 'next/cache';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
@@ -96,6 +97,36 @@ describe('assignVariantMediaAction', () => {
     });
 
     expect(result).toEqual({ ok: true, mediaId: MEDIA_ID, variantId: null });
+  });
+
+  it('invalidates the editor route the seller is standing on, not just /listings', async () => {
+    vi.mocked(assignVariantMedia).mockResolvedValue({
+      ok: true,
+      mediaId: MEDIA_ID,
+      variantId: VARIANT_ID,
+    });
+
+    await assignVariantMediaAction({
+      productId: PRODUCT_ID,
+      mediaId: MEDIA_ID,
+      variantId: VARIANT_ID,
+    });
+
+    /**
+     * The whole bug, in one assertion.
+     *
+     * This action used to call `revalidatePath('/listings')`, and the Product
+     * Editor is `/listings/new?productId=…`. The write reached Postgres, the
+     * seller saw the thumbnail from local state, then `router.refresh()`
+     * re-requested a route nothing had invalidated and the stale projection put
+     * the placeholder back. The photo "disappeared" while being saved correctly.
+     *
+     * `'layout'` is what makes the subtree — `/listings/new` and the description
+     * studio included — part of the invalidation. Asserted with the argument,
+     * because `toHaveBeenCalledWith('/listings')` passes for the broken call and
+     * is exactly the assertion that let this ship.
+     */
+    expect(revalidatePath).toHaveBeenCalledWith('/listings', 'layout');
   });
 
   it('refuses an id that is not a uuid without reaching the database', async () => {

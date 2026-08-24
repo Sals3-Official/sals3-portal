@@ -98,7 +98,10 @@ const readProductAcrossRequests = unstable_cache(
   // nothing.
   // Bumped to 'v5' on 2026-08-22: the detail row gained `rating` and
   // `ratingBreakdown`.
-  ['storefront-catalog-product', 'v5'],
+  // Bumped to 'v6' on 2026-08-24: each variant gained `imageUrl`. The feed key
+  // stays on 'v2' — a card row has no variants, so busting it would discard
+  // warm entries for nothing.
+  ['storefront-catalog-product', 'v6'],
   { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
 );
 

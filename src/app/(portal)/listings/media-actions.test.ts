@@ -139,7 +139,7 @@ describe('uploadSellerMediaAction', () => {
         heightPixels: 800,
       },
     });
-    expect(revalidatePath).toHaveBeenCalledWith('/listings');
+    expect(revalidatePath).toHaveBeenCalledWith('/listings', 'layout');
   });
 
   it('does not revalidate when the domain module refuses', async () => {
@@ -281,7 +281,7 @@ describe('deleteSellerMediaAction', () => {
     const result = await deleteSellerMediaAction(VALID_DELETE_INPUT);
 
     expect(result).toEqual({ ok: true });
-    expect(revalidatePath).toHaveBeenCalledWith('/listings');
+    expect(revalidatePath).toHaveBeenCalledWith('/listings', 'layout');
   });
 
   it('refuses input the schema cannot read without calling the domain module', async () => {

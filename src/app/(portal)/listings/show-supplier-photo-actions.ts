@@ -1,12 +1,12 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
 import saveShowSupplierPhoto from '@/modules/catalog/products/save-show-supplier-photo';
+import revalidateListingViews from './revalidate-listing-views';
 
 /**
  * The protected boundary for a seller's own "show supplier photo" toggle.
@@ -115,7 +115,7 @@ export default async function saveShowSupplierPhotoAction(
 
   if (!result.ok) return refuse(result.reason);
 
-  revalidatePath('/listings');
+  revalidateListingViews();
 
   return { ok: true, productVersion: result.productVersion };
 }

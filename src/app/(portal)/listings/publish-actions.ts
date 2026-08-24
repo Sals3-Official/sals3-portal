@@ -1,6 +1,6 @@
 'use server';
 
-import { revalidatePath, updateTag } from 'next/cache';
+import { updateTag } from 'next/cache';
 import { after } from 'next/server';
 import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
@@ -12,6 +12,7 @@ import publishProduct, {
   unpublishProduct,
   type PublishRefusal,
 } from '@/modules/catalog/products/publish';
+import revalidateListingViews from './revalidate-listing-views';
 
 /**
  * The protected boundary for making a product visible to buyers.
@@ -148,7 +149,7 @@ async function authorize(
  */
 function revalidateAfterPublicationChange(): void {
   updateTag(STOREFRONT_CATALOG_TAG);
-  revalidatePath('/listings');
+  revalidateListingViews();
 }
 
 /**

@@ -1,6 +1,5 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
@@ -8,6 +7,7 @@ import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
 import saveCategoryAttributes from '@/modules/catalog/products/save-category-attributes';
 import type { CategoryAttributeSubmissionValidation } from '@/modules/catalog/taxonomy/attribute-types';
+import revalidateListingViews from './revalidate-listing-views';
 
 /**
  * The protected boundary for saving a seller's answers to their product's
@@ -133,7 +133,7 @@ export default async function saveCategoryAttributesAction(
 
   // The editor reads specifications through the catalogue read-model, so
   // listing views must re-read rather than serve the pre-save render.
-  revalidatePath('/listings');
+  revalidateListingViews();
 
   return {
     ok: true,

@@ -1,6 +1,6 @@
 'use server';
 
-import { revalidatePath, updateTag } from 'next/cache';
+import { updateTag } from 'next/cache';
 import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
@@ -9,6 +9,7 @@ import { checkRateLimit } from '@/lib/rate-limit';
 import { STOREFRONT_CATALOG_TAG } from '@/lib/storefront/catalog-cache';
 import { authorizeCategoryGovernance } from '@/modules/catalog/taxonomy/authorization';
 import { decideProductSals3Category } from '@/modules/catalog/products/decide-category';
+import revalidateListingViews from './revalidate-listing-views';
 
 /**
  * The one authorized entry point for a seller declaring their own product's
@@ -143,7 +144,7 @@ export async function decideCategoryMappingAction(
   // and a published PDP through the storefront cache — same two-cache
   // reasoning as `saveOptionMappingAction`, since this can also change an
   // already-live product's category.
-  revalidatePath('/listings');
+  revalidateListingViews();
   updateTag(STOREFRONT_CATALOG_TAG);
 
   return {
