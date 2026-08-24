@@ -5,6 +5,7 @@ import {
   desc,
   eq,
   gte,
+  ilike,
   inArray,
   isNotNull,
   lte,
@@ -607,7 +608,7 @@ export type StorefrontDepartmentQuery = {
  * `undefined` rather than an always-true comparison so an unfiltered browse
  * renders the same SQL it did before this filter existed.
  */
-function departmentPriceBound(input: {
+function listingPriceBound(input: {
   minPriceMinor?: number;
   maxPriceMinor?: number;
 }) {
@@ -624,7 +625,7 @@ function departmentPriceBound(input: {
 }
 
 /** Every ordering is tie-broken on `products.id` so paging cannot repeat or skip a row. */
-function departmentOrderBy(sort: StorefrontDepartmentSort) {
+function listingOrderBy(sort: StorefrontDepartmentSort) {
   if (sort === 'price-asc') return [asc(lowestPriceMinor), asc(products.id)];
   if (sort === 'price-desc') return [desc(lowestPriceMinor), asc(products.id)];
 
@@ -634,7 +635,7 @@ function departmentOrderBy(sort: StorefrontDepartmentSort) {
 async function countGroupedProducts(
   executor: DbExecutor,
   scope: ReturnType<typeof publishedScope>,
-  priceBound: ReturnType<typeof departmentPriceBound>,
+  priceBound: ReturnType<typeof listingPriceBound>,
 ): Promise<number> {
   const matching = listBase(executor)
     .where(scope)
@@ -689,13 +690,13 @@ export async function listPublishedProductsInDepartment(
     publishedScope(),
     eq(sals3Categories.l1, input.departmentName),
   );
-  const priceBound = departmentPriceBound(input);
+  const priceBound = listingPriceBound(input);
 
   const ordered = listBase(executor)
     .where(scope)
     .groupBy(products.id)
     .having(priceBound)
-    .orderBy(...departmentOrderBy(input.sort));
+    .orderBy(...listingOrderBy(input.sort));
 
   const [rows, totals] = await Promise.all([
     ordered.limit(input.limit).offset((input.page - 1) * input.limit),
@@ -704,6 +705,90 @@ export async function listPublishedProductsInDepartment(
     // `listPublishedProducts`: a `HAVING` on an aggregate needs the grouping to
     // exist, so the matching ids are grouped in a subquery and the rows of that
     // subquery are what gets counted.
+    countGroupedProducts(executor, scope, priceBound),
+  ]);
+
+  return {
+    rows: await withRatings(
+      rows
+        .map(toListRow)
+        .filter((row): row is StorefrontListRow => row !== null),
+      executor,
+    ),
+    total: totals,
+  };
+}
+
+export type StorefrontSearchQuery = {
+  /** Already trimmed and length-bounded by `storefrontSearchQuerySchema`. */
+  term: string;
+  /**
+   * Optional narrowing to one L1 department, resolved from a slug by
+   * `departmentNameForSlug` — never a raw path segment.
+   */
+  departmentName?: string;
+  sort: StorefrontDepartmentSort;
+  page: number;
+  limit: number;
+  minPriceMinor?: number;
+  maxPriceMinor?: number;
+};
+
+/**
+ * `%` and `_` are wildcards to `LIKE`, so a buyer typing either would silently
+ * widen their own search — `%` alone matching the entire catalogue. The value
+ * is parameterised, so this is not an injection defence; it is the difference
+ * between searching for the characters someone typed and searching for a
+ * pattern they did not write. Backslash is escaped first, because it is the
+ * escape character doing the escaping.
+ */
+function escapeLikePattern(term: string): string {
+  return term.replace(/\\/g, '\\\\').replace(/[%_]/g, (char) => `\\${char}`);
+}
+
+/**
+ * Published products whose title contains the term, newest first by default.
+ *
+ * ## Title only, and substring only
+ *
+ * It matches `products.title` and nothing else. Not the category name — a
+ * search for "electronics" would then return every product in the department
+ * rather than the ones actually called that, and a buyer cannot tell which of
+ * the two happened. Not the description either: a word buried in supplier copy
+ * is not what someone searching for a product name means.
+ *
+ * `ILIKE '%term%'` is a substring match with no ranking, which is the honest
+ * shape for the catalogue this serves. It is also the part to replace first:
+ * with a large catalogue this cannot use an index and has no notion of a better
+ * match, so it wants a `tsvector` column with a GIN index and
+ * `websearch_to_tsquery` before the published count grows. Deliberately not
+ * done now — that is a migration, and prod migrations here are applied by hand.
+ *
+ * Everything that decides what is *public* is shared with the rest of this
+ * module: `publishedScope`, `listBase`, `toListRow`, `withRatings`. Only the
+ * narrowing differs.
+ */
+export async function searchPublishedProducts(
+  input: StorefrontSearchQuery,
+  executor: DbExecutor = getDb(),
+): Promise<StorefrontPage> {
+  const scope = and(
+    publishedScope(),
+    ilike(products.title, `%${escapeLikePattern(input.term)}%`),
+    ...(input.departmentName === undefined
+      ? []
+      : [eq(sals3Categories.l1, input.departmentName)]),
+  );
+  const priceBound = listingPriceBound(input);
+
+  const ordered = listBase(executor)
+    .where(scope)
+    .groupBy(products.id)
+    .having(priceBound)
+    .orderBy(...listingOrderBy(input.sort));
+
+  const [rows, totals] = await Promise.all([
+    ordered.limit(input.limit).offset((input.page - 1) * input.limit),
     countGroupedProducts(executor, scope, priceBound),
   ]);
 
