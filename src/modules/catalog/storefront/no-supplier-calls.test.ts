@@ -30,6 +30,7 @@ const ENTRY_POINTS = [
   resolve(APP_ROOT, 'products/route.ts'),
   resolve(APP_ROOT, 'products/[id]/route.ts'),
   resolve(APP_ROOT, 'categories/route.ts'),
+  resolve(APP_ROOT, 'categories/[slug]/products/route.ts'),
   resolve(__dirname, 'read-model.ts'),
 ];
 

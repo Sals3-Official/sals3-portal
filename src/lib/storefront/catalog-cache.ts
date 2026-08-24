@@ -8,7 +8,9 @@ import {
   listCategoryDepartments,
   listPublishedCategories,
   listPublishedProducts,
+  listPublishedProductsInDepartment,
   type StorefrontCategoryRow,
+  type StorefrontDepartmentQuery,
   type StorefrontDepartmentRow,
   type StorefrontDetailRow,
   type StorefrontPage,
@@ -102,6 +104,41 @@ const readProductAcrossRequests = unstable_cache(
   { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
 );
 
+/**
+ * The department browse, keyed by every input that changes its rows.
+ *
+ * Its own key rather than a share of `storefront-catalog-feed`: the two answer
+ * different questions over the same table, and one filtered department page
+ * must never be served for another. Starts at 'v1' — there is no earlier
+ * shape to bust. The feed and product keys are deliberately untouched: a card
+ * row's shape has not changed, so busting them would discard warm entries for
+ * nothing.
+ *
+ * The arguments are spread rather than passed as the query object because
+ * `unstable_cache` keys on the serialised argument list, and an object literal
+ * would key on property order as well as value.
+ */
+const readDepartmentFeedAcrossRequests = unstable_cache(
+  async (
+    departmentName: string,
+    sort: StorefrontDepartmentQuery['sort'],
+    page: number,
+    limit: number,
+    minPriceMinor: number | undefined,
+    maxPriceMinor: number | undefined,
+  ): Promise<StorefrontPage> =>
+    listPublishedProductsInDepartment({
+      departmentName,
+      sort,
+      page,
+      limit,
+      minPriceMinor,
+      maxPriceMinor,
+    }),
+  ['storefront-catalog-department-feed', 'v1'],
+  { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
+);
+
 const readCategoriesAcrossRequests = unstable_cache(
   async (): Promise<StorefrontCategoryRow[]> => listPublishedCategories(),
   ['storefront-catalog-categories', 'v1'],
@@ -129,6 +166,15 @@ export const readStorefrontFeed: (
 export const readStorefrontProduct: (
   slug: string,
 ) => Promise<StorefrontDetailRow | null> = cache(readProductAcrossRequests);
+
+export const readStorefrontDepartmentFeed: (
+  departmentName: string,
+  sort: StorefrontDepartmentQuery['sort'],
+  page: number,
+  limit: number,
+  minPriceMinor: number | undefined,
+  maxPriceMinor: number | undefined,
+) => Promise<StorefrontPage> = cache(readDepartmentFeedAcrossRequests);
 
 export const readStorefrontCategories: () => Promise<StorefrontCategoryRow[]> =
   cache(readCategoriesAcrossRequests);

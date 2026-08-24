@@ -48,6 +48,57 @@ export const storefrontFeedQuerySchema = z.object({
 
 export type StorefrontFeedQuery = z.infer<typeof storefrontFeedQuerySchema>;
 
+export const storefrontDepartmentSortSchema = z.enum([
+  'newest',
+  'price-asc',
+  'price-desc',
+]);
+
+/**
+ * A price bound in minor units.
+ *
+ * Capped rather than unbounded: the column is a `bigint`, and a bound past
+ * `Number.MAX_SAFE_INTEGER` would be compared as a rounded float. The cap is
+ * far above any real catalogue price, so it clamps nothing a seller could
+ * legitimately list — it only refuses a bound that could not have come from
+ * the price filter's own controls.
+ */
+const MAX_PRICE_MINOR = 1_000_000_000;
+
+const priceBoundSchema = z.coerce
+  .number()
+  .int()
+  .min(0)
+  .max(MAX_PRICE_MINOR)
+  .optional()
+  .catch(undefined);
+
+/**
+ * The category browse query.
+ *
+ * Separate from `storefrontFeedQuerySchema` because the two surfaces narrow
+ * differently: the home feed takes a `section`, which is an ordering over the
+ * whole catalogue, while this takes a sort and a price window inside one
+ * department. Sharing one schema would give each route parameters it has no
+ * meaning for.
+ *
+ * `.catch()` throughout, matching the feed schema: a junk query string degrades
+ * to the default view rather than answering 400. A browse URL is something a
+ * buyer edits, shares, and truncates, so the useful failure mode is "you get
+ * the unfiltered department", not an error page.
+ */
+export const storefrontDepartmentQuerySchema = z.object({
+  sort: storefrontDepartmentSortSchema.catch('newest').default('newest'),
+  page: z.coerce.number().int().min(1).max(10_000).catch(1).default(1),
+  limit: z.coerce.number().int().min(1).max(30).catch(30).default(30),
+  minPriceMinor: priceBoundSchema,
+  maxPriceMinor: priceBoundSchema,
+});
+
+export type StorefrontDepartmentFeedQuery = z.infer<
+  typeof storefrontDepartmentQuerySchema
+>;
+
 /**
  * The consumer's own slug/category shape. Mirrored here so a row that cannot
  * satisfy it is dropped by the producer, where the failure is one missing card
@@ -372,10 +423,15 @@ export function toStorefrontProductDetail(
   };
 }
 
-export function toStorefrontProductFeed(
-  page: StorefrontPage,
-  query: StorefrontFeedQuery,
-): StorefrontProductFeed {
+/**
+ * `query` is constrained to the two keys this actually reads, so the home feed
+ * and the department browse can share one envelope without either pretending to
+ * carry the other's parameters. Generic rather than a `Pick`, so a caller may
+ * pass its own fuller query object without tripping an excess-property check.
+ */
+export function toStorefrontProductFeed<
+  Query extends Pick<StorefrontFeedQuery, 'page' | 'limit'>,
+>(page: StorefrontPage, query: Query): StorefrontProductFeed {
   return {
     products: page.rows
       .map(toStorefrontProduct)
