@@ -100,6 +100,43 @@ export type StorefrontDepartmentFeedQuery = z.infer<
 >;
 
 /**
+ * Bounded so a pasted essay cannot become a `LIKE` pattern, and so the term
+ * that reaches the query is the one a search box could realistically produce.
+ */
+const MAX_SEARCH_TERM_LENGTH = 80;
+
+/**
+ * The search query.
+ *
+ * `q` is the one field here that is genuinely free text, so it is the one field
+ * that is trimmed and truncated rather than allow-listed — everything else
+ * (`category`, `sort`, the price bounds) still comes from a fixed set. An empty
+ * or whitespace-only `q` is not an error: the route answers it as an empty
+ * result rather than a 400, because a buyer clearing the box is a normal thing
+ * to do and not a malformed request.
+ *
+ * `category` is a department **slug** here, not a name; the route resolves it
+ * through `departmentNameForSlug` so an unknown value cannot reach the query.
+ */
+export const storefrontSearchQuerySchema = z.object({
+  q: z
+    .string()
+    .catch('')
+    .default('')
+    .transform((value) => value.trim().slice(0, MAX_SEARCH_TERM_LENGTH)),
+  category: z.string().optional().catch(undefined),
+  sort: storefrontDepartmentSortSchema.catch('newest').default('newest'),
+  page: z.coerce.number().int().min(1).max(10_000).catch(1).default(1),
+  limit: z.coerce.number().int().min(1).max(30).catch(30).default(30),
+  minPriceMinor: priceBoundSchema,
+  maxPriceMinor: priceBoundSchema,
+});
+
+export type StorefrontSearchFeedQuery = z.infer<
+  typeof storefrontSearchQuerySchema
+>;
+
+/**
  * The consumer's own slug/category shape. Mirrored here so a row that cannot
  * satisfy it is dropped by the producer, where the failure is one missing card
  * with a server-side log, instead of by the consumer, where it is a thrown

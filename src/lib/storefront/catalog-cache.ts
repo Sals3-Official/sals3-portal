@@ -9,9 +9,11 @@ import {
   listPublishedCategories,
   listPublishedProducts,
   listPublishedProductsInDepartment,
+  searchPublishedProducts,
   type StorefrontCategoryRow,
   type StorefrontDepartmentQuery,
   type StorefrontDepartmentRow,
+  type StorefrontSearchQuery,
   type StorefrontDetailRow,
   type StorefrontPage,
   type StorefrontSection,
@@ -142,6 +144,39 @@ const readDepartmentFeedAcrossRequests = unstable_cache(
   { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
 );
 
+/**
+ * Search, on its own key.
+ *
+ * Cached like everything else here, but the hit rate is expected to be poor and
+ * that is fine: the point is that a burst of buyers typing the *same* term
+ * costs one query, not that arbitrary terms are cheap. `REVALIDATE_SECONDS`
+ * bounds how long a term can serve a product that has since been paused.
+ *
+ * The term is part of the key, so entries are per-term. Starts at 'v1'.
+ */
+const readSearchAcrossRequests = unstable_cache(
+  async (
+    term: string,
+    departmentName: string | undefined,
+    sort: StorefrontSearchQuery['sort'],
+    page: number,
+    limit: number,
+    minPriceMinor: number | undefined,
+    maxPriceMinor: number | undefined,
+  ): Promise<StorefrontPage> =>
+    searchPublishedProducts({
+      term,
+      departmentName,
+      sort,
+      page,
+      limit,
+      minPriceMinor,
+      maxPriceMinor,
+    }),
+  ['storefront-catalog-search', 'v1'],
+  { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
+);
+
 const readCategoriesAcrossRequests = unstable_cache(
   async (): Promise<StorefrontCategoryRow[]> => listPublishedCategories(),
   ['storefront-catalog-categories', 'v1'],
@@ -178,6 +213,16 @@ export const readStorefrontDepartmentFeed: (
   minPriceMinor: number | undefined,
   maxPriceMinor: number | undefined,
 ) => Promise<StorefrontPage> = cache(readDepartmentFeedAcrossRequests);
+
+export const readStorefrontSearch: (
+  term: string,
+  departmentName: string | undefined,
+  sort: StorefrontSearchQuery['sort'],
+  page: number,
+  limit: number,
+  minPriceMinor: number | undefined,
+  maxPriceMinor: number | undefined,
+) => Promise<StorefrontPage> = cache(readSearchAcrossRequests);
 
 export const readStorefrontCategories: () => Promise<StorefrontCategoryRow[]> =
   cache(readCategoriesAcrossRequests);
