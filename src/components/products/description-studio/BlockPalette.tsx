@@ -85,45 +85,59 @@ export const PALETTE_IMAGES: PaletteEntry[] = [
 ];
 
 /**
- * Suggested block orders per category family.
+ * The one designed layout, in the order `Sals3 PDP Redesign v3.1.dc.html`
+ * draws it: a sub-heading, the opening paragraph, one full-width photo, the
+ * feature list, two detail photos side by side, then the specifics.
  *
- * A template adds empty blocks and writes no copy. Pre-written marketing prose
- * would put words in a seller's mouth and land unedited on a buyer's page —
- * the same objection that keeps the category workbook's attribute-family
- * suggestion behind a button instead of pre-filling it.
+ * ## One, not a menu per category family
+ *
+ * Three category templates stood here (Apparel / Electronics / Beauty) and none
+ * of them included an `image`, so the layout a seller landed on was never the
+ * one the product page was designed around. Owner decision 2026-08-24: there is
+ * one designed layout, and it is the canvas's. A picker also asks the seller to
+ * choose before they have written anything, which is a question they cannot
+ * answer yet and a decision the design has already made.
+ *
+ * ## It writes no copy, and that is what makes it safe to apply by default
+ *
+ * Every entry becomes `emptyBlockOfType`, so this adds structure and not one
+ * word. Pre-written marketing prose would put words in a seller's mouth and
+ * land unedited on a buyer's page — the same objection that keeps the category
+ * workbook's attribute-family suggestion behind a button instead of pre-filling
+ * it. Because `prepareBlocksForSave` drops every empty block, a seller who
+ * opens the studio and leaves saves exactly the empty document they arrived
+ * with: the layout is a starting shape, never stored content.
+ *
+ * The pair of consecutive `image` entries is deliberate. The product page
+ * derives image layout from adjacency — one alone runs full width at 16:9, two
+ * or more pair into a grid at 4:3 — so two blocks in a row *are* the side-by-side
+ * row, and there is nothing else to store.
  */
-export const TEMPLATES: {
-  id: string;
-  label: string;
-  outline: string;
-  types: DescriptionBlockType[];
-}[] = [
-  {
-    id: 'apparel',
-    label: 'Apparel',
-    outline: 'Fit · features · materials · care',
-    types: ['heading', 'paragraph', 'heading', 'bulletList', 'keyValueList'],
-  },
-  {
-    id: 'electronics',
-    label: 'Electronics',
-    outline: 'What it does · specs · in the box',
-    types: ['paragraph', 'heading', 'bulletList', 'keyValueList'],
-  },
-  {
-    id: 'beauty',
-    label: 'Beauty',
-    outline: 'Use · ingredients · warnings',
-    types: ['paragraph', 'heading', 'keyValueList', 'heading', 'bulletList'],
-  },
+export const DEFAULT_DESIGN_LAYOUT: DescriptionBlockType[] = [
+  'heading',
+  'paragraph',
+  'image',
+  'bulletList',
+  'image',
+  'image',
+  'keyValueList',
 ];
+
+const DEFAULT_LAYOUT_OUTLINE =
+  'Intro · full-width photo · features · two photos · details';
 
 type BlockPaletteProps = {
   onAdd: (entry: PaletteEntry) => void;
-  onApplyTemplate: (types: DescriptionBlockType[]) => void;
+  onApplyLayout: (types: DescriptionBlockType[]) => void;
   /** Blocks still available before `MAX_BLOCKS`, so a preset cannot overrun it. */
   remaining: number;
-  canApplyTemplate: boolean;
+  /**
+   * False once the canvas holds anything, because applying the layout replaces
+   * the canvas outright. The studio seeds a new description with it already, so
+   * this is the control for putting it back after a seller has cleared
+   * everything — never a way to discard work in progress.
+   */
+  canApplyLayout: boolean;
 };
 
 function PaletteButton({
@@ -157,9 +171,9 @@ function PaletteButton({
 
 export default function BlockPalette({
   onAdd,
-  onApplyTemplate,
+  onApplyLayout,
   remaining,
-  canApplyTemplate,
+  canApplyLayout,
 }: BlockPaletteProps) {
   return (
     <div className="flex flex-col">
@@ -190,25 +204,22 @@ export default function BlockPalette({
 
       <hr className="mx-1 my-4 border-border" />
       <p className="mb-2 ml-1 text-[10.5px] font-bold tracking-[0.09em] text-ink-subtle uppercase">
-        Start from
+        Layout
       </p>
-      {TEMPLATES.map((template) => (
-        <button
-          key={template.id}
-          type="button"
-          disabled={!canApplyTemplate || remaining < template.types.length}
-          onClick={() => onApplyTemplate(template.types)}
-          className="min-h-[34px] cursor-pointer rounded-md px-2 py-1.5 text-left text-[13px] font-medium text-sals3-deep hover:bg-background disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-        >
-          {template.label}
-          <span className="block text-[11.5px] font-normal text-ink-subtle">
-            {template.outline}
-          </span>
-        </button>
-      ))}
+      <button
+        type="button"
+        disabled={!canApplyLayout || remaining < DEFAULT_DESIGN_LAYOUT.length}
+        onClick={() => onApplyLayout(DEFAULT_DESIGN_LAYOUT)}
+        className="min-h-[34px] cursor-pointer rounded-md px-2 py-1.5 text-left text-[13px] font-medium text-sals3-deep hover:bg-background disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+      >
+        Standard layout
+        <span className="block text-[11.5px] font-normal text-ink-subtle">
+          {DEFAULT_LAYOUT_OUTLINE}
+        </span>
+      </button>
       <p className="mt-3 ml-1 text-[11.5px] leading-relaxed text-ink-subtle">
-        A template adds empty blocks in a suggested order. It writes no copy for
-        you.
+        A new description already starts in this layout. It adds empty blocks
+        and writes no copy for you.
       </p>
     </div>
   );

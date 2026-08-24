@@ -30,7 +30,10 @@ import {
   type KeyedDescriptionBlock,
 } from '@/lib/products/keyed-blocks';
 import BlockInspector from './BlockInspector';
-import BlockPalette, { type PaletteEntry } from './BlockPalette';
+import BlockPalette, {
+  DEFAULT_DESIGN_LAYOUT,
+  type PaletteEntry,
+} from './BlockPalette';
 import StudioCanvas from './StudioCanvas';
 
 /**
@@ -74,8 +77,40 @@ export default function DescriptionStudio({
   uploadImage,
   uploadDisabledReason = null,
 }: DescriptionStudioProps) {
+  /**
+   * A description that has never been written opens in the designed layout
+   * rather than on a blank canvas.
+   *
+   * Owner decision 2026-08-24. The empty canvas asked a seller to invent the
+   * shape of a product page before writing a word of it, and the shape is not
+   * theirs to invent — `Sals3 PDP Redesign v3.1` already decided it, and the
+   * storefront renders that and nothing else. The three category templates that
+   * used to sit behind a button did not even include a photo, so the arrangement
+   * a seller started from was never the one their page was designed around.
+   *
+   * ## This cannot fabricate a description
+   *
+   * `DEFAULT_DESIGN_LAYOUT` becomes `emptyBlockOfType` blocks — structure with
+   * no text and no image address — and `prepareBlocksForSave` drops every empty
+   * block before anything is stored. So a seller who opens this screen and
+   * leaves saves the same empty document they arrived with, `blocksMatchSaved`
+   * reports no unsaved changes, and nothing reaches a buyer. The seeding is a
+   * starting shape, never content, which is the whole reason it is safe to
+   * apply without asking.
+   *
+   * ## Seeded at mount, not in an effect
+   *
+   * The initialiser runs once per mounted product, so there is no render where
+   * the canvas is briefly empty and no effect racing the seller's first
+   * keystroke. A saved description is left exactly as stored — the seeding is
+   * strictly the empty case.
+   */
   const [blocks, setBlocks] = useState<KeyedDescriptionBlock[]>(() =>
-    keyDescriptionBlocks(initialBlocks),
+    keyDescriptionBlocks(
+      initialBlocks.length === 0
+        ? DEFAULT_DESIGN_LAYOUT.map(emptyBlockOfType)
+        : initialBlocks,
+    ),
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -182,9 +217,9 @@ export default function DescriptionStudio({
   const palette = (
     <BlockPalette
       remaining={remaining}
-      canApplyTemplate={blocks.length === 0}
+      canApplyLayout={blocks.length === 0}
       onAdd={(entry: PaletteEntry) => addBlocks(entry.type, entry.count)}
-      onApplyTemplate={(types) => {
+      onApplyLayout={(types) => {
         const added = types.map((type) =>
           keyDescriptionBlock(emptyBlockOfType(type)),
         );
