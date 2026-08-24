@@ -4,8 +4,10 @@ import {
   count,
   desc,
   eq,
+  gte,
   inArray,
   isNotNull,
+  lte,
   ne,
   sql,
 } from 'drizzle-orm';
@@ -579,6 +581,140 @@ export async function listPublishedProducts(
       executor,
     ),
     total: totals[0]?.total ?? 0,
+  };
+}
+
+export type StorefrontDepartmentSort = 'newest' | 'price-asc' | 'price-desc';
+
+export type StorefrontDepartmentQuery = {
+  /**
+   * The exact `sals3_categories.l1` value, resolved from a slug by
+   * `departmentNameForSlug`. Never a raw path segment — see that function for
+   * why the allow-list is the security boundary here.
+   */
+  departmentName: string;
+  sort: StorefrontDepartmentSort;
+  page: number;
+  limit: number;
+  /** Inclusive bounds on the card price, in minor units. */
+  minPriceMinor?: number;
+  maxPriceMinor?: number;
+};
+
+/**
+ * The inclusive card-price bound, or `undefined` when neither end was given.
+ *
+ * `undefined` rather than an always-true comparison so an unfiltered browse
+ * renders the same SQL it did before this filter existed.
+ */
+function departmentPriceBound(input: {
+  minPriceMinor?: number;
+  maxPriceMinor?: number;
+}) {
+  const bounds = [
+    input.minPriceMinor === undefined
+      ? undefined
+      : gte(lowestPriceMinor, input.minPriceMinor),
+    input.maxPriceMinor === undefined
+      ? undefined
+      : lte(lowestPriceMinor, input.maxPriceMinor),
+  ].filter((bound) => bound !== undefined);
+
+  return bounds.length === 0 ? undefined : and(...bounds);
+}
+
+/** Every ordering is tie-broken on `products.id` so paging cannot repeat or skip a row. */
+function departmentOrderBy(sort: StorefrontDepartmentSort) {
+  if (sort === 'price-asc') return [asc(lowestPriceMinor), asc(products.id)];
+  if (sort === 'price-desc') return [desc(lowestPriceMinor), asc(products.id)];
+
+  return [desc(products.publishedAt), asc(products.id)];
+}
+
+async function countGroupedProducts(
+  executor: DbExecutor,
+  scope: ReturnType<typeof publishedScope>,
+  priceBound: ReturnType<typeof departmentPriceBound>,
+): Promise<number> {
+  const matching = listBase(executor)
+    .where(scope)
+    .groupBy(products.id)
+    .having(priceBound)
+    .as('matching_products');
+  const totals = await executor.select({ total: count() }).from(matching);
+
+  return totals[0]?.total ?? 0;
+}
+
+/**
+ * Published products filed under one L1 department, filtered and paged.
+ *
+ * ## Why the price bound is a `HAVING`, not a `WHERE`
+ *
+ * The price on a card is `min(product_offers.price_amount_minor)` — an
+ * aggregate over every published offer. A `WHERE` on the raw offer column
+ * filters offer rows *before* grouping, so a product with a $10 and a $50 offer
+ * would survive a "$15–$30" filter on neither, but a product with a $10 and a
+ * $20 offer would survive on its $20 row and then render at $10 — a card
+ * outside the band the buyer just selected, sitting in the results for that
+ * band. Filtering the aggregate means the number that decides membership is the
+ * same number the buyer sees.
+ *
+ * ## Why the department is matched on `l1` and not the path
+ *
+ * `l1` carries the department name verbatim for every workbook-seeded taxonomy
+ * row, and `sals3_categories_l1_idx` indexes it. Auto-mirrored CJ rows put a
+ * whole supplier path in `l1` (see `taxonomy/departments.ts`), so they simply
+ * fail the equality rather than needing a second predicate to exclude them —
+ * and a product filed under one was never reachable from a department tile
+ * anyway, because `categoryTopName` would not reduce its path to a department
+ * slug either.
+ *
+ * ## Why this is a separate function from `listPublishedProducts`
+ *
+ * It could have been optional arguments on that one. It is not, because that
+ * query serves the live home page: its predicate is asserted condition by
+ * condition, its count is asserted byte-identical to its list, and both are read
+ * by index in `read-model.published-scope.test.ts`. Adding a grouped `HAVING`
+ * and a subquery count to it would rewrite the shape those assertions describe,
+ * to make a browse surface work. The two share `listBase`, `publishedScope`,
+ * `toListRow` and `withRatings` — everything that decides what is public — and
+ * differ only in how they narrow and order it.
+ */
+export async function listPublishedProductsInDepartment(
+  input: StorefrontDepartmentQuery,
+  executor: DbExecutor = getDb(),
+): Promise<StorefrontPage> {
+  const scope = and(
+    publishedScope(),
+    eq(sals3Categories.l1, input.departmentName),
+  );
+  const priceBound = departmentPriceBound(input);
+
+  const ordered = listBase(executor)
+    .where(scope)
+    .groupBy(products.id)
+    .having(priceBound)
+    .orderBy(...departmentOrderBy(input.sort));
+
+  const [rows, totals] = await Promise.all([
+    ordered.limit(input.limit).offset((input.page - 1) * input.limit),
+    // Counted over the same grouped, price-bounded set the page is drawn from.
+    // `count(distinct products.id)` cannot be used here as it is in
+    // `listPublishedProducts`: a `HAVING` on an aggregate needs the grouping to
+    // exist, so the matching ids are grouped in a subquery and the rows of that
+    // subquery are what gets counted.
+    countGroupedProducts(executor, scope, priceBound),
+  ]);
+
+  return {
+    rows: await withRatings(
+      rows
+        .map(toListRow)
+        .filter((row): row is StorefrontListRow => row !== null),
+      executor,
+    ),
+    total: totals,
   };
 }
 

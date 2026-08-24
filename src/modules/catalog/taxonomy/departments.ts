@@ -20,6 +20,8 @@
  * data-driven: a department that is not in the table does not appear in the
  * storefront's list, whitelisted or not.
  */
+import { slugBaseFromTitle } from '@/modules/catalog/products/slug';
+
 const SALS3_TAXONOMY_DEPARTMENTS = [
   'Animals & Pet Supplies',
   'Apparel & Accessories',
@@ -43,5 +45,37 @@ const SALS3_TAXONOMY_DEPARTMENTS = [
   'Toys & Games',
   'Vehicles & Parts',
 ] as const;
+
+/**
+ * `animals-pet-supplies` → `Animals & Pet Supplies`.
+ *
+ * ## Why a map and not a query
+ *
+ * `toCategorySlug` is one-way — it lowercases, replaces every non-alphanumeric
+ * run with a hyphen, and truncates. There is no SQL expression that inverts it,
+ * so a department slug arriving in a URL cannot be turned into a `WHERE` value
+ * by the database. Building the 21 slugs from the same list the forward
+ * direction uses keeps both directions derived from one source: a taxonomy
+ * reseed that renames a department changes the slug on both sides in the same
+ * commit, or neither.
+ *
+ * ## Why this doubles as the allow-list
+ *
+ * The returned name is interpolated into a `sals3_categories.l1` comparison, so
+ * an unrecognised slug must never reach the query. Returning `null` for
+ * anything not in this list satisfies code rule 33 (allow-lists, never
+ * block-lists) at the one boundary where a buyer-controlled path segment
+ * becomes a query value — and it is why the caller answers 404 rather than
+ * running a query that would return nothing anyway.
+ *
+ * Built once at module load: 21 entries, and the list is a frozen constant.
+ */
+const DEPARTMENT_NAME_BY_SLUG = new Map<string, string>(
+  SALS3_TAXONOMY_DEPARTMENTS.map((name) => [slugBaseFromTitle(name), name]),
+);
+
+export function departmentNameForSlug(slug: string): string | null {
+  return DEPARTMENT_NAME_BY_SLUG.get(slug) ?? null;
+}
 
 export default SALS3_TAXONOMY_DEPARTMENTS;
