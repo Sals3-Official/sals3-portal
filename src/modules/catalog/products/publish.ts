@@ -581,6 +581,10 @@ export default async function publishProduct(input: {
           },
           supplierCostObservedAt: variant.observedAt?.toISOString() ?? null,
           settlementCurrency: SETTLEMENT_CURRENCY,
+          // The same destination this publication writes onto every offer
+          // below, so the margin that prices a variant and the market it is
+          // sold into can never be two different answers.
+          marketCode: destination.destinationCountryCode,
         });
       } else {
         /**

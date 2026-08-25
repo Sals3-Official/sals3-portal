@@ -35,6 +35,9 @@ const ACTIVE_DEFAULT: PricingStoreDefaultRow = {
   targetMarginRate: '0.350000',
   minContributionMinor: BigInt(250),
   minContributionCurrency: 'USD',
+  // Unscoped, which is what every store default is until a destination is set
+  // against it — `null` is the "all destinations" rule, not a missing value.
+  marketCode: null,
   roundingRule: 'NEAREST_0_99',
   status: 'ACTIVE',
   version: 2,

@@ -698,6 +698,21 @@ async function runDraftTransaction(
       supplierVariantId: null,
       supplierCost: null,
       supplierCostObservedAt: observedAt?.toISOString() ?? null,
+      /**
+       * Empty on purpose, and not a stand-in country.
+       *
+       * A draft is not being priced for anywhere yet — the destination is
+       * decided at publication, from the seller's own market profile. Passing
+       * `'AU'` here to satisfy the type would be exactly the inferred
+       * commercial input ADR-015's amendment refuses, and it would read as a
+       * real decision to whoever found it next.
+       *
+       * The resolver refuses this call on `CATEGORY_MAPPING_REQUIRES_REVIEW`
+       * before the market is ever examined, so the recorded reason is unchanged
+       * by this field. If that ever stops being true, `MARKET_REQUIRED` is the
+       * honest answer and this line is what produces it.
+       */
+      marketCode: '',
       settlementCurrency: SETTLEMENT_CURRENCY,
     });
 

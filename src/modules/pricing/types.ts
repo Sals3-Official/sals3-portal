@@ -18,6 +18,7 @@ export type PricingUnavailableReason =
   | 'CATEGORY_MAPPING_REQUIRES_REVIEW'
   | 'CATEGORY_POLICY_REQUIRED'
   | 'PRICING_POLICY_REQUIRED'
+  | 'MARKET_REQUIRED'
   | 'CONTRIBUTION_FLOOR_CURRENCY_MISMATCH'
   | 'SUPPLIER_COST_UNAVAILABLE'
   | 'REFERENCE_FX_UNAVAILABLE'
@@ -35,6 +36,13 @@ export const PRICING_UNAVAILABLE_REASON_LABELS: Record<
   CATEGORY_POLICY_REQUIRED: 'Category policy required',
   PRICING_POLICY_REQUIRED:
     'No margin policy — set a store default or a category margin in Market rules',
+  /**
+   * Names the caller's omission, not the seller's. A seller cannot fix this by
+   * configuring anything, so the copy must not send them to Market rules the
+   * way `PRICING_POLICY_REQUIRED` does.
+   */
+  MARKET_REQUIRED:
+    'No destination was given, so this price could not be worked out',
   CONTRIBUTION_FLOOR_CURRENCY_MISMATCH:
     'Contribution floor currency does not match the settlement currency',
   SUPPLIER_COST_UNAVAILABLE: 'Supplier cost unavailable',
@@ -59,6 +67,24 @@ export type PricingResolutionInput = {
   supplierCostObservedAt: string | null;
   /** ADR-003 phase 1: always `'USD'` today. Passed in, never hardcoded inside the resolver, so a future multi-currency phase changes one caller-supplied value, not this module. */
   settlementCurrency: string;
+  /**
+   * The destination being priced for, as a two-letter code.
+   *
+   * **Required, and deliberately not defaulted.** ADR-015's
+   * `Amendment — 2026-08-25`: a caller that cannot say which destination it is
+   * pricing for must refuse rather than silently resolve the all-destinations
+   * rule — same reasoning as `settlementCurrency` above and
+   * `minContributionCurrency` in the schema. An inferred commercial input is one
+   * nobody can audit later, and the failure it produces is a wrong price rather
+   * than an error.
+   *
+   * Typed as `string` rather than an enum for the reason
+   * `product_offers.market_code` records: the allowed set is resolved
+   * server-side from the seller's own profile, and this module must not become
+   * the place a destination list is hard-coded. The resolver validates the shape
+   * and refuses `MARKET_REQUIRED` on anything else.
+   */
+  marketCode: string;
 };
 
 export type PricingDecision =

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   listCategoryMarginOverview: vi.fn(),
-  findActiveStoreDefault: vi.fn(),
+  findStoreDefaultForScope: vi.fn(),
   countDescendantsByPath: vi.fn(),
 }));
 
@@ -11,7 +11,7 @@ vi.mock('@/lib/db/client', () => ({ default: () => ({ __db: true }) }));
 
 vi.mock('@/modules/pricing/repository', () => ({
   listCategoryMarginOverview: mocks.listCategoryMarginOverview,
-  findActiveStoreDefault: mocks.findActiveStoreDefault,
+  findStoreDefaultForScope: mocks.findStoreDefaultForScope,
   countDescendantsByPath: mocks.countDescendantsByPath,
 }));
 
@@ -51,7 +51,7 @@ async function renderToTree(): Promise<string> {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.listCategoryMarginOverview.mockResolvedValue(ROWS);
-  mocks.findActiveStoreDefault.mockResolvedValue(null);
+  mocks.findStoreDefaultForScope.mockResolvedValue(null);
   mocks.countDescendantsByPath.mockResolvedValue(new Map());
 });
 
@@ -65,7 +65,7 @@ describe('CategoryPricingSection — read isolation', () => {
    * had succeeded the entire time.
    */
   it('still renders the tree when the store-default read fails outright', async () => {
-    mocks.findActiveStoreDefault.mockRejectedValue(
+    mocks.findStoreDefaultForScope.mockRejectedValue(
       new Error('relation "pricing_store_defaults" does not exist'),
     );
 
@@ -79,7 +79,7 @@ describe('CategoryPricingSection — read isolation', () => {
   });
 
   it('a failed store-default read is never presented as "no default configured"', async () => {
-    mocks.findActiveStoreDefault.mockRejectedValue(new Error('boom'));
+    mocks.findStoreDefaultForScope.mockRejectedValue(new Error('boom'));
 
     const output = await renderToTree();
 
@@ -87,7 +87,7 @@ describe('CategoryPricingSection — read isolation', () => {
   });
 
   it('a successful read with no default still shows the first-run notice', async () => {
-    mocks.findActiveStoreDefault.mockResolvedValue(null);
+    mocks.findStoreDefaultForScope.mockResolvedValue(null);
 
     const output = await renderToTree();
 
@@ -96,7 +96,7 @@ describe('CategoryPricingSection — read isolation', () => {
   });
 
   it('a real default shows neither banner', async () => {
-    mocks.findActiveStoreDefault.mockResolvedValue({
+    mocks.findStoreDefaultForScope.mockResolvedValue({
       targetMarginRate: '0.350000',
       roundingRule: 'NONE',
     });

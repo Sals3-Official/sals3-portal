@@ -85,6 +85,24 @@ export async function resolveProductPricing(
     return unavailable('CATEGORY_MAPPING_REQUIRES_REVIEW');
   }
 
+  /**
+   * Refused before any read, not defaulted.
+   *
+   * Both policy tables now carry a destination scope, and an unscoped rule is a
+   * real configuration meaning "all destinations" rather than an absence. So a
+   * caller that cannot name its destination cannot be quietly given the
+   * unscoped answer: that would price a Fiji order off a rule the seller wrote
+   * for everywhere, and produce a number instead of an error.
+   *
+   * Shape-checked here against the same `^[A-Z]{2}$` the database enforces, so
+   * a typo is a refusal rather than a silent miss — `market_code = 'aus'`
+   * matches no row and would otherwise fall through to the unscoped rule
+   * looking exactly like success.
+   */
+  if (!/^[A-Z]{2}$/.test(input.marketCode)) {
+    return unavailable('MARKET_REQUIRED');
+  }
+
   const category = await findCategoryByCode(executor, input.categoryCode);
 
   if (category === null) {
@@ -95,6 +113,7 @@ export async function resolveProductPricing(
     executor,
     input.sellerAccountId,
     category,
+    input.marketCode,
   );
 
   // Fetched even when a category policy exists: the store default is the
@@ -103,6 +122,7 @@ export async function resolveProductPricing(
   const storeDefault = await findActiveStoreDefault(
     executor,
     input.sellerAccountId,
+    input.marketCode,
   );
 
   if (nearestCategoryPolicy === null && storeDefault === null) {

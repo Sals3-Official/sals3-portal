@@ -149,10 +149,54 @@ export type NearestCategoryPolicy = {
  * the leaf's own `path` string, so no recursive CTE is needed — then the
  * deepest priced node wins client-side (at most 5 rows).
  */
+/**
+ * Which of two candidate rows wins, in one place.
+ *
+ * **Depth beats market** — owner decision, 2026-08-25, confirmed explicitly.
+ * A deeper category carrying only an all-destinations rule outranks a shallower
+ * one carrying a rule for this exact destination. The alternative was tried on
+ * paper and rejected: if market outranked depth, setting a single country rate
+ * on a department would silently override every product-level decision beneath
+ * it, and nothing in the UI would show that it had.
+ *
+ * Market is the tie-break **within** one depth, where an exactly-scoped rule
+ * beats the unscoped one. That pair can only exist because the two partial
+ * unique indexes deliberately allow it: one ACTIVE row per `(seller, category)`
+ * with a null scope, and one per `(seller, category, market_code)` without.
+ *
+ * Returns true when `row` should replace `best`.
+ */
+function outranks(
+  row: { category: Sals3CategoryRow; policy: PricingCategoryPolicyRow },
+  best: { category: Sals3CategoryRow; policy: PricingCategoryPolicyRow },
+): boolean {
+  if (row.category.path.length !== best.category.path.length) {
+    return row.category.path.length > best.category.path.length;
+  }
+
+  // Same category: the destination-specific rule is the more specific answer.
+  return row.policy.marketCode !== null && best.policy.marketCode === null;
+}
+
+/**
+ * The nearest active policy for one category **in one destination**.
+ *
+ * `marketCode` is required and deliberately not defaulted. ADR-015's
+ * `Amendment — 2026-08-25`: a caller that cannot say which destination it is
+ * pricing for must refuse rather than silently resolve the all-destinations
+ * rule, for the same reason `minContributionCurrency` is explicit — an inferred
+ * commercial input is one nobody can audit later.
+ *
+ * The query widens to `market_code = $market OR market_code IS NULL`; it does
+ * **not** narrow to the market alone. Dropping the unscoped rows would make a
+ * seller who has configured nothing per-destination lose every margin they
+ * have, which is the opposite of what "null means all destinations" promises.
+ */
 export async function findNearestActiveCategoryPolicy(
   executor: Executor,
   sellerAccountId: string,
   category: Sals3CategoryRow,
+  marketCode: string,
 ): Promise<NearestCategoryPolicy | null> {
   const segments = category.path.split(CATEGORY_PATH_SEPARATOR);
   const chainPaths = segments.map((_, index) =>
@@ -171,6 +215,10 @@ export async function findNearestActiveCategoryPolicy(
         eq(pricingCategoryPolicies.categoryId, sals3Categories.id),
         eq(pricingCategoryPolicies.sellerAccountId, sellerAccountId),
         eq(pricingCategoryPolicies.status, 'ACTIVE'),
+        or(
+          eq(pricingCategoryPolicies.marketCode, marketCode),
+          isNull(pricingCategoryPolicies.marketCode),
+        ),
       ),
     )
     .where(inArray(sals3Categories.path, chainPaths));
@@ -178,7 +226,7 @@ export async function findNearestActiveCategoryPolicy(
   if (rows.length === 0) return null;
 
   const deepest = rows.reduce((best, row) =>
-    row.category.path.length > best.category.path.length ? row : best,
+    outranks(row, best) ? row : best,
   );
 
   return { policy: deepest.policy, sourceCategory: deepest.category };
@@ -812,9 +860,39 @@ export async function deactivateFundingBufferPolicy(
 
 // --- Store default (ADR-015 §3 base layer) -------------------------------
 
-export async function findActiveStoreDefault(
+/**
+ * The seller's active store default for one destination.
+ *
+ * The floor lives on this row, and the owner's justification for
+ * per-destination pricing was operational expense — which is exactly what
+ * `min_contribution_minor` carries. So the scope applies here too, or the rule
+ * would only have moved by half.
+ *
+ * There is no depth here, so market is the only key: an exactly-scoped default
+ * beats the unscoped one, and `.limit(1)` is gone because both can exist. Taking
+ * the first row of two would have made the answer depend on Postgres's physical
+ * ordering — a silent, unreproducible pick between two real configurations.
+ */
+/**
+ * The store default for **exactly** one scope, with no fallback.
+ *
+ * Deliberately separate from `findActiveStoreDefault`, which resolves — walks
+ * the scoped rule then the unscoped one — because a screen and a resolver want
+ * opposite things from the same table.
+ *
+ * The resolver wants "whatever applies to this destination". An editor wants
+ * "the row this scope owns, or nothing". Handing the editor the resolver's
+ * answer is how a screen ends up **displaying the unscoped rule and writing a
+ * scoped one**, or displaying a rule inherited from all-destinations and
+ * offering a Deactivate that silently creates a new row instead.
+ *
+ * `null` asks for the unscoped rule, which is what the Market Rules screen
+ * edits until it grows a destination selector.
+ */
+export async function findStoreDefaultForScope(
   executor: Executor,
   sellerAccountId: string,
+  marketCode: string | null,
 ): Promise<PricingStoreDefaultRow | null> {
   const rows = await executor
     .select()
@@ -823,11 +901,36 @@ export async function findActiveStoreDefault(
       and(
         eq(pricingStoreDefaults.sellerAccountId, sellerAccountId),
         eq(pricingStoreDefaults.status, 'ACTIVE'),
+        marketCode === null
+          ? isNull(pricingStoreDefaults.marketCode)
+          : eq(pricingStoreDefaults.marketCode, marketCode),
       ),
     )
     .limit(1);
 
   return rows[0] ?? null;
+}
+
+export async function findActiveStoreDefault(
+  executor: Executor,
+  sellerAccountId: string,
+  marketCode: string,
+): Promise<PricingStoreDefaultRow | null> {
+  const rows = await executor
+    .select()
+    .from(pricingStoreDefaults)
+    .where(
+      and(
+        eq(pricingStoreDefaults.sellerAccountId, sellerAccountId),
+        eq(pricingStoreDefaults.status, 'ACTIVE'),
+        or(
+          eq(pricingStoreDefaults.marketCode, marketCode),
+          isNull(pricingStoreDefaults.marketCode),
+        ),
+      ),
+    );
+
+  return rows.find((row) => row.marketCode !== null) ?? rows[0] ?? null;
 }
 
 export async function createStoreDefault(

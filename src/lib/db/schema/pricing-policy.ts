@@ -1,5 +1,6 @@
 import {
   bigint,
+  check,
   index,
   integer,
   numeric,
@@ -116,6 +117,26 @@ export const pricingCategoryPolicies = pgTable(
     categoryId: uuid('category_id')
       .notNull()
       .references(() => sals3Categories.id, { onDelete: 'restrict' }),
+    /**
+     * The destination this rule prices for, or `null` for "all destinations".
+     *
+     * ADR-015's `Amendment — 2026-08-25`: operational expense is not the same
+     * number in every country, so one rate cannot serve six. A 300 g basket
+     * costs $3.70 to the Philippines and $16.01 to Fiji, while a 25% margin on
+     * a $4.29 supplier cost contributes about $1.07 — covering neither.
+     *
+     * **Null is the unscoped rule, not a missing value.** Every policy written
+     * before this column existed is therefore still exactly what it was, and no
+     * backfill is required to preserve behaviour.
+     *
+     * Free text with a shape check rather than an enum, for the reason
+     * `product_offers.market_code` already records: the allowed set is resolved
+     * server-side from the seller's own `seller_market_profiles` row
+     * intersected with `modules/market-config/capabilities.ts`, and encoding
+     * today's pilot destinations as a Postgres enum would need a migration
+     * every time the policy moves.
+     */
+    marketCode: text('market_code'),
     /** 0 < rate < 1, enforced again at the write boundary (Zod) and defensively by the resolver. */
     targetMarginRate: numeric('target_margin_rate', {
       precision: 8,
@@ -136,11 +157,35 @@ export const pricingCategoryPolicies = pgTable(
       .defaultNow(),
   },
   (table) => [
-    // Deterministic selection: at most one ACTIVE policy per seller+category.
-    uniqueIndex('pricing_category_policies_active_key')
+    /**
+     * Deterministic selection, in **two** partial indexes rather than one.
+     *
+     * Adding `market_code` to the original
+     * `(seller_account_id, category_id)` index would have silently destroyed
+     * the guarantee it existed for: Postgres treats NULLs as distinct in a
+     * unique index, so two ACTIVE all-destinations policies for one category
+     * would both have been accepted and the resolver would have had no
+     * deterministic row to choose. Splitting on `market_code IS NULL` keeps
+     * "at most one ACTIVE" true on both sides of the scope.
+     *
+     * `NULLS NOT DISTINCT` would express the same thing in one index. It is not
+     * used because it is a Postgres 15+ behaviour switch that reads as a
+     * detail, while this is the invariant the whole resolution order rests on.
+     */
+    uniqueIndex('pricing_category_policies_active_all_markets_key')
       .on(table.sellerAccountId, table.categoryId)
-      .where(sql`${table.status} = 'ACTIVE'`),
+      .where(sql`${table.status} = 'ACTIVE' AND ${table.marketCode} IS NULL`),
+    uniqueIndex('pricing_category_policies_active_market_key')
+      .on(table.sellerAccountId, table.categoryId, table.marketCode)
+      .where(
+        sql`${table.status} = 'ACTIVE' AND ${table.marketCode} IS NOT NULL`,
+      ),
     index('pricing_category_policies_seller_idx').on(table.sellerAccountId),
+    /** Same shape `product_offers` enforces. A CHECK passes on NULL. */
+    check(
+      'pricing_category_policies_market_code_shape',
+      sql`${table.marketCode} IS NULL OR ${table.marketCode} ~ '^[A-Z]{2}$'`,
+    ),
   ],
 );
 
@@ -311,6 +356,26 @@ export const pricingStoreDefaults = pgTable(
     minContributionCurrency: text('min_contribution_currency')
       .notNull()
       .default('USD'),
+    /**
+     * The destination this rule prices for, or `null` for "all destinations".
+     *
+     * ADR-015's `Amendment — 2026-08-25`: operational expense is not the same
+     * number in every country, so one rate cannot serve six. A 300 g basket
+     * costs $3.70 to the Philippines and $16.01 to Fiji, while a 25% margin on
+     * a $4.29 supplier cost contributes about $1.07 — covering neither.
+     *
+     * **Null is the unscoped rule, not a missing value.** Every policy written
+     * before this column existed is therefore still exactly what it was, and no
+     * backfill is required to preserve behaviour.
+     *
+     * Free text with a shape check rather than an enum, for the reason
+     * `product_offers.market_code` already records: the allowed set is resolved
+     * server-side from the seller's own `seller_market_profiles` row
+     * intersected with `modules/market-config/capabilities.ts`, and encoding
+     * today's pilot destinations as a Postgres enum would need a migration
+     * every time the policy moves.
+     */
+    marketCode: text('market_code'),
     roundingRule: roundingRuleEnum('rounding_rule').notNull().default('NONE'),
     status: pricingPolicyStatusEnum('status').notNull().default('ACTIVE'),
     version: integer('version').notNull().default(1),
@@ -325,11 +390,30 @@ export const pricingStoreDefaults = pgTable(
       .defaultNow(),
   },
   (table) => [
-    // Deterministic selection: at most one ACTIVE store default per seller.
-    uniqueIndex('pricing_store_defaults_active_key')
+    /**
+     * At most one ACTIVE store default per seller **per scope** — same
+     * two-index reasoning as `pricing_category_policies` above, and the same
+     * NULL-distinctness trap avoided the same way.
+     *
+     * The floor travels with the margin here on purpose. The owner's
+     * justification for per-destination pricing was operational expense, and
+     * `min_contribution_minor` is the instrument that carries exactly that:
+     * the cost that does not shrink when an item is cheap. Scoping the margin
+     * without scoping the floor would have moved half the rule.
+     */
+    uniqueIndex('pricing_store_defaults_active_all_markets_key')
       .on(table.sellerAccountId)
-      .where(sql`${table.status} = 'ACTIVE'`),
+      .where(sql`${table.status} = 'ACTIVE' AND ${table.marketCode} IS NULL`),
+    uniqueIndex('pricing_store_defaults_active_market_key')
+      .on(table.sellerAccountId, table.marketCode)
+      .where(
+        sql`${table.status} = 'ACTIVE' AND ${table.marketCode} IS NOT NULL`,
+      ),
     index('pricing_store_defaults_seller_idx').on(table.sellerAccountId),
+    check(
+      'pricing_store_defaults_market_code_shape',
+      sql`${table.marketCode} IS NULL OR ${table.marketCode} ~ '^[A-Z]{2}$'`,
+    ),
   ],
 );
 

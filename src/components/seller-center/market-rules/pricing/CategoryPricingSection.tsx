@@ -1,7 +1,7 @@
 import getDb from '@/lib/db/client';
 import {
   countDescendantsByPath,
-  findActiveStoreDefault,
+  findStoreDefaultForScope,
   listCategoryMarginOverview,
   type CategoryMarginLeafRow,
 } from '@/modules/pricing/repository';
@@ -73,7 +73,11 @@ async function readStoreDefault(
   | { state: 'unavailable' }
 > {
   try {
-    const storeDefault = await findActiveStoreDefault(getDb(), sellerAccountId);
+    const storeDefault = await findStoreDefaultForScope(
+      getDb(),
+      sellerAccountId,
+      null,
+    );
 
     return {
       state: 'ok',

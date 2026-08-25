@@ -34,20 +34,52 @@ function columnNamesOf(
 }
 
 describe('pricing_category_policies constraints', () => {
-  it('holds at most one ACTIVE policy per seller per category', () => {
-    const index = indexNamed(
-      pricingCategoryPolicies,
-      'pricing_category_policies_active_key',
-    );
+  /**
+   * One ACTIVE policy per scope, in **two** partial indexes.
+   *
+   * Postgres treats NULLs as distinct in a unique index, so folding
+   * `market_code` into the original `(seller_account_id, category_id)` index
+   * would have accepted two ACTIVE all-destinations policies for one category
+   * and left the resolver with no deterministic row to choose. Both halves are
+   * asserted because losing either one loses the guarantee on that side only —
+   * quietly, and not until two rows actually collide.
+   */
+  it('holds at most one ACTIVE all-destinations policy per seller per category', () => {
+    const name = 'pricing_category_policies_active_all_markets_key';
 
-    expect(index?.config.unique).toBe(true);
+    expect(indexNamed(pricingCategoryPolicies, name)?.config.unique).toBe(true);
+    expect(columnNamesOf(pricingCategoryPolicies, name)).toEqual([
+      'seller_account_id',
+      'category_id',
+    ]);
     expect(
-      columnNamesOf(
+      indexNamed(pricingCategoryPolicies, name)?.config.where,
+    ).toBeDefined();
+  });
+
+  it('holds at most one ACTIVE policy per seller per category per destination', () => {
+    const name = 'pricing_category_policies_active_market_key';
+
+    expect(indexNamed(pricingCategoryPolicies, name)?.config.unique).toBe(true);
+    expect(columnNamesOf(pricingCategoryPolicies, name)).toEqual([
+      'seller_account_id',
+      'category_id',
+      'market_code',
+    ]);
+    expect(
+      indexNamed(pricingCategoryPolicies, name)?.config.where,
+    ).toBeDefined();
+  });
+
+  it('no longer carries the single index that could not tell the two apart', () => {
+    // Left behind, this would silently duplicate the all-markets guarantee and
+    // make `drizzle-kit` want to recreate an index production no longer has.
+    expect(
+      indexNamed(
         pricingCategoryPolicies,
         'pricing_category_policies_active_key',
       ),
-    ).toEqual(['seller_account_id', 'category_id']);
-    expect(index?.config.where).toBeDefined();
+    ).toBeUndefined();
   });
 });
 
