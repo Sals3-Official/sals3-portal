@@ -5,6 +5,7 @@ import MarketRolesExplainerPanel from '@/components/seller-center/market-rules/M
 import CategoryPricingSection from '@/components/seller-center/market-rules/pricing/CategoryPricingSection';
 import FundingBufferSection from '@/components/seller-center/market-rules/pricing/FundingBufferSection';
 import PricingSectionFallback from '@/components/seller-center/market-rules/pricing/PricingSectionFallback';
+import StoreDefaultSection from '@/components/seller-center/market-rules/pricing/StoreDefaultSection';
 import { can } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { listPricingScopeDestinations } from '@/modules/pricing/pricing-scope-destinations';
@@ -84,6 +85,24 @@ export default async function MarketRulesPage() {
             simply could not say so yet, which reads as a failed save and
             invites a manual reload.
           */}
+          {/*
+            Ahead of the category tree, because it is the layer beneath it: a
+            category with no margin of its own falls back to this, and until
+            2026-08-26 this section existed but was rendered by no page at all —
+            so the floor the resolver already applied could not be set from
+            anywhere.
+          */}
+          <Suspense
+            fallback={
+              <PricingSectionFallback label="Store default pricing" rows={6} />
+            }
+          >
+            <StoreDefaultSection
+              destinations={destinations}
+              sellerAccountId={session.sellerId}
+              canManage={canManagePricing}
+            />
+          </Suspense>
           <Suspense
             fallback={
               <PricingSectionFallback label="Category margins" rows={6} />

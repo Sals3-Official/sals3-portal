@@ -69,6 +69,7 @@ function storeDefault(overrides: Partial<Record<string, unknown>> = {}) {
     targetMarginRate: '0.350000',
     minContributionMinor: BigInt(0),
     minContributionCurrency: 'USD',
+    minContributionRate: null,
     roundingRule: 'NONE',
     status: 'ACTIVE',
     version: 1,
@@ -489,6 +490,67 @@ describe('resolveProductPricing — inheritance and the contribution floor', () 
         currency: 'USD',
       });
     }
+  });
+
+  /**
+   * The percentage form of the floor, and the case it exists for.
+   *
+   * `StoreDefaultPreview` records the objection that two proportional rules
+   * never cross, so a percentage floor can never fire — true, but only against
+   * the store default's *own* margin. The margin the resolver floors is
+   * whichever layer won, and a **category** set below the floor is precisely
+   * what the owner asked to prevent: "the margin must never fall below
+   * operating expenses".
+   */
+  it('a minimum margin lifts a category priced below it', async () => {
+    // Category margin 20%: cost 1000 -> 1250. Minimum 40%: 1000 / 0.6 -> 1667.
+    mocks.findActiveStoreDefault.mockResolvedValue(
+      storeDefault({ minContributionRate: '0.400000' }),
+    );
+
+    const result = await resolveProductPricing(EXECUTOR, BASE_INPUT);
+
+    expect(result.outcome).toBe('PRODUCT_MARGIN_ESTIMATE');
+    if (result.outcome === 'PRODUCT_MARGIN_ESTIMATE') {
+      expect(result.resolvedLayer).toBe('CATEGORY');
+      expect(result.contributionFloorApplied).toBe(true);
+      expect(result.suggestedItemPrice.amountMinor).toBe(1667);
+    }
+  });
+
+  it('a minimum margin below the category margin changes nothing', async () => {
+    // 20% category against a 10% minimum: 1250 beats 1111, so the margin wins.
+    mocks.findActiveStoreDefault.mockResolvedValue(
+      storeDefault({ minContributionRate: '0.100000' }),
+    );
+
+    const result = await resolveProductPricing(EXECUTOR, BASE_INPUT);
+
+    expect(result.outcome).toBe('PRODUCT_MARGIN_ESTIMATE');
+    if (result.outcome === 'PRODUCT_MARGIN_ESTIMATE') {
+      expect(result.contributionFloorApplied).toBe(false);
+      expect(result.suggestedItemPrice.amountMinor).toBe(1250);
+    }
+  });
+
+  it('a minimum margin needs no currency to compare against', async () => {
+    /*
+      The amount form fails closed on a currency mismatch
+      (`CONTRIBUTION_FLOOR_CURRENCY_MISMATCH`). The rate form has no currency at
+      all, so it keeps pricing where the amount form would refuse — which is why
+      it is the safer of the two once the storefront settles in the buyer's own
+      currency.
+    */
+    mocks.findActiveStoreDefault.mockResolvedValue(
+      storeDefault({
+        minContributionRate: '0.400000',
+        minContributionCurrency: 'AUD',
+      }),
+    );
+
+    const result = await resolveProductPricing(EXECUTOR, BASE_INPUT);
+
+    expect(result.outcome).toBe('PRODUCT_MARGIN_ESTIMATE');
   });
 
   it('the floor stays quiet when the percentage already clears it', async () => {

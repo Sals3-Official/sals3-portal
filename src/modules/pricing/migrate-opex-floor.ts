@@ -35,15 +35,13 @@ import type { Database } from '@/lib/db/client';
  * jobs — a seller may aim for 25% while refusing to ever go under 18% — and
  * collapsing them would make the floor unexpressible.
  *
- * ## What this deliberately does not do
+ * ## The ledger row arrives a step late, on purpose
  *
- * It does not write a `drizzle.__drizzle_migrations` row, the way
- * `migrate-per-market-scope.ts` does for `0029`. That module could pin a hash
- * because its migration file already existed; the file for this column is
- * generated from the schema change, which by the ordering above cannot ship
- * until after this has run. The ledger row therefore belongs to the feature
- * change, not to this one — and is named here so its absence reads as a
- * decision rather than an oversight.
+ * `0030_lean_blizzard` is generated **from** the schema change, which by the
+ * ordering above could not ship until after the DDL had already run. So the
+ * first run of this endpoint had no migration file to record. The marking below
+ * closes that gap on a second run — the DDL half is idempotent, so re-running
+ * costs nothing and leaves the ledger agreeing with the database.
  */
 
 export const OPEX_FLOOR_DDL_STATEMENTS = [
@@ -140,11 +138,80 @@ export async function runOpexFloorDdl(
   return { statementsRun: OPEX_FLOOR_DDL_STATEMENTS.length };
 }
 
+/**
+ * `drizzle/meta/_journal.json`'s entry for tag `0030_lean_blizzard` (`when`) and
+ * the sha256 of `drizzle/0030_lean_blizzard.sql`'s raw file content, computed
+ * the way `drizzle-orm`'s own `readMigrationFiles()` does it. Hard-coded so this
+ * endpoint never depends on the migration file being in the deployed bundle.
+ * Re-derive with:
+ *   node -e "console.log(require('crypto').createHash('sha256').update(require('fs').readFileSync('drizzle/0030_lean_blizzard.sql').toString()).digest('hex'))"
+ * only if the migration is regenerated. Pinned to the file by its own test.
+ */
+const MIGRATION_0030_CREATED_AT = 1787683690238;
+const MIGRATION_0030_HASH =
+  'fdebbfb72c06a74eb4ecb4fa94ff4e6fbd185e1ed56efd113d8113462594a4cb';
+
+export type MarkMigration0030AppliedResult = {
+  createdAt: number;
+  inserted: boolean;
+};
+
+/**
+ * Records `0030_lean_blizzard` as applied, so a later real `npm run db:migrate`
+ * does not try to run it again.
+ *
+ * The DDL above reached production through this endpoint **before** the
+ * migration file existed — that ordering is the whole point of the two-step.
+ * Without this row the ledger and the database disagree: the column is there
+ * and drizzle believes it is not.
+ *
+ * Idempotent by construction; the values are fixed constants, not request
+ * input, so the raw SQL carries no injection risk.
+ */
+export async function markMigration0030Applied(
+  db: Database,
+): Promise<MarkMigration0030AppliedResult> {
+  await db.execute(sql.raw(`CREATE SCHEMA IF NOT EXISTS "drizzle"`));
+  await db.execute(
+    sql.raw(
+      `CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations" (
+        id SERIAL PRIMARY KEY,
+        hash text NOT NULL,
+        created_at bigint
+      )`,
+    ),
+  );
+
+  const existing = (await db.execute(
+    sql.raw(
+      `SELECT id FROM "drizzle"."__drizzle_migrations" WHERE created_at = ${MIGRATION_0030_CREATED_AT} LIMIT 1`,
+    ),
+  )) as unknown as unknown[];
+
+  if (existing.length > 0) {
+    return { createdAt: MIGRATION_0030_CREATED_AT, inserted: false };
+  }
+
+  await db.execute(
+    sql.raw(
+      `INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at") VALUES ('${MIGRATION_0030_HASH}', ${MIGRATION_0030_CREATED_AT})`,
+    ),
+  );
+
+  return { createdAt: MIGRATION_0030_CREATED_AT, inserted: true };
+}
+
+export const MIGRATION_0030 = {
+  createdAt: MIGRATION_0030_CREATED_AT,
+  hash: MIGRATION_0030_HASH,
+} as const;
+
 export type MigrateOpexFloorResult = {
   ok: true;
   columnExistedBefore: boolean;
   constraintsExistedBefore: boolean;
   statementsRun: number;
+  migrationRecord: MarkMigration0030AppliedResult;
   columnExistsAfter: boolean;
   constraintsExistAfter: boolean;
 };
@@ -166,6 +233,7 @@ export async function migrateOpexFloor(
   ]);
 
   const { statementsRun } = await runOpexFloorDdl(db);
+  const migrationRecord = await markMigration0030Applied(db);
 
   const [columnExistsAfter, constraintsExistAfter] = await Promise.all([
     hasOpexFloorColumn(db),
@@ -177,6 +245,7 @@ export async function migrateOpexFloor(
     columnExistedBefore,
     constraintsExistedBefore,
     statementsRun,
+    migrationRecord,
     columnExistsAfter,
     constraintsExistAfter,
   };
