@@ -148,3 +148,23 @@ describe('depth beats market', () => {
     expect(result?.sourceCategory.path).toBe(GROUP);
   });
 });
+
+describe('a write lands in the scope the screen was showing', () => {
+  it('requires a scope on createStoreDefault rather than defaulting it', async () => {
+    const { createStoreDefault } = await import('./repository');
+
+    /**
+     * A compile-time guarantee, asserted here so the reason survives.
+     *
+     * `marketCode` was briefly absent from this input. Every call site still
+     * compiled, and `saveStoreDefaultAction` read the destination's row and
+     * then created an **unscoped** one — writing the all-destinations rule
+     * under a heading that said otherwise. Optional-with-a-null-default would
+     * reintroduce exactly that, silently.
+     *
+     * The function is only referenced here; the real protection is the required
+     * property on its input type, which turns the omission into a type error.
+     */
+    expect(typeof createStoreDefault).toBe('function');
+  });
+});

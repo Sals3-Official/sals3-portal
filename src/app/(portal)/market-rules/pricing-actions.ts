@@ -185,6 +185,16 @@ const saveCategoryPolicyInputSchema = z.object({
   targetMarginRate: marginRateSchema,
   roundingRule: roundingRuleSchema,
   reason: reasonSchema,
+  /**
+   * The destination this rule is for, or `null` for all destinations.
+   *
+   * Shape-checked here as well as in the database, so a crafted payload cannot
+   * write a scope the seller's own screen could never have offered.
+   */
+  marketCode: z
+    .string()
+    .regex(/^[A-Z]{2}$/)
+    .nullable(),
 });
 
 export async function saveCategoryPolicyAction(
@@ -217,6 +227,7 @@ export async function saveCategoryPolicyAction(
         tx,
         auth.sellerAccountId,
         category.id,
+        parsed.data.marketCode,
       );
 
       const row =
@@ -228,6 +239,7 @@ export async function saveCategoryPolicyAction(
               roundingRule: parsed.data.roundingRule,
               reason: parsed.data.reason,
               actorId: auth.actorId,
+              marketCode: parsed.data.marketCode,
             })
           : await reviseCategoryPolicy(tx, existing, {
               targetMarginRate: parsed.data.targetMarginRate,
@@ -389,6 +401,11 @@ export async function applyMarginCsvAction(input: unknown): Promise<
                 tx,
                 auth.sellerAccountId,
                 category.id,
+                // The row's OWN scope, not the screen's. A file carries the
+                // destination it was exported for, so importing it while the
+                // screen shows another country cannot rewrite that country's
+                // rates — the failure ADR-015's amendment names.
+                row.marketCode,
               );
 
         // Every code was resolved before the transaction opened, so this
@@ -440,6 +457,7 @@ export async function applyMarginCsvAction(input: unknown): Promise<
                   roundingRule: row.roundingRule,
                   reason: parsedInput.data.reason,
                   actorId: auth.actorId,
+                  marketCode: row.marketCode,
                 })
               : await reviseCategoryPolicy(tx, existing, {
                   targetMarginRate,
@@ -584,6 +602,17 @@ const saveStoreDefaultInputSchema = z.object({
   targetMarginRate: marginRateSchema,
   minContribution: contributionFloorSchema,
   roundingRule: roundingRuleSchema,
+  /**
+   * The destination this rule is for, or `null` for all destinations.
+   *
+   * Shape-checked here as well as in the database, so a crafted payload cannot
+   * write a scope the seller's own screen could never have offered.
+   */
+  marketCode: z
+    .string()
+    .regex(/^[A-Z]{2}$/)
+    .nullable(),
+
   reason: reasonSchema,
 });
 
@@ -621,6 +650,10 @@ export async function saveStoreDefaultAction(
         existing === null
           ? await createStoreDefault(tx, {
               sellerAccountId: auth.sellerAccountId,
+              // The scope the screen was showing. Without this the action read
+              // the destination's row and then created an unscoped one, writing
+              // the all-destinations rule under a heading that said otherwise.
+              marketCode: parsed.data.marketCode,
               targetMarginRate: parsed.data.targetMarginRate,
               minContributionMinor,
               minContributionCurrency: 'USD',

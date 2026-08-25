@@ -22,6 +22,20 @@ import type { RoundingRule } from './money-math';
  *   how the template ships and how a margin gets cleared.
  * - `rounding` accepts the two rule names, case-insensitively, and defaults
  *   to `NONE` when blank.
+ * - `market_code` is the destination the line applies to, and **blank means
+ *   all destinations** — the same meaning `pricing_category_policies.market_code`
+ *   gives a null. ADR-015's `Amendment — 2026-08-25` flags this column as part
+ *   of the decision rather than a detail, and the reason is the failure it
+ *   prevents: a seller who exports Australia, edits it, and imports while the
+ *   screen is showing the Philippines would otherwise write every Australian
+ *   rate onto the wrong country, silently and in one click. **The file carries
+ *   its own scope**, so it cannot be applied to a destination it was not
+ *   written for.
+ *
+ * What an import does NOT do is unchanged and load-bearing: a category absent
+ * from the file is left alone. Only a row that is present, with an empty
+ * `margin_percent`, clears anything — and it clears only the scope its own
+ * `market_code` names.
  */
 
 export const MARGIN_CSV_HEADERS = [
@@ -29,6 +43,7 @@ export const MARGIN_CSV_HEADERS = [
   'category_path',
   'margin_percent',
   'rounding',
+  'market_code',
 ] as const;
 
 /** Guards a paste of the wrong file — a product export, say — before it reaches any writer. */
@@ -36,9 +51,11 @@ export const MAX_CSV_ROWS = 6000;
 
 export type MarginCsvRow = {
   categoryCode: string;
-  /** `null` clears any margin on this category. */
+  /** `null` clears any margin on this category, in this row's own scope. */
   marginPercent: number | null;
   roundingRule: RoundingRule;
+  /** `null` is the all-destinations rule, matching the column it writes. */
+  marketCode: string | null;
 };
 
 export type MarginCsvRowError = {
@@ -57,6 +74,8 @@ export type MarginCsvExportRow = {
   /** The margin set ON this category, not an inherited one — an export must round-trip. */
   ownMarginRate: string | null;
   ownRoundingRule: RoundingRule | null;
+  /** The scope this row was read from. `null` exports as blank. */
+  marketCode: string | null;
 };
 
 /** RFC 4180 quoting, applied only where it is needed. */
@@ -122,6 +141,10 @@ export function buildMarginCsv(rows: MarginCsvExportRow[]): string {
         escapeCell(row.path),
         marginPercent,
         row.ownRoundingRule ?? '',
+        // Blank rather than a literal 'ALL': the column holds a country code or
+        // nothing, exactly as the database column does, so a round trip cannot
+        // invent a destination named after a keyword.
+        row.marketCode ?? '',
       ].join(','),
     );
   });
@@ -151,7 +174,16 @@ function parseRoundingRule(raw: string): RoundingRule | undefined {
 export function parseMarginCsv(text: string): MarginCsvParseResult {
   const errors: MarginCsvRowError[] = [];
   const rows: MarginCsvRow[] = [];
-  const seenCodes = new Set<string>();
+  /**
+   * Keyed on category **and scope**, not category alone.
+   *
+   * The same category legitimately appears twice now — once for a destination
+   * and once blank for all destinations — and they are two different rows in
+   * two different partial unique indexes. Deduping on the code alone would
+   * reject that file as a duplicate and make the second scope unreachable
+   * through import.
+   */
+  const seenScopedCodes = new Set<string>();
 
   // Tolerate CRLF, LF, and a UTF-8 BOM — all three come out of Excel.
   const lines = text
@@ -169,6 +201,7 @@ export function parseMarginCsv(text: string): MarginCsvParseResult {
   const codeIndex = header.indexOf('category_code');
   const marginIndex = header.indexOf('margin_percent');
   const roundingIndex = header.indexOf('rounding');
+  const marketIndex = header.indexOf('market_code');
 
   if (codeIndex === -1 || marginIndex === -1) {
     return {
@@ -205,14 +238,36 @@ export function parseMarginCsv(text: string): MarginCsvParseResult {
       return;
     }
 
-    if (seenCodes.has(categoryCode)) {
+    const rawMarket =
+      marketIndex === -1 ? '' : (cells[marketIndex] ?? '').trim().toUpperCase();
+
+    /**
+     * Shape-checked against the same `^[A-Z]{2}$` the database enforces, so a
+     * typo is a numbered line rather than a row written to a destination that
+     * does not exist. Blank is the all-destinations rule and is not an error.
+     */
+    if (rawMarket !== '' && !/^[A-Z]{2}$/.test(rawMarket)) {
       errors.push({
         line: lineNumber,
-        message: `${categoryCode} appears more than once.`,
+        message: `market_code "${rawMarket}" must be a two-letter country code, or blank for all destinations.`,
       });
       return;
     }
-    seenCodes.add(categoryCode);
+
+    const marketCode = rawMarket === '' ? null : rawMarket;
+    const scopedKey = `${categoryCode}|${marketCode ?? ''}`;
+
+    if (seenScopedCodes.has(scopedKey)) {
+      errors.push({
+        line: lineNumber,
+        message:
+          marketCode === null
+            ? `${categoryCode} appears more than once for all destinations.`
+            : `${categoryCode} appears more than once for ${marketCode}.`,
+      });
+      return;
+    }
+    seenScopedCodes.add(scopedKey);
 
     const roundingRule =
       roundingIndex === -1
@@ -230,7 +285,12 @@ export function parseMarginCsv(text: string): MarginCsvParseResult {
     const rawMargin = (cells[marginIndex] ?? '').trim();
 
     if (rawMargin === '') {
-      rows.push({ categoryCode, marginPercent: null, roundingRule });
+      rows.push({
+        categoryCode,
+        marginPercent: null,
+        roundingRule,
+        marketCode,
+      });
       return;
     }
 
@@ -254,7 +314,7 @@ export function parseMarginCsv(text: string): MarginCsvParseResult {
       return;
     }
 
-    rows.push({ categoryCode, marginPercent, roundingRule });
+    rows.push({ categoryCode, marginPercent, roundingRule, marketCode });
   });
 
   if (errors.length > 0) return { ok: false, errors };

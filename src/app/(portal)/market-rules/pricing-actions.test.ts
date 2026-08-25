@@ -117,6 +117,7 @@ describe('saveCategoryPolicyAction', () => {
     targetMarginRate: '0.30',
     roundingRule: 'NONE',
     reason: 'Standard department default for this launch category.',
+    marketCode: null,
   };
 
   it('denies a caller without pricing_policy:manage', async () => {
@@ -785,6 +786,7 @@ describe('saveStoreDefaultAction', () => {
     minContribution: '2.50',
     roundingRule: 'NEAREST_0_99',
     reason: 'Initial store-wide default while headcount is one.',
+    marketCode: null,
   };
 
   it('denies a caller without pricing_policy:manage', async () => {
@@ -957,6 +959,7 @@ describe('field-level validation messages', () => {
       minContribution: '2.50',
       roundingRule: 'NONE',
       reason: 'short',
+      marketCode: null,
     });
 
     expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
@@ -970,6 +973,7 @@ describe('field-level validation messages', () => {
       minContribution: '0',
       roundingRule: 'NONE',
       reason: 'A perfectly valid reason here.',
+      marketCode: null,
     });
 
     if (result.ok) throw new Error('expected a refusal');
@@ -983,6 +987,7 @@ describe('field-level validation messages', () => {
       minContribution: '2.505',
       roundingRule: 'NONE',
       reason: 'A perfectly valid reason here.',
+      marketCode: null,
     });
 
     if (result.ok) throw new Error('expected a refusal');

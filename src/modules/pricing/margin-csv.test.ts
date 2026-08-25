@@ -42,6 +42,7 @@ describe('buildMarginCsv', () => {
         path: 'Animals & Pet Supplies',
         ownMarginRate: '0.350000',
         ownRoundingRule: 'NEAREST_0_99',
+        marketCode: null,
       },
     ]);
 
@@ -55,6 +56,7 @@ describe('buildMarginCsv', () => {
         path: 'Apparel & Accessories',
         ownMarginRate: null,
         ownRoundingRule: null,
+        marketCode: null,
       },
     ]);
 
@@ -68,6 +70,7 @@ describe('buildMarginCsv', () => {
         path: 'Food, Beverages & Tobacco',
         ownMarginRate: null,
         ownRoundingRule: null,
+        marketCode: null,
       },
     ]);
 
@@ -81,6 +84,7 @@ describe('buildMarginCsv', () => {
         path: 'Food, Beverages & Tobacco',
         ownMarginRate: '0.425000',
         ownRoundingRule: 'NONE',
+        marketCode: null,
       },
     ]);
 
@@ -93,6 +97,7 @@ describe('buildMarginCsv', () => {
         categoryCode: 'CAT-GGL-3',
         marginPercent: 42.5,
         roundingRule: 'NONE',
+        marketCode: null,
       },
     ]);
   });
@@ -110,6 +115,7 @@ describe('parseMarginCsv', () => {
       categoryCode: 'CAT-GGL-1',
       marginPercent: 35,
       roundingRule: 'NONE',
+      marketCode: null,
     });
   });
 
@@ -202,5 +208,93 @@ describe('parseMarginCsv', () => {
 
   it('says so plainly when the file is empty', () => {
     expect(parseMarginCsv('')).toMatchObject({ ok: false });
+  });
+});
+
+describe('the file carries its own destination', () => {
+  it('exports the scope each row was read from', () => {
+    const csv = buildMarginCsv([
+      {
+        code: 'CAT-GGL-1',
+        path: 'Apparel',
+        ownMarginRate: '0.250000',
+        ownRoundingRule: 'NONE',
+        marketCode: 'AU',
+      },
+      {
+        code: 'CAT-GGL-2',
+        path: 'Media',
+        ownMarginRate: '0.300000',
+        ownRoundingRule: 'NONE',
+        marketCode: null,
+      },
+    ]);
+
+    expect(csv).toContain('market_code');
+    expect(csv).toContain('CAT-GGL-1,Apparel,25,NONE,AU');
+    // Blank, not a keyword: the column holds a country code or nothing, exactly
+    // as the database column does, so a round trip cannot invent a destination
+    // named after a word like ALL.
+    expect(csv).toContain('CAT-GGL-2,Media,30,NONE,\r\n');
+  });
+
+  it('reads the scope back, and blank means all destinations', () => {
+    const result = parseMarginCsv(
+      'category_code,margin_percent,market_code\nCAT-GGL-1,25,AU\nCAT-GGL-2,30,\n',
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows.map((r) => r.marketCode)).toEqual(['AU', null]);
+  });
+
+  it('lets one category appear once per destination', () => {
+    /**
+     * The dedupe key is category AND scope. Keyed on the code alone this file
+     * would be rejected as a duplicate, and the second scope would be
+     * unreachable through import — which is most of the point of the column.
+     */
+    const result = parseMarginCsv(
+      'category_code,margin_percent,market_code\nCAT-GGL-1,25,AU\nCAT-GGL-1,30,\n',
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows).toHaveLength(2);
+  });
+
+  it('still refuses the same category twice in one scope', () => {
+    const result = parseMarginCsv(
+      'category_code,margin_percent,market_code\nCAT-GGL-1,25,AU\nCAT-GGL-1,30,AU\n',
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors[0]?.message).toContain('more than once for AU');
+  });
+
+  it('refuses a malformed destination by line number', () => {
+    // A typo must be a numbered line, not a row written to a destination that
+    // does not exist.
+    const result = parseMarginCsv(
+      'category_code,margin_percent,market_code\nCAT-GGL-1,25,aus\n',
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors[0]).toMatchObject({ line: 2 });
+    expect(result.errors[0]?.message).toContain('two-letter country code');
+  });
+
+  it('treats a file with no market_code column as all destinations', () => {
+    // Every file exported before this column existed still imports, and it
+    // imports as the unscoped rule it was written for.
+    const result = parseMarginCsv(
+      'category_code,margin_percent\nCAT-GGL-1,25\n',
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows[0]?.marketCode).toBeNull();
   });
 });

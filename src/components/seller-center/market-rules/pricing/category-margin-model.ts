@@ -47,6 +47,14 @@ export type CategoryMarginNodeViewModel = {
     roundingRule: RoundingRule;
     version: number;
     updatedAt: Date;
+    /**
+     * The destination this rule was read for, or `null` for all destinations.
+     *
+     * Carried on the view model, not only in the query, because the CSV export
+     * is built from these nodes — a file that did not say which scope it came
+     * from could be imported onto a different destination in one click.
+     */
+    marketCode: string | null;
   } | null;
 };
 

@@ -82,6 +82,9 @@ export default function MarginCsvControls({
         path: node.path,
         ownMarginRate: node.policy?.targetMarginRate ?? null,
         ownRoundingRule: node.policy?.roundingRule ?? null,
+        // The scope the row was actually read from, so the file carries its own
+        // destination and cannot be imported onto a different one.
+        marketCode: node.policy?.marketCode ?? null,
       })),
     );
 

@@ -48,7 +48,7 @@ function recordingExecutor() {
 async function renderedWhere(): Promise<string> {
   const { executor, recorded } = recordingExecutor();
 
-  await listCategoryMarginOverview(executor, 'seller-1');
+  await listCategoryMarginOverview(executor, 'seller-1', null);
 
   return recorded[0] ?? '';
 }
@@ -67,7 +67,7 @@ describe('listCategoryMarginOverview scope', () => {
   it('binds the v1 prefix, so a mirror cannot satisfy it', async () => {
     const { executor, recorded } = recordingExecutor();
 
-    await listCategoryMarginOverview(executor, 'seller-1');
+    await listCategoryMarginOverview(executor, 'seller-1', null);
 
     const where = (
       vi.mocked((executor as unknown as { select: () => unknown }).select).mock

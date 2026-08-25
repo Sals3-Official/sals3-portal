@@ -7,6 +7,9 @@ import {
 } from '@/modules/pricing/repository';
 import DisclosureBanner from '@/components/seller-center/shared/DisclosureBanner';
 import CategoryMarginTree from './CategoryMarginTree';
+import DestinationScopeSelector, {
+  type DestinationOption,
+} from './DestinationScopeSelector';
 import MarginCsvControls from './MarginCsvControls';
 import type {
   CategoryMarginNodeViewModel,
@@ -16,6 +19,13 @@ import type {
 type CategoryPricingSectionProps = {
   sellerAccountId: string;
   canManage: boolean;
+  /**
+   * The destination scope this render is for. `null` is the all-destinations
+   * rule. Read from the URL by the page, so the scope displayed and the scope
+   * saved are one value from one place.
+   */
+  marketCode: string | null;
+  destinationOptions: DestinationOption[];
 };
 
 const PATH_SEPARATOR = ' > ';
@@ -26,14 +36,17 @@ const PATH_SEPARATOR = ' > ';
  * yet (same discipline as `resolveFixtureVariantGuidance` — a missing
  * table is an operational condition, not a bug to surface as a 500).
  */
-async function readCategoryRows(sellerAccountId: string): Promise<{
+async function readCategoryRows(
+  sellerAccountId: string,
+  marketCode: string | null,
+): Promise<{
   rows: CategoryMarginLeafRow[];
   descendantCounts: Map<string, number>;
 } | null> {
   try {
     const db = getDb();
     const [rows, descendantCounts] = await Promise.all([
-      listCategoryMarginOverview(db, sellerAccountId),
+      listCategoryMarginOverview(db, sellerAccountId, marketCode),
       countDescendantsByPath(db),
     ]);
 
@@ -68,6 +81,7 @@ async function readCategoryRows(sellerAccountId: string): Promise<{
  */
 async function readStoreDefault(
   sellerAccountId: string,
+  marketCode: string | null,
 ): Promise<
   | { state: 'ok'; storeDefault: StoreDefaultSummary | null }
   | { state: 'unavailable' }
@@ -76,7 +90,7 @@ async function readStoreDefault(
     const storeDefault = await findStoreDefaultForScope(
       getDb(),
       sellerAccountId,
-      null,
+      marketCode,
     );
 
     return {
@@ -153,11 +167,13 @@ function toNodeViewModels(
 export default async function CategoryPricingSection({
   sellerAccountId,
   canManage,
+  marketCode,
+  destinationOptions,
 }: CategoryPricingSectionProps) {
   // Independent reads: a store-default failure must never hide the tree.
   const [categoryData, storeDefaultResult] = await Promise.all([
-    readCategoryRows(sellerAccountId),
-    readStoreDefault(sellerAccountId),
+    readCategoryRows(sellerAccountId, marketCode),
+    readStoreDefault(sellerAccountId, marketCode),
   ]);
 
   const storeDefault =
@@ -178,6 +194,14 @@ export default async function CategoryPricingSection({
             Set a margin only where a department genuinely differs; a product
             can still override it in the Product Editor.
           </p>
+          {destinationOptions.length > 1 ? (
+            <div className="mt-3">
+              <DestinationScopeSelector
+                options={destinationOptions}
+                selected={marketCode}
+              />
+            </div>
+          ) : null}
         </div>
         {categoryData === null ? null : (
           <MarginCsvControls
