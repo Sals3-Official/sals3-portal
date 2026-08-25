@@ -1,0 +1,10 @@
+DROP INDEX "pricing_category_policies_active_key";--> statement-breakpoint
+DROP INDEX "pricing_store_defaults_active_key";--> statement-breakpoint
+ALTER TABLE "pricing_category_policies" ADD COLUMN "market_code" text;--> statement-breakpoint
+ALTER TABLE "pricing_store_defaults" ADD COLUMN "market_code" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "pricing_category_policies_active_all_markets_key" ON "pricing_category_policies" USING btree ("seller_account_id","category_id") WHERE "pricing_category_policies"."status" = 'ACTIVE' AND "pricing_category_policies"."market_code" IS NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "pricing_category_policies_active_market_key" ON "pricing_category_policies" USING btree ("seller_account_id","category_id","market_code") WHERE "pricing_category_policies"."status" = 'ACTIVE' AND "pricing_category_policies"."market_code" IS NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "pricing_store_defaults_active_all_markets_key" ON "pricing_store_defaults" USING btree ("seller_account_id") WHERE "pricing_store_defaults"."status" = 'ACTIVE' AND "pricing_store_defaults"."market_code" IS NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "pricing_store_defaults_active_market_key" ON "pricing_store_defaults" USING btree ("seller_account_id","market_code") WHERE "pricing_store_defaults"."status" = 'ACTIVE' AND "pricing_store_defaults"."market_code" IS NOT NULL;--> statement-breakpoint
+ALTER TABLE "pricing_category_policies" ADD CONSTRAINT "pricing_category_policies_market_code_shape" CHECK ("pricing_category_policies"."market_code" IS NULL OR "pricing_category_policies"."market_code" ~ '^[A-Z]{2}$');--> statement-breakpoint
+ALTER TABLE "pricing_store_defaults" ADD CONSTRAINT "pricing_store_defaults_market_code_shape" CHECK ("pricing_store_defaults"."market_code" IS NULL OR "pricing_store_defaults"."market_code" ~ '^[A-Z]{2}$');

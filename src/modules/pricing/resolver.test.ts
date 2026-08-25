@@ -29,6 +29,7 @@ const BASE_INPUT: PricingResolutionInput = {
   supplierCost: { amountMinor: 1000, currency: 'USD' },
   supplierCostObservedAt: '2026-08-11T00:00:00.000Z',
   settlementCurrency: 'USD',
+  marketCode: 'AU',
 };
 
 const CATEGORY = {

@@ -64,6 +64,7 @@ describe('findNearestActiveCategoryPolicy', () => {
       executor,
       'seller-1',
       category('Apparel & Accessories > Clothing > Shirts & Tops'),
+      'AU',
     );
 
     expect(result).toBeNull();
@@ -81,6 +82,7 @@ describe('findNearestActiveCategoryPolicy', () => {
       executor,
       'seller-1',
       self,
+      'AU',
     );
 
     expect(result?.policy.id).toBe('self');
@@ -102,6 +104,7 @@ describe('findNearestActiveCategoryPolicy', () => {
       executor,
       'seller-1',
       leaf,
+      'AU',
     );
 
     // "Clothing" is deeper than the department — the nearest wins.
@@ -124,6 +127,7 @@ describe('findNearestActiveCategoryPolicy', () => {
       executor,
       'seller-1',
       leaf,
+      'AU',
     );
 
     expect(result?.policy.id).toBe('dept');
@@ -140,6 +144,7 @@ describe('findNearestActiveCategoryPolicy', () => {
       executor,
       'seller-1',
       department,
+      'AU',
     );
 
     expect(result?.policy.id).toBe('dept');

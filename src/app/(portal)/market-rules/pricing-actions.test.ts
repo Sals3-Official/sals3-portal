@@ -52,7 +52,7 @@ const pricingRepositoryMocks = vi.hoisted(() => ({
   reviseCategoryPolicy: vi.fn(),
   deactivateCategoryPolicy: vi.fn(),
   findCategoryById: vi.fn(),
-  findActiveStoreDefault: vi.fn(),
+  findStoreDefaultForScope: vi.fn(),
   findCategoriesByCodes: vi.fn(),
   createStoreDefault: vi.fn(),
   reviseStoreDefault: vi.fn(),
@@ -833,7 +833,7 @@ describe('saveStoreDefaultAction', () => {
   });
 
   it('creates a new version-1 default with the floor in minor units, and audits it', async () => {
-    pricingRepositoryMocks.findActiveStoreDefault.mockResolvedValue(null);
+    pricingRepositoryMocks.findStoreDefaultForScope.mockResolvedValue(null);
     pricingRepositoryMocks.createStoreDefault.mockResolvedValue({
       id: POLICY_ID,
       version: 1,
@@ -864,7 +864,7 @@ describe('saveStoreDefaultAction', () => {
 
   it('revises (supersedes) the existing active default instead of creating a duplicate', async () => {
     const existing = { id: POLICY_ID, version: 2 };
-    pricingRepositoryMocks.findActiveStoreDefault.mockResolvedValue(existing);
+    pricingRepositoryMocks.findStoreDefaultForScope.mockResolvedValue(existing);
     pricingRepositoryMocks.reviseStoreDefault.mockResolvedValue({
       id: 'new-id',
       version: 3,
@@ -887,7 +887,7 @@ describe('saveStoreDefaultAction', () => {
   });
 
   it('a whole-dollar floor converts exactly to minor units', async () => {
-    pricingRepositoryMocks.findActiveStoreDefault.mockResolvedValue(null);
+    pricingRepositoryMocks.findStoreDefaultForScope.mockResolvedValue(null);
     pricingRepositoryMocks.createStoreDefault.mockResolvedValue({
       id: POLICY_ID,
       version: 1,

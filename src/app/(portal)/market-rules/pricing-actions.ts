@@ -26,7 +26,7 @@ import {
   findActiveFundingBufferPolicy,
   findActiveProductOverride,
   findActiveVariantOverride,
-  findActiveStoreDefault,
+  findStoreDefaultForScope,
   findCategoriesByCodes,
   findCategoryByCode,
   findCategoryById,
@@ -611,7 +611,11 @@ export async function saveStoreDefaultAction(
     );
 
     await getDb().transaction(async (tx) => {
-      const existing = await findActiveStoreDefault(tx, auth.sellerAccountId);
+      const existing = await findStoreDefaultForScope(
+        tx,
+        auth.sellerAccountId,
+        null,
+      );
 
       const row =
         existing === null

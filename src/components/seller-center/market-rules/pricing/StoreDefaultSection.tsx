@@ -1,5 +1,5 @@
 import getDb from '@/lib/db/client';
-import { findActiveStoreDefault } from '@/modules/pricing/repository';
+import { findStoreDefaultForScope } from '@/modules/pricing/repository';
 import type { PricingStoreDefaultRow } from '@/lib/db/schema';
 import DisclosureBanner from '@/components/seller-center/shared/DisclosureBanner';
 import StoreDefaultCard from './StoreDefaultCard';
@@ -21,7 +21,11 @@ async function readStoreDefault(
   { ok: true; policy: PricingStoreDefaultRow | null } | { ok: false }
 > {
   try {
-    const policy = await findActiveStoreDefault(getDb(), sellerAccountId);
+    const policy = await findStoreDefaultForScope(
+      getDb(),
+      sellerAccountId,
+      null,
+    );
     return { ok: true, policy };
   } catch (error) {
     // eslint-disable-next-line no-console

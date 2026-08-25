@@ -178,11 +178,81 @@ export async function runPerMarketScopeDdl(
   return { statementsRun: PER_MARKET_SCOPE_DDL_STATEMENTS.length };
 }
 
+/**
+ * `drizzle/meta/_journal.json`'s entry for tag `0029_jazzy_senator_kelly`
+ * (`when`) and the sha256 of `drizzle/0029_jazzy_senator_kelly.sql`'s raw file
+ * content, computed the way `drizzle-orm`'s own `readMigrationFiles()` does it.
+ * Hard-coded so this endpoint never depends on the migration file being in the
+ * deployed bundle. Re-derive with:
+ *   node -e "console.log(require('crypto').createHash('sha256').update(require('fs').readFileSync('drizzle/0029_jazzy_senator_kelly.sql').toString()).digest('hex'))"
+ * only if the migration is regenerated. Pinned to the file by its own test.
+ */
+const MIGRATION_0029_CREATED_AT = 1787659573173;
+const MIGRATION_0029_HASH =
+  'cb2fbb5fce65fe857db70d7c7a9ccfb0d0ac106274dd934862a4ace244e55637';
+
+export type MarkMigration0029AppliedResult = {
+  createdAt: number;
+  inserted: boolean;
+};
+
+/**
+ * Records `0029_jazzy_senator_kelly` as applied, so a later real
+ * `npm run db:migrate` does not try to run it again.
+ *
+ * The DDL above already reached production through the break-glass endpoint
+ * **before** this migration file existed — that ordering is the whole point of
+ * the two-step. Without this row the ledger and the database disagree: the
+ * columns are there and drizzle believes they are not.
+ *
+ * Idempotent by construction; the values are fixed constants, not request
+ * input, so the raw SQL carries no injection risk.
+ */
+export async function markMigration0029Applied(
+  db: Database,
+): Promise<MarkMigration0029AppliedResult> {
+  await db.execute(sql.raw(`CREATE SCHEMA IF NOT EXISTS "drizzle"`));
+  await db.execute(
+    sql.raw(
+      `CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations" (
+        id SERIAL PRIMARY KEY,
+        hash text NOT NULL,
+        created_at bigint
+      )`,
+    ),
+  );
+
+  const existing = (await db.execute(
+    sql.raw(
+      `SELECT id FROM "drizzle"."__drizzle_migrations" WHERE created_at = ${MIGRATION_0029_CREATED_AT} LIMIT 1`,
+    ),
+  )) as unknown as unknown[];
+
+  if (existing.length > 0) {
+    return { createdAt: MIGRATION_0029_CREATED_AT, inserted: false };
+  }
+
+  await db.execute(
+    sql.raw(
+      `INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at") VALUES ('${MIGRATION_0029_HASH}', ${MIGRATION_0029_CREATED_AT})`,
+    ),
+  );
+
+  return { createdAt: MIGRATION_0029_CREATED_AT, inserted: true };
+}
+
+export const MIGRATION_0029 = {
+  tag: '0029_jazzy_senator_kelly',
+  createdAt: MIGRATION_0029_CREATED_AT,
+  hash: MIGRATION_0029_HASH,
+} as const;
+
 export type MigratePerMarketScopeResult = {
   ok: true;
   columnsExistedBefore: boolean;
   indexesExistedBefore: boolean;
   ddl: RunPerMarketScopeDdlResult;
+  migrationRecord: MarkMigration0029AppliedResult;
   columnsExistAfter: boolean;
   indexesExistAfter: boolean;
 };
@@ -190,12 +260,11 @@ export type MigratePerMarketScopeResult = {
 /**
  * The whole run, with its own before/after readings.
  *
- * No `__drizzle_migrations` bookkeeping here, unlike
- * `migrate-media-stored-copy.ts`. That row belongs with the migration **file**,
- * and this change deliberately ships without one — the `drizzle/` file and its
- * ledger entry travel with the Drizzle schema change that follows, because a
- * ledger row pointing at a file that is not in the bundle yet is worse than no
- * row.
+ * `markMigration0029Applied` runs here too, and it arrived in the change that
+ * added the migration file rather than in the one that first ran this DDL —
+ * a ledger row pointing at a file that is not in the bundle yet is worse than
+ * no row. Re-running the workflow after that change is what writes it; the DDL
+ * half no-ops.
  *
  * Both `*After` flags are reported because they fail differently: a missing
  * column breaks every write immediately, a missing index breaks nothing until
@@ -207,6 +276,7 @@ export async function migratePerMarketScope(
   const columnsExistedBefore = await hasPerMarketScopeColumns(db);
   const indexesExistedBefore = await hasPerMarketScopeIndexes(db);
   const ddl = await runPerMarketScopeDdl(db);
+  const migrationRecord = await markMigration0029Applied(db);
   const columnsExistAfter = await hasPerMarketScopeColumns(db);
   const indexesExistAfter = await hasPerMarketScopeIndexes(db);
 
@@ -215,6 +285,7 @@ export async function migratePerMarketScope(
     columnsExistedBefore,
     indexesExistedBefore,
     ddl,
+    migrationRecord,
     columnsExistAfter,
     indexesExistAfter,
   };

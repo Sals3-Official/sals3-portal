@@ -10,6 +10,7 @@ import {
   hasPerMarketScopeIndexes,
   migratePerMarketScope,
   runPerMarketScopeDdl,
+  MIGRATION_0029,
 } from './migrate-per-market-scope';
 
 /**
@@ -213,5 +214,30 @@ describe('the readings', () => {
     expect(result.ddl.statementsRun).toBe(
       PER_MARKET_SCOPE_DDL_STATEMENTS.length,
     );
+  });
+});
+
+describe('the migration ledger', () => {
+  it('pins the hash and timestamp to the real migration file', async () => {
+    const { createHash } = await import('node:crypto');
+    const { readFileSync } = await import('node:fs');
+    const journal = JSON.parse(
+      readFileSync('drizzle/meta/_journal.json', 'utf8'),
+    ) as { entries: { tag: string; when: number }[] };
+    const entry = journal.entries.find((e) => e.tag === MIGRATION_0029.tag);
+
+    /**
+     * The constants are hard-coded so the endpoint never depends on the
+     * migration file being in the deployed bundle. That is only safe while they
+     * still describe the file — a regenerated migration silently makes the
+     * ledger row point at content that no longer exists, and `db:migrate` would
+     * then re-run a migration it believes is applied.
+     */
+    expect(entry?.when).toBe(MIGRATION_0029.createdAt);
+    expect(
+      createHash('sha256')
+        .update(readFileSync(`drizzle/${MIGRATION_0029.tag}.sql`).toString())
+        .digest('hex'),
+    ).toBe(MIGRATION_0029.hash);
   });
 });
