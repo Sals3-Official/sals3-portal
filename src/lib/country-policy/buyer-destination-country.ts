@@ -33,12 +33,46 @@ import type { BuyerDestinationCountryPolicy } from './types';
  * setting and not an Admin Portal UI. ADR-014's future Admin Portal replaces
  * this with a published, versioned policy without changing callers.
  */
-const POLICY_VERSION = 'buyer-destination-country-v2-au-ph';
-const SOURCE = 'owner-instruction-2026-08-11-au-ph';
+/**
+ * `v3` (owner decision 2026-08-25): the four remaining measured destinations
+ * join AU and PH.
+ *
+ * ## What this re-opens, checked rather than assumed
+ *
+ * A new version string requeues every decided candidate — 588,850 of them —
+ * because it composes into `candidate_evaluations.policy_version`. Before
+ * making that change the blast radius was verified rather than feared:
+ *
+ * - **Nothing is deleted.** There is no `delete()` against
+ *   `supplier_candidates`, `candidate_evaluations` or `supplier_snapshots`
+ *   anywhere in the codebase. A requeue is an `UPDATE` on the evaluation row;
+ *   the candidate and its `feed_snapshot` are untouched.
+ * - **No passing candidate can start failing.** `checkValidMarket` is a strict
+ *   subset check — every intended destination must be enabled — so widening
+ *   the list can only grow the intersection. `NO_VALID_MARKET` is recoverable
+ *   by design, and its own doc comment says widening "re-admits every affected
+ *   queued candidate".
+ * - **No CJ points are spent.** ADR-013 §1a (2026-08-12) made evaluation
+ *   local-only; the evaluator is forbidden from calling product detail,
+ *   inventory, comments or freight. The ~1.73M-point figure from the
+ *   2026-08-11 session predates that change and no longer applies.
+ *
+ * The real cost is compute: 588,850 rows through the outbox and screening.
+ *
+ * **What is lost** is each candidate's *previous* decision. `candidate_evaluations`
+ * holds one row per candidate with no history, so a `PASS` dated last week
+ * becomes a `PASS` dated today. That is a pre-existing gap recorded in `hot.md`,
+ * not something this change introduces.
+ *
+ * A REVERT must restore `buyer-destination-country-v2-au-ph` exactly, not
+ * invent a `v4`, or every row is requeued a second time.
+ */
+const POLICY_VERSION = 'buyer-destination-country-v3-six-measured';
+const SOURCE = 'owner-instruction-2026-08-25-open-six-measured-destinations';
 
 export default function resolveBuyerDestinationCountryPolicy(): BuyerDestinationCountryPolicy {
   return {
-    countryCodes: ['AU', 'PH'],
+    countryCodes: ['AU', 'NZ', 'PH', 'US', 'CA', 'FJ'],
     policyVersion: POLICY_VERSION,
     source: SOURCE,
     effective: 'ENABLED',

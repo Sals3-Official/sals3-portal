@@ -6,7 +6,11 @@ describe('resolveBuyerDestinationCountryPolicy', () => {
   it('enables exactly the owner-approved destinations, and carries an identifiable version and source', () => {
     const policy = resolveBuyerDestinationCountryPolicy();
 
-    expect(policy.countryCodes).toEqual(['AU', 'PH']);
+    // Opened to all six measured destinations, owner decision 2026-08-25.
+    // Asserted as the exact set rather than a length: this list decides where a
+    // buyer may order from, and a country arriving here by accident is not the
+    // kind of change that should pass a test.
+    expect(policy.countryCodes).toEqual(['AU', 'NZ', 'PH', 'US', 'CA', 'FJ']);
     expect(policy.effective).toBe('ENABLED');
     expect(policy.policyVersion).toBeTruthy();
     expect(policy.source).toBeTruthy();

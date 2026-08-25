@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+import { isPricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
 import getDb from '@/lib/db/client';
 import { requirePermission } from '@/lib/auth/session';
 import { PermissionError } from '@/lib/auth/permissions';
@@ -193,7 +194,9 @@ const saveCategoryPolicyInputSchema = z.object({
    */
   marketCode: z
     .string()
-    .regex(/^[A-Z]{2}$/)
+    .refine(isPricingScopeDestination, {
+      message: 'Not a destination this account can price for.',
+    })
     .nullable(),
 });
 
@@ -610,7 +613,9 @@ const saveStoreDefaultInputSchema = z.object({
    */
   marketCode: z
     .string()
-    .regex(/^[A-Z]{2}$/)
+    .refine(isPricingScopeDestination, {
+      message: 'Not a destination this account can price for.',
+    })
     .nullable(),
 
   reason: reasonSchema,
