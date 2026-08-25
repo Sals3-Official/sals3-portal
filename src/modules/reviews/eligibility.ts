@@ -42,8 +42,82 @@ import { REVIEW_WINDOW_DAYS, REVIEWABLE_PARCEL_STATE } from './contracts';
  * never widens: no "or the order is public", no admin bypass, no id-only path.
  */
 
-/** The delivery instant, with the fallback `contracts.ts` explains. */
-const deliveredAt = sql<Date>`coalesce(${fulfillmentGroups.carrierDeliveredAt}, ${fulfillmentGroups.updatedAt})`;
+/**
+ * A driver value for `coalesce(carrier_delivered_at, updated_at)`, as a `Date`.
+ *
+ * ## Why this exists — `sql<Date>` was a lie, and it took production down
+ *
+ * The first version of this file wrote `sql<Date>\`coalesce(…)\`` and passed the
+ * result straight into `product_reviews.delivered_at`. A raw `sql` template
+ * carries **`noopDecoder`** (`drizzle-orm/sql/sql.cjs`), so the `<Date>` is a
+ * compile-time assertion and nothing at runtime honours it — whatever the driver
+ * hands back is what the writer receives.
+ *
+ * When a `string` arrived, `PgTimestamp.mapToDriverValue` did
+ * `value.toISOString()` and threw `TypeError: value.toISOString is not a
+ * function`. That surfaced as `storefrontErrorResponse` → `503`, which the
+ * storefront maps to its catch-all sentence: *"Your review could not be posted.
+ * Try again in a moment."* — advice that could never come true, on the first
+ * review anybody tried to write.
+ *
+ * ## Why the column's own decoder, then an assertion
+ *
+ * `mapFromDriverValue` is where drizzle already knows how to read this exact
+ * column, so the parsing rule stays in one place instead of being re-derived
+ * here. But it returns anything that is not a `string` unchanged, which is how a
+ * non-`Date` reached an insert in the first place — so the result is checked. A
+ * named failure at the boundary beats the same `TypeError` three frames deep
+ * inside query building, and a rejected value beats a guessed one: this instant
+ * anchors the review edit window, so inventing a conversion for a shape we do
+ * not understand would silently move a buyer's deadline.
+ *
+ * `listLineReviewStates` never needed this — it compares the expression inside
+ * SQL and reads back a boolean — which is exactly why the read path kept working
+ * and drew a button the write path could not honour.
+ *
+ * ## `null` never arrives here
+ *
+ * Drizzle short-circuits a `null` driver value before any decoder runs
+ * (`drizzle-orm/utils.cjs`), so this would never see one — and it cannot happen
+ * anyway, because `fulfillment_groups.updated_at` is `NOT NULL DEFAULT now()`
+ * and is the `coalesce` fallback. Making that column nullable would put a `null`
+ * into a `Date` field without this function being consulted, which is the one
+ * change that would defeat it.
+ *
+ * ## Exported so it can be tested at all
+ *
+ * `eligibility.test.ts` drives a hand-built fake whose `then` resolves the canned
+ * rows directly, so drizzle's result mapping — and therefore this decoder —
+ * never runs there. That fake is right for what it was built for (it renders the
+ * real `WHERE` and asserts the predicate carries every condition), and it is
+ * also why `verify` was green in both repositories while this defect shipped. A
+ * behavioural test through the fake would pass no matter what this function did,
+ * so the function is named, exported, and tested directly.
+ */
+export function asDeliveredAt(value: unknown): Date {
+  const mapped = fulfillmentGroups.updatedAt.mapFromDriverValue(
+    value as string,
+  );
+
+  if (mapped instanceof Date && !Number.isNaN(mapped.getTime())) {
+    return mapped;
+  }
+
+  throw new TypeError(
+    `coalesce(carrier_delivered_at, updated_at) is not a timestamp: ${typeof value}`,
+  );
+}
+
+/**
+ * The delivery instant, with the fallback `contracts.ts` explains.
+ *
+ * The type comes from the decoder rather than from an annotation, so it is
+ * earned instead of asserted.
+ */
+const deliveredAt =
+  sql`coalesce(${fulfillmentGroups.carrierDeliveredAt}, ${fulfillmentGroups.updatedAt})`.mapWith(
+    asDeliveredAt,
+  );
 
 /**
  * The ship-to `fullName` from a checkout snapshot, or `null`.
