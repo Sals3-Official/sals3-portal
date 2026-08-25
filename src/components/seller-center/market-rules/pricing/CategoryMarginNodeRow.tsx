@@ -21,6 +21,8 @@ type CategoryMarginNodeRowProps = {
   effective: EffectiveMargin;
   sellerAccountId: string;
   canManage: boolean;
+  /** The destination being edited, or `null` for the all-destinations rule. */
+  marketCode: string | null;
   /** Search mode: full path shown, no indent, no expand chevron. */
   flat: boolean;
   isExpanded: boolean;
@@ -93,6 +95,7 @@ export default function CategoryMarginNodeRow({
   effective,
   sellerAccountId,
   canManage,
+  marketCode,
   flat,
   isExpanded,
   onToggleExpanded,
@@ -200,6 +203,7 @@ export default function CategoryMarginNodeRow({
         <CategoryMarginDialog
           node={node}
           effective={effective}
+          marketCode={marketCode}
           open={isEditorOpen}
           onOpenChange={setIsEditorOpen}
           onSaved={handleSaved}

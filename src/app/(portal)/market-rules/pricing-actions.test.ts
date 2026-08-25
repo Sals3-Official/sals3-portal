@@ -120,6 +120,28 @@ describe('saveCategoryPolicyAction', () => {
     marketCode: null,
   };
 
+  /**
+   * The scope is a required field, and this is the case that says so.
+   *
+   * On 2026-08-25 `marketCode` was added to this schema and the dialog kept
+   * sending the previous four-field object. Every save on the category tree
+   * returned `invalid_input` and the screen showed only "Check the fields and
+   * try again" — in production, on a screen that had worked the day before.
+   * Nothing caught it: the action takes `unknown`, so the compiler had nothing
+   * to check, and every case in this file already spelled the new field out.
+   *
+   * A test that only ever passes a complete input cannot fail the way real
+   * callers fail. This one passes an incomplete one on purpose.
+   */
+  it('refuses a payload that never names a destination', async () => {
+    const withoutScope: Record<string, unknown> = { ...VALID_INPUT };
+    delete withoutScope.marketCode;
+
+    const result = await saveCategoryPolicyAction(withoutScope);
+
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+  });
+
   it('denies a caller without pricing_policy:manage', async () => {
     requirePermissionMock.mockRejectedValue(new PermissionError());
 

@@ -18,6 +18,8 @@ type CategoryMarginTreeProps = {
   storeDefault: StoreDefaultSummary | null;
   sellerAccountId: string;
   canManage: boolean;
+  /** The destination being edited, or `null` for the all-destinations rule. */
+  marketCode: string | null;
 };
 
 /**
@@ -37,6 +39,7 @@ export default function CategoryMarginTree({
   storeDefault,
   sellerAccountId,
   canManage,
+  marketCode,
 }: CategoryMarginTreeProps) {
   const [query, setQuery] = useState('');
   const [expandedPaths, setExpandedPaths] = useState<ReadonlySet<string>>(
@@ -176,6 +179,7 @@ export default function CategoryMarginTree({
               effective={effectiveMarginFor(node, nodesByPath, storeDefault)}
               sellerAccountId={sellerAccountId}
               canManage={canManage}
+              marketCode={marketCode}
               flat={searchMatches !== null}
               isExpanded={expandedPaths.has(node.path)}
               onToggleExpanded={() => toggleExpanded(node.path)}
