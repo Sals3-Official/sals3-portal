@@ -333,3 +333,34 @@ describe('Description studio - save pre-flight', () => {
     expect(await screen.findByText(/2000 × 2000 px/)).toBeInTheDocument();
   });
 });
+
+describe('the canvas preview and the product page', () => {
+  it("keeps a paragraph's own line breaks, as the product page does", () => {
+    // This canvas tells the seller it sets text "exactly as the product page
+    // will set it", and the storefront honours a paragraph's single newlines —
+    // `descriptionTextToBlocks` keeps them inside the block on purpose. A
+    // preview that collapsed them would break its own promise: the seller sees
+    // a run-on line, publishes, and the listing renders something else.
+    //
+    // Asserted on the class: jsdom does not compute `white-space`, so there is
+    // no line box to measure.
+    render(
+      <DescriptionStudio
+        productName="Fishnet half skirt"
+        backHref="/listings/new?productId=p1"
+        initialBlocks={[
+          {
+            type: 'paragraph',
+            text: 'Product details\nMaterial: viscose fibre',
+          },
+        ]}
+        onSave={vi.fn().mockResolvedValue({ ok: true, revisionVersion: 2 })}
+      />,
+    );
+
+    const paragraph = screen.getByText(/Product details/).closest('p');
+
+    expect(paragraph?.className).toContain('whitespace-pre-line');
+    expect(paragraph?.className).not.toContain('whitespace-pre-wrap');
+  });
+});
