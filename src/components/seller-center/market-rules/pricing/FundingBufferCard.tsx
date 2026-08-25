@@ -41,11 +41,33 @@ function formatSignedPercent(rate: string): string {
  * category-pricing redesign's own rule.
  */
 export default function FundingBufferCard({
-  policy,
+  policy: serverPolicy,
   sellerAccountId,
   canManage,
 }: FundingBufferCardProps) {
   const router = useRouter();
+  /**
+   * The row this card just wrote, shown until the server render catches up.
+   *
+   * Without it the card learned its own new value only from the next full page
+   * render, so a seller watched an unchanged card — on a first save, an empty
+   * form with the inputs cleared — and reasonably concluded the save had
+   * failed. The write is authoritative the moment the action returns; this is
+   * that answer, held for the seconds it takes the page to agree.
+   *
+   * `serverPolicy` wins as soon as it reports a version at least as new, so a
+   * change made elsewhere (another tab, a deactivation) is never masked by a
+   * stale local copy.
+   */
+  const [savedPolicy, setSavedPolicy] =
+    useState<PricingFxAdjustmentPolicyRow | null>(null);
+
+  const policy =
+    savedPolicy !== null &&
+    (serverPolicy === null || serverPolicy.version < savedPolicy.version)
+      ? savedPolicy
+      : serverPolicy;
+
   const [isEditing, setIsEditing] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [adjustmentPercent, setAdjustmentPercent] = useState('');
@@ -78,6 +100,15 @@ export default function FundingBufferCard({
       toast.success(
         policy === null ? 'Funding buffer set.' : 'Funding buffer updated.',
       );
+      /*
+        Show what was written before asking the page to agree, not after.
+
+        `?? null` rather than a bare assignment: a success without a row is not
+        supposed to happen, and a card that throws on one would replace a
+        merely-stale number with a blank screen. Falling back to the server's
+        copy costs a slow update; crashing costs the whole section.
+      */
+      setSavedPolicy(result.data ?? null);
       setIsEditing(false);
       setAdjustmentPercent('');
       setReason('');

@@ -1,8 +1,10 @@
+import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import PageHeader from '@/components/portal/PageHeader';
 import MarketRolesExplainerPanel from '@/components/seller-center/market-rules/MarketRolesExplainerPanel';
 import CategoryPricingSection from '@/components/seller-center/market-rules/pricing/CategoryPricingSection';
 import FundingBufferSection from '@/components/seller-center/market-rules/pricing/FundingBufferSection';
+import PricingSectionFallback from '@/components/seller-center/market-rules/pricing/PricingSectionFallback';
 import { can } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { listPricingScopeDestinations } from '@/modules/pricing/pricing-scope-destinations';
@@ -71,15 +73,38 @@ export default async function MarketRulesPage() {
       <MarketRolesExplainerPanel />
       {canReadPricing ? (
         <>
-          <CategoryPricingSection
-            destinations={destinations}
-            sellerAccountId={session.sellerId}
-            canManage={canManagePricing}
-          />
-          <FundingBufferSection
-            sellerAccountId={session.sellerId}
-            canManage={canManagePricing}
-          />
+          {/*
+            A boundary per section, so one slow read cannot hold the others.
+
+            These were awaited together in a single route render, with the
+            category tree — a full taxonomy scan plus a store-default read per
+            destination — first in the list. Every save on this page, including
+            a one-line funding-buffer change, waited behind that scan before
+            anything on screen moved. The write had already committed; the page
+            simply could not say so yet, which reads as a failed save and
+            invites a manual reload.
+          */}
+          <Suspense
+            fallback={
+              <PricingSectionFallback label="Category margins" rows={6} />
+            }
+          >
+            <CategoryPricingSection
+              destinations={destinations}
+              sellerAccountId={session.sellerId}
+              canManage={canManagePricing}
+            />
+          </Suspense>
+          <Suspense
+            fallback={
+              <PricingSectionFallback label="Funding buffer" rows={1} />
+            }
+          >
+            <FundingBufferSection
+              sellerAccountId={session.sellerId}
+              canManage={canManagePricing}
+            />
+          </Suspense>
         </>
       ) : null}
     </div>
