@@ -31,7 +31,7 @@ describe('listCategoryMarginOverview — depth cap', () => {
   it('filters rather than selecting the whole taxonomy', async () => {
     const { executor, where } = capturingExecutor();
 
-    await listCategoryMarginOverview(executor, 'seller-1');
+    await listCategoryMarginOverview(executor, 'seller-1', null);
 
     // Without this the page ships every one of the 5,602 rows.
     expect(where).toHaveBeenCalledTimes(1);
@@ -40,7 +40,7 @@ describe('listCategoryMarginOverview — depth cap', () => {
   it('keeps an already-configured deeper category visible instead of hiding a live rate', async () => {
     const { executor, calls } = capturingExecutor();
 
-    await listCategoryMarginOverview(executor, 'seller-1');
+    await listCategoryMarginOverview(executor, 'seller-1', null);
 
     // Walk the built condition and collect every column it touches. Drizzle
     // nests its operands, so a recursive collect is stabler than reaching

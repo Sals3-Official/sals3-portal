@@ -5,6 +5,7 @@ import CategoryPricingSection from '@/components/seller-center/market-rules/pric
 import FundingBufferSection from '@/components/seller-center/market-rules/pricing/FundingBufferSection';
 import { can } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
+import { resolveSellerMarketCapabilities } from '@/modules/market-config/capabilities';
 
 export const metadata: Metadata = { title: 'Market rules · Seller Center' };
 
@@ -44,8 +45,43 @@ export const metadata: Metadata = { title: 'Market rules · Seller Center' };
  * viewer hold the latter but not the former. Having a pricing rule never
  * means a market is active, and vice versa.
  */
-export default async function MarketRulesPage() {
+type PageProps = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+/**
+ * The destination whose rules this render shows, taken from the URL.
+ *
+ * Validated against `resolveSellerMarketCapabilities()` — the same gate every
+ * write path uses — rather than trusted. An unknown, lowercase, or
+ * not-offered code falls back to the all-destinations rule instead of 404ing:
+ * a hand-edited or stale link is an ordinary way to arrive here, and the
+ * unscoped view is the honest thing to show when the asked-for scope is not
+ * one this seller has.
+ */
+function resolveScope(
+  raw: string | string[] | undefined,
+  offerable: readonly string[],
+): string | null {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+
+  if (value === undefined) return null;
+
+  return offerable.includes(value) ? value : null;
+}
+
+export default async function MarketRulesPage({ searchParams }: PageProps) {
   const session = await requirePermission('market_rules:read');
+  const { destinations } = resolveSellerMarketCapabilities();
+  const offerable = destinations.map((d) => d.destinationCountryCode);
+  const marketCode = resolveScope((await searchParams).destination, offerable);
+  const destinationOptions = [
+    { code: null, label: 'All destinations' },
+    ...destinations.map((d) => ({
+      code: d.destinationCountryCode,
+      label: d.destinationCountryCode,
+    })),
+  ];
 
   const canReadPricing = can(session.role, 'pricing_policy:read');
   const canManagePricing = can(session.role, 'pricing_policy:manage');
@@ -60,6 +96,8 @@ export default async function MarketRulesPage() {
       {canReadPricing ? (
         <>
           <CategoryPricingSection
+            marketCode={marketCode}
+            destinationOptions={destinationOptions}
             sellerAccountId={session.sellerId}
             canManage={canManagePricing}
           />

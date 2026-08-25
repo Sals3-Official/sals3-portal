@@ -59,6 +59,7 @@ function policy(rate: string) {
     roundingRule: 'NONE' as const,
     version: 1,
     updatedAt: new Date('2026-08-10T00:00:00Z'),
+    marketCode: null,
   };
 }
 

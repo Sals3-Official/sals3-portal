@@ -112,10 +112,20 @@ export async function searchCategories(
 
 // --- Category policy ---------------------------------------------------
 
+/**
+ * The policy for **exactly** one category and one scope, with no fallback.
+ *
+ * This is the compare-and-set read behind every save, so the scope has to be
+ * exact: resolving here would let a save that believes it is revising an
+ * all-destinations rule actually supersede a destination-scoped one, or the
+ * reverse. `findNearestActiveCategoryPolicy` is the resolving read; these two
+ * answer different questions and must not be swapped.
+ */
 export async function findActiveCategoryPolicy(
   executor: Executor,
   sellerAccountId: string,
   categoryId: string,
+  marketCode: string | null,
 ): Promise<PricingCategoryPolicyRow | null> {
   const rows = await executor
     .select()
@@ -125,6 +135,9 @@ export async function findActiveCategoryPolicy(
         eq(pricingCategoryPolicies.sellerAccountId, sellerAccountId),
         eq(pricingCategoryPolicies.categoryId, categoryId),
         eq(pricingCategoryPolicies.status, 'ACTIVE'),
+        marketCode === null
+          ? isNull(pricingCategoryPolicies.marketCode)
+          : eq(pricingCategoryPolicies.marketCode, marketCode),
       ),
     )
     .limit(1);
@@ -279,6 +292,8 @@ export type CategoryMarginLeafRow = {
     roundingRule: SchemaRoundingRule;
     version: number;
     updatedAt: Date;
+    /** The scope this row was read for. `null` is the all-destinations rule. */
+    marketCode: string | null;
   } | null;
 };
 
@@ -347,9 +362,22 @@ export async function countDescendantsByPath(
   return counts;
 }
 
+/**
+ * `marketCode` selects **exactly one scope**, with no fallback — this is an
+ * editing view, not a resolution.
+ *
+ * The screen must show the rules the seller's next save will replace. Showing
+ * a rate inherited from all-destinations while the Save button writes a
+ * destination-scoped row is the same class of bug `findStoreDefaultForScope`
+ * exists to prevent, one table over.
+ *
+ * `null` asks for the all-destinations rules, which is what the screen shows
+ * before a destination is chosen.
+ */
 export async function listCategoryMarginOverview(
   executor: Executor,
   sellerAccountId: string,
+  marketCode: string | null,
 ): Promise<CategoryMarginLeafRow[]> {
   const rows = await executor
     .select({
@@ -360,6 +388,7 @@ export async function listCategoryMarginOverview(
       l2: sals3Categories.l2,
       l3: sals3Categories.l3,
       policyId: pricingCategoryPolicies.id,
+      policyMarketCode: pricingCategoryPolicies.marketCode,
       targetMarginRate: pricingCategoryPolicies.targetMarginRate,
       roundingRule: pricingCategoryPolicies.roundingRule,
       version: pricingCategoryPolicies.version,
@@ -372,6 +401,9 @@ export async function listCategoryMarginOverview(
         eq(pricingCategoryPolicies.categoryId, sals3Categories.id),
         eq(pricingCategoryPolicies.sellerAccountId, sellerAccountId),
         eq(pricingCategoryPolicies.status, 'ACTIVE'),
+        marketCode === null
+          ? isNull(pricingCategoryPolicies.marketCode)
+          : eq(pricingCategoryPolicies.marketCode, marketCode),
       ),
     )
     /**
@@ -450,6 +482,7 @@ export async function listCategoryMarginOverview(
             roundingRule: row.roundingRule as SchemaRoundingRule,
             version: row.version as number,
             updatedAt: row.updatedAt as Date,
+            marketCode: (row.policyMarketCode as string | null) ?? null,
           },
   }));
 }
@@ -463,6 +496,8 @@ export async function createCategoryPolicy(
     roundingRule: SchemaRoundingRule;
     reason: string;
     actorId: string;
+    /** `null` writes the all-destinations rule. */
+    marketCode: string | null;
   },
 ): Promise<PricingCategoryPolicyRow> {
   const [row] = await executor
@@ -494,6 +529,9 @@ export async function reviseCategoryPolicy(
     .values({
       sellerAccountId: previous.sellerAccountId,
       categoryId: previous.categoryId,
+      // Carried from the row being superseded, never re-supplied by the caller:
+      // a revision changes a rate, not which destination the rule is for.
+      marketCode: previous.marketCode,
       targetMarginRate: input.targetMarginRate,
       roundingRule: input.roundingRule,
       reason: input.reason,

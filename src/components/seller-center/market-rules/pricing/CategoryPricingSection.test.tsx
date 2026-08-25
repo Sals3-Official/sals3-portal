@@ -43,6 +43,8 @@ async function renderToTree(): Promise<string> {
   const element = await CategoryPricingSection({
     sellerAccountId: 'seller-1',
     canManage: true,
+    marketCode: null,
+    destinationOptions: [{ code: null, label: 'All destinations' }],
   });
 
   return JSON.stringify(element);
