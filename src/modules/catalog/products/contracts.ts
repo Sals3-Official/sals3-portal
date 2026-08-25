@@ -241,6 +241,18 @@ export const PRODUCT_AUDIT_ACTIONS = {
    */
   categoryAssigned: 'product.category_assigned',
   revisionCreated: 'catalog_product_revision.created',
+  /**
+   * A settled revision was forked into a new open draft so a published
+   * product could be edited again.
+   *
+   * Deliberately not folded into `revisionCreated`: that action means "a
+   * product was imported and given its first draft" and is emitted once per
+   * product by `create-draft.ts`. Sharing it would make that series start
+   * counting edits, and the rows already written carry no origin field to
+   * tell the two apart afterwards — a payload discriminator only works
+   * going forward.
+   */
+  revisionForked: 'catalog_product_revision.forked',
   revisionSaved: 'catalog_product_revision.saved',
   revisionSaveRejected: 'catalog_product_revision.save_rejected_stale',
   variantCreated: 'catalog_product_variant.created',

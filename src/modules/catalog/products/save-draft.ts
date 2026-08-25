@@ -4,6 +4,7 @@ import { appendAuditEvent } from '@/modules/catalog/candidates/repository';
 import { PRODUCT_AUDIT_ACTIONS, type SaveProductDraftInput } from './contracts';
 import { descriptionImagesAreStored } from './description-image-storage';
 import { checksumOfDescriptionDocument } from './description-document';
+import openDraftForEdit from './open-draft-for-edit';
 import {
   findProductForSteward,
   saveDraftRevisionContent,
@@ -28,16 +29,36 @@ import {
  *    new draft, never an in-place overwrite of what a reviewer approved or an
  *    accepted order referenced (ADR-007 invariant 3).
  *
+ * That fork is `openDraftForEdit`, which runs first and inside the same
+ * transaction. It is the only place the rule lives — the description-only save
+ * calls the same helper — and it hands back the revision this save must
+ * actually write to, which is a different row from the one the editor sent
+ * whenever the product was already published. `revisionId` travels back in the
+ * result for the same reason: the editor holds a revision id, not only a
+ * version, and a screen still pointing at the settled revision would be
+ * refused on its very next save.
+ *
  * A rejected stale write is audited. Spec §19 requires draft saves *and*
  * version conflicts to be observable, and an unrecorded rejection is exactly
  * the silent outcome ADR-010 §1 rules out.
  */
 
 export type SaveProductDraftOutcome =
-  | { ok: true; revisionVersion: number; contentChecksum: string }
+  | {
+      ok: true;
+      /** The draft actually written: a new one when this save forked. */
+      revisionId: string;
+      revisionVersion: number;
+      contentChecksum: string;
+      forked: boolean;
+    }
   | {
       ok: false;
-      reason: 'not_found' | 'version_conflict' | 'image_not_stored';
+      reason:
+        | 'not_found'
+        | 'version_conflict'
+        | 'revision_in_review'
+        | 'image_not_stored';
     };
 
 export default async function saveProductDraft(input: {
@@ -71,10 +92,36 @@ export default async function saveProductDraft(input: {
 
     if (product === null) return { ok: false as const, reason: 'not_found' };
 
-    const revision = await saveDraftRevisionContent(tx, {
+    const draft = await openDraftForEdit(tx, {
+      product,
       revisionId: request.revisionId,
+      expectedRevisionVersion: request.expectedRevisionVersion,
+      actorId: input.actorId,
+    });
+
+    if (!draft.ok) {
+      await appendAuditEvent(tx, {
+        actorId: input.actorId,
+        action: PRODUCT_AUDIT_ACTIONS.revisionSaveRejected,
+        entityType: 'ProductRevision',
+        entityId: request.revisionId,
+        payload: {
+          productId: request.productId,
+          expectedVersion: request.expectedRevisionVersion,
+          outcome:
+            draft.reason === 'revision_in_review'
+              ? 'REVISION_UNDER_REVIEW'
+              : 'STALE_OR_NOT_EDITABLE',
+        },
+      });
+
+      return { ok: false as const, reason: draft.reason };
+    }
+
+    const revision = await saveDraftRevisionContent(tx, {
+      revisionId: draft.revisionId,
       productId: request.productId,
-      expectedVersion: request.expectedRevisionVersion,
+      expectedVersion: draft.expectedVersion,
       contentDocument: request.descriptionDocument,
       contentChecksum,
       actorId: input.actorId,
@@ -85,10 +132,10 @@ export default async function saveProductDraft(input: {
         actorId: input.actorId,
         action: PRODUCT_AUDIT_ACTIONS.revisionSaveRejected,
         entityType: 'ProductRevision',
-        entityId: request.revisionId,
+        entityId: draft.revisionId,
         payload: {
           productId: request.productId,
-          expectedVersion: request.expectedRevisionVersion,
+          expectedVersion: draft.expectedVersion,
           // Which of "wrong version", "not a draft any more", or "not this
           // product's revision" failed is deliberately not distinguished for
           // the caller; the audit records what was attempted.
@@ -120,9 +167,11 @@ export default async function saveProductDraft(input: {
       entityId: revision.id,
       payload: {
         productId: request.productId,
-        previousVersion: request.expectedRevisionVersion,
+        previousVersion: draft.expectedVersion,
         version: revision.version,
         contentChecksum,
+        /** Set only when this save forked; see `save-description-document.ts`. */
+        forkedFromRevisionId: draft.forked ? request.revisionId : undefined,
         blockCount: request.descriptionDocument.blocks.length,
         sals3CategoryL1: request.sals3CategoryL1,
         pricedOfferCount,
@@ -131,8 +180,10 @@ export default async function saveProductDraft(input: {
 
     return {
       ok: true as const,
+      revisionId: revision.id,
       revisionVersion: revision.version,
       contentChecksum,
+      forked: draft.forked,
     };
   });
 }

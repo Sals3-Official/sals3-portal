@@ -20,11 +20,17 @@ vi.mock('./repository', () => ({
   updateProductEditorialForSteward: vi.fn(),
 }));
 
+// The fork rule has its own suite (`open-draft-for-edit.test.ts`). Here it is
+// mocked so these tests stay about what `saveProductDraft` does with the
+// answer: which revision it writes to, and what it reports back.
+vi.mock('./open-draft-for-edit', () => ({ default: vi.fn() }));
+
 /* eslint-disable import/first */
 import { appendAuditEvent } from '@/modules/catalog/candidates/repository';
 
 import saveProductDraft from './save-draft';
 import type { SaveProductDraftInput } from './contracts';
+import openDraftForEdit from './open-draft-for-edit';
 import {
   findProductForSteward,
   saveDraftRevisionContent,
@@ -84,15 +90,79 @@ beforeEach(() => {
     id: REQUEST.productId,
   });
   asMock(updateSellerRetailPrices).mockResolvedValue(1);
+  asMock(openDraftForEdit).mockResolvedValue({
+    ok: true,
+    revisionId: REQUEST.revisionId,
+    expectedVersion: REQUEST.expectedRevisionVersion,
+    forked: false,
+  });
 });
 
 describe('saveProductDraft', () => {
   it('saves content and returns the advanced version', async () => {
     await expect(run()).resolves.toEqual({
       ok: true,
+      revisionId: REQUEST.revisionId,
       revisionVersion: 4,
       contentChecksum: expect.any(String),
+      forked: false,
     });
+  });
+
+  it('writes to the forked draft, not the revision the editor named', async () => {
+    // What a published product does: the settled revision the editor rendered
+    // is not writable, so the fork answers with a different row. Writing to
+    // the request's id anyway is the bug this whole path exists to prevent.
+    const forkedId = '44444444-4444-4444-8444-444444444444';
+
+    asMock(openDraftForEdit).mockResolvedValue({
+      ok: true,
+      revisionId: forkedId,
+      expectedVersion: 1,
+      forked: true,
+    });
+    asMock(saveDraftRevisionContent).mockResolvedValue({
+      id: forkedId,
+      version: 2,
+    });
+
+    await expect(run()).resolves.toEqual({
+      ok: true,
+      revisionId: forkedId,
+      revisionVersion: 2,
+      contentChecksum: expect.any(String),
+      forked: true,
+    });
+
+    const [, args] = asMock(saveDraftRevisionContent).mock.calls[0];
+
+    expect(args.revisionId).toBe(forkedId);
+    expect(args.expectedVersion).toBe(1);
+  });
+
+  it('refuses a revision under review without writing anything', async () => {
+    asMock(openDraftForEdit).mockResolvedValue({
+      ok: false,
+      reason: 'revision_in_review',
+    });
+
+    await expect(run()).resolves.toEqual({
+      ok: false,
+      reason: 'revision_in_review',
+    });
+    expect(saveDraftRevisionContent).not.toHaveBeenCalled();
+    expect(updateProductEditorialForSteward).not.toHaveBeenCalled();
+    expect(updateSellerRetailPrices).not.toHaveBeenCalled();
+
+    // The refusal is still observable: an unrecorded rejection is the silent
+    // outcome ADR-010 §1 rules out.
+    expect(appendAuditEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'catalog_product_revision.save_rejected_stale',
+        payload: expect.objectContaining({ outcome: 'REVISION_UNDER_REVIEW' }),
+      }),
+    );
   });
 
   it('passes a content checksum computed server-side, never one from the caller', async () => {

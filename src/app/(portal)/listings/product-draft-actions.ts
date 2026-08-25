@@ -297,7 +297,18 @@ export async function bulkCreateProductDraftsAction(
 }
 
 export type SaveProductDraftActionResult =
-  | { ok: true; revisionVersion: number }
+  | {
+      ok: true;
+      /**
+       * The revision this actually wrote — a new draft when the product was
+       * already published. See `description-actions.ts` for why the editor
+       * must adopt it rather than keep its own.
+       */
+      revisionId: string;
+      revisionVersion: number;
+      /** True when this save opened a new draft off the published revision. */
+      forked: boolean;
+    }
   | {
       ok: false;
       reason:
@@ -307,6 +318,7 @@ export type SaveProductDraftActionResult =
         | 'not_configured'
         | 'not_found'
         | 'version_conflict'
+        | 'revision_in_review'
         | 'image_not_stored'
         | 'failed';
     };
@@ -338,7 +350,12 @@ export async function saveProductDraftAction(
     });
 
     return outcome.ok
-      ? { ok: true, revisionVersion: outcome.revisionVersion }
+      ? {
+          ok: true,
+          revisionId: outcome.revisionId,
+          revisionVersion: outcome.revisionVersion,
+          forked: outcome.forked,
+        }
       : { ok: false, reason: outcome.reason };
   } catch (error) {
     // eslint-disable-next-line no-console

@@ -56,8 +56,10 @@ export default async function DescriptionStudioPage({ params }: PageProps) {
   const { fixture } = record;
   const target = fixture.draftSaveTarget;
 
-  // No open `DRAFT` revision means no version to compare-and-set against, so
-  // the canvas would render over a save that could never succeed.
+  // No current revision at all means no version to compare-and-set against, so
+  // the canvas would render over a save that could never succeed. A *settled*
+  // current revision is fine: the save forks a new draft off it rather than
+  // rewriting it (`open-draft-for-edit.ts`).
   if (target === null) notFound();
 
   return (
@@ -68,6 +70,7 @@ export default async function DescriptionStudioPage({ params }: PageProps) {
       expectedRevisionVersion={target.expectedRevisionVersion}
       backHref={`/listings/new?productId=${target.productId}`}
       initialBlocks={fixture.descriptionBlocks}
+      publishedRevision={fixture.publishedRevision}
     />
   );
 }

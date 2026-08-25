@@ -469,6 +469,16 @@ export type CatalogueProductFixture = {
   /** Optimistic-concurrency token for the current open draft revision. */
   currentRevisionVersion?: number | null;
   /**
+   * `products.published_revision_id` - the revision buyers are actually
+   * served, which the storefront projection reads and no draft save touches.
+   * `null` when the product has never been published; absent on illustrative
+   * fixtures, which have no row.
+   *
+   * Compared against `currentRevisionId` it answers the only question the
+   * editor needs: whether the draft on screen has been published yet.
+   */
+  publishedRevisionId?: string | null;
+  /**
    * Axis names a seller has already committed for this product, in their stored
    * position order. Empty when nothing is mapped yet.
    *

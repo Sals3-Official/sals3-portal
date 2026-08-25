@@ -5,6 +5,7 @@ import { PRODUCT_AUDIT_ACTIONS } from './contracts';
 import type { DescriptionDocument } from './description-document';
 import { checksumOfDescriptionDocument } from './description-document';
 import { descriptionImagesAreStored } from './description-image-storage';
+import openDraftForEdit from './open-draft-for-edit';
 import { findProductForSteward, saveDraftRevisionContent } from './repository';
 
 /**
@@ -28,12 +29,33 @@ import { findProductForSteward, saveDraftRevisionContent } from './repository';
  * rewritten in place at all — editing a settled revision is a fork into a new
  * draft, never an overwrite of what a reviewer approved or an accepted order
  * referenced (ADR-007 invariant 3).
+ *
+ * That fork is `openDraftForEdit`, and it runs inside this transaction rather
+ * than in a step of its own: a draft created for an edit that then fails
+ * validation would be an open draft nobody asked for, and it would block the
+ * next fork through the open-draft index. Both outcomes roll back together.
+ *
+ * `revisionId` in the result is not decoration. The fork answers on a
+ * *different* row from the one the editor sent, and the editor holds its
+ * revision id as well as its version — so the id has to travel back or the
+ * next save from that screen names the settled revision again and is refused.
  */
 export type SaveDescriptionDocumentResult =
-  | { ok: true; revisionVersion: number; contentChecksum: string }
+  | {
+      ok: true;
+      /** The draft actually written: a new one when this save forked. */
+      revisionId: string;
+      revisionVersion: number;
+      contentChecksum: string;
+      forked: boolean;
+    }
   | {
       ok: false;
-      reason: 'not_found' | 'version_conflict' | 'image_not_stored';
+      reason:
+        | 'not_found'
+        | 'version_conflict'
+        | 'revision_in_review'
+        | 'image_not_stored';
     };
 
 export default async function saveDescriptionDocument(input: {
@@ -70,10 +92,37 @@ export default async function saveDescriptionDocument(input: {
 
       if (product === null) return { ok: false, reason: 'not_found' };
 
-      const revision = await saveDraftRevisionContent(tx, {
+      const draft = await openDraftForEdit(tx, {
+        product,
         revisionId: input.revisionId,
+        expectedRevisionVersion: input.expectedRevisionVersion,
+        actorId: input.actorId,
+      });
+
+      if (!draft.ok) {
+        await appendAuditEvent(tx, {
+          actorId: input.actorId,
+          action: PRODUCT_AUDIT_ACTIONS.revisionSaveRejected,
+          entityType: 'ProductRevision',
+          entityId: input.revisionId,
+          payload: {
+            productId: input.productId,
+            expectedVersion: input.expectedRevisionVersion,
+            scope: 'DESCRIPTION_ONLY',
+            outcome:
+              draft.reason === 'revision_in_review'
+                ? 'REVISION_UNDER_REVIEW'
+                : 'STALE_OR_NOT_EDITABLE',
+          },
+        });
+
+        return { ok: false, reason: draft.reason };
+      }
+
+      const revision = await saveDraftRevisionContent(tx, {
+        revisionId: draft.revisionId,
         productId: input.productId,
-        expectedVersion: input.expectedRevisionVersion,
+        expectedVersion: draft.expectedVersion,
         contentDocument: input.descriptionDocument,
         contentChecksum,
         actorId: input.actorId,
@@ -87,10 +136,10 @@ export default async function saveDescriptionDocument(input: {
           actorId: input.actorId,
           action: PRODUCT_AUDIT_ACTIONS.revisionSaveRejected,
           entityType: 'ProductRevision',
-          entityId: input.revisionId,
+          entityId: draft.revisionId,
           payload: {
             productId: input.productId,
-            expectedVersion: input.expectedRevisionVersion,
+            expectedVersion: draft.expectedVersion,
             scope: 'DESCRIPTION_ONLY',
             outcome: 'STALE_OR_NOT_EDITABLE',
           },
@@ -106,9 +155,15 @@ export default async function saveDescriptionDocument(input: {
         entityId: revision.id,
         payload: {
           productId: input.productId,
-          previousVersion: input.expectedRevisionVersion,
+          previousVersion: draft.expectedVersion,
           version: revision.version,
           contentChecksum,
+          /**
+           * Names the draft this landed on when it was not the one the editor
+           * sent, so `revisionForked` and the save that followed it read as
+           * one action in the trail.
+           */
+          forkedFromRevisionId: draft.forked ? input.revisionId : undefined,
           blockCount: input.descriptionDocument.blocks.length,
           /**
            * Names what this save covered, so the trail distinguishes it from a
@@ -125,8 +180,10 @@ export default async function saveDescriptionDocument(input: {
 
       return {
         ok: true,
+        revisionId: revision.id,
         revisionVersion: revision.version,
         contentChecksum,
+        forked: draft.forked,
       };
     },
   );

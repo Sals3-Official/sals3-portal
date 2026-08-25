@@ -413,6 +413,54 @@ describe('productToEditorFixture — the CJ category is the category', () => {
     });
   });
 
+  it('reports nothing pending for a product that was never published', () => {
+    const { fixture } = productToEditorFixture(CATALOGUE_PRODUCT);
+
+    expect(fixture.publishedRevision).toBeNull();
+  });
+
+  it('reports the draft as live while it is still the published revision', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      status: 'LIVE',
+      publishedRevisionId: CATALOGUE_PRODUCT.currentRevisionId,
+    });
+
+    expect(fixture.publishedRevision).toEqual({
+      id: CATALOGUE_PRODUCT.currentRevisionId,
+      isCurrent: true,
+    });
+  });
+
+  it('reports a fork the seller has not published yet', () => {
+    // What an edit on a published product leaves behind: the current revision
+    // is the new draft, `published_revision_id` still names the frozen one the
+    // storefront serves.
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      status: 'LIVE_NEEDS_ATTENTION',
+      publishedRevisionId: '99999999-9999-4999-8999-999999999999',
+    });
+
+    expect(fixture.publishedRevision).toEqual({
+      id: '99999999-9999-4999-8999-999999999999',
+      isCurrent: false,
+    });
+  });
+
+  it('claims no live storefront for a paused listing that still names one', () => {
+    // `unpublishProduct` moves a product to PAUSED and leaves
+    // `published_revision_id` set. Buyers are served nothing, so an edit there
+    // is not waiting to go live and the editor must not say it is.
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      status: 'AUTO_PAUSED',
+      publishedRevisionId: '99999999-9999-4999-8999-999999999999',
+    });
+
+    expect(fixture.publishedRevision).toBeNull();
+  });
+
   it('stays honestly unmapped only when no CJ category exists anywhere', () => {
     const { fixture } = productToEditorFixture({
       ...CATALOGUE_PRODUCT,

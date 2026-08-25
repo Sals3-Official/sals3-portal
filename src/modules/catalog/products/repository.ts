@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 
 import {
   offerSupplierBindings,
@@ -272,6 +272,32 @@ export async function findOpenDraftRevision(
   return rows[0] ?? null;
 }
 
+/**
+ * One revision of one product, by id.
+ *
+ * The `productId` term is not decoration: it is what stops a revision id
+ * belonging to another seller's product from being read through a caller that
+ * has already checked stewardship of a *different* product. Same rule as
+ * every other statement here — ownership travels in the `WHERE` clause.
+ */
+export async function findRevisionOfProduct(
+  executor: Executor,
+  input: { revisionId: string; productId: string },
+): Promise<ProductRevisionRow | null> {
+  const rows = await executor
+    .select()
+    .from(productRevisions)
+    .where(
+      and(
+        eq(productRevisions.id, input.revisionId),
+        eq(productRevisions.productId, input.productId),
+      ),
+    )
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
 export async function findHighestRevisionNumber(
   executor: Executor,
   productId: string,
@@ -292,10 +318,19 @@ export async function findHighestRevisionNumber(
  * Creates the next `DRAFT` revision for a product.
  *
  * This is also the fork-on-edit path: editing a published product never
- * rewrites the public revision (spec §6.2), it creates the next draft here.
- * The partial unique index `product_revisions_open_draft_key` is what makes
- * that safe — a second concurrent fork collides instead of producing two
- * rival drafts of the same product.
+ * rewrites the public revision (spec §6.2), it creates the next draft here
+ * (`open-draft-for-edit.ts`). The partial unique index
+ * `product_revisions_open_draft_key` is what makes that safe — a second
+ * concurrent fork collides instead of producing two rival drafts of the same
+ * product.
+ *
+ * That collision is answered with `ON CONFLICT DO NOTHING` and a `null`
+ * return rather than a raised error, because the alternative is worse than
+ * verbose: a unique violation aborts the whole surrounding transaction in
+ * Postgres, so the loser could not even record why it lost. `null` means
+ * "another writer already holds this product's open draft (or its revision
+ * number)" and leaves the transaction usable, which is what lets the caller
+ * refuse cleanly instead of crashing or riding along on the winner's draft.
  */
 export async function insertDraftRevision(
   executor: Executor,
@@ -307,7 +342,7 @@ export async function insertDraftRevision(
     contentChecksum: string;
     actorId: string;
   },
-): Promise<ProductRevisionRow> {
+): Promise<ProductRevisionRow | null> {
   const [row] = await executor
     .insert(productRevisions)
     .values({
@@ -330,9 +365,10 @@ export async function insertDraftRevision(
       createdBy: input.actorId,
       updatedBy: input.actorId,
     })
+    .onConflictDoNothing()
     .returning();
 
-  return row;
+  return row ?? null;
 }
 
 export async function setCurrentRevision(
@@ -347,6 +383,49 @@ export async function setCurrentRevision(
       updatedBy: input.actorId,
     })
     .where(eq(products.id, input.productId));
+}
+
+/**
+ * Retires the revisions a newly published one replaces.
+ *
+ * `APPROVED` is meant to name the copy a product is currently published from.
+ * Leaving the previous one in that state after a newer revision goes live
+ * would leave two rows making the same claim, and `products` — which already
+ * records the live one in `published_revision_id` — would be the only way to
+ * tell which is true. `SUPERSEDED` is already in the enum for exactly this.
+ *
+ * Safe against the frozen-when-settled check constraint: every row this
+ * touches is `APPROVED`, so it already carries `content_snapshot` and
+ * `frozen_at`, and moving it to `SUPERSEDED` keeps that constraint satisfied.
+ * Nothing is unfrozen and no snapshot is rewritten — an accepted order's
+ * frozen content stays byte-identical.
+ */
+export async function markApprovedRevisionsSuperseded(
+  executor: Executor,
+  input: {
+    productId: string;
+    exceptRevisionId: string;
+    actorId: string;
+    now: Date;
+  },
+): Promise<string[]> {
+  const rows = await executor
+    .update(productRevisions)
+    .set({
+      workflowState: 'SUPERSEDED',
+      updatedAt: input.now,
+      updatedBy: input.actorId,
+    })
+    .where(
+      and(
+        eq(productRevisions.productId, input.productId),
+        eq(productRevisions.workflowState, 'APPROVED'),
+        ne(productRevisions.id, input.exceptRevisionId),
+      ),
+    )
+    .returning({ id: productRevisions.id });
+
+  return rows.map((row) => row.id);
 }
 
 /**

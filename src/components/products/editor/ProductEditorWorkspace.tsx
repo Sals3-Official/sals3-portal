@@ -71,6 +71,7 @@ import PublishSuccessDialog from './PublishSuccessDialog';
 import ReviewPublishSection from './ReviewPublishSection';
 import SpecificationsSection from './SpecificationsSection';
 import SupplierSourceDrawer from './SupplierSourceDrawer';
+import UnpublishedChangesNotice from './UnpublishedChangesNotice';
 import VariantImagePicker from './VariantImagePicker';
 import VariantOptionMappingSection from './VariantOptionMappingSection';
 import VariantPricingTable from './VariantPricingTable';
@@ -87,7 +88,7 @@ type ProductEditorWorkspaceProps = {
   initialLifecycle: EditorLifecycle;
   /** Database draft save boundary. Omitted for fixture/design-preview mode. */
   saveDraftAction?: (input: unknown) => Promise<
-    | { ok: true; revisionVersion: number }
+    | { ok: true; revisionId: string; revisionVersion: number; forked: boolean }
     | {
         ok: false;
         reason:
@@ -98,6 +99,7 @@ type ProductEditorWorkspaceProps = {
           | 'not_configured'
           | 'not_found'
           | 'version_conflict'
+          | 'revision_in_review'
           | 'image_not_stored'
           | 'failed';
       }
@@ -106,10 +108,14 @@ type ProductEditorWorkspaceProps = {
    * The narrow description save, so its own section can save without committing
    * a retail price the seller was still deciding on.
    */
-  saveDescriptionAction?: (
-    input: unknown,
-  ) => Promise<
-    | { ok: true; revisionVersion: number; contentChecksum: string }
+  saveDescriptionAction?: (input: unknown) => Promise<
+    | {
+        ok: true;
+        revisionId: string;
+        revisionVersion: number;
+        contentChecksum: string;
+        forked: boolean;
+      }
     | { ok: false; reason: string; message: string }
   >;
   publishAction?: (input: unknown) => Promise<
@@ -268,6 +274,29 @@ const PUBLISH_FAILURE_MESSAGES: Record<string, string> = {
   validation_failed: 'Server validation blocked publication.',
   failed: 'No listing was published.',
 };
+
+/**
+ * Why a draft save was refused, in the seller's terms.
+ *
+ * `revision_in_review` is not reachable today — nothing writes `IN_REVIEW` or
+ * `CHANGES_REQUESTED` — but it is a real server answer with a real cause, and
+ * "No database change was made." would tell a seller nothing about a block
+ * they cannot clear by retrying. The same wording is in
+ * `description-actions.ts`, which refuses the narrow save the same way.
+ */
+const DRAFT_SAVE_FAILURE_MESSAGES: Record<string, string> = {
+  version_conflict:
+    'This draft changed elsewhere. Refresh before saving again.',
+  revision_in_review:
+    'This listing is in review. Changes are blocked until the review finishes.',
+  image_not_stored:
+    'One image is not stored in Sals3. Upload it again and save.',
+};
+
+/** Falls back rather than claiming a cause the server did not give. */
+function draftSaveFailureMessage(reason: string): string {
+  return DRAFT_SAVE_FAILURE_MESSAGES[reason] ?? 'No database change was made.';
+}
 
 function descriptionDocumentFrom(
   blocks: KeyedDescriptionBlock[],
@@ -645,8 +674,34 @@ export default function ProductEditorWorkspace({
   const [previewVariantId, setPreviewVariantId] = useState(
     fixture.variants[0]?.id ?? '',
   );
+  /**
+   * The revision this tab is writing to, and the version it last observed.
+   *
+   * The id is state, not a straight read of `fixture.draftSaveTarget`, because
+   * a save on a published product lands on a *different row* from the one the
+   * server rendered: it forks a new draft off the published revision. Holding
+   * the id in the prop meant the screen kept naming the settled revision after
+   * the fork, so the fork happened once and every save after it was refused as
+   * a version conflict — a fix that looked correct on the server and did
+   * nothing for the seller.
+   *
+   * Both are adopted from the save result for the same reason the version
+   * already was: this screen has just moved the row it is editing.
+   */
+  const [draftRevisionId, setDraftRevisionId] = useState(
+    fixture.draftSaveTarget?.revisionId ?? null,
+  );
   const [draftRevisionVersion, setDraftRevisionVersion] = useState(
     fixture.draftSaveTarget?.expectedRevisionVersion ?? null,
+  );
+  /**
+   * Whether the storefront is behind the draft on screen. Seeded from the
+   * server (a fork from an earlier session survives a reload) and set on every
+   * successful revision-scoped save of a published product, because that save
+   * is exactly what opens the gap.
+   */
+  const [hasUnpublishedChanges, setHasUnpublishedChanges] = useState(
+    fixture.publishedRevision !== null && !fixture.publishedRevision.isCurrent,
   );
 
   /**
@@ -951,11 +1006,12 @@ export default function ProductEditorWorkspace({
     if (
       saveDraftAction !== undefined &&
       fixture.draftSaveTarget !== null &&
+      draftRevisionId !== null &&
       draftRevisionVersion !== null
     ) {
       const result = await saveDraftAction({
         productId: fixture.draftSaveTarget.productId,
-        revisionId: fixture.draftSaveTarget.revisionId,
+        revisionId: draftRevisionId,
         expectedRevisionVersion: draftRevisionVersion,
         title: productName,
         // The draft L1 dropdown that used to set this was removed from the
@@ -977,6 +1033,7 @@ export default function ProductEditorWorkspace({
       });
 
       if (result.ok) {
+        setDraftRevisionId(result.revisionId);
         setDraftRevisionVersion(result.revisionVersion);
         setSavedDescriptionBlocks(
           descriptionBlocks.map((entry) => entry.block),
@@ -984,6 +1041,11 @@ export default function ProductEditorWorkspace({
         setSavedDescriptionMode(descriptionMode);
         setLifecycle('SAVED');
         setIsDirty(false);
+
+        if (fixture.publishedRevision !== null) {
+          setHasUnpublishedChanges(true);
+        }
+
         toast('Draft saved.');
 
         return;
@@ -991,10 +1053,7 @@ export default function ProductEditorWorkspace({
 
       setLifecycle('SAVE_FAILED');
       toast('Draft save failed.', {
-        description:
-          result.reason === 'version_conflict'
-            ? 'This draft changed elsewhere. Refresh before saving again.'
-            : 'No database change was made.',
+        description: draftSaveFailureMessage(result.reason),
       });
 
       return;
@@ -1060,6 +1119,9 @@ export default function ProductEditorWorkspace({
       if (result.ok) {
         setLifecycle('IDLE');
         setIsDirty(false);
+        // The draft on screen is what the storefront now serves, so the gap
+        // this notice reports is closed until the next edit reopens it.
+        setHasUnpublishedChanges(false);
         router.refresh();
         // A dialog rather than a toast: this is the end of the task, it names a
         // path worth reading, and the seller most likely wants to leave for the
@@ -1231,6 +1293,7 @@ export default function ProductEditorWorkspace({
   const handleSaveDescription =
     saveDescriptionAction === undefined ||
     fixture.draftSaveTarget === null ||
+    draftRevisionId === null ||
     draftRevisionVersion === null
       ? undefined
       : async () => {
@@ -1240,7 +1303,7 @@ export default function ProductEditorWorkspace({
 
           const result = await saveDescriptionAction({
             productId: target.productId,
-            revisionId: target.revisionId,
+            revisionId: draftRevisionId,
             expectedRevisionVersion: draftRevisionVersion,
             descriptionDocument: descriptionDocumentFrom(
               descriptionBlocks,
@@ -1250,11 +1313,17 @@ export default function ProductEditorWorkspace({
 
           if (!result.ok) return { ok: false, message: result.message };
 
+          setDraftRevisionId(result.revisionId);
           setDraftRevisionVersion(result.revisionVersion);
           setSavedDescriptionBlocks(
             descriptionBlocks.map((entry) => entry.block),
           );
           setSavedDescriptionMode(descriptionMode);
+
+          if (fixture.publishedRevision !== null) {
+            setHasUnpublishedChanges(true);
+          }
+
           toast('Description saved.');
 
           return { ok: true, message: 'Description saved.' };
@@ -1608,6 +1677,11 @@ export default function ProductEditorWorkspace({
         banner={currentFixture.banner}
         lifecycle={lifecycle}
         onRetry={() => setLifecycle('IDLE')}
+      />
+
+      <UnpublishedChangesNotice
+        isPublished={fixture.publishedRevision !== null}
+        hasUnpublishedChanges={hasUnpublishedChanges}
       />
 
       {/* 86.5rem (1384px) is 272px Readiness + 760px main + 320px Preview +
