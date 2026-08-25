@@ -101,6 +101,39 @@ const PILOT_DESTINATIONS: readonly MarketDestinationCapability[] = [
     authorizedSellingCurrencyCodes: ['USD'],
     pendingCapabilities: MARKET_CAPABILITY_REQUIREMENTS,
   },
+  // Opened 2026-08-25 by owner decision, alongside
+  // `buyer-destination-country` v3. Same `BOUNDED_PILOT` readiness and the
+  // same outstanding capability list as AU and PH: being offerable is not the
+  // same as being ready, and every one of them still reports payments,
+  // logistics, tax and payout as pending.
+  {
+    destinationCountryCode: 'NZ',
+    destinationName: 'New Zealand',
+    readiness: 'BOUNDED_PILOT',
+    authorizedSellingCurrencyCodes: ['USD'],
+    pendingCapabilities: MARKET_CAPABILITY_REQUIREMENTS,
+  },
+  {
+    destinationCountryCode: 'US',
+    destinationName: 'United States',
+    readiness: 'BOUNDED_PILOT',
+    authorizedSellingCurrencyCodes: ['USD'],
+    pendingCapabilities: MARKET_CAPABILITY_REQUIREMENTS,
+  },
+  {
+    destinationCountryCode: 'CA',
+    destinationName: 'Canada',
+    readiness: 'BOUNDED_PILOT',
+    authorizedSellingCurrencyCodes: ['USD'],
+    pendingCapabilities: MARKET_CAPABILITY_REQUIREMENTS,
+  },
+  {
+    destinationCountryCode: 'FJ',
+    destinationName: 'Fiji',
+    readiness: 'BOUNDED_PILOT',
+    authorizedSellingCurrencyCodes: ['USD'],
+    pendingCapabilities: MARKET_CAPABILITY_REQUIREMENTS,
+  },
 ];
 
 export function resolveSellerMarketCapabilities(): SellerMarketCapabilities {

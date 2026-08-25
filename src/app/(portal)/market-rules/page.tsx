@@ -5,7 +5,7 @@ import CategoryPricingSection from '@/components/seller-center/market-rules/pric
 import FundingBufferSection from '@/components/seller-center/market-rules/pricing/FundingBufferSection';
 import { can } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
-import { resolveSellerMarketCapabilities } from '@/modules/market-config/capabilities';
+import { listPricingScopeDestinations } from '@/modules/pricing/pricing-scope-destinations';
 
 export const metadata: Metadata = { title: 'Market rules · Seller Center' };
 
@@ -52,8 +52,8 @@ type PageProps = {
 /**
  * The destination whose rules this render shows, taken from the URL.
  *
- * Validated against `resolveSellerMarketCapabilities()` — the same gate every
- * write path uses — rather than trusted. An unknown, lowercase, or
+ * Validated against `listPricingScopeDestinations()` — the same gate every write
+ * path uses — rather than trusted. An unknown, lowercase, or
  * not-offered code falls back to the all-destinations rule instead of 404ing:
  * a hand-edited or stale link is an ordinary way to arrive here, and the
  * unscoped view is the honest thing to show when the asked-for scope is not
@@ -72,15 +72,24 @@ function resolveScope(
 
 export default async function MarketRulesPage({ searchParams }: PageProps) {
   const session = await requirePermission('market_rules:read');
-  const { destinations } = resolveSellerMarketCapabilities();
-  const offerable = destinations.map((d) => d.destinationCountryCode);
-  const marketCode = resolveScope((await searchParams).destination, offerable);
+  /**
+   * Pricing scope, not the buyer allowlist — owner decision 2026-08-25.
+   *
+   * `resolveSellerMarketCapabilities()` answers "where may a buyer order
+   * from", and widening it requeues every decided candidate because its policy
+   * version composes into `candidate_evaluations.policy_version`. Setting a
+   * margin costs nothing and prices nothing until a destination is separately
+   * approved, so the two lists are deliberately different. See
+   * `pricing-scope-destinations.ts`.
+   */
+  const scopes = listPricingScopeDestinations();
+  const marketCode = resolveScope(
+    (await searchParams).destination,
+    scopes.map((d) => d.code),
+  );
   const destinationOptions = [
     { code: null, label: 'All destinations' },
-    ...destinations.map((d) => ({
-      code: d.destinationCountryCode,
-      label: d.destinationCountryCode,
-    })),
+    ...scopes.map((d) => ({ code: d.code, label: d.code })),
   ];
 
   const canReadPricing = can(session.role, 'pricing_policy:read');

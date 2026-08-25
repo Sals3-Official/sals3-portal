@@ -165,7 +165,14 @@ describe('beginMarketProfileSetupAction — authorization and allow list', () =>
     );
   });
 
-  it.each(['SG', 'ID', 'US', 'au', 'AUSTRALIA', ''])(
+  /**
+   * `US` left this list on 2026-08-25 because it is now an approved
+   * destination — it was replaced by `GB` rather than dropped, so the invariant
+   * this case exists for still has a subject. What must keep holding is that a
+   * destination the policy does not name is refused **server-side**, whatever
+   * the browser posted, along with the wrong-case and free-text forms.
+   */
+  it.each(['SG', 'ID', 'GB', 'au', 'AUSTRALIA', ''])(
     'refuses unapproved destination %s server-side',
     async (destinationCountryCode) => {
       const result = await beginMarketProfileSetupAction({
