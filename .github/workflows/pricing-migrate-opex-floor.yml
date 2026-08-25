@@ -1,0 +1,90 @@
+# One-time, idempotent DDL — no schedule, manual trigger only.
+#
+# Adds pricing_store_defaults.min_contribution_rate (the percentage form of the
+# operating-expense floor) and the two constraints that govern it: exactly one
+# floor form per rule, and a rate inside the open interval the resolver can
+# divide by. Same break-glass pattern as pricing-migrate-per-market-scope.yml —
+# a manual workflow_dispatch calling an authenticated internal route with the
+# shared CRON_SECRET, no Vercel access or raw database credential required.
+#
+# ORDER MATTERS. This runs BEFORE the deployment that names the column. Drizzle
+# names every column of a table in its INSERT, so a deployment carrying
+# minContributionRate before the database has it breaks every store-default
+# write, not just the new field. Nothing in the change that adds this DDL names
+# the column, so running this early is safe and running it late is not.
+#
+# THE CONSTRAINTS MATTER AS MUCH AS THE COLUMN. A missing column breaks every
+# write immediately and loudly. A missing constraint breaks nothing until a row
+# carries both a percentage and an amount, and by then the resolver has already
+# had two answers and quietly used one. That is why this verifies both, and why
+# a run reporting the column without the constraints fails.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin, e.g.
+#                                https://sals3-portal.example.com
+
+name: Pricing Migrate Opex Floor
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the opex-floor migration endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/pricing/migrate-opex-floor"
+
+          # Read-only first, so the log records the state this run started from.
+          echo "--- schema state before ---"
+          curl -sS "$endpoint" -H "Authorization: Bearer $CRON_SECRET"
+          echo
+
+          echo "--- applying migration ---"
+          status=$(curl -sS -o /tmp/migrate-response.json -w '%{http_code}' \
+            -X POST "$endpoint" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/migrate-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "opex-floor migration returned HTTP $status" >&2
+            echo "Nothing was changed: the DDL runs in a transaction with a" >&2
+            echo "lock_timeout, so a lock it could not acquire rolls back" >&2
+            echo "cleanly. Safe to re-run when the database is quieter." >&2
+            exit 1
+          fi
+
+          # A 200 is not proof. Assert the column AND the constraints are
+          # genuinely there, or fail the run — a migration that reports success
+          # without achieving anything is the exact failure this endpoint exists
+          # to undo, and the constraint half is the half that fails silently.
+          echo "--- verifying the column and constraints exist ---"
+          if ! grep -q '"columnExistsAfter":true' /tmp/migrate-response.json; then
+            echo "Migration returned HTTP $status but min_contribution_rate is absent" >&2
+            exit 1
+          fi
+
+          if ! grep -q '"constraintsExistAfter":true' /tmp/migrate-response.json; then
+            echo "Migration returned HTTP $status and added the column, but the" >&2
+            echo "floor constraints are absent. Do NOT deploy the reader: without" >&2
+            echo "them a rule can carry a percentage and an amount at once, and" >&2
+            echo "nothing records which one was meant to apply." >&2
+            exit 1
+          fi
+
+          echo "Verified: min_contribution_rate and both floor constraints exist."
