@@ -2,7 +2,10 @@
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it, vi } from 'vitest';
-import resolveReviewableLine, { listLineReviewStates } from './eligibility';
+import resolveReviewableLine, {
+  asDeliveredAt,
+  listLineReviewStates,
+} from './eligibility';
 
 /**
  * Eligibility is a `WHERE` clause or it is not a gate.
@@ -301,4 +304,54 @@ describe('listLineReviewStates', () => {
 
     expect(state?.reviewable).toBe(false);
   });
+});
+
+/**
+ * The decoder that took the write path down on the first review anybody tried.
+ *
+ * `sql<Date>` carries `noopDecoder`, so the annotation was a compile-time claim
+ * with nothing behind it: a `string` from the driver reached
+ * `product_reviews.delivered_at` and `PgTimestamp.mapToDriverValue` threw
+ * `TypeError: value.toISOString is not a function` — a 503, and the storefront's
+ * catch-all "Try again in a moment" for a condition that would never pass.
+ *
+ * Tested here rather than through `recordingExecutor`, because that fake
+ * resolves its canned rows directly and drizzle's result mapping never runs — so
+ * a test written there passes whatever this function does. That is the gap this
+ * block closes.
+ */
+describe('asDeliveredAt', () => {
+  it('parses the timestamptz string a driver can hand back', () => {
+    const parsed = asDeliveredAt('2026-08-24 10:00:00+00');
+
+    expect(parsed).toBeInstanceOf(Date);
+    expect(parsed.toISOString()).toBe('2026-08-24T10:00:00.000Z');
+  });
+
+  it('passes a Date through untouched', () => {
+    const already = new Date('2026-08-17T00:00:00.000Z');
+
+    expect(asDeliveredAt(already)).toBe(already);
+  });
+
+  /**
+   * The instant anchors the review edit window, so a shape we do not understand
+   * is refused rather than converted. A number would be a guess about epoch
+   * units, and guessing wrong moves a buyer's deadline by a factor of a thousand
+   * without anything looking broken.
+   */
+  it.each([
+    ['a number', 1787000000000],
+    ['null', null],
+    ['undefined', undefined],
+    ['an unparseable string', 'not a timestamp'],
+    ['an object', {}],
+  ])(
+    'refuses %s by name instead of failing inside query building',
+    (_label, value) => {
+      expect(() => asDeliveredAt(value)).toThrow(
+        /coalesce\(carrier_delivered_at, updated_at\) is not a timestamp/,
+      );
+    },
+  );
 });
