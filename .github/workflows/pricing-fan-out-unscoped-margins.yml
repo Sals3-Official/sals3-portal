@@ -1,0 +1,100 @@
+# One-time, idempotent data migration — no schedule, manual trigger only.
+#
+# Copies every all-destinations category margin into each open destination
+# (AU, PH, NZ, US, CA, FJ), then retires the all-destinations rule. Same
+# break-glass pattern as pricing-migrate-per-market-scope.yml: a manual
+# workflow_dispatch calling an authenticated internal route with the shared
+# CRON_SECRET — no Vercel access or raw database credential required.
+#
+# NO PRICE MOVES. Each copy carries the source rate and rounding unchanged, so
+# every destination keeps the number it already resolves to. What changes is
+# only where that number is written down.
+#
+# ORDER MATTERS, in the opposite direction to the DDL migration. This runs
+# BEFORE the deployment that drops the all-destinations mode from the Market
+# Rules screen. Until it has run, production prices everything from unscoped
+# rows; a screen rendering only per-destination columns would show every
+# category as "Not set" while those rows went on pricing live orders.
+#
+# THE PLAN IS PRINTED FIRST, AND IT IS NOT DECORATION. The size of this write
+# is however many categories the bulk 25% import touched, multiplied by six —
+# a number that is not knowable from the code. Read it in the log before
+# trusting the result line.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin, e.g.
+#                                https://sals3-portal.example.com
+
+name: Pricing Fan Out Unscoped Margins
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the unscoped-margin fan-out endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/pricing/fan-out-unscoped-margins"
+
+          # Read-only first, so the log records what this run is about to do.
+          echo "--- plan ---"
+          curl -sS -o /tmp/fan-out-plan.json -w '%{http_code}\n' \
+            "$endpoint" -H "Authorization: Bearer $CRON_SECRET"
+          cat /tmp/fan-out-plan.json
+          echo
+
+          echo "--- applying migration ---"
+          status=$(curl -sS -o /tmp/fan-out-response.json -w '%{http_code}' \
+            -X POST "$endpoint" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/fan-out-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "unscoped-margin fan-out returned HTTP $status" >&2
+            echo "Nothing was changed: the copy and the retire share one" >&2
+            echo "transaction, so a failure rolls both back. Safe to re-run." >&2
+            exit 1
+          fi
+
+          # A 200 is not proof. The dangerous outcome is a run that retired the
+          # all-destinations rules without writing their replacements, which
+          # would leave categories with no rule pricing them at all.
+          echo "--- verifying nothing was left stranded ---"
+          if ! grep -q '"ok":true' /tmp/fan-out-response.json; then
+            echo "Fan-out returned HTTP $status without ok:true" >&2
+            exit 1
+          fi
+
+          echo "--- plan after ---"
+          curl -sS "$endpoint" -H "Authorization: Bearer $CRON_SECRET" \
+            -o /tmp/fan-out-plan-after.json
+          cat /tmp/fan-out-plan-after.json
+          echo
+
+          # A second read must find nothing left to move. If it still reports
+          # unscoped rules, the retire did not take and the screen change must
+          # NOT be deployed yet.
+          if ! grep -q '"unscopedActive":0' /tmp/fan-out-plan-after.json; then
+            echo "All-destinations rules still ACTIVE after the run. Do NOT" >&2
+            echo "deploy the per-destination screen: those rows are pricing" >&2
+            echo "live orders and the new screen cannot show them." >&2
+            exit 1
+          fi
+
+          echo "Verified: every margin now lives on a destination of its own."
