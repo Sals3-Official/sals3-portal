@@ -7,22 +7,24 @@ import { useRouter } from 'next/navigation';
 import { ChevronRight } from 'lucide-react';
 import { getCategoryPolicyHistoryAction } from '@/app/(portal)/market-rules/pricing-actions';
 import { Button } from '@/components/ui/button';
+import type { PricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
 import CategoryMarginDialog from './CategoryMarginDialog';
-import DeactivateCategoryPolicyButton from './DeactivateCategoryPolicyButton';
 import {
+  effectiveMarginFor,
   ROW_GRID,
   type CategoryMarginNodeViewModel,
   type EffectiveMargin,
+  type StoreDefaultSummary,
 } from './category-margin-model';
 import PolicyHistoryButton from './PolicyHistoryButton';
 
 type CategoryMarginNodeRowProps = {
   node: CategoryMarginNodeViewModel;
-  effective: EffectiveMargin;
+  nodesByPath: Map<string, CategoryMarginNodeViewModel>;
+  destinations: PricingScopeDestination[];
+  storeDefaults: Record<string, StoreDefaultSummary | null>;
   sellerAccountId: string;
   canManage: boolean;
-  /** The destination being edited, or `null` for the all-destinations rule. */
-  marketCode: string | null;
   /** Search mode: full path shown, no indent, no expand chevron. */
   flat: boolean;
   isExpanded: boolean;
@@ -40,15 +42,22 @@ function formatPercent(rate: string): string {
 }
 
 /**
- * "Set on this category" collided with the button also labelled "Set" — the
- * same word for a state and for an action. These name the origin only.
+ * What a cell means, spelled out for the tooltip and the screen reader.
+ *
+ * The column header already says which destination this is, so these name the
+ * origin only. With the source column gone, this string is the only place an
+ * inherited rate explains itself in words.
  */
 function sourceLabel(effective: EffectiveMargin): string {
   switch (effective.source) {
     case 'SELF':
-      return 'This category';
+      return effective.viaAllMarkets
+        ? 'Set on this category for all destinations'
+        : 'Set on this category';
     case 'ANCESTOR':
-      return `From ${effective.ancestorName}`;
+      return effective.viaAllMarkets
+        ? `From ${effective.ancestorName}, for all destinations`
+        : `From ${effective.ancestorName}`;
     case 'STORE_DEFAULT':
       return 'Store default';
     default:
@@ -56,64 +65,81 @@ function sourceLabel(effective: EffectiveMargin): string {
   }
 }
 
+/**
+ * One destination's rate for one category.
+ *
+ * Solid green when the category carries its own rule for this destination, a
+ * `sals3-bright`-outlined tint when the rate is inherited: an inherited rate is
+ * real and effective, but the outline says "editing the parent moves this too".
+ * `sals3-bright` is used only as a border (it fails 4.5:1 — see the token's own
+ * doc comment); the chip text is `sals3-deep`, 14.3:1 on white.
+ */
 function MarginChip({ effective }: { effective: EffectiveMargin }) {
   if (effective.source === 'NONE') {
     return (
-      <span className="inline-flex w-fit items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-ink-muted">
-        Not set
+      <span className="inline-flex w-full items-center justify-center rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap text-ink-muted">
+        —
       </span>
     );
   }
 
-  if (effective.source === 'SELF') {
+  if (effective.source === 'SELF' && !effective.viaAllMarkets) {
     return (
-      <span className="inline-flex w-fit items-center rounded-full bg-success-surface px-2 py-0.5 text-[11px] font-bold whitespace-nowrap text-green-700 tabular-nums">
+      <span className="inline-flex w-full items-center justify-center rounded-full bg-success-surface px-1.5 py-0.5 text-[11px] font-bold whitespace-nowrap text-green-700 tabular-nums">
         {formatPercent(effective.rate)}
       </span>
     );
   }
 
   return (
-    <span className="inline-flex w-fit items-center rounded-full border border-sals3-bright px-2 py-0.5 text-[11px] font-bold whitespace-nowrap text-sals3-deep tabular-nums">
+    <span className="inline-flex w-full items-center justify-center rounded-full border border-sals3-bright px-1.5 py-0.5 text-[11px] font-bold whitespace-nowrap text-sals3-deep tabular-nums">
       {formatPercent(effective.rate)}
     </span>
   );
 }
 
 /**
- * One taxonomy node — department or group. The margin chip is solid green
- * when the node carries its own policy and a `sals3-bright`-outlined tint
- * when the rate is inherited: an inherited rate is real and effective, but
- * the outline says "editing the parent moves this too". `sals3-bright` is
- * used only as a border here, never as text (it fails 4.5:1 — see the
- * token's own doc comment); the chip text is `sals3-deep`, 14.3:1 on white.
+ * One taxonomy node — department or group — across every open destination.
  *
- * Editing happens in a pop-out, not inline — see `CategoryMarginDialog`.
+ * Owner decision 2026-08-25: the destinations are columns rather than a mode
+ * the whole screen is switched into. Reading a rate for one country used to
+ * mean reloading the page and holding the previous number in your head; the
+ * point of a column is that the comparison is the default view, not a task.
+ *
+ * Editing happens in a pop-out opened from the cell, so the click that says
+ * which destination is the same click that opens the editor — there is no
+ * separate step in which the two could disagree.
  */
 export default function CategoryMarginNodeRow({
   node,
-  effective,
+  nodesByPath,
+  destinations,
+  storeDefaults,
   sellerAccountId,
   canManage,
-  marketCode,
   flat,
   isExpanded,
   onToggleExpanded,
 }: CategoryMarginNodeRowProps) {
   const router = useRouter();
-  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
 
   /**
    * Close, then refresh — from here, because this component stays mounted
    * through both. The dialog cannot do it: closing unmounts it.
    */
   function handleSaved() {
-    setIsEditorOpen(false);
+    setEditing(null);
     router.refresh();
   }
 
   const indent = flat ? 0 : (node.depth - 1) * 20;
   const hasChildren = node.childCount > 0;
+  const editingDestination =
+    editing === null
+      ? null
+      : (destinations.find((destination) => destination.code === editing) ??
+        null);
 
   return (
     <>
@@ -161,36 +187,40 @@ export default function CategoryMarginNodeRow({
           </div>
         </div>
 
-        <div role="cell">
-          <MarginChip effective={effective} />
-        </div>
+        {destinations.map((destination) => {
+          const effective = effectiveMarginFor(
+            node,
+            nodesByPath,
+            storeDefaults[destination.code] ?? null,
+            destination.code,
+          );
+          const description = `${destination.label}: ${sourceLabel(effective)}`;
 
-        <div role="cell" className="min-w-0">
-          <span
-            className={`block truncate text-xs ${effective.source === 'SELF' ? 'text-ink-muted' : 'text-ink-faint'}`}
-          >
-            {sourceLabel(effective)}
-          </span>
-        </div>
+          return (
+            <div role="cell" key={destination.code} className="min-w-0">
+              {canManage ? (
+                <button
+                  type="button"
+                  // The destination is named in the label, not only in the
+                  // column position — a screen reader gets no column header
+                  // from a CSS grid.
+                  aria-label={`${node.name} — ${description}. Edit.`}
+                  title={description}
+                  className="w-full cursor-pointer rounded-full focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  onClick={() => setEditing(destination.code)}
+                >
+                  <MarginChip effective={effective} />
+                </button>
+              ) : (
+                <span title={description} aria-label={description}>
+                  <MarginChip effective={effective} />
+                </span>
+              )}
+            </div>
+          );
+        })}
 
-        <div role="cell" className="flex items-center justify-end gap-1">
-          {canManage ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setIsEditorOpen(true)}
-            >
-              {node.policy === null ? 'Set' : 'Edit'}
-            </Button>
-          ) : null}
-          {canManage && node.policy !== null ? (
-            <DeactivateCategoryPolicyButton
-              policyId={node.policy.id}
-              sellerAccountId={sellerAccountId}
-              categoryPath={node.path}
-            />
-          ) : null}
+        <div role="cell" className="flex items-center justify-end">
           <PolicyHistoryButton
             title={`History — ${node.name}`}
             ariaLabel={`Policy history for ${node.path}`}
@@ -199,13 +229,19 @@ export default function CategoryMarginNodeRow({
         </div>
       </div>
 
-      {canManage && isEditorOpen ? (
+      {canManage && editingDestination !== null ? (
         <CategoryMarginDialog
           node={node}
-          effective={effective}
-          marketCode={marketCode}
-          open={isEditorOpen}
-          onOpenChange={setIsEditorOpen}
+          destination={editingDestination}
+          effective={effectiveMarginFor(
+            node,
+            nodesByPath,
+            storeDefaults[editingDestination.code] ?? null,
+            editingDestination.code,
+          )}
+          sellerAccountId={sellerAccountId}
+          open
+          onOpenChange={(next) => setEditing(next ? editing : null)}
           onSaved={handleSaved}
         />
       ) : null}

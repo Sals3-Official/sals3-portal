@@ -45,32 +45,7 @@ export const metadata: Metadata = { title: 'Market rules · Seller Center' };
  * viewer hold the latter but not the former. Having a pricing rule never
  * means a market is active, and vice versa.
  */
-type PageProps = {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-};
-
-/**
- * The destination whose rules this render shows, taken from the URL.
- *
- * Validated against `listPricingScopeDestinations()` — the same gate every write
- * path uses — rather than trusted. An unknown, lowercase, or
- * not-offered code falls back to the all-destinations rule instead of 404ing:
- * a hand-edited or stale link is an ordinary way to arrive here, and the
- * unscoped view is the honest thing to show when the asked-for scope is not
- * one this seller has.
- */
-function resolveScope(
-  raw: string | string[] | undefined,
-  offerable: readonly string[],
-): string | null {
-  const value = Array.isArray(raw) ? raw[0] : raw;
-
-  if (value === undefined) return null;
-
-  return offerable.includes(value) ? value : null;
-}
-
-export default async function MarketRulesPage({ searchParams }: PageProps) {
+export default async function MarketRulesPage() {
   const session = await requirePermission('market_rules:read');
   /**
    * Pricing scope, not the buyer allowlist — owner decision 2026-08-25.
@@ -82,15 +57,7 @@ export default async function MarketRulesPage({ searchParams }: PageProps) {
    * approved, so the two lists are deliberately different. See
    * `pricing-scope-destinations.ts`.
    */
-  const scopes = listPricingScopeDestinations();
-  const marketCode = resolveScope(
-    (await searchParams).destination,
-    scopes.map((d) => d.code),
-  );
-  const destinationOptions = [
-    { code: null, label: 'All destinations' },
-    ...scopes.map((d) => ({ code: d.code, label: d.code })),
-  ];
+  const destinations = listPricingScopeDestinations();
 
   const canReadPricing = can(session.role, 'pricing_policy:read');
   const canManagePricing = can(session.role, 'pricing_policy:manage');
@@ -105,8 +72,7 @@ export default async function MarketRulesPage({ searchParams }: PageProps) {
       {canReadPricing ? (
         <>
           <CategoryPricingSection
-            marketCode={marketCode}
-            destinationOptions={destinationOptions}
+            destinations={destinations}
             sellerAccountId={session.sellerId}
             canManage={canManagePricing}
           />

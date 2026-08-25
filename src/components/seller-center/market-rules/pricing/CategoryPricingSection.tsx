@@ -2,14 +2,12 @@ import getDb from '@/lib/db/client';
 import {
   countDescendantsByPath,
   findStoreDefaultForScope,
-  listCategoryMarginOverview,
-  type CategoryMarginLeafRow,
+  listCategoryMarginOverviewByMarket,
+  type CategoryMarginMarketRow,
 } from '@/modules/pricing/repository';
+import type { PricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
 import DisclosureBanner from '@/components/seller-center/shared/DisclosureBanner';
 import CategoryMarginTree from './CategoryMarginTree';
-import DestinationScopeSelector, {
-  type DestinationOption,
-} from './DestinationScopeSelector';
 import MarginCsvControls from './MarginCsvControls';
 import type {
   CategoryMarginNodeViewModel,
@@ -19,13 +17,8 @@ import type {
 type CategoryPricingSectionProps = {
   sellerAccountId: string;
   canManage: boolean;
-  /**
-   * The destination scope this render is for. `null` is the all-destinations
-   * rule. Read from the URL by the page, so the scope displayed and the scope
-   * saved are one value from one place.
-   */
-  marketCode: string | null;
-  destinationOptions: DestinationOption[];
+  /** One column each, in the order they are shown. */
+  destinations: PricingScopeDestination[];
 };
 
 const PATH_SEPARATOR = ' > ';
@@ -36,17 +29,14 @@ const PATH_SEPARATOR = ' > ';
  * yet (same discipline as `resolveFixtureVariantGuidance` — a missing
  * table is an operational condition, not a bug to surface as a 500).
  */
-async function readCategoryRows(
-  sellerAccountId: string,
-  marketCode: string | null,
-): Promise<{
-  rows: CategoryMarginLeafRow[];
+async function readCategoryRows(sellerAccountId: string): Promise<{
+  rows: CategoryMarginMarketRow[];
   descendantCounts: Map<string, number>;
 } | null> {
   try {
     const db = getDb();
     const [rows, descendantCounts] = await Promise.all([
-      listCategoryMarginOverview(db, sellerAccountId, marketCode),
+      listCategoryMarginOverviewByMarket(db, sellerAccountId),
       countDescendantsByPath(db),
     ]);
 
@@ -78,34 +68,45 @@ async function readCategoryRows(
  * none configured — the ordinary first-run case), and `unavailable` (the
  * backend could not answer). Only the last is an error worth a banner; the
  * middle one is normal and the tree already renders it honestly.
+ *
+ * One read per destination, because a store default is scoped like every
+ * other rule. Six single-row index lookups, issued together — cheaper than
+ * the one taxonomy scan beside it, and the alternative is showing one
+ * destination's floor under all six columns.
  */
-async function readStoreDefault(
+async function readStoreDefaults(
   sellerAccountId: string,
-  marketCode: string | null,
+  destinations: PricingScopeDestination[],
 ): Promise<
-  | { state: 'ok'; storeDefault: StoreDefaultSummary | null }
+  | { state: 'ok'; storeDefaults: Record<string, StoreDefaultSummary | null> }
   | { state: 'unavailable' }
 > {
   try {
-    const storeDefault = await findStoreDefaultForScope(
-      getDb(),
-      sellerAccountId,
-      marketCode,
+    const db = getDb();
+    const rows = await Promise.all(
+      destinations.map(async (destination) => {
+        const storeDefault = await findStoreDefaultForScope(
+          db,
+          sellerAccountId,
+          destination.code,
+        );
+
+        return [
+          destination.code,
+          storeDefault === null
+            ? null
+            : {
+                targetMarginRate: storeDefault.targetMarginRate,
+                roundingRule: storeDefault.roundingRule,
+              },
+        ] as const;
+      }),
     );
 
-    return {
-      state: 'ok',
-      storeDefault:
-        storeDefault === null
-          ? null
-          : {
-              targetMarginRate: storeDefault.targetMarginRate,
-              roundingRule: storeDefault.roundingRule,
-            },
-    };
+    return { state: 'ok', storeDefaults: Object.fromEntries(rows) };
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.error('[portal] failed to read the store default for the tree', {
+    console.error('[portal] failed to read the store defaults for the tree', {
       sellerAccountId,
       error: error instanceof Error ? error.message : 'unknown',
     });
@@ -119,7 +120,7 @@ async function readStoreDefault(
  * so the client walks Maps instead of re-scanning 5,595 paths per render.
  */
 function toNodeViewModels(
-  rows: CategoryMarginLeafRow[],
+  rows: CategoryMarginMarketRow[],
   descendantCounts: Map<string, number>,
 ): CategoryMarginNodeViewModel[] {
   // `childCount` is derived from the ROWS — it drives the expand chevron, so
@@ -152,32 +153,37 @@ function toNodeViewModels(
         segments.length > 1 ? segments.slice(0, -1).join(PATH_SEPARATOR) : null,
       childCount: childCounts.get(row.path) ?? 0,
       subtreeCount: descendantCounts.get(row.path) ?? 0,
-      policy: row.policy,
+      policies: row.policies,
     };
   });
 }
 
 /**
- * ADR-015 Phase 1, reworked 2026-08-19: category margin as an inheritance
- * tree. A category without its own margin inherits the nearest priced
- * ancestor, then the store default — so a handful of department policies
- * covers everything, and the old per-leaf bulk fan-out (5,595 rows per
- * seller per change) is gone.
+ * ADR-015 Phase 1, reworked 2026-08-19 into an inheritance tree and again on
+ * 2026-08-25 into a column per destination.
+ *
+ * The scope selector this replaces made comparing two countries a task:
+ * reload the page, hold the previous number in your head. Freight to Fiji is
+ * roughly four times freight to the Philippines, so the comparison is the
+ * point — and a screen showing one destination at a time hides exactly what
+ * the seller came to decide.
  */
 export default async function CategoryPricingSection({
   sellerAccountId,
   canManage,
-  marketCode,
-  destinationOptions,
+  destinations,
 }: CategoryPricingSectionProps) {
   // Independent reads: a store-default failure must never hide the tree.
   const [categoryData, storeDefaultResult] = await Promise.all([
-    readCategoryRows(sellerAccountId, marketCode),
-    readStoreDefault(sellerAccountId, marketCode),
+    readCategoryRows(sellerAccountId),
+    readStoreDefaults(sellerAccountId, destinations),
   ]);
 
-  const storeDefault =
-    storeDefaultResult.state === 'ok' ? storeDefaultResult.storeDefault : null;
+  const storeDefaults =
+    storeDefaultResult.state === 'ok' ? storeDefaultResult.storeDefaults : {};
+  const destinationsWithoutDefault = destinations.filter(
+    (destination) => (storeDefaults[destination.code] ?? null) === null,
+  );
 
   return (
     <section
@@ -190,18 +196,11 @@ export default async function CategoryPricingSection({
             Category margins
           </h2>
           <p className="max-w-[78ch] text-sm text-muted-foreground">
-            A category without its own margin uses the nearest parent above it.
-            Set a margin only where a department genuinely differs; a product
-            can still override it in the Product Editor.
+            One column per destination. A category without its own margin for a
+            destination uses the nearest parent above it. Set a margin only
+            where a department genuinely differs; a product can still override
+            it in the Product Editor.
           </p>
-          {destinationOptions.length > 1 ? (
-            <div className="mt-3">
-              <DestinationScopeSelector
-                options={destinationOptions}
-                selected={marketCode}
-              />
-            </div>
-          ) : null}
         </div>
         {categoryData === null ? null : (
           <MarginCsvControls
@@ -209,6 +208,7 @@ export default async function CategoryPricingSection({
               categoryData.rows,
               categoryData.descendantCounts,
             )}
+            destinations={destinations}
             canManage={canManage}
           />
         )}
@@ -222,17 +222,22 @@ export default async function CategoryPricingSection({
         <>
           {storeDefaultResult.state === 'unavailable' ? (
             <DisclosureBanner tone="warning">
-              Your store default could not be read, so the inherited rates below
-              are incomplete — a category with no margin of its own may still be
-              covered by a default this page cannot see right now. Margins set
-              on a category are unaffected.
+              Your store defaults could not be read, so the inherited rates
+              below are incomplete — a category with no margin of its own may
+              still be covered by a default this page cannot see right now.
+              Margins set on a category are unaffected.
             </DisclosureBanner>
           ) : null}
-          {storeDefaultResult.state === 'ok' && storeDefault === null ? (
+          {storeDefaultResult.state === 'ok' &&
+          destinationsWithoutDefault.length > 0 ? (
             <DisclosureBanner tone="warning">
-              No store default exists yet, so a category shown as &quot;Not
-              set&quot; cannot price at all — its products need a manual retail
-              price until a default or a parent margin covers them.
+              No store default exists yet for{' '}
+              {destinationsWithoutDefault
+                .map((destination) => destination.label)
+                .join(', ')}
+              , so a category shown as &quot;—&quot; in those columns cannot
+              price at all — its products need a manual retail price until a
+              default or a parent margin covers them.
             </DisclosureBanner>
           ) : null}
           <CategoryMarginTree
@@ -240,10 +245,10 @@ export default async function CategoryPricingSection({
               categoryData.rows,
               categoryData.descendantCounts,
             )}
-            storeDefault={storeDefault}
+            destinations={destinations}
+            storeDefaults={storeDefaults}
             sellerAccountId={sellerAccountId}
             canManage={canManage}
-            marketCode={marketCode}
           />
         </>
       )}

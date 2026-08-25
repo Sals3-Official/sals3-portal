@@ -28,9 +28,20 @@ vi.mock('@/app/(portal)/market-rules/pricing-actions', () => ({
 /* eslint-disable import/first */
 import CategoryMarginTree from './CategoryMarginTree';
 import {
+  ALL_MARKETS_KEY,
   effectiveMarginFor,
   type CategoryMarginNodeViewModel,
+  type CategoryMarginPolicyViewModel,
 } from './category-margin-model';
+
+const DESTINATIONS = [
+  { code: 'AU', label: 'Australia' },
+  { code: 'PH', label: 'Philippines' },
+  { code: 'NZ', label: 'New Zealand' },
+  { code: 'US', label: 'United States' },
+  { code: 'CA', label: 'Canada' },
+  { code: 'FJ', label: 'Fiji' },
+];
 
 function node(
   path: string,
@@ -47,26 +58,39 @@ function node(
     parentPath: segments.length > 1 ? segments.slice(0, -1).join(' > ') : null,
     childCount: 0,
     subtreeCount: 0,
-    policy: null,
+    policies: {},
     ...overrides,
   };
 }
 
-function policy(rate: string) {
+function policy(
+  rate: string,
+  marketCode: string | null,
+): CategoryMarginPolicyViewModel {
   return {
-    id: `policy-${rate}`,
+    id: `policy-${marketCode ?? 'all'}-${rate}`,
     targetMarginRate: rate,
     roundingRule: 'NONE' as const,
     version: 1,
     updatedAt: new Date('2026-08-10T00:00:00Z'),
-    marketCode: null,
+    marketCode,
   };
+}
+
+/** Keyed the way the repository keys them — destination code, or the all-markets key. */
+function scoped(rate: string, marketCode: string) {
+  return { [marketCode]: policy(rate, marketCode) };
 }
 
 const STORE_DEFAULT = {
   targetMarginRate: '0.350000',
   roundingRule: 'NONE' as const,
 };
+
+/** Every destination sharing one default, which is the ordinary starting state. */
+const STORE_DEFAULTS = Object.fromEntries(
+  DESTINATIONS.map((destination) => [destination.code, STORE_DEFAULT]),
+);
 
 const APPAREL = node('Apparel & Accessories', {
   childCount: 1,
@@ -77,7 +101,9 @@ const CLOTHING = node('Apparel & Accessories > Clothing', {
   subtreeCount: 1,
 });
 const JACKETS = node('Apparel & Accessories > Clothing > Jackets');
-const ELECTRONICS = node('Electronics', { policy: policy('0.400000') });
+const ELECTRONICS = node('Electronics', {
+  policies: { ...scoped('0.400000', 'AU'), ...scoped('0.600000', 'FJ') },
+});
 
 const NODES = [APPAREL, CLOTHING, JACKETS, ELECTRONICS];
 
@@ -85,114 +111,146 @@ function nodesByPath(nodes: CategoryMarginNodeViewModel[]) {
   return new Map(nodes.map((entry) => [entry.path, entry]));
 }
 
+function renderTree(props: Partial<{ canManage: boolean }> = {}) {
+  return render(
+    <CategoryMarginTree
+      nodes={NODES}
+      destinations={DESTINATIONS}
+      storeDefaults={STORE_DEFAULTS}
+      sellerAccountId="seller-1"
+      canManage={props.canManage ?? true}
+    />,
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('effectiveMarginFor — mirrors the resolver chain', () => {
-  it('a node with its own policy resolves as SELF', () => {
-    expect(
-      effectiveMarginFor(ELECTRONICS, nodesByPath(NODES), STORE_DEFAULT),
-    ).toEqual({ source: 'SELF', rate: '0.400000' });
+describe('effectiveMarginFor — mirrors the resolver chain, per destination', () => {
+  it('reads each destination independently on the same category', () => {
+    const map = nodesByPath(NODES);
+
+    // The whole point of the columns: one category, two different answers.
+    expect(effectiveMarginFor(ELECTRONICS, map, STORE_DEFAULT, 'AU')).toEqual({
+      source: 'SELF',
+      rate: '0.400000',
+      viaAllMarkets: false,
+    });
+    expect(effectiveMarginFor(ELECTRONICS, map, STORE_DEFAULT, 'FJ')).toEqual({
+      source: 'SELF',
+      rate: '0.600000',
+      viaAllMarkets: false,
+    });
   });
 
-  it('a deep node inherits the NEAREST priced ancestor, not the shallowest', () => {
+  it('a destination with no rule of its own falls through, it does not borrow another', () => {
+    // PH must not show AU's 40%. Borrowing a sibling destination's rate is the
+    // failure this whole screen would be worthless for.
+    expect(
+      effectiveMarginFor(ELECTRONICS, nodesByPath(NODES), STORE_DEFAULT, 'PH'),
+    ).toEqual({ source: 'STORE_DEFAULT', rate: '0.350000' });
+  });
+
+  it('a deep node inherits the NEAREST priced ancestor for that destination', () => {
     const pricedApparel = node('Apparel & Accessories', {
-      policy: policy('0.200000'),
+      policies: scoped('0.200000', 'AU'),
       childCount: 1,
       subtreeCount: 2,
     });
     const pricedClothing = node('Apparel & Accessories > Clothing', {
-      policy: policy('0.550000'),
+      policies: scoped('0.550000', 'AU'),
       childCount: 1,
       subtreeCount: 1,
     });
     const map = nodesByPath([pricedApparel, pricedClothing, JACKETS]);
 
-    const result = effectiveMarginFor(JACKETS, map, STORE_DEFAULT);
-
-    expect(result).toEqual({
+    expect(effectiveMarginFor(JACKETS, map, STORE_DEFAULT, 'AU')).toEqual({
       source: 'ANCESTOR',
       rate: '0.550000',
       ancestorName: 'Clothing',
+      viaAllMarkets: false,
     });
   });
 
-  it('falls back to the store default when no ancestor is priced', () => {
+  it('prefers the destination rule over an all-destinations rule at the same depth', () => {
+    const both = node('Electronics', {
+      policies: {
+        ...scoped('0.400000', 'AU'),
+        [ALL_MARKETS_KEY]: policy('0.250000', null),
+      },
+    });
+
+    // `outranks` in the resolver: depth beats market, and market beats
+    // unscoped only at equal depth. Reversing these two here would display a
+    // rate the resolver would never use.
     expect(
-      effectiveMarginFor(JACKETS, nodesByPath(NODES), STORE_DEFAULT),
-    ).toEqual({ source: 'STORE_DEFAULT', rate: '0.350000' });
+      effectiveMarginFor(both, nodesByPath([both]), STORE_DEFAULT, 'AU'),
+    ).toEqual({ source: 'SELF', rate: '0.400000', viaAllMarkets: false });
   });
 
-  it('reports NONE honestly when there is no policy anywhere and no default', () => {
-    expect(effectiveMarginFor(JACKETS, nodesByPath(NODES), null)).toEqual({
-      source: 'NONE',
+  it('still shows an all-destinations rule rather than pretending it is unset', () => {
+    const legacy = node('Electronics', {
+      policies: { [ALL_MARKETS_KEY]: policy('0.250000', null) },
     });
+
+    // Before the fan-out migration runs, these are the rows actually pricing.
+    // A reader that ignored them would show "—" for a live rule.
+    expect(
+      effectiveMarginFor(legacy, nodesByPath([legacy]), STORE_DEFAULT, 'PH'),
+    ).toEqual({ source: 'SELF', rate: '0.250000', viaAllMarkets: true });
+  });
+
+  it('reports NONE honestly when nothing anywhere prices it', () => {
+    expect(effectiveMarginFor(JACKETS, nodesByPath(NODES), null, 'AU')).toEqual(
+      { source: 'NONE' },
+    );
   });
 });
 
 describe('CategoryMarginTree', () => {
+  it('gives every destination a column header', () => {
+    renderTree();
+
+    DESTINATIONS.forEach((destination) => {
+      expect(
+        screen.getByRole('columnheader', { name: destination.code }),
+      ).toBeInTheDocument();
+    });
+  });
+
   it('renders only departments initially — subtrees stay collapsed', () => {
-    render(
-      <CategoryMarginTree
-        nodes={NODES}
-        storeDefault={STORE_DEFAULT}
-        sellerAccountId="seller-1"
-        canManage
-        marketCode={null}
-      />,
-    );
+    renderTree();
 
     expect(screen.getByText('Apparel & Accessories')).toBeInTheDocument();
     expect(screen.getByText('Electronics')).toBeInTheDocument();
     expect(screen.queryByText('Clothing')).toBeNull();
   });
 
-  it('expanding a department reveals its children with their inherited rate and source', () => {
-    render(
-      <CategoryMarginTree
-        nodes={NODES}
-        storeDefault={STORE_DEFAULT}
-        sellerAccountId="seller-1"
-        canManage
-        marketCode={null}
-      />,
-    );
+  it('shows one category two different rates on the same row', () => {
+    renderTree();
 
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Expand Apparel & Accessories' }),
-    );
-
-    expect(screen.getByText('Clothing')).toBeInTheDocument();
-    expect(screen.getAllByText('Store default').length).toBeGreaterThan(0);
+    expect(screen.getByText('40%')).toBeInTheDocument();
+    expect(screen.getByText('60%')).toBeInTheDocument();
   });
 
-  it('a set rate and an inherited rate are labelled differently', () => {
-    render(
-      <CategoryMarginTree
-        nodes={NODES}
-        storeDefault={STORE_DEFAULT}
-        sellerAccountId="seller-1"
-        canManage
-        marketCode={null}
-      />,
-    );
+  it('names the destination in each cell, so the column is not the only clue', () => {
+    renderTree();
 
-    expect(screen.getByText('This category')).toBeInTheDocument();
-    // Whole rates render whole — `40.00%` was false precision.
-    expect(screen.getByText('40%')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', {
+        name: 'Electronics — Australia: Set on this category. Edit.',
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', {
+        name: 'Electronics — Philippines: Store default. Edit.',
+      }),
+    ).toBeInTheDocument();
   });
 
   it('search flattens to matching nodes shown with their full path', () => {
-    render(
-      <CategoryMarginTree
-        nodes={NODES}
-        storeDefault={STORE_DEFAULT}
-        sellerAccountId="seller-1"
-        canManage
-        marketCode={null}
-      />,
-    );
+    renderTree();
 
     fireEvent.change(screen.getByRole('searchbox'), {
       target: { value: 'jackets' },
@@ -205,15 +263,7 @@ describe('CategoryMarginTree', () => {
   });
 
   it('says plainly when a search matches nothing', () => {
-    render(
-      <CategoryMarginTree
-        nodes={NODES}
-        storeDefault={STORE_DEFAULT}
-        sellerAccountId="seller-1"
-        canManage
-        marketCode={null}
-      />,
-    );
+    renderTree();
 
     fireEvent.change(screen.getByRole('searchbox'), {
       target: { value: 'zzz' },
@@ -222,18 +272,10 @@ describe('CategoryMarginTree', () => {
     expect(screen.getByText(/No category matches/)).toBeInTheDocument();
   });
 
-  it('editing opens a pop-out, and saving calls the single-category action with that node code', async () => {
+  it('saves against the destination whose cell was clicked, not the first one', async () => {
     mocks.saveCategoryPolicyAction.mockResolvedValue({ ok: true });
 
-    render(
-      <CategoryMarginTree
-        nodes={NODES}
-        storeDefault={STORE_DEFAULT}
-        sellerAccountId="seller-1"
-        canManage
-        marketCode={null}
-      />,
-    );
+    renderTree();
 
     // Nothing is editable until the pop-out is opened — the table itself
     // carries no inputs any more.
@@ -241,8 +283,11 @@ describe('CategoryMarginTree', () => {
       screen.queryByLabelText('Margin percent for Apparel & Accessories'),
     ).toBeNull();
 
-    // Departments without a policy offer "Set".
-    fireEvent.click(screen.getAllByRole('button', { name: 'Set' })[0]);
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Apparel & Accessories — Fiji: Store default. Edit.',
+      }),
+    );
 
     const marginInput = await screen.findByLabelText(
       'Margin percent for Apparel & Accessories',
@@ -250,7 +295,7 @@ describe('CategoryMarginTree', () => {
     fireEvent.change(marginInput, { target: { value: '40' } });
     fireEvent.change(
       screen.getByLabelText('Reason for change to Apparel & Accessories'),
-      { target: { value: 'Department-level default for apparel.' } },
+      { target: { value: 'Freight to Fiji is four times the PH lane.' } },
     );
     fireEvent.click(screen.getByRole('button', { name: 'Save margin' }));
 
@@ -259,28 +304,34 @@ describe('CategoryMarginTree', () => {
         categoryCode: 'CODE-Apparel & Accessories',
         targetMarginRate: '0.4',
         roundingRule: 'NONE',
-        reason: 'Department-level default for apparel.',
-        // The scope travels with the payload. Asserted explicitly because a
-        // save that names no destination is refused by the action's schema —
-        // which this mock cannot show, and which is exactly how the missing
-        // field reached production unnoticed.
-        marketCode: null,
+        reason: 'Freight to Fiji is four times the PH lane.',
+        // The clicked column. If this ever came from anywhere but the cell,
+        // a seller would price the wrong country and the screen would look
+        // exactly the same.
+        marketCode: 'FJ',
       }),
     );
   });
 
-  it('read-only callers see no Set/Edit controls at all', () => {
-    render(
-      <CategoryMarginTree
-        nodes={NODES}
-        storeDefault={STORE_DEFAULT}
-        sellerAccountId="seller-1"
-        canManage={false}
-        marketCode={null}
-      />,
+  it('names the destination in the editor, which the cell behind it no longer can', async () => {
+    renderTree();
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Electronics — Fiji: Set on this category. Edit.',
+      }),
     );
 
-    expect(screen.queryByRole('button', { name: 'Set' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(
+      await screen.findByText(/Edit margin — Electronics · Fiji/),
+    ).toBeInTheDocument();
+  });
+
+  it('read-only callers get no editable cells at all', () => {
+    renderTree({ canManage: false });
+
+    expect(screen.queryByRole('button', { name: /Edit\.$/ })).toBeNull();
+    // The rates are still readable — read-only is not blank.
+    expect(screen.getByText('40%')).toBeInTheDocument();
   });
 });

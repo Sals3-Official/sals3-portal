@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  listCategoryMarginOverview: vi.fn(),
+  listCategoryMarginOverviewByMarket: vi.fn(),
   findStoreDefaultForScope: vi.fn(),
   countDescendantsByPath: vi.fn(),
 }));
@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/db/client', () => ({ default: () => ({ __db: true }) }));
 
 vi.mock('@/modules/pricing/repository', () => ({
-  listCategoryMarginOverview: mocks.listCategoryMarginOverview,
+  listCategoryMarginOverviewByMarket: mocks.listCategoryMarginOverviewByMarket,
   findStoreDefaultForScope: mocks.findStoreDefaultForScope,
   countDescendantsByPath: mocks.countDescendantsByPath,
 }));
@@ -26,8 +26,14 @@ const ROWS = [
     l1: 'Animals & Pet Supplies',
     l2: null,
     l3: null,
-    policy: null,
+    policies: {},
   },
+];
+
+/** Two lanes are enough; the section's job is the wiring, not the count. */
+const DESTINATIONS = [
+  { code: 'AU', label: 'Australia' },
+  { code: 'FJ', label: 'Fiji' },
 ];
 
 /**
@@ -43,8 +49,7 @@ async function renderToTree(): Promise<string> {
   const element = await CategoryPricingSection({
     sellerAccountId: 'seller-1',
     canManage: true,
-    marketCode: null,
-    destinationOptions: [{ code: null, label: 'All destinations' }],
+    destinations: DESTINATIONS,
   });
 
   return JSON.stringify(element);
@@ -52,7 +57,7 @@ async function renderToTree(): Promise<string> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.listCategoryMarginOverview.mockResolvedValue(ROWS);
+  mocks.listCategoryMarginOverviewByMarket.mockResolvedValue(ROWS);
   mocks.findStoreDefaultForScope.mockResolvedValue(null);
   mocks.countDescendantsByPath.mockResolvedValue(new Map());
 });
@@ -110,7 +115,9 @@ describe('CategoryPricingSection — read isolation', () => {
   });
 
   it('only a failed taxonomy read hides the tree — that one genuinely has nothing to show', async () => {
-    mocks.listCategoryMarginOverview.mockRejectedValue(new Error('boom'));
+    mocks.listCategoryMarginOverviewByMarket.mockRejectedValue(
+      new Error('boom'),
+    );
 
     const output = await renderToTree();
 
