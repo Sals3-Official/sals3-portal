@@ -3,9 +3,9 @@
 import { useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import type { PricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
 import CategoryMarginNodeRow from './CategoryMarginNodeRow';
 import {
-  effectiveMarginFor,
   ROW_GRID,
   type CategoryMarginNodeViewModel,
   type StoreDefaultSummary,
@@ -15,11 +15,12 @@ const SEARCH_RESULT_CAP = 50;
 
 type CategoryMarginTreeProps = {
   nodes: CategoryMarginNodeViewModel[];
-  storeDefault: StoreDefaultSummary | null;
+  /** One column each, in the order they are shown. */
+  destinations: PricingScopeDestination[];
+  /** The store default per destination — the last fallback in each column. */
+  storeDefaults: Record<string, StoreDefaultSummary | null>;
   sellerAccountId: string;
   canManage: boolean;
-  /** The destination being edited, or `null` for the all-destinations rule. */
-  marketCode: string | null;
 };
 
 /**
@@ -36,10 +37,10 @@ type CategoryMarginTreeProps = {
  */
 export default function CategoryMarginTree({
   nodes,
-  storeDefault,
+  destinations,
+  storeDefaults,
   sellerAccountId,
   canManage,
-  marketCode,
 }: CategoryMarginTreeProps) {
   const [query, setQuery] = useState('');
   const [expandedPaths, setExpandedPaths] = useState<ReadonlySet<string>>(
@@ -145,23 +146,21 @@ export default function CategoryMarginTree({
           >
             Category
           </span>
+          {destinations.map((destination) => (
+            <span
+              key={destination.code}
+              role="columnheader"
+              title={destination.label}
+              className="text-center text-[11px] font-bold tracking-wider text-ink-faint uppercase"
+            >
+              {destination.code}
+            </span>
+          ))}
           <span
             role="columnheader"
-            className="text-[11px] font-bold tracking-wider text-ink-faint uppercase"
+            className="sr-only text-right text-[11px] font-bold tracking-wider text-ink-faint uppercase"
           >
-            Effective margin
-          </span>
-          <span
-            role="columnheader"
-            className="text-[11px] font-bold tracking-wider text-ink-faint uppercase"
-          >
-            Source
-          </span>
-          <span
-            role="columnheader"
-            className="text-right text-[11px] font-bold tracking-wider text-ink-faint uppercase"
-          >
-            Actions
+            History
           </span>
         </div>
 
@@ -176,10 +175,11 @@ export default function CategoryMarginTree({
             <CategoryMarginNodeRow
               key={node.categoryId}
               node={node}
-              effective={effectiveMarginFor(node, nodesByPath, storeDefault)}
+              nodesByPath={nodesByPath}
+              destinations={destinations}
+              storeDefaults={storeDefaults}
               sellerAccountId={sellerAccountId}
               canManage={canManage}
-              marketCode={marketCode}
               flat={searchMatches !== null}
               isExpanded={expandedPaths.has(node.path)}
               onToggleExpanded={() => toggleExpanded(node.path)}

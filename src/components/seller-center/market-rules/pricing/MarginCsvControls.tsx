@@ -19,10 +19,13 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { buildMarginCsv } from '@/modules/pricing/margin-csv';
+import type { PricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
 import type { CategoryMarginNodeViewModel } from './category-margin-model';
 
 type MarginCsvControlsProps = {
   nodes: CategoryMarginNodeViewModel[];
+  /** One exported line per node per destination — see `handleExport`. */
+  destinations: PricingScopeDestination[];
   canManage: boolean;
 };
 
@@ -53,6 +56,7 @@ const MAX_FILE_BYTES = 2_000_000;
  */
 export default function MarginCsvControls({
   nodes,
+  destinations,
   canManage,
 }: MarginCsvControlsProps) {
   const router = useRouter();
@@ -77,15 +81,31 @@ export default function MarginCsvControls({
 
   function handleExport() {
     const csvText = buildMarginCsv(
-      nodes.map((node) => ({
-        code: node.code,
-        path: node.path,
-        ownMarginRate: node.policy?.targetMarginRate ?? null,
-        ownRoundingRule: node.policy?.roundingRule ?? null,
-        // The scope the row was actually read from, so the file carries its own
-        // destination and cannot be imported onto a different one.
-        marketCode: node.policy?.marketCode ?? null,
-      })),
+      /*
+        One line per (category, destination) — the screen shows six columns
+        now, so a file with one line per category could only ever describe one
+        of them, and would silently flatten the other five on re-import.
+
+        A destination with no rule of its own still gets a line with an empty
+        rate. Exporting only what is set would make the file a partial picture
+        that looks complete, and the round trip export → edit → import is the
+        main way a seller fills these in.
+      */
+      nodes.flatMap((node) =>
+        destinations.map((destination) => {
+          const policy = node.policies[destination.code] ?? null;
+
+          return {
+            code: node.code,
+            path: node.path,
+            ownMarginRate: policy?.targetMarginRate ?? null,
+            ownRoundingRule: policy?.roundingRule ?? null,
+            // The scope this line describes, so the file carries its own
+            // destination and cannot be imported onto a different one.
+            marketCode: destination.code,
+          };
+        }),
+      ),
     );
 
     // A BOM so Excel opens a UTF-8 path like "Food, Beverages & Tobacco"

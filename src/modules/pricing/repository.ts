@@ -279,6 +279,16 @@ export async function listActiveCategoryPolicies(
   }));
 }
 
+export type CategoryMarginPolicySummary = {
+  id: string;
+  targetMarginRate: string;
+  roundingRule: SchemaRoundingRule;
+  version: number;
+  updatedAt: Date;
+  /** The scope this row was read for. `null` is the all-destinations rule. */
+  marketCode: string | null;
+};
+
 export type CategoryMarginLeafRow = {
   categoryId: string;
   code: string;
@@ -286,15 +296,24 @@ export type CategoryMarginLeafRow = {
   l1: string | null;
   l2: string | null;
   l3: string | null;
-  policy: {
-    id: string;
-    targetMarginRate: string;
-    roundingRule: SchemaRoundingRule;
-    version: number;
-    updatedAt: Date;
-    /** The scope this row was read for. `null` is the all-destinations rule. */
-    marketCode: string | null;
-  } | null;
+  policy: CategoryMarginPolicySummary | null;
+};
+
+/**
+ * The same taxonomy row, carrying every destination's rule at once.
+ *
+ * Keyed by destination code rather than held as a list because every consumer
+ * asks the same question — "what does this category do in AU?" — and a list
+ * makes each of them write the same find.
+ */
+export type CategoryMarginMarketRow = {
+  categoryId: string;
+  code: string;
+  path: string;
+  l1: string | null;
+  l2: string | null;
+  l3: string | null;
+  policies: Record<string, CategoryMarginPolicySummary>;
 };
 
 /**
@@ -485,6 +504,107 @@ export async function listCategoryMarginOverview(
             marketCode: (row.policyMarketCode as string | null) ?? null,
           },
   }));
+}
+
+/**
+ * The same overview, read once for every destination instead of once per
+ * destination.
+ *
+ * The screen shows a column per destination now, so the alternative was six
+ * calls to `listCategoryMarginOverview` — six passes over 5,595 taxonomy rows
+ * to answer one question. This joins without a scope filter and groups the
+ * result, so the taxonomy is scanned once and each category arrives carrying
+ * whichever destination rules it has.
+ *
+ * The join fans out — one row per (category, destination) rule, and a category
+ * with no rule at all still arrives once with a null policy. Grouping by
+ * `categoryId` is what turns that back into one row per category.
+ *
+ * All-destinations rules (`market_code IS NULL`) are read and reported under
+ * the `ALL_MARKETS_KEY` rather than dropped. They are retired by
+ * `fanOutUnscopedMargins`, but a reader that silently ignored one would show
+ * "Not set" for a category a live rule is still pricing — the exact failure the
+ * migration exists to prevent, reintroduced one layer up.
+ */
+export const ALL_MARKETS_KEY = '__all__';
+
+export async function listCategoryMarginOverviewByMarket(
+  executor: Executor,
+  sellerAccountId: string,
+): Promise<CategoryMarginMarketRow[]> {
+  const rows = await executor
+    .select({
+      categoryId: sals3Categories.id,
+      code: sals3Categories.code,
+      path: sals3Categories.path,
+      l1: sals3Categories.l1,
+      l2: sals3Categories.l2,
+      l3: sals3Categories.l3,
+      policyId: pricingCategoryPolicies.id,
+      policyMarketCode: pricingCategoryPolicies.marketCode,
+      targetMarginRate: pricingCategoryPolicies.targetMarginRate,
+      roundingRule: pricingCategoryPolicies.roundingRule,
+      version: pricingCategoryPolicies.version,
+      updatedAt: pricingCategoryPolicies.updatedAt,
+    })
+    .from(sals3Categories)
+    .leftJoin(
+      pricingCategoryPolicies,
+      and(
+        eq(pricingCategoryPolicies.categoryId, sals3Categories.id),
+        eq(pricingCategoryPolicies.sellerAccountId, sellerAccountId),
+        eq(pricingCategoryPolicies.status, 'ACTIVE'),
+      ),
+    )
+    // Same two rules as the single-scope read above, and for the same reasons:
+    // depth <= 2 unless a policy already exists, and real Sals3 categories only
+    // so a supplier mirror is never offered a margin it can never apply.
+    .where(
+      and(
+        or(isNull(sals3Categories.l3), isNotNull(pricingCategoryPolicies.id)),
+        like(sals3Categories.code, `${TAXONOMY_V1_CODE_PREFIX}%`),
+      ),
+    )
+    .orderBy(
+      sals3Categories.l1,
+      sals3Categories.l2,
+      sals3Categories.l3,
+      sals3Categories.path,
+    );
+
+  const byCategory = new Map<string, CategoryMarginMarketRow>();
+
+  rows.forEach((row) => {
+    let entry = byCategory.get(row.categoryId);
+
+    if (entry === undefined) {
+      entry = {
+        categoryId: row.categoryId,
+        code: row.code,
+        path: row.path,
+        l1: row.l1,
+        l2: row.l2,
+        l3: row.l3,
+        policies: {},
+      };
+      byCategory.set(row.categoryId, entry);
+    }
+
+    if (row.policyId === null) return;
+
+    const marketCode = (row.policyMarketCode as string | null) ?? null;
+
+    entry.policies[marketCode ?? ALL_MARKETS_KEY] = {
+      id: row.policyId,
+      targetMarginRate: row.targetMarginRate as string,
+      roundingRule: row.roundingRule as SchemaRoundingRule,
+      version: row.version as number,
+      updatedAt: row.updatedAt as Date,
+      marketCode,
+    };
+  });
+
+  return [...byCategory.values()];
 }
 
 export async function createCategoryPolicy(

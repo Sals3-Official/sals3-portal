@@ -25,6 +25,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { RoundingRule } from '@/modules/pricing/money-math';
+import type { PricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
+import DeactivateCategoryPolicyButton from './DeactivateCategoryPolicyButton';
 import type {
   CategoryMarginNodeViewModel,
   EffectiveMargin,
@@ -34,13 +36,15 @@ type CategoryMarginDialogProps = {
   node: CategoryMarginNodeViewModel;
   effective: EffectiveMargin;
   /**
-   * The destination this edit is for, or `null` for the all-destinations rule.
+   * The destination this edit is for.
    *
-   * Threaded from the page rather than read off `node.policy.marketCode`: a
-   * category with no rule yet has no policy to read it from, which is exactly
-   * the case where getting it wrong writes the rate onto the wrong scope.
+   * Passed as the whole destination rather than a bare code so the dialog can
+   * name it in words. "Edit margin — Apparel & Accessories" gave no clue which
+   * of six columns was clicked, and the cell that opened it is now hidden
+   * behind the dialog.
    */
-  marketCode: string | null;
+  destination: PricingScopeDestination;
+  sellerAccountId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /**
@@ -78,19 +82,25 @@ function inheritedFrom(effective: EffectiveMargin): string | null {
 export default function CategoryMarginDialog({
   node,
   effective,
-  marketCode,
+  destination,
+  sellerAccountId,
   open,
   onOpenChange,
   onSaved,
 }: CategoryMarginDialogProps) {
+  // The rule this destination carries in its own right, which is what Save
+  // revises and what Deactivate can remove. An inherited rate has no row here,
+  // and offering to deactivate one would promise something this screen cannot
+  // do — the rate belongs to an ancestor.
+  const ownPolicy = node.policies[destination.code] ?? null;
   const [isPending, startTransition] = useTransition();
   const [marginPercent, setMarginPercent] = useState(
-    node.policy === null
+    ownPolicy === null
       ? ''
-      : (Number(node.policy.targetMarginRate) * 100).toString(),
+      : (Number(ownPolicy.targetMarginRate) * 100).toString(),
   );
   const [roundingRule, setRoundingRule] = useState<RoundingRule>(
-    node.policy?.roundingRule ?? 'NONE',
+    ownPolicy?.roundingRule ?? 'NONE',
   );
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -111,7 +121,7 @@ export default function CategoryMarginDialog({
       targetMarginRate,
       roundingRule,
       reason,
-      marketCode,
+      marketCode: destination.code,
     };
 
     startTransition(async () => {
@@ -122,7 +132,7 @@ export default function CategoryMarginDialog({
         return;
       }
 
-      toast.success(`Margin saved for ${node.name}.`);
+      toast.success(`Margin saved for ${node.name} — ${destination.label}.`);
       setReason('');
       /**
        * Hand off instead of refreshing here.
@@ -148,7 +158,8 @@ export default function CategoryMarginDialog({
       >
         <DialogHeader>
           <DialogTitle>
-            {node.policy === null ? 'Set margin' : 'Edit margin'} — {node.name}
+            {ownPolicy === null ? 'Set margin' : 'Edit margin'} — {node.name} ·{' '}
+            {destination.label}
           </DialogTitle>
           <DialogDescription>
             {node.path}
@@ -230,17 +241,34 @@ export default function CategoryMarginDialog({
               : 'Applies to products in this category.'}
           </p>
 
-          <div className="flex items-center justify-end gap-2">
-            <DialogClose
-              render={
-                <Button type="button" variant="outline">
-                  Cancel
-                </Button>
-              }
-            />
-            <Button type="submit" disabled={isPending || !ready}>
-              {isPending ? 'Saving…' : 'Save margin'}
-            </Button>
+          <div className="flex items-center justify-between gap-2">
+            {/*
+              Removing this destination's rule lives with the rule, not in the
+              row. The row has six of them now, and a Deactivate button beside
+              a row of six chips could not say which one it meant.
+            */}
+            <span>
+              {ownPolicy === null ? null : (
+                <DeactivateCategoryPolicyButton
+                  policyId={ownPolicy.id}
+                  sellerAccountId={sellerAccountId}
+                  categoryPath={`${node.path} · ${destination.label}`}
+                />
+              )}
+            </span>
+
+            <span className="flex items-center gap-2">
+              <DialogClose
+                render={
+                  <Button type="button" variant="outline">
+                    Cancel
+                  </Button>
+                }
+              />
+              <Button type="submit" disabled={isPending || !ready}>
+                {isPending ? 'Saving…' : 'Save margin'}
+              </Button>
+            </span>
           </div>
         </form>
       </DialogContent>
