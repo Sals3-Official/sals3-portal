@@ -1113,6 +1113,8 @@ export async function createStoreDefault(
     targetMarginRate: string;
     minContributionMinor: bigint;
     minContributionCurrency: string;
+    /** The minimum-margin form of the floor, or `null`. Never set alongside an amount. */
+    minContributionRate: string | null;
     roundingRule: SchemaRoundingRule;
     reason: string;
     actorId: string;
@@ -1144,6 +1146,8 @@ export async function reviseStoreDefault(
     targetMarginRate: string;
     minContributionMinor: bigint;
     minContributionCurrency: string;
+    /** The minimum-margin form of the floor, or `null`. Never set alongside an amount. */
+    minContributionRate: string | null;
     roundingRule: SchemaRoundingRule;
     reason: string;
     actorId: string;
@@ -1161,6 +1165,17 @@ export async function reviseStoreDefault(
       targetMarginRate: input.targetMarginRate,
       minContributionMinor: input.minContributionMinor,
       minContributionCurrency: input.minContributionCurrency,
+      minContributionRate: input.minContributionRate,
+      /*
+        Carried from the row being replaced, and this line is load-bearing.
+
+        Every other field is listed explicitly here, and `marketCode` was not —
+        so a revision of Australia's rule inserted a row with a NULL scope,
+        quietly moving it to all-destinations while the screen still said
+        Australia. A revision keeps the scope it is revising; it is not a place
+        to change which destination a rule belongs to.
+      */
+      marketCode: previous.marketCode,
       roundingRule: input.roundingRule,
       reason: input.reason,
       actorId: input.actorId,

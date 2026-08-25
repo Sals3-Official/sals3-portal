@@ -357,6 +357,30 @@ export const pricingStoreDefaults = pgTable(
       .notNull()
       .default('USD'),
     /**
+     * The same floor expressed as a margin instead of an amount, or `null`.
+     *
+     * Owner rule 2026-08-26: a margin must never fall below what it costs to
+     * operate, and that minimum is either a percentage or a fixed amount —
+     * never both on one rule. `pricing_store_defaults_floor_exclusive` refuses
+     * a row carrying both, so the resolver can never be handed two answers.
+     *
+     * Read as `price >= cost / (1 - rate)`, the same formula
+     * `targetMarginRate` uses, so the two are directly comparable — a floor of
+     * 0.18 genuinely means "never below 18% margin", not "18% on top of cost".
+     *
+     * Distinct from `targetMarginRate` on purpose: that is what the rule aims
+     * for, this is what it must never fall below. A seller may aim for 25% and
+     * refuse to go under 18%, and one column cannot say both.
+     *
+     * Needs no currency, unlike `minContributionMinor` — which is why it is the
+     * safer of the two forms once the storefront starts settling in the buyer's
+     * own currency.
+     */
+    minContributionRate: numeric('min_contribution_rate', {
+      precision: 8,
+      scale: 6,
+    }),
+    /**
      * The destination this rule prices for, or `null` for "all destinations".
      *
      * ADR-015's `Amendment — 2026-08-25`: operational expense is not the same
@@ -413,6 +437,27 @@ export const pricingStoreDefaults = pgTable(
     check(
       'pricing_store_defaults_market_code_shape',
       sql`${table.marketCode} IS NULL OR ${table.marketCode} ~ '^[A-Z]{2}$'`,
+    ),
+    /**
+     * One floor form per rule, or neither.
+     *
+     * Written against `> 0` rather than `IS NOT NULL` because
+     * `minContributionMinor` is NOT NULL DEFAULT 0 — "no amount floor" is zero
+     * here, and a check phrased against NULL would admit exactly the rows it
+     * exists to refuse.
+     */
+    check(
+      'pricing_store_defaults_floor_exclusive',
+      sql`NOT (${table.minContributionRate} IS NOT NULL AND ${table.minContributionMinor} > 0)`,
+    ),
+    /**
+     * `price = cost / (1 - rate)` divides by zero at 1 and prices nothing at 0.
+     * Both are typos, and a typo belongs refused rather than stored as a rule
+     * that can only ever fail.
+     */
+    check(
+      'pricing_store_defaults_floor_rate_range',
+      sql`${table.minContributionRate} IS NULL OR (${table.minContributionRate} > 0 AND ${table.minContributionRate} < 1)`,
     ),
   ],
 );

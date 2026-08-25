@@ -816,6 +816,10 @@ describe('saveStoreDefaultAction', () => {
   const VALID_INPUT = {
     targetMarginRate: '0.35',
     minContribution: '2.50',
+    // Exactly one floor form per rule. This fixture uses the amount, so the
+    // rate is null — sending both is refused by the schema and by
+    // `pricing_store_defaults_floor_exclusive`.
+    minContributionRate: null,
     roundingRule: 'NEAREST_0_99',
     reason: 'Initial store-wide default while headcount is one.',
     marketCode: null,

@@ -21,6 +21,13 @@ type StoreDefaultPreviewProps = {
   marginPercent: string;
   /** Raw field value in whole currency, e.g. "2.50". Empty means no floor. */
   floorAmount: string;
+  /**
+   * Raw field value, e.g. "18". Empty means no percentage floor.
+   *
+   * Mutually exclusive with `floorAmount` — the two are one choice, and the
+   * preview switches axis rather than trying to draw both at once.
+   */
+  floorPercent?: string;
   roundingRule: RoundingRule;
 };
 
@@ -123,6 +130,60 @@ export function crossoverCostMinor(
 }
 
 /**
+ * The percentage floor, shown on the axis it actually varies along.
+ *
+ * A cost-based preview is the wrong picture for it. Two proportional rules
+ * never cross, so against the store default's own margin a percentage floor can
+ * never fire at any supplier cost — the observation the comment below records,
+ * and the reason the amount form came first.
+ *
+ * But the margin the resolver floors is not the store default's. It is whatever
+ * layer won: a **category** margin, or a product or variant override
+ * (`resolver.ts`, `targetMarginRate`). Those are the numbers that vary, and a
+ * category set below the floor is exactly the case the owner asked for — "the
+ * margin must never fall below operating expenses". So the meaningful axis is
+ * the margin, not the cost.
+ *
+ * Reported as rates rather than prices because the answer is cost-independent:
+ * at any supplier cost, a category below the floor prices at the floor.
+ */
+export type MarginFloorPreviewRow = {
+  categoryPercent: number;
+  effectivePercent: number;
+  governedBy: 'MINIMUM' | 'MARGIN';
+};
+
+export function buildMarginFloorPreviewRows(
+  floorPercent: string,
+): MarginFloorPreviewRow[] | null {
+  const floor = Number(floorPercent);
+
+  if (
+    floorPercent.trim() === '' ||
+    !Number.isFinite(floor) ||
+    floor <= 0 ||
+    floor >= 100
+  ) {
+    return null;
+  }
+
+  // Three category margins spanning the floor: clearly under, at it, clearly
+  // over. Round numbers derived from the floor itself, so the table stays
+  // meaningful whatever the seller types.
+  const samples = [
+    Math.max(1, Math.round(floor / 2)),
+    Math.round(floor),
+    Math.min(99, Math.round(floor * 2)),
+  ];
+
+  return samples.map((categoryPercent) => ({
+    categoryPercent,
+    effectivePercent: Math.max(categoryPercent, floor),
+    governedBy: categoryPercent < floor ? 'MINIMUM' : 'MARGIN',
+  }));
+}
+
+/**
  * The rule, shown rather than described. Three costs in, three prices out,
  * each labelled with which of the two numbers decided it and what is left
  * for the seller — the fastest way to see what the margin and the minimum
@@ -138,8 +199,70 @@ export function crossoverCostMinor(
 export default function StoreDefaultPreview({
   marginPercent,
   floorAmount,
+  floorPercent = '',
   roundingRule,
 }: StoreDefaultPreviewProps) {
+  const marginFloorRows = buildMarginFloorPreviewRows(floorPercent);
+
+  if (marginFloorRows !== null) {
+    return (
+      <div className="w-full">
+        <p className="mb-1.5 text-xs font-semibold text-ink-muted">
+          What the minimum does
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full max-w-xl text-xs">
+            <thead>
+              <tr className="text-left text-ink-faint">
+                <th scope="col" className="py-1 pr-4 font-medium">
+                  A category set to
+                </th>
+                <th scope="col" className="py-1 pr-4 font-medium">
+                  Actually prices at
+                </th>
+                <th scope="col" className="py-1 font-medium">
+                  Set by
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {marginFloorRows.map((row) => (
+                <tr
+                  key={row.categoryPercent}
+                  className="border-t border-border"
+                >
+                  <td className="py-1 pr-4 tabular-nums">
+                    {row.categoryPercent}%
+                  </td>
+                  <td className="py-1 pr-4 font-semibold tabular-nums">
+                    {row.effectivePercent}%
+                  </td>
+                  <td className="py-1">
+                    <span
+                      className={
+                        row.governedBy === 'MINIMUM'
+                          ? 'font-semibold text-sals3-deep'
+                          : 'text-ink-muted'
+                      }
+                    >
+                      {row.governedBy === 'MINIMUM'
+                        ? 'the minimum'
+                        : 'the margin'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-1.5 text-xs text-ink-faint">
+          Any category, product, or variant priced below the minimum is lifted
+          to it. This holds at every supplier cost.
+        </p>
+      </div>
+    );
+  }
+
   const rows = buildPreviewRows(marginPercent, floorAmount, roundingRule);
   const crossover = crossoverCostMinor(marginPercent, floorAmount);
 

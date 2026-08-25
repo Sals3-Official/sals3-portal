@@ -142,6 +142,27 @@ export function suggestedPriceMinor(
  * Returns the winning amount — the caller compares against the input to
  * know whether the floor fired.
  */
+/**
+ * The floor a minimum-margin rule puts under a price.
+ *
+ * `price = cost / (1 - rate)` — deliberately the same formula
+ * `computeSuggestedPriceMinor` uses for the target margin, so the two numbers
+ * mean the same thing and can be compared directly. A floor of 0.18 therefore
+ * reads as "never below an 18% margin", not "18% on top of cost"; those differ
+ * by more than they look (1.2195x against 1.18x), and picking the other one
+ * would make a floor that reads higher than a margin quietly sit below it.
+ *
+ * Throws on a rate outside the open interval rather than returning a nonsense
+ * price. `pricing_store_defaults_floor_rate_range` refuses those rows, so this
+ * is defence in depth against a row that predates the constraint.
+ */
+export function marginFloorMinor(
+  effectiveCostMinor: bigint,
+  floorRateScaled: bigint,
+): bigint {
+  return suggestedPriceMinor(effectiveCostMinor, floorRateScaled);
+}
+
 export function applyContributionFloor(
   suggestedMinor: bigint,
   effectiveCostMinor: bigint,

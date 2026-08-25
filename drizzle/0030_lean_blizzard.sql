@@ -1,0 +1,3 @@
+ALTER TABLE "pricing_store_defaults" ADD COLUMN "min_contribution_rate" numeric(8, 6);--> statement-breakpoint
+ALTER TABLE "pricing_store_defaults" ADD CONSTRAINT "pricing_store_defaults_floor_exclusive" CHECK (NOT ("pricing_store_defaults"."min_contribution_rate" IS NOT NULL AND "pricing_store_defaults"."min_contribution_minor" > 0));--> statement-breakpoint
+ALTER TABLE "pricing_store_defaults" ADD CONSTRAINT "pricing_store_defaults_floor_rate_range" CHECK ("pricing_store_defaults"."min_contribution_rate" IS NULL OR ("pricing_store_defaults"."min_contribution_rate" > 0 AND "pricing_store_defaults"."min_contribution_rate" < 1));

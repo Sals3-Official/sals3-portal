@@ -1,6 +1,7 @@
 import type { Executor } from '@/modules/catalog/candidates/repository';
 import {
   applyContributionFloor,
+  marginFloorMinor,
   applyFxAdjustment,
   applyRounding,
   convertAmountMinor,
@@ -250,24 +251,60 @@ export async function resolveProductPricing(
     return unavailable('INVALID_MARGIN_RATE');
   }
 
-  // The contribution floor lives on the store default. A floor in a
-  // currency the settlement currency cannot be compared against fails
-  // closed — converting at an invented rate is the flat-markup failure
-  // ADR-003 prohibits. A seller with no store default simply has no floor.
-  let minContributionMinor = BigInt(0);
+  /*
+    The operating-expense floor lives on the store default, in one of two
+    forms — a minimum margin, or a minimum cash contribution per item. Owner
+    rule 2026-08-26: never both on one rule, enforced by
+    `pricing_store_defaults_floor_exclusive`, so this reads whichever is set
+    rather than reconciling two answers.
 
-  if (storeDefault !== null && storeDefault.minContributionMinor > BigInt(0)) {
+    The rate form needs no currency. The amount form does, and a floor in a
+    currency the settlement currency cannot be compared against fails closed —
+    converting at an invented rate is the flat-markup failure ADR-003
+    prohibits. A seller with no store default simply has no floor.
+  */
+  let minContributionMinor = BigInt(0);
+  let floorFromRateMinor = BigInt(0);
+
+  if (storeDefault !== null && storeDefault.minContributionRate !== null) {
+    let floorRateScaled: bigint;
+
+    try {
+      floorRateScaled = parseScaledRate(storeDefault.minContributionRate);
+    } catch {
+      return unavailable('INVALID_MARGIN_RATE');
+    }
+
+    try {
+      floorFromRateMinor = marginFloorMinor(
+        effectiveProductCostMinor,
+        floorRateScaled,
+      );
+    } catch {
+      // A rate outside the open interval predates
+      // `pricing_store_defaults_floor_rate_range`. Refuse rather than quote a
+      // price computed from a rule the database would no longer accept.
+      return unavailable('INVALID_MARGIN_RATE');
+    }
+  } else if (
+    storeDefault !== null &&
+    storeDefault.minContributionMinor > BigInt(0)
+  ) {
     if (storeDefault.minContributionCurrency !== input.settlementCurrency) {
       return unavailable('CONTRIBUTION_FLOOR_CURRENCY_MISMATCH');
     }
     minContributionMinor = storeDefault.minContributionMinor;
   }
 
-  const flooredMinor = applyContributionFloor(
+  const contributionFlooredMinor = applyContributionFloor(
     suggestedMinor,
     effectiveProductCostMinor,
     minContributionMinor,
   );
+  const flooredMinor =
+    floorFromRateMinor > contributionFlooredMinor
+      ? floorFromRateMinor
+      : contributionFlooredMinor;
   const contributionFloorApplied = flooredMinor > suggestedMinor;
 
   const roundedMinor = applyRounding(flooredMinor, roundingRule);

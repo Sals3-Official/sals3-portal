@@ -624,25 +624,50 @@ function contributionFloorToMinor(value: string): bigint {
   return BigInt(whole) * BigInt(100) + BigInt(frac.padEnd(2, '0'));
 }
 
-const saveStoreDefaultInputSchema = z.object({
-  targetMarginRate: marginRateSchema,
-  minContribution: contributionFloorSchema,
-  roundingRule: roundingRuleSchema,
-  /**
-   * The destination this rule is for, or `null` for all destinations.
-   *
-   * Shape-checked here as well as in the database, so a crafted payload cannot
-   * write a scope the seller's own screen could never have offered.
-   */
-  marketCode: z
-    .string()
-    .refine(isPricingScopeDestination, {
-      message: 'Not a destination this account can price for.',
-    })
-    .nullable(),
+const saveStoreDefaultInputSchema = z
+  .object({
+    targetMarginRate: marginRateSchema,
+    minContribution: contributionFloorSchema,
+    /**
+     * The minimum-margin form of the operating-expense floor, or `null`.
+     *
+     * Owner rule 2026-08-26: the minimum is either a percentage or an amount,
+     * never both. The refinement below is the first of three gates — the form
+     * disables one field once the other has a value, and
+     * `pricing_store_defaults_floor_exclusive` refuses the row outright. The
+     * database gate is the one that matters, because a CSV import or a repair
+     * statement reaches neither of the other two.
+     */
+    minContributionRate: marginRateSchema.nullable(),
+    roundingRule: roundingRuleSchema,
+    /**
+     * The destination this rule is for, or `null` for all destinations.
+     *
+     * Shape-checked here as well as in the database, so a crafted payload cannot
+     * write a scope the seller's own screen could never have offered.
+     */
+    marketCode: z
+      .string()
+      .refine(isPricingScopeDestination, {
+        message: 'Not a destination this account can price for.',
+      })
+      .nullable(),
 
-  reason: reasonSchema,
-});
+    reason: reasonSchema,
+  })
+  .refine(
+    (value) =>
+      !(
+        value.minContributionRate !== null && Number(value.minContribution) > 0
+      ),
+    {
+      // Reported against the percentage field, because that is the newer of the
+      // two and the one a seller is most likely to have just typed.
+      path: ['minContributionRate'],
+      message:
+        'Set a minimum as a percentage or as an amount, not both. Clear one to use the other.',
+    },
+  );
 
 /** Same contract, and the same reason, as `SaveCategoryPolicyInput`. */
 export type SaveStoreDefaultInput = z.input<typeof saveStoreDefaultInputSchema>;
@@ -671,10 +696,20 @@ export async function saveStoreDefaultAction(
     );
 
     await getDb().transaction(async (tx) => {
+      /*
+        Read the scope being saved, not the unscoped rule.
+
+        This asked for `null` while the create path below wrote
+        `parsed.data.marketCode`, so a save for Australia decided
+        create-vs-revise from the all-destinations row — and where one existed,
+        revised *that* instead of creating Australia's. The read and the write
+        have to name the same scope or the screen and the database describe
+        different rules.
+      */
       const existing = await findStoreDefaultForScope(
         tx,
         auth.sellerAccountId,
-        null,
+        parsed.data.marketCode,
       );
 
       const row =
@@ -688,6 +723,7 @@ export async function saveStoreDefaultAction(
               targetMarginRate: parsed.data.targetMarginRate,
               minContributionMinor,
               minContributionCurrency: 'USD',
+              minContributionRate: parsed.data.minContributionRate,
               roundingRule: parsed.data.roundingRule,
               reason: parsed.data.reason,
               actorId: auth.actorId,
@@ -696,6 +732,7 @@ export async function saveStoreDefaultAction(
               targetMarginRate: parsed.data.targetMarginRate,
               minContributionMinor,
               minContributionCurrency: 'USD',
+              minContributionRate: parsed.data.minContributionRate,
               roundingRule: parsed.data.roundingRule,
               reason: parsed.data.reason,
               actorId: auth.actorId,
