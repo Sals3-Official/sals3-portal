@@ -187,3 +187,80 @@ describe('FundingBufferCard — active buffer', () => {
     expect(mocks.toastSuccess).toHaveBeenCalledWith('Funding buffer updated.');
   });
 });
+
+describe('FundingBufferCard — the save has to look like it happened', () => {
+  /**
+   * The complaint this covers, reported by the owner on 2026-08-26: an amount
+   * was entered, and the card had to be reloaded by hand before the new value
+   * appeared.
+   *
+   * The write was never the problem. The card learned its own new value only
+   * from the next full page render, and on Market Rules that render sat behind
+   * a whole-taxonomy scan. On a first save it was worse than slow — with no
+   * policy in props the form simply stayed on screen with its inputs cleared,
+   * which is indistinguishable from a save that silently failed.
+   */
+  it('shows the new rate straight away, without waiting for a server render', async () => {
+    mocks.saveFundingBufferPolicyAction.mockResolvedValue({
+      ok: true,
+      data: { ...ACTIVE_POLICY, adjustmentRate: '0.025000', version: 1 },
+    });
+
+    // First run: no policy in props, and none arrives during this test —
+    // exactly the case where the card previously showed nothing at all.
+    render(
+      <FundingBufferCard policy={null} sellerAccountId="seller-1" canManage />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Funding buffer percentage'), {
+      target: { value: '2.5' },
+    });
+    fireEvent.change(screen.getByLabelText('Reason for change'), {
+      target: { value: 'AUD to USD conversion on CJ Wallet top-ups.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Set a buffer' }));
+
+    expect(await screen.findByText('+2.50%')).toBeInTheDocument();
+    // Still asked for, because the rest of the page has to catch up too — it
+    // is just no longer the only way the seller finds out.
+    expect(mocks.refresh).toHaveBeenCalled();
+  });
+
+  it('lets a newer server value win, so another tab is never masked', async () => {
+    mocks.saveFundingBufferPolicyAction.mockResolvedValue({
+      ok: true,
+      data: { ...ACTIVE_POLICY, adjustmentRate: '0.025000', version: 5 },
+    });
+
+    const { rerender } = render(
+      <FundingBufferCard
+        policy={ACTIVE_POLICY}
+        sellerAccountId="seller-1"
+        canManage
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Funding buffer percentage'), {
+      target: { value: '2.5' },
+    });
+    fireEvent.change(screen.getByLabelText('Reason for change'), {
+      target: { value: 'AUD to USD conversion on CJ Wallet top-ups.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('+2.50%')).toBeInTheDocument();
+
+    // A later render carrying a newer version replaces the local copy, rather
+    // than the card pinning its own answer forever.
+    rerender(
+      <FundingBufferCard
+        policy={{ ...ACTIVE_POLICY, adjustmentRate: '0.040000', version: 6 }}
+        sellerAccountId="seller-1"
+        canManage
+      />,
+    );
+
+    expect(screen.getByText('+4.00%')).toBeInTheDocument();
+  });
+});

@@ -45,7 +45,10 @@ import {
   isValidMarginRate,
   parseScaledRate,
 } from '@/modules/pricing/money-math';
-import type { Sals3CategoryRow } from '@/lib/db/schema';
+import type {
+  PricingFxAdjustmentPolicyRow,
+  Sals3CategoryRow,
+} from '@/lib/db/schema';
 
 /**
  * Server actions for Settings → Market Rules → Category pricing / funding
@@ -826,9 +829,19 @@ const saveFundingBufferPolicyInputSchema = z.object({
   effectiveTo: z.string().datetime().optional(),
 });
 
+/**
+ * Returns the row it wrote, not just `ok`.
+ *
+ * The card used to learn the new value only from the next server render, so a
+ * seller stared at an unchanged card until a whole page round trip finished and
+ * frequently reloaded by hand, believing the save had failed. The write is
+ * authoritative the moment it commits; handing it straight back lets the card
+ * say so immediately, and the background refresh becomes reconciliation rather
+ * than the only source of truth.
+ */
 export async function saveFundingBufferPolicyAction(
   input: unknown,
-): Promise<ActionResult> {
+): Promise<ActionResult<PricingFxAdjustmentPolicyRow>> {
   const parsed = saveFundingBufferPolicyInputSchema.safeParse(input);
   if (!parsed.success) {
     return {
@@ -845,7 +858,7 @@ export async function saveFundingBufferPolicyAction(
   if (!auth.ok) return auth;
 
   try {
-    await getDb().transaction(async (tx) => {
+    const saved = await getDb().transaction(async (tx) => {
       const existing = await findActiveFundingBufferPolicy(
         tx,
         auth.sellerAccountId,
@@ -887,10 +900,12 @@ export async function saveFundingBufferPolicyAction(
           version: row.version,
         },
       });
+
+      return row;
     });
 
     revalidatePath('/market-rules');
-    return { ok: true };
+    return { ok: true, data: saved };
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('[portal] save funding buffer policy failed', {

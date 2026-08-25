@@ -350,7 +350,12 @@ describe('saveFundingBufferPolicyAction', () => {
 
     const result = await saveFundingBufferPolicyAction(VALID_INPUT);
 
-    expect(result).toEqual({ ok: true });
+    // The action hands the written row straight back now, so the card can
+    // show it without waiting for a page render — see `savedPolicy`.
+    expect(result).toMatchObject({ ok: true });
+    expect(result).toMatchObject({
+      data: { id: 'buffer-1' },
+    });
     expect(
       pricingRepositoryMocks.createFundingBufferPolicy,
     ).toHaveBeenCalledWith(
@@ -392,7 +397,12 @@ describe('saveFundingBufferPolicyAction', () => {
 
     const result = await saveFundingBufferPolicyAction(VALID_INPUT);
 
-    expect(result).toEqual({ ok: true });
+    // The action hands the written row straight back now, so the card can
+    // show it without waiting for a page render — see `savedPolicy`.
+    expect(result).toMatchObject({ ok: true });
+    expect(result).toMatchObject({
+      data: { id: 'buffer-2' },
+    });
     expect(
       pricingRepositoryMocks.reviseFundingBufferPolicy,
     ).toHaveBeenCalledWith(TX, existing, expect.any(Object));
