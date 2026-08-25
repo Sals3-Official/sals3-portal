@@ -1,0 +1,91 @@
+# One-time, idempotent DDL — no schedule, manual trigger only.
+#
+# Adds pricing_category_policies.market_code and
+# pricing_store_defaults.market_code, and replaces each table's single ACTIVE
+# unique index with a pair split on `market_code IS NULL`. Same break-glass
+# pattern as products-migrate-media-stored-copy.yml: a manual workflow_dispatch
+# calling an authenticated internal route with the shared CRON_SECRET — no
+# Vercel access or raw database credential required.
+#
+# ORDER MATTERS. This runs BEFORE the deployment that reads the scope. Drizzle
+# names every schema column in an INSERT, so a deployment carrying market_code
+# before the database has it breaks every save on the Market Rules screen.
+# Nothing in the change that adds this DDL names the column, so running this
+# early is safe and running it late is not. ADR-015's Amendment — 2026-08-25
+# requires this ordering.
+#
+# THE INDEXES MATTER AS MUCH AS THE COLUMNS. Postgres treats NULLs as distinct
+# in a unique index, so a single index over (seller, category, market_code)
+# would have admitted two ACTIVE all-destinations policies for one category and
+# left the resolver with no deterministic row to choose. That is why this
+# verifies both, and why a run reporting the column without the index fails.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin, e.g.
+#                                https://sals3-portal.example.com
+
+name: Pricing Migrate Per-Market Scope
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the per-market-scope migration endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/pricing/migrate-per-market-scope"
+
+          # Read-only first, so the log records the state this run started from.
+          echo "--- schema state before ---"
+          curl -sS "$endpoint" -H "Authorization: Bearer $CRON_SECRET"
+          echo
+
+          echo "--- applying migration ---"
+          status=$(curl -sS -o /tmp/migrate-response.json -w '%{http_code}' \
+            -X POST "$endpoint" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/migrate-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "per-market-scope migration returned HTTP $status" >&2
+            echo "Nothing was changed: the DDL runs in a transaction with a" >&2
+            echo "lock_timeout, so a lock it could not acquire rolls back" >&2
+            echo "cleanly. Safe to re-run when the database is quieter." >&2
+            exit 1
+          fi
+
+          # A 200 is not proof. Assert the columns AND the indexes are genuinely
+          # there, or fail the run — a migration that reports success without
+          # achieving anything is the exact failure this endpoint exists to undo,
+          # and the index half is the half that fails silently later.
+          echo "--- verifying columns and indexes exist ---"
+          if ! grep -q '"columnsExistAfter":true' /tmp/migrate-response.json; then
+            echo "Migration returned HTTP $status but market_code is still absent" >&2
+            exit 1
+          fi
+
+          if ! grep -q '"indexesExistAfter":true' /tmp/migrate-response.json; then
+            echo "Migration returned HTTP $status and added the columns, but the" >&2
+            echo "scope-aware unique indexes are absent. Do NOT deploy the reader:" >&2
+            echo "without them two ACTIVE policies can share one scope and the" >&2
+            echo "resolver will pick between them arbitrarily." >&2
+            exit 1
+          fi
+
+          echo "Verified: market_code and the four scope-aware unique indexes exist."
