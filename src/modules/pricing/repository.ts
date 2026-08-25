@@ -996,6 +996,16 @@ export async function createStoreDefault(
     roundingRule: SchemaRoundingRule;
     reason: string;
     actorId: string;
+    /**
+     * Required, not optional with a null default.
+     *
+     * Optional here would compile at every call site and silently write the
+     * all-destinations rule while a screen said otherwise — which is exactly
+     * what happened before this was tightened: `saveStoreDefaultAction` read
+     * the scoped row and then created an unscoped one. Making it required is
+     * what turns that into a compile error.
+     */
+    marketCode: string | null;
   },
 ): Promise<PricingStoreDefaultRow> {
   const [row] = await executor

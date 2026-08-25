@@ -650,6 +650,10 @@ export async function saveStoreDefaultAction(
         existing === null
           ? await createStoreDefault(tx, {
               sellerAccountId: auth.sellerAccountId,
+              // The scope the screen was showing. Without this the action read
+              // the destination's row and then created an unscoped one, writing
+              // the all-destinations rule under a heading that said otherwise.
+              marketCode: parsed.data.marketCode,
               targetMarginRate: parsed.data.targetMarginRate,
               minContributionMinor,
               minContributionCurrency: 'USD',
