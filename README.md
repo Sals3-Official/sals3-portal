@@ -828,6 +828,38 @@ workflow (`workflow_dispatch`, `CRON_SECRET`-authenticated), which calls
 `POST /api/internal/catalog/products/migrate-meta-description` on the
 deployed app itself. Idempotent; safe to run more than once.
 
+**Variants record the supplier's packed box, not just its weight
+(2026-08-25).** `insertDraftVariant` passed `weight_grams` through and
+hard-coded `length_millimeters`, `width_millimeters`, and
+`height_millimeters` to `null`; `create-draft.ts`'s own subset schema did not
+even read the three fields off the evidence snapshot, so they were dropped
+twice on the way in. Nothing in the Portal looked wrong, because the
+`Package dimensions (supplier)` label in Supplier Details is derived from the
+snapshot at read time rather than from the columns.
+
+Two things read the columns and were both quietly degraded: the storefront's
+**Supplier details** block, which showed a weight and no size, and
+`freight-quotes.ts`, which cannot compute a volumetric weight unless all three
+are present. The dimensions come from `supplier_snapshots.evidence`, matched to
+a variant by CJ's own `vid` through `provider_variant_references`, and are
+rounded to whole millimetres because the columns are `integer`.
+
+Fixing the write path only helps products imported after it ships.
+`backfillVariantDimensions` (`modules/catalog/products/backfill-variant-dimensions.ts`)
+fills the columns for everything already in the catalogue: idempotent, reads
+only data the database already holds, makes no CJ call, and touches a variant
+only while all three columns are still null — so it never overwrites a value a
+seller or an audited override set. A variant whose evidence lacks any of the
+three is skipped rather than half-filled.
+
+Production is never backfilled from a laptop, for the same reason it is never
+migrated from one: trigger the `Products Backfill Variant Dimensions` GitHub
+Actions workflow (`workflow_dispatch`, `CRON_SECRET`-authenticated), which
+calls `POST /api/internal/catalog/products/backfill-variant-dimensions` on the
+deployed app itself. It reports `variantsFilled` and `variantsStillMissing`, so
+a run that found no evidence to fill from says so rather than reporting
+success. Safe to run more than once.
+
 **Brand and Country of Origin show seller-friendly defaults, not raw
 workbook tokens (2026-08-17).** The Specification section's `Brand` /
 `Brand / Publisher` dropdown displays the workbook's own `UNBRANDED` token

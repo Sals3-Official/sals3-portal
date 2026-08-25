@@ -114,6 +114,17 @@ const storedVariantSchema = z.object({
   optionLabel: z.string().nullish(),
   priceUsd: z.number().nonnegative().nullish(),
   weightGrams: z.number().nonnegative().nullish(),
+  /**
+   * Packed box dimensions in millimetres (`VariantEvidence.lengthMm` and
+   * friends). Read here because unknown keys are dropped by this schema: the
+   * snapshot has carried them since evidence capture existed, and leaving them
+   * out of this subset is what kept `product_variants` empty of dimensions
+   * while the editor's "Package dimensions (supplier)" label — built from the
+   * same snapshot — showed them.
+   */
+  lengthMm: z.number().nonnegative().nullish(),
+  widthMm: z.number().nonnegative().nullish(),
+  heightMm: z.number().nonnegative().nullish(),
   totalInventory: z.number().nonnegative().nullish(),
 });
 
@@ -630,6 +641,9 @@ async function runDraftTransaction(
         productId: product.id,
         sals3Sku,
         weightGrams: evidenceVariant.weightGrams ?? null,
+        lengthMillimeters: evidenceVariant.lengthMm ?? null,
+        widthMillimeters: evidenceVariant.widthMm ?? null,
+        heightMillimeters: evidenceVariant.heightMm ?? null,
         actorId: input.actorId,
       });
 

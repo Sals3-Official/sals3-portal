@@ -168,6 +168,9 @@ const EVIDENCE_VARIANT = {
   optionLabel: 'Black-1XL',
   priceUsd: 12.34,
   weightGrams: 210,
+  lengthMm: 350,
+  widthMm: 400,
+  heightMm: 50,
   totalInventory: 44,
 };
 
@@ -451,6 +454,46 @@ describe('createProductDraftFromCandidate — variants from persisted evidence o
       }),
     );
     expect(args.weightGrams).toBe(210);
+  });
+
+  it('carries the packed box dimensions off the evidence snapshot', async () => {
+    // These were dropped twice: this module's own subset schema did not read
+    // them, and `insertDraftVariant` hard-coded all three to null. The Portal
+    // still showed "Package dimensions (supplier)" because that label is built
+    // from the snapshot at read time, so nothing looked wrong until the
+    // storefront and freight quoting both came up empty.
+    await run();
+
+    const [, args] = asMock(insertDraftVariant).mock.calls[0];
+
+    expect(args.lengthMillimeters).toBe(350);
+    expect(args.widthMillimeters).toBe(400);
+    expect(args.heightMillimeters).toBe(50);
+  });
+
+  it('passes null dimensions through rather than inventing a box', async () => {
+    // A feed-only candidate has no dimensions at all. Substituting a default
+    // would put a fabricated measurement into freight quoting.
+    asMock(findSnapshotByCandidateId).mockResolvedValue(
+      evidenceSnapshot([
+        {
+          vid: 'VID-1',
+          sku: 'CJ-SKU-1',
+          optionLabel: 'Black-1XL',
+          priceUsd: 12.34,
+          weightGrams: 210,
+          totalInventory: 44,
+        },
+      ]),
+    );
+
+    await run();
+
+    const [, args] = asMock(insertDraftVariant).mock.calls[0];
+
+    expect(args.lengthMillimeters).toBeNull();
+    expect(args.widthMillimeters).toBeNull();
+    expect(args.heightMillimeters).toBeNull();
   });
 
   it('preserves the raw CJ option label without parsing it into option axes', async () => {
