@@ -200,6 +200,26 @@ const saveCategoryPolicyInputSchema = z.object({
     .nullable(),
 });
 
+/**
+ * The payload shape callers must build, exported so the compiler can hold them
+ * to it.
+ *
+ * The parameter below stays `unknown` — a server action is a network boundary
+ * and must validate whatever actually arrives. But `unknown` also means a
+ * caller in this repo gets no help, and that is not hypothetical: when
+ * `marketCode` was added to the schema on 2026-08-25 the dialog kept sending
+ * the old four-field object, every save on the category tree started returning
+ * `invalid_input`, and nothing failed — not the compiler, because the argument
+ * was `unknown`, and not the tests, because each one passed a hand-written
+ * input that already had the new field.
+ *
+ * Annotating the call site with this type is what makes the next omission a
+ * build error instead of a broken screen.
+ */
+export type SaveCategoryPolicyInput = z.input<
+  typeof saveCategoryPolicyInputSchema
+>;
+
 export async function saveCategoryPolicyAction(
   input: unknown,
 ): Promise<ActionResult> {
@@ -620,6 +640,9 @@ const saveStoreDefaultInputSchema = z.object({
 
   reason: reasonSchema,
 });
+
+/** Same contract, and the same reason, as `SaveCategoryPolicyInput`. */
+export type SaveStoreDefaultInput = z.input<typeof saveStoreDefaultInputSchema>;
 
 export async function saveStoreDefaultAction(
   input: unknown,

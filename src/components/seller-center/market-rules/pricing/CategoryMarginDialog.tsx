@@ -2,7 +2,10 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import { saveCategoryPolicyAction } from '@/app/(portal)/market-rules/pricing-actions';
+import {
+  saveCategoryPolicyAction,
+  type SaveCategoryPolicyInput,
+} from '@/app/(portal)/market-rules/pricing-actions';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -30,6 +33,14 @@ import type {
 type CategoryMarginDialogProps = {
   node: CategoryMarginNodeViewModel;
   effective: EffectiveMargin;
+  /**
+   * The destination this edit is for, or `null` for the all-destinations rule.
+   *
+   * Threaded from the page rather than read off `node.policy.marketCode`: a
+   * category with no rule yet has no policy to read it from, which is exactly
+   * the case where getting it wrong writes the rate onto the wrong scope.
+   */
+  marketCode: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /**
@@ -67,6 +78,7 @@ function inheritedFrom(effective: EffectiveMargin): string | null {
 export default function CategoryMarginDialog({
   node,
   effective,
+  marketCode,
   open,
   onOpenChange,
   onSaved,
@@ -92,13 +104,18 @@ export default function CategoryMarginDialog({
 
     const targetMarginRate = (Number(marginPercent) / 100).toString();
 
+    // Annotated, not inferred. This is the type that turns a missing field
+    // into a build error — see `SaveCategoryPolicyInput`.
+    const payload: SaveCategoryPolicyInput = {
+      categoryCode: node.code,
+      targetMarginRate,
+      roundingRule,
+      reason,
+      marketCode,
+    };
+
     startTransition(async () => {
-      const result = await saveCategoryPolicyAction({
-        categoryCode: node.code,
-        targetMarginRate,
-        roundingRule,
-        reason,
-      });
+      const result = await saveCategoryPolicyAction(payload);
 
       if (!result.ok) {
         setError('Check the fields and try again.');

@@ -55,7 +55,12 @@ beforeEach(() => {
 describe('StoreDefaultCard — first run (no default yet)', () => {
   it('states the consequence plainly and keeps the form visible for a manager', () => {
     render(
-      <StoreDefaultCard policy={null} sellerAccountId="seller-1" canManage />,
+      <StoreDefaultCard
+        policy={null}
+        sellerAccountId="seller-1"
+        canManage
+        marketCode={null}
+      />,
     );
 
     expect(
@@ -72,6 +77,7 @@ describe('StoreDefaultCard — first run (no default yet)', () => {
         policy={null}
         sellerAccountId="seller-1"
         canManage={false}
+        marketCode={null}
       />,
     );
 
@@ -84,7 +90,12 @@ describe('StoreDefaultCard — first run (no default yet)', () => {
     mocks.saveStoreDefaultAction.mockResolvedValue({ ok: true });
 
     render(
-      <StoreDefaultCard policy={null} sellerAccountId="seller-1" canManage />,
+      <StoreDefaultCard
+        policy={null}
+        sellerAccountId="seller-1"
+        canManage
+        marketCode={null}
+      />,
     );
 
     fireEvent.change(screen.getByLabelText('Default margin percent'), {
@@ -105,6 +116,7 @@ describe('StoreDefaultCard — first run (no default yet)', () => {
         minContribution: '2.50',
         roundingRule: 'NONE',
         reason: 'Initial default while the roster is small.',
+        marketCode: null,
       }),
     );
     expect(mocks.refresh).toHaveBeenCalled();
@@ -114,7 +126,12 @@ describe('StoreDefaultCard — first run (no default yet)', () => {
     mocks.saveStoreDefaultAction.mockResolvedValue({ ok: true });
 
     render(
-      <StoreDefaultCard policy={null} sellerAccountId="seller-1" canManage />,
+      <StoreDefaultCard
+        policy={null}
+        sellerAccountId="seller-1"
+        canManage
+        marketCode={null}
+      />,
     );
 
     fireEvent.change(screen.getByLabelText('Default margin percent'), {
@@ -140,7 +157,12 @@ describe('StoreDefaultCard — first run (no default yet)', () => {
     });
 
     render(
-      <StoreDefaultCard policy={null} sellerAccountId="seller-1" canManage />,
+      <StoreDefaultCard
+        policy={null}
+        sellerAccountId="seller-1"
+        canManage
+        marketCode={null}
+      />,
     );
 
     fireEvent.change(screen.getByLabelText('Default margin percent'), {
@@ -164,7 +186,12 @@ describe('StoreDefaultCard — first run (no default yet)', () => {
 
   it('refuses to submit a reason the server is certain to reject', () => {
     render(
-      <StoreDefaultCard policy={null} sellerAccountId="seller-1" canManage />,
+      <StoreDefaultCard
+        policy={null}
+        sellerAccountId="seller-1"
+        canManage
+        marketCode={null}
+      />,
     );
 
     fireEvent.change(screen.getByLabelText('Default margin percent'), {
@@ -193,6 +220,7 @@ describe('StoreDefaultCard — active default', () => {
         policy={ACTIVE_DEFAULT}
         sellerAccountId="seller-1"
         canManage
+        marketCode={null}
       />,
     );
 
@@ -210,6 +238,7 @@ describe('StoreDefaultCard — active default', () => {
         policy={{ ...ACTIVE_DEFAULT, minContributionMinor: BigInt(0) }}
         sellerAccountId="seller-1"
         canManage
+        marketCode={null}
       />,
     );
 
@@ -223,6 +252,7 @@ describe('StoreDefaultCard — active default', () => {
         policy={ACTIVE_DEFAULT}
         sellerAccountId="seller-1"
         canManage
+        marketCode={null}
       />,
     );
 
@@ -239,6 +269,7 @@ describe('StoreDefaultCard — active default', () => {
         policy={ACTIVE_DEFAULT}
         sellerAccountId="seller-1"
         canManage={false}
+        marketCode={null}
       />,
     );
 

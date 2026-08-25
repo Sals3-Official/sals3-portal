@@ -243,6 +243,7 @@ export default async function CategoryPricingSection({
             storeDefault={storeDefault}
             sellerAccountId={sellerAccountId}
             canManage={canManage}
+            marketCode={marketCode}
           />
         </>
       )}

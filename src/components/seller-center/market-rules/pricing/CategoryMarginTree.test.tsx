@@ -139,6 +139,7 @@ describe('CategoryMarginTree', () => {
         storeDefault={STORE_DEFAULT}
         sellerAccountId="seller-1"
         canManage
+        marketCode={null}
       />,
     );
 
@@ -154,6 +155,7 @@ describe('CategoryMarginTree', () => {
         storeDefault={STORE_DEFAULT}
         sellerAccountId="seller-1"
         canManage
+        marketCode={null}
       />,
     );
 
@@ -172,6 +174,7 @@ describe('CategoryMarginTree', () => {
         storeDefault={STORE_DEFAULT}
         sellerAccountId="seller-1"
         canManage
+        marketCode={null}
       />,
     );
 
@@ -187,6 +190,7 @@ describe('CategoryMarginTree', () => {
         storeDefault={STORE_DEFAULT}
         sellerAccountId="seller-1"
         canManage
+        marketCode={null}
       />,
     );
 
@@ -207,6 +211,7 @@ describe('CategoryMarginTree', () => {
         storeDefault={STORE_DEFAULT}
         sellerAccountId="seller-1"
         canManage
+        marketCode={null}
       />,
     );
 
@@ -226,6 +231,7 @@ describe('CategoryMarginTree', () => {
         storeDefault={STORE_DEFAULT}
         sellerAccountId="seller-1"
         canManage
+        marketCode={null}
       />,
     );
 
@@ -254,6 +260,11 @@ describe('CategoryMarginTree', () => {
         targetMarginRate: '0.4',
         roundingRule: 'NONE',
         reason: 'Department-level default for apparel.',
+        // The scope travels with the payload. Asserted explicitly because a
+        // save that names no destination is refused by the action's schema —
+        // which this mock cannot show, and which is exactly how the missing
+        // field reached production unnoticed.
+        marketCode: null,
       }),
     );
   });
@@ -265,6 +276,7 @@ describe('CategoryMarginTree', () => {
         storeDefault={STORE_DEFAULT}
         sellerAccountId="seller-1"
         canManage={false}
+        marketCode={null}
       />,
     );
 

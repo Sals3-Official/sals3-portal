@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import {
   getStoreDefaultHistoryAction,
   saveStoreDefaultAction,
+  type SaveStoreDefaultInput,
 } from '@/app/(portal)/market-rules/pricing-actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,6 +29,8 @@ type StoreDefaultCardProps = {
   policy: PricingStoreDefaultRow | null;
   sellerAccountId: string;
   canManage: boolean;
+  /** The destination this rule is for, or `null` for all destinations. */
+  marketCode: string | null;
 };
 
 /** Mirrors `MIN_REASON_LENGTH` in `pricing-actions.ts`. */
@@ -75,6 +78,7 @@ export default function StoreDefaultCard({
   policy,
   sellerAccountId,
   canManage,
+  marketCode,
 }: StoreDefaultCardProps) {
   const router = useRouter();
   const [isEditing, setIsEditing] = useState(false);
@@ -111,12 +115,16 @@ export default function StoreDefaultCard({
     const targetMarginRate = (Number(marginPercent) / 100).toString();
 
     startTransition(async () => {
-      const result = await saveStoreDefaultAction({
+      // Annotated, not inferred — see `SaveStoreDefaultInput`.
+      const payload: SaveStoreDefaultInput = {
         targetMarginRate,
         minContribution: floorDollars.trim() === '' ? '0' : floorDollars,
         roundingRule,
         reason,
-      });
+        marketCode,
+      };
+
+      const result = await saveStoreDefaultAction(payload);
 
       if (!result.ok) {
         // Per-field messages when the server has them; a single line only

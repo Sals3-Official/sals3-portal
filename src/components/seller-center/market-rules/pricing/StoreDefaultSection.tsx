@@ -7,6 +7,14 @@ import StoreDefaultCard from './StoreDefaultCard';
 type StoreDefaultSectionProps = {
   sellerAccountId: string;
   canManage: boolean;
+  /**
+   * The destination this rule is for, or `null` for all destinations.
+   *
+   * Threaded even though nothing renders this section today: the read and the
+   * write must name the same scope, and a component that reads one scope while
+   * its card saves to another is the defect this whole change is repairing.
+   */
+  marketCode: string | null;
 };
 
 /**
@@ -17,6 +25,7 @@ type StoreDefaultSectionProps = {
  */
 async function readStoreDefault(
   sellerAccountId: string,
+  marketCode: string | null,
 ): Promise<
   { ok: true; policy: PricingStoreDefaultRow | null } | { ok: false }
 > {
@@ -24,7 +33,7 @@ async function readStoreDefault(
     const policy = await findStoreDefaultForScope(
       getDb(),
       sellerAccountId,
-      null,
+      marketCode,
     );
     return { ok: true, policy };
   } catch (error) {
@@ -45,8 +54,9 @@ async function readStoreDefault(
 export default async function StoreDefaultSection({
   sellerAccountId,
   canManage,
+  marketCode,
 }: StoreDefaultSectionProps) {
-  const result = await readStoreDefault(sellerAccountId);
+  const result = await readStoreDefault(sellerAccountId, marketCode);
 
   return (
     <section
@@ -75,6 +85,7 @@ export default async function StoreDefaultSection({
           policy={result.policy}
           sellerAccountId={sellerAccountId}
           canManage={canManage}
+          marketCode={marketCode}
         />
       ) : (
         <DisclosureBanner tone="warning">
