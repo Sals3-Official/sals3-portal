@@ -1,0 +1,52 @@
+# One-time, idempotent write — no schedule, manual trigger only.
+#
+# Fills in product_variants.length/width/height_millimeters for variants
+# imported while the draft path wrote null for all three. Carries no DDL: the
+# columns have existed since the table did, and the numbers come from evidence
+# the database already holds, so this makes no CJ call and spends no points.
+#
+# Same break-glass pattern as products-backfill-media-copies.yml and
+# products-migrate-meta-description.yml: a manual workflow_dispatch calling an
+# authenticated internal route with the shared CRON_SECRET — no Vercel access
+# or raw database credential required.
+#
+# Safe to run more than once. The statement only touches variants whose three
+# columns are all still null, so a second run reports variantsFilled: 0 and
+# never overwrites a value a seller or an audited override set.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin, e.g.
+#                                https://sals3-portal.example.com
+
+name: Products Backfill Variant Dimensions
+
+on:
+  workflow_dispatch:
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the variant dimension backfill endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          status=$(curl -sS -o /tmp/backfill-response.json -w '%{http_code}' \
+            -X POST "$PORTAL_BASE_URL/api/internal/catalog/products/backfill-variant-dimensions" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/backfill-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "variant dimension backfill returned HTTP $status" >&2
+            exit 1
+          fi

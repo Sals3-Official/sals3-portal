@@ -541,12 +541,36 @@ export async function listVariantsForProduct(
     .orderBy(asc(productVariants.sals3Sku));
 }
 
+/**
+ * The four supplier measurements are `integer` columns, and CJ reports them as
+ * plain numbers with no guarantee of being whole. A fractional value would make
+ * the insert throw and take the whole draft creation down with it, so it is
+ * rounded here rather than refused: a packed box measured to the nearest
+ * millimetre is still an honest supplier fact, and no observed CJ payload has
+ * ever carried a fraction.
+ */
+function roundedMeasurement(value: number | null): number | null {
+  return value === null ? null : Math.round(value);
+}
+
 export async function insertDraftVariant(
   executor: Executor,
   input: {
     productId: string;
     sals3Sku: string;
     weightGrams: number | null;
+    /**
+     * Packed box dimensions in millimetres, as CJ reports them.
+     *
+     * These used to be hard-coded `null` here while `weightGrams` was passed
+     * through, which is why a published product showed a supplier weight and no
+     * dimensions. Two things read them, and both were silently degraded: the
+     * storefront's Supplier details block, and `freight-quotes.ts`, which
+     * cannot compute a volumetric weight without all three.
+     */
+    lengthMillimeters: number | null;
+    widthMillimeters: number | null;
+    heightMillimeters: number | null;
     actorId: string;
   },
 ): Promise<ProductVariantRow> {
@@ -564,10 +588,10 @@ export async function insertDraftVariant(
       gtins: null,
       mpn: null,
       identifierExists: true,
-      weightGrams: input.weightGrams,
-      lengthMillimeters: null,
-      widthMillimeters: null,
-      heightMillimeters: null,
+      weightGrams: roundedMeasurement(input.weightGrams),
+      lengthMillimeters: roundedMeasurement(input.lengthMillimeters),
+      widthMillimeters: roundedMeasurement(input.widthMillimeters),
+      heightMillimeters: roundedMeasurement(input.heightMillimeters),
       createdBy: input.actorId,
       updatedBy: input.actorId,
     })
