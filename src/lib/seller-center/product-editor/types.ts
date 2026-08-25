@@ -504,6 +504,16 @@ export type ProductEditorFixture = {
     productId: string;
     expectedProductVersion: number;
   } | null;
+  /**
+   * The revision buyers are served, when this product is live.
+   *
+   * `null` means nothing is published — an illustrative fixture, or a product
+   * that has never been listed — and nothing can be pending publication
+   * either. `isCurrent: false` means the open draft has moved ahead of what
+   * the storefront shows, which is exactly what a save on a published product
+   * causes: it forks a new draft and leaves `published_revision_id` alone.
+   */
+  publishedRevision: { id: string; isCurrent: boolean } | null;
   /** Opaque internal identifiers only. Never a key, token, or secret. */
   advancedIdentifiers: Record<string, string>;
 };

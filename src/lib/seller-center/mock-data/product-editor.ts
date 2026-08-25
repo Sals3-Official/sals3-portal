@@ -432,6 +432,7 @@ const BASE: ProductEditorFixture = {
   policyVersion: '2026.08.01',
   draftSaveTarget: null,
   publishTarget: null,
+  publishedRevision: null,
   advancedIdentifiers: {
     draft_id: '8f2c1a7e-6f0b-4a1d-9d3e-77e2c0b41a55',
     supplier_connection_id: '3c9d2f14-2a71-4b09-bb52-1e8a4d770a12',

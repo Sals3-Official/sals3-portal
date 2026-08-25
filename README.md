@@ -259,7 +259,7 @@ Redis, KV, or paid cache service is used for this path.
 | `/orders`                                                  | Seller Center order screen shell. Real paid storefront orders now persist in PostgreSQL for fulfillment, but this UI remains a static/illustrative operations surface until the order-management views are wired to the new tables                                                                                                                                                                                                                                                             |
 | `/listings`                                                | Product Catalogue. Reads persisted Sals3 Product/Variant/Offer/provider-reference rows for the seller and maps them into the existing catalogue UI. No supplier API call is made. Imported rows remain Draft/Unpublished until the real publish gates can resolve category, media, price, variant options, and revision approval.                                                                                                                                                              |
 | `/listings/new`                                            | Add Product. No query: the blank essentials-first wizard (read-only fields, no save yet). `?fixture=<key>`: the supplier-prefilled Product Editor design preview — see [Product Editor](#product-editor-add-product-from-a-supplier-product). `?productId=<uuid>`: opens a persisted Product Catalogue draft, using supplier detail evidence saved during the Add to Product Catalogue / Customize & List action. `?supplierCandidateId=` remains reserved and does not render fictional data. |
-| `/listings/[productId]/description`                        | **Description full editor** — the description on its own full-viewport screen, outside the portal shell. Block palette, a canvas set to the product page's own measurements, and a per-block inspector. Saves the description alone through its own compare-and-set Server Action; requires an open `DRAFT` revision. See [Description full editor](#description-full-editor)                                                                                                                  |
+| `/listings/[productId]/description`                        | **Description full editor** — the description on its own full-viewport screen, outside the portal shell. Block palette, a canvas set to the product page's own measurements, and a per-block inspector. Saves the description alone through its own compare-and-set Server Action; on a published product it forks a new `DRAFT` revision instead of rewriting the published one. See [Description full editor](#description-full-editor)                                                      |
 | `/inventory`                                               | Inline stock edits with undo and an audit record                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `/finances`                                                | Itemized ledger and estimated proceeds for one example order                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `/payouts`                                                 | Payout schedule, states, and destination                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -1488,6 +1488,46 @@ Because nothing else on the listing is held there, leaving needs no
 are-you-sure prompt. And because the revision version moves on save, a stale
 listing-editor tab that later presses `Save Draft` is **refused** with
 `version_conflict` rather than overwriting what was written here.
+
+### Editing a published product forks a new draft
+
+A revision-scoped write — the description, and the product name that rides
+`Save Draft` — lands only on an open `DRAFT` revision. Publishing moves that
+revision to `APPROVED` and freezes its content, so after the first publish
+there is no draft to write to. Every such save is now preceded by
+`openDraftForEdit` (`src/modules/catalog/products/open-draft-for-edit.ts`),
+which forks the next `DRAFT` from the published revision's `content_snapshot`
+inside the same transaction and hands the write its id.
+
+What that guarantees, and what it deliberately still refuses:
+
+- **The storefront does not move.** The fork leaves
+  `products.published_revision_id` alone, and that is the column the storefront
+  projection reads. Buyers keep seeing the published copy until `Publish
+Update`. The editor says so, persistently, rather than only in a toast.
+- **A settled revision is never rewritten.** The `workflow_state = 'DRAFT'`
+  predicate on the update is unchanged; the fork adds a row instead of relaxing
+  it.
+- **One open draft per product, decided by the database.**
+  `product_revisions_open_draft_key` is a partial unique index. A second
+  concurrent fork is refused with `version_conflict` — the loser is never
+  redirected into the winner's draft.
+- **A stale screen still loses.** The fork happens only when the editor names
+  the product's _current_ revision at the version it actually holds. A tab that
+  loaded before someone else published matches on version alone and is refused,
+  because forking from it would resurrect older copy over newer.
+- **A revision under review is refused outright**, with its own reason
+  (`revision_in_review`) rather than a generic failure. Nothing writes
+  `IN_REVIEW` or `CHANGES_REQUESTED` today; the refusal exists because forking
+  around such a revision would let a publish step silently past it.
+
+Both editor surfaces adopt the revision id the server returns. Holding it in a
+prop was the second half of the same bug: the fork would happen once and every
+save after it would name the settled revision again.
+
+Publishing also retires what it replaces — the previous `APPROVED` revision
+becomes `SUPERSEDED` in the same transaction, so `APPROVED` names exactly one
+revision per product.
 
 It lives in an `(studio)` route group with its own pass-through layout. Layouts
 nest, so a child of `(portal)` could only add chrome to the rail and topbar,

@@ -134,7 +134,9 @@ describe('Description section - block authoring', () => {
 
     vi.mocked(saveProductDraftAction).mockResolvedValue({
       ok: true,
+      revisionId: DRAFT_TARGET.revisionId,
       revisionVersion: 4,
+      forked: false,
     });
 
     renderEditor(fixture);
@@ -399,7 +401,9 @@ describe('Description section - simple text and designed layout', () => {
   it('saves what was typed in the simple box as paragraph blocks', async () => {
     vi.mocked(saveProductDraftAction).mockResolvedValue({
       ok: true,
+      revisionId: DRAFT_TARGET.revisionId,
       revisionVersion: 4,
+      forked: false,
     });
 
     renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
@@ -446,7 +450,9 @@ describe('Description section - simple text and designed layout', () => {
   it('cancelling the warning keeps the designed layout untouched', async () => {
     vi.mocked(saveProductDraftAction).mockResolvedValue({
       ok: true,
+      revisionId: DRAFT_TARGET.revisionId,
       revisionVersion: 4,
+      forked: false,
     });
 
     renderEditor({ ...databaseBackedFixture(), descriptionBlocks: RICH });
@@ -462,7 +468,9 @@ describe('Description section - simple text and designed layout', () => {
   it('confirming keeps every word and drops only the structure', async () => {
     vi.mocked(saveProductDraftAction).mockResolvedValue({
       ok: true,
+      revisionId: DRAFT_TARGET.revisionId,
       revisionVersion: 4,
+      forked: false,
     });
 
     renderEditor({ ...databaseBackedFixture(), descriptionBlocks: RICH });
@@ -496,7 +504,9 @@ describe('Description section - simple text and designed layout', () => {
   it('saves the trimmed text even though the field keeps the space', async () => {
     vi.mocked(saveProductDraftAction).mockResolvedValue({
       ok: true,
+      revisionId: DRAFT_TARGET.revisionId,
       revisionVersion: 4,
+      forked: false,
     });
 
     renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
@@ -554,7 +564,9 @@ describe('Description section - simple text and designed layout', () => {
   it('keeps a retained photo through an edit and a save', async () => {
     vi.mocked(saveProductDraftAction).mockResolvedValue({
       ok: true,
+      revisionId: DRAFT_TARGET.revisionId,
       revisionVersion: 4,
+      forked: false,
     });
 
     renderEditor({
@@ -679,7 +691,9 @@ describe('Product editor - telling the seller a save landed', () => {
   it('saves the description from its own section, in both modes', async () => {
     vi.mocked(saveDescriptionAction).mockResolvedValue({
       ok: true,
+      revisionId: DRAFT_TARGET.revisionId,
       revisionVersion: 5,
+      forked: false,
       contentChecksum: 'abc',
     });
 
@@ -704,10 +718,162 @@ describe('Product editor - telling the seller a save landed', () => {
     expect(await screen.findByText('Description saved.')).toBeInTheDocument();
   });
 
+  /**
+   * The half-fix this screen makes possible.
+   *
+   * Forking on the server is only half the repair: this editor held its
+   * revision *version* in state but read its revision *id* straight from the
+   * server-rendered prop. After a fork the id is stale, so the fork would
+   * happen once and every save after it would name the settled revision again
+   * and be refused — with no page reload in between to correct it.
+   */
+  const PUBLISHED = {
+    id: DRAFT_TARGET.revisionId,
+    isCurrent: true,
+  };
+  const FORKED_REVISION_ID = '44444444-4444-4444-8444-444444444444';
+
+  function publishedFixture(): ProductEditorFixture {
+    return {
+      ...databaseBackedFixture(),
+      descriptionBlocks: [],
+      publishedRevision: PUBLISHED,
+    };
+  }
+
+  it('follows the fork on the next description save', async () => {
+    vi.mocked(saveDescriptionAction)
+      .mockResolvedValueOnce({
+        ok: true,
+        revisionId: FORKED_REVISION_ID,
+        revisionVersion: 1,
+        forked: true,
+        contentChecksum: 'abc',
+      })
+      .mockResolvedValue({
+        ok: true,
+        revisionId: FORKED_REVISION_ID,
+        revisionVersion: 2,
+        forked: false,
+        contentChecksum: 'def',
+      });
+
+    // This suite shares one module-level mock across its tests, so counting
+    // from zero means clearing the history the earlier ones left behind.
+    vi.mocked(saveDescriptionAction).mockClear();
+    renderEditor(publishedFixture());
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'First edit after publishing.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save description/ }));
+
+    await waitFor(() => expect(saveDescriptionAction).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'A second edit in the same session.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save description/ }));
+
+    await waitFor(() => expect(saveDescriptionAction).toHaveBeenCalledTimes(2));
+
+    const [first] = vi.mocked(saveDescriptionAction).mock.calls[0] ?? [];
+    const [second] = vi.mocked(saveDescriptionAction).mock.calls[1] ?? [];
+
+    expect(first).toMatchObject({
+      revisionId: DRAFT_TARGET.revisionId,
+      expectedRevisionVersion: DRAFT_TARGET.expectedRevisionVersion,
+    });
+    expect(second).toMatchObject({
+      revisionId: FORKED_REVISION_ID,
+      expectedRevisionVersion: 1,
+    });
+  });
+
+  it('carries a fork from Save Draft into the description save', async () => {
+    // The exact sequence that failed in the live Portal: `Save New Draft`
+    // first, then `Save description`. The two buttons are different actions
+    // but one revision, so the id one of them moves has to reach the other.
+    vi.mocked(saveProductDraftAction).mockResolvedValue({
+      ok: true,
+      revisionId: FORKED_REVISION_ID,
+      revisionVersion: 1,
+      forked: true,
+    });
+    vi.mocked(saveDescriptionAction).mockResolvedValue({
+      ok: true,
+      revisionId: FORKED_REVISION_ID,
+      revisionVersion: 2,
+      forked: false,
+      contentChecksum: 'abc',
+    });
+
+    renderEditor(publishedFixture());
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'Saved through the draft button.' },
+    });
+    await saveDraft();
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'Then through the description button.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save description/ }));
+
+    await waitFor(() => expect(saveDescriptionAction).toHaveBeenCalled());
+
+    const [sent] = vi.mocked(saveDescriptionAction).mock.calls.at(-1) ?? [];
+
+    expect(sent).toMatchObject({
+      revisionId: FORKED_REVISION_ID,
+      expectedRevisionVersion: 1,
+    });
+  });
+
+  it('says the save is not live yet, but only for a published product', async () => {
+    vi.mocked(saveDescriptionAction).mockResolvedValue({
+      ok: true,
+      revisionId: FORKED_REVISION_ID,
+      revisionVersion: 1,
+      forked: true,
+      contentChecksum: 'abc',
+    });
+
+    vi.mocked(saveDescriptionAction).mockClear();
+
+    const { unmount } = renderEditor(publishedFixture());
+
+    // Nothing to claim before the edit: the storefront and the draft agree.
+    expect(screen.queryByText(/not live yet/i)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'An edit the storefront has not seen.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save description/ }));
+
+    expect(await screen.findByText(/not live yet/i)).toBeInTheDocument();
+
+    unmount();
+
+    // An unpublished draft has no published copy to differ from, so the same
+    // save must not claim one.
+    renderEditor({ ...databaseBackedFixture(), descriptionBlocks: [] });
+
+    fireEvent.change(screen.getByLabelText('Product description'), {
+      target: { value: 'An edit on a product nobody can buy yet.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save description/ }));
+
+    await waitFor(() => expect(saveDescriptionAction).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/not live yet/i)).not.toBeInTheDocument();
+  });
+
   it('stops offering to revert once the description has saved', async () => {
     vi.mocked(saveDescriptionAction).mockResolvedValue({
       ok: true,
+      revisionId: DRAFT_TARGET.revisionId,
       revisionVersion: 5,
+      forked: false,
       contentChecksum: 'abc',
     });
 
@@ -795,7 +961,9 @@ describe('Product editor - a mode switch is an unsaved change', () => {
   it('carries the switched mode through Save Draft', async () => {
     vi.mocked(saveProductDraftAction).mockResolvedValue({
       ok: true,
+      revisionId: DRAFT_TARGET.revisionId,
       revisionVersion: 4,
+      forked: false,
     });
 
     renderEditor({

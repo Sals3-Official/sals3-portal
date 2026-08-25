@@ -32,6 +32,7 @@ import {
   projectSupplierMediaForProduct,
   SUPPLIER_MEDIA_RIGHTS,
 } from './media-projection';
+import { markApprovedRevisionsSuperseded } from './repository';
 import { candidateSlugsFromTitle } from './slug';
 
 /**
@@ -781,6 +782,27 @@ export default async function publishProduct(input: {
         .where(eq(productRevisions.id, revision.id));
     }
 
+    /**
+     * Retire whatever this revision replaces.
+     *
+     * Not a correctness fix — the selection above is already deterministic and
+     * `products.published_revision_id` already records the live revision. It
+     * is about the rows not making a false claim: `APPROVED` means "the copy
+     * this product is published from", and leaving the previous revision in
+     * that state after a newer one goes live puts two rows in that role and
+     * two sources of truth on the table. `SUPERSEDED` has been in the enum
+     * for exactly this and nothing wrote it until now.
+     *
+     * Excludes the revision just published, and matches nothing at all on a
+     * first publish or a republish of the same revision.
+     */
+    const supersededRevisionIds = await markApprovedRevisionsSuperseded(tx, {
+      productId: input.productId,
+      exceptRevisionId: revision.id,
+      actorId: input.actorId,
+      now,
+    });
+
     const availability = strongestAvailability(availabilityStates);
     const slug = await publishWithSlug(tx, {
       productId: input.productId,
@@ -803,6 +825,7 @@ export default async function publishProduct(input: {
         slug,
         marketCode: destination.destinationCountryCode,
         offerCount: publishedOfferIds.length,
+        supersededRevisionIds,
         availability,
         imagesProjected: media.inserted,
         mediaSource: media.source,

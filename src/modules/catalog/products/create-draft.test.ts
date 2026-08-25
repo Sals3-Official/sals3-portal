@@ -367,6 +367,37 @@ describe('createProductDraftFromCandidate — canonical identity', () => {
     expect(outcome.ok && outcome.result.productId).toBe(PRODUCT.id);
   });
 
+  it('adopts the winning draft when the open-draft index refuses the insert', async () => {
+    // `insertDraftRevision` answers a collision with `null` rather than an
+    // error, because a raised unique violation would abort this whole
+    // transaction. For the import pipeline the right answer is the winner's
+    // draft: it wants the product to *have* an open draft, not to own the one
+    // it created. An editing save refuses instead — see `open-draft-for-edit`.
+    asMock(insertDraftRevision).mockResolvedValue(null);
+    asMock(findOpenDraftRevision)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: 'revision-from-another-writer' });
+
+    const outcome = await run();
+
+    expect(outcome.ok).toBe(true);
+    expect(setCurrentRevision).not.toHaveBeenCalled();
+
+    const actions = asMock(appendAuditEvent).mock.calls.map(
+      ([, event]) => event.action,
+    );
+
+    // No `revisionCreated`: this call created nothing.
+    expect(actions).not.toContain('catalog_product_revision.created');
+  });
+
+  it('raises rather than continuing when no draft can be resolved at all', async () => {
+    asMock(insertDraftRevision).mockResolvedValue(null);
+    asMock(findOpenDraftRevision).mockResolvedValue(null);
+
+    await expect(run()).rejects.toThrow(/draft revision insert/i);
+  });
+
   it('looks the reference up by the exact provider and external id, never by title', async () => {
     // A title/slug/image match must never merge two distinct CJ products.
     await run();

@@ -515,26 +515,47 @@ async function runDraftTransaction(
           actorId: input.actorId,
         });
 
-        revisionId = revision.id;
-        await setCurrentRevision(tx, {
-          productId: product.id,
-          revisionId: revision.id,
-          actorId: input.actorId,
-        });
+        if (revision === null) {
+          /**
+           * The open-draft index refused a second draft: something else — a
+           * concurrent import, or `openDraftForEdit` forking this product for
+           * an edit — created one between the read above and this insert.
+           *
+           * Adopting the winner is the same answer the `openDraft !== null`
+           * branch above gives, and it is right *here* specifically because
+           * this is the import pipeline: it wants the product to have an open
+           * draft, not to own the one it created. An editing save must never
+           * do this — see `open-draft-for-edit.ts`, which refuses instead.
+           */
+          const winner = await findOpenDraftRevision(tx, product.id);
 
-        await appendAuditEvent(tx, {
-          actorId: input.actorId,
-          action: PRODUCT_AUDIT_ACTIONS.revisionCreated,
-          entityType: 'ProductRevision',
-          entityId: revision.id,
-          payload: {
+          if (winner === null) {
+            throw new Error('draft revision insert produced no row');
+          }
+
+          revisionId = winner.id;
+        } else {
+          revisionId = revision.id;
+          await setCurrentRevision(tx, {
             productId: product.id,
-            revisionNumber: revision.revisionNumber,
-            workflowState: revision.workflowState,
-            contentChecksum: revision.contentChecksum,
-            forkedFromProductVersion: product.version,
-          },
-        });
+            revisionId: revision.id,
+            actorId: input.actorId,
+          });
+
+          await appendAuditEvent(tx, {
+            actorId: input.actorId,
+            action: PRODUCT_AUDIT_ACTIONS.revisionCreated,
+            entityType: 'ProductRevision',
+            entityId: revision.id,
+            payload: {
+              productId: product.id,
+              revisionNumber: revision.revisionNumber,
+              workflowState: revision.workflowState,
+              contentChecksum: revision.contentChecksum,
+              forkedFromProductVersion: product.version,
+            },
+          });
+        }
       }
 
       missing.add('STRUCTURED_DESCRIPTION_REQUIRED');

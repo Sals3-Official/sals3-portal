@@ -1135,6 +1135,7 @@ function buildCatalogueProducts(
         productVersion: product.version,
         currentRevisionId: revision?.id ?? null,
         currentRevisionVersion: revision?.version ?? null,
+        publishedRevisionId: product.publishedRevisionId,
         optionAxisNames: (optionsByProduct.get(product.id) ?? []).map(
           (option) => option.name,
         ),
@@ -1867,6 +1868,28 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
         : {
             productId: product.id,
             expectedProductVersion: product.productVersion,
+          },
+    /**
+     * What the storefront is serving right now, so the editor can say plainly
+     * that a saved edit is not live yet. `isCurrent` goes false the moment an
+     * edit forks a draft off the published revision, and stays false until
+     * `Publish Update` runs.
+     *
+     * Gated on the listing actually being live, not merely on the column being
+     * set: `unpublishProduct` moves a product to `PAUSED` without clearing
+     * `published_revision_id`, and a paused listing serves buyers nothing. An
+     * edit there is not "waiting to go live", so saying so would be the same
+     * kind of false reassurance this field exists to remove.
+     */
+    publishedRevision:
+      product.publishedRevisionId === undefined ||
+      product.publishedRevisionId === null ||
+      (product.status !== 'LIVE' && product.status !== 'LIVE_NEEDS_ATTENTION')
+        ? null
+        : {
+            id: product.publishedRevisionId,
+            isCurrent:
+              product.publishedRevisionId === product.currentRevisionId,
           },
     advancedIdentifiers: {
       product_id: product.id,

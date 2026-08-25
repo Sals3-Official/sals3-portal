@@ -334,8 +334,44 @@ describe('publishProduct', () => {
 
     await publish(db);
 
-    expect(writes.find((write) => write.table === productRevisions)).toBe(
-      undefined,
+    const revisionWrites = writes.filter(
+      (write) => write.table === productRevisions,
+    );
+
+    // One write, and it is the supersede sweep — never a second freeze. The
+    // sweep excludes the revision being published (`ne` in the statement) and
+    // sets no snapshot or `frozenAt`, so an accepted order's frozen content
+    // stays byte-identical.
+    expect(revisionWrites).toHaveLength(1);
+    expect(revisionWrites[0]?.values).toEqual(
+      expect.objectContaining({ workflowState: 'SUPERSEDED' }),
+    );
+    expect(revisionWrites[0]?.values).not.toEqual(
+      expect.objectContaining({ contentSnapshot: expect.anything() }),
+    );
+    expect(revisionWrites[0]?.values).not.toEqual(
+      expect.objectContaining({ frozenAt: expect.anything() }),
+    );
+  });
+
+  it('retires the previous approved revision when a draft is published', async () => {
+    const { db, writes } = transactionalDb();
+
+    await publish(db);
+
+    const revisionWrites = writes.filter(
+      (write) => write.table === productRevisions,
+    );
+
+    // The freeze of the draft, then the sweep that retires whatever it
+    // replaces. `APPROVED` must name one revision per product: the one the
+    // storefront is served from.
+    expect(revisionWrites).toHaveLength(2);
+    expect(revisionWrites[0]?.values).toEqual(
+      expect.objectContaining({ workflowState: 'APPROVED' }),
+    );
+    expect(revisionWrites[1]?.values).toEqual(
+      expect.objectContaining({ workflowState: 'SUPERSEDED' }),
     );
   });
 

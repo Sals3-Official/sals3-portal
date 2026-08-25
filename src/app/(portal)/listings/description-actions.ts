@@ -44,7 +44,20 @@ const saveDescriptionInputSchema = z.object({
 });
 
 export type SaveDescriptionActionResult =
-  | { ok: true; revisionVersion: number; contentChecksum: string }
+  | {
+      ok: true;
+      /**
+       * The revision this actually wrote. On a published product the save
+       * forks a new draft, so this is not always the id the editor sent — and
+       * the editor has to adopt it or its next save names the settled
+       * revision again and is refused.
+       */
+      revisionId: string;
+      revisionVersion: number;
+      contentChecksum: string;
+      /** True when this save opened a new draft off the published revision. */
+      forked: boolean;
+    }
   | { ok: false; reason: string; message: string };
 
 const REFUSAL_MESSAGES: Record<string, string> = {
@@ -56,6 +69,8 @@ const REFUSAL_MESSAGES: Record<string, string> = {
   not_found: 'This product no longer exists, or it is not yours.',
   version_conflict:
     'This description changed in another tab or session. Reload the editor and try again.',
+  revision_in_review:
+    'This listing is in review. Changes are blocked until the review finishes.',
   image_not_stored:
     'One image is not stored in Sals3. Upload it again and save.',
   failed: 'The description could not be saved.',
@@ -135,7 +150,9 @@ export default async function saveDescriptionAction(
 
   return {
     ok: true,
+    revisionId: result.revisionId,
     revisionVersion: result.revisionVersion,
     contentChecksum: result.contentChecksum,
+    forked: result.forked,
   };
 }

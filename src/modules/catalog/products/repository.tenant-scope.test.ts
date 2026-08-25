@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { and, eq, type SQL } from 'drizzle-orm';
+import { and, eq, ne, type SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
+import { drizzle } from 'drizzle-orm/postgres-js';
 
 import { supplierCandidates } from '@/lib/db/schema/catalog';
 import {
@@ -13,6 +14,9 @@ import { supplierConnections } from '@/lib/db/schema/supplier-connections';
 import {
   findCandidateSourceForSeller,
   findProductForSteward,
+  findRevisionOfProduct,
+  insertDraftRevision,
+  markApprovedRevisionsSuperseded,
   saveDraftRevisionContent,
   updateSellerRetailPrices,
 } from './repository';
@@ -220,5 +224,140 @@ describe('saveDraftRevisionContent', () => {
     await expect(
       saveDraftRevisionContent(executor as never, request),
     ).resolves.toBeNull();
+  });
+});
+
+describe('findRevisionOfProduct', () => {
+  it('ands the revision id with its product rather than trusting the id', () => {
+    const executor = selectExecutor([]);
+
+    return findRevisionOfProduct(executor as never, {
+      revisionId: 'revision-a',
+      productId: 'product-a',
+    }).then(() => {
+      const actual = renderSql(executor.where.mock.calls[0][0] as SQL);
+      // The fork path reads this before deciding whether to open a draft. The
+      // caller has proven stewardship of *its* product; without this term a
+      // revision id belonging to another seller's product would still be read
+      // and forked from.
+      const expected = renderSql(
+        and(
+          eq(productRevisions.id, 'revision-a'),
+          eq(productRevisions.productId, 'product-a'),
+        ),
+      );
+
+      expect(actual.sql).toBe(expected.sql);
+      expect(actual.params).toEqual(expected.params);
+    });
+  });
+});
+
+describe('markApprovedRevisionsSuperseded', () => {
+  it("retires the product's other approved revisions and nothing else", async () => {
+    const executor = updateExecutor([{ id: 'revision-old' }]);
+
+    await markApprovedRevisionsSuperseded(executor as never, {
+      productId: 'product-a',
+      exceptRevisionId: 'revision-new',
+      actorId: 'actor-1',
+      now: new Date('2026-08-25T00:00:00.000Z'),
+    });
+
+    const actual = renderSql(executor.where.mock.calls[0][0] as SQL);
+    const expected = renderSql(
+      and(
+        eq(productRevisions.productId, 'product-a'),
+        // Only APPROVED rows: a DRAFT must stay editable, and re-superseding a
+        // SUPERSEDED row would move `updated_at` for nothing.
+        eq(productRevisions.workflowState, 'APPROVED'),
+        // Never the revision just published.
+        ne(productRevisions.id, 'revision-new'),
+      ),
+    );
+
+    expect(actual.sql).toBe(expected.sql);
+    expect(actual.params).toEqual(expected.params);
+  });
+
+  it('leaves the frozen snapshot and freeze time untouched', async () => {
+    const executor = updateExecutor([]);
+
+    await markApprovedRevisionsSuperseded(executor as never, {
+      productId: 'product-a',
+      exceptRevisionId: 'revision-new',
+      actorId: 'actor-1',
+      now: new Date('2026-08-25T00:00:00.000Z'),
+    });
+
+    const values = executor.set.mock.calls[0][0] as Record<string, unknown>;
+
+    // An accepted order references these bytes (ADR-007 invariant 3), and the
+    // frozen-when-settled check constraint requires them to stay present.
+    expect(values).not.toHaveProperty('contentSnapshot');
+    expect(values).not.toHaveProperty('frozenAt');
+    expect(values).toMatchObject({ workflowState: 'SUPERSEDED' });
+  });
+});
+
+describe('insertDraftRevision', () => {
+  /**
+   * The only claim in this module that a mocked executor cannot make.
+   *
+   * `openDraftForEdit` treats a `null` return as "another writer holds this
+   * product's open draft" and refuses cleanly. That is only true if the
+   * statement really carries `on conflict do nothing`: a raised unique
+   * violation would instead abort the surrounding transaction, so the loser
+   * could not record why it lost and the caller's refusal path would never
+   * run. Everywhere else in this suite renders the `WHERE` clause; here what
+   * matters is the conflict clause, rendered from the same real dialect.
+   */
+  it('sends ON CONFLICT DO NOTHING rather than raising a unique violation', async () => {
+    const db = drizzle.mock();
+    let built: { getSQL: () => SQL } | undefined;
+
+    // The real Drizzle builder, driven only by the calls the function itself
+    // makes. If `insertDraftRevision` stopped calling `onConflictDoNothing`,
+    // nothing would reach `built` and this fails on the assertion below rather
+    // than passing against a query the test wrote for itself.
+    const executor = {
+      insert: (table: Parameters<typeof db.insert>[0]) => ({
+        values: (input: never) => {
+          const withValues = db.insert(table).values(input);
+
+          return {
+            onConflictDoNothing: () => {
+              const withConflict = withValues.onConflictDoNothing();
+
+              return {
+                returning: async () => {
+                  built = withConflict.returning();
+
+                  return [];
+                },
+              };
+            },
+          };
+        },
+      }),
+    };
+
+    await insertDraftRevision(executor as never, {
+      productId: 'product-a',
+      revisionNumber: 3,
+      expectedProductVersion: 7,
+      contentDocument: { version: 1, blocks: [] },
+      contentChecksum: 'checksum',
+      actorId: 'actor-1',
+    });
+
+    if (built === undefined) {
+      throw new Error('insertDraftRevision never reached the returning clause');
+    }
+
+    const rendered = dialect.sqlToQuery(built.getSQL()).sql;
+
+    expect(rendered).toContain('on conflict do nothing');
+    expect(rendered).toContain('returning');
   });
 });

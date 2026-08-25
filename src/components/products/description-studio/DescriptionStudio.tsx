@@ -58,7 +58,17 @@ export type SaveDescription = (input: {
     blocks: DescriptionBlock[];
   };
 }) => Promise<
-  { ok: true; revisionVersion: number } | { ok: false; message: string }
+  | {
+      ok: true;
+      revisionVersion: number;
+      /**
+       * Replaces the default "Description saved." when the save has more to
+       * report than success — on a published product it saved to a draft the
+       * storefront is not serving yet.
+       */
+      message?: string;
+    }
+  | { ok: false; message: string }
 >;
 
 type DescriptionStudioProps = {
@@ -210,7 +220,7 @@ export default function DescriptionStudio({
     setIsSaving(false);
     setStatus(
       result.ok
-        ? { kind: 'saved', message: 'Description saved.' }
+        ? { kind: 'saved', message: result.message ?? 'Description saved.' }
         : { kind: 'error', message: result.message },
     );
   }
