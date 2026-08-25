@@ -99,6 +99,22 @@ export default function CanvasBlock({
   }
 
   if (block.type === 'paragraph') {
+    /*
+      `whitespace-pre-line` on both previews below, because this canvas claims
+      to set text "exactly as the product page will set it" (`StudioCanvas`)
+      and the product page now honours a paragraph's single newlines.
+
+      Those newlines are deliberate: `descriptionTextToBlocks` keeps them inside
+      the block rather than splitting on them, so a seller writing a heading
+      line and one line per feature gets one paragraph carrying the layout they
+      typed. Without this the seller previewed a run-on line, published, and
+      found the storefront had rendered something else — the preview's own
+      promise broken by the surface making it.
+
+      `pre-line` rather than `pre-wrap`, matching the storefront: newlines are
+      honoured, runs of spaces still collapse, so an accidental double space is
+      not previewed as if it would publish.
+    */
     const runs: InlineRun[] = block.runs ?? runsFromPlainText(block.text);
 
     if (!isSelected) {
@@ -107,7 +123,7 @@ export default function CanvasBlock({
           Empty paragraph. Select it to write.
         </p>
       ) : (
-        <p className="m-0 text-[15px] leading-[1.7] text-ink-muted text-pretty">
+        <p className="m-0 text-[15px] leading-[1.7] whitespace-pre-line text-ink-muted text-pretty">
           <InlineRunsText text={block.text} runs={block.runs} />
         </p>
       );
@@ -120,7 +136,7 @@ export default function CanvasBlock({
         {/* Shown only when there is emphasis to see. Without marks it would
             repeat the field below it word for word. */}
         {hasEmphasis ? (
-          <p className="m-0 text-[15px] leading-[1.7] text-ink-muted text-pretty">
+          <p className="m-0 text-[15px] leading-[1.7] whitespace-pre-line text-ink-muted text-pretty">
             <InlineRunsText text={block.text} runs={block.runs} />
           </p>
         ) : null}
