@@ -406,10 +406,25 @@ export async function listCategoryMarginOverview(
     .where(
       and(
         or(isNull(sals3Categories.l3), isNotNull(pricingCategoryPolicies.id)),
-        or(
-          like(sals3Categories.code, `${TAXONOMY_V1_CODE_PREFIX}%`),
-          isNotNull(pricingCategoryPolicies.id),
-        ),
+        // Unconditional, unlike the depth escape hatch above it.
+        //
+        // This shipped with an `OR policy IS NOT NULL` arm on the reasoning
+        // that a mirror already carrying a policy should stay visible so it
+        // could be deactivated rather than stranded. In production **every**
+        // mirror carries one — the owner's bulk 25% import wrote a policy to
+        // every row — so the arm fired on all of them and the screen looked
+        // unchanged. The escape hatch was written for a rare case that is in
+        // fact the normal one.
+        //
+        // Hiding them strands nothing, because a mirror policy is provably
+        // inert: `findNearestActiveCategoryPolicy` matches on
+        // `sals3_categories.path` against the chain derived from the product's
+        // own path, and a mirror's path is the supplier's raw string
+        // (`Men's Clothing / Outerwear & Jackets / …`, separated by `/`, not
+        // ` > `). It can never be an ancestor of a real taxonomy path, so it
+        // can never price anything. What is left behind is a dead row, not a
+        // live rule.
+        like(sals3Categories.code, `${TAXONOMY_V1_CODE_PREFIX}%`),
       ),
     )
     .orderBy(
