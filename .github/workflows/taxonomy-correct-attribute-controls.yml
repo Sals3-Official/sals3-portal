@@ -1,0 +1,55 @@
+# One-time, idempotent write — no schedule, manual trigger only.
+#
+# Removes `Neckline` and `Sleeve Style` from the four skirt-only categories and
+# narrows `Dress / Skirt Style` to values that describe a skirt. Carries no DDL:
+# these are data rows inside the `controlsVersion` already in force, corrected
+# in place rather than reseeded under a new version.
+#
+# Needed because the attribute-controls seed is additive only
+# (`onConflictDoNothing`), so correcting the extract fixes fresh environments
+# and cannot touch a database that has already been seeded.
+#
+# Same break-glass pattern as taxonomy-migrate-attribute-controls.yml: a manual
+# workflow_dispatch calling an authenticated internal route with the shared
+# CRON_SECRET — no Vercel access or raw database credential required.
+#
+# Safe to run more than once: the delete matches nothing on a second run and
+# the update rewrites values already present. It reports how many rows it
+# removed, how many it rewrote, and any category code it could not match.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin, e.g.
+#                                https://sals3-portal.example.com
+
+name: Taxonomy Correct Attribute Controls
+
+on:
+  workflow_dispatch:
+
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the attribute control correction endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          status=$(curl -sS -o /tmp/correction-response.json -w '%{http_code}' \
+            -X POST "$PORTAL_BASE_URL/api/internal/catalog/taxonomy/correct-attribute-controls" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/correction-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "attribute control correction returned HTTP $status" >&2
+            exit 1
+          fi

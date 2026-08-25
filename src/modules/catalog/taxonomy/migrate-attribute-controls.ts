@@ -6,6 +6,7 @@ import {
 } from '@/lib/db/schema/category-attribute-controls';
 import { sals3Categories } from '@/lib/db/schema/pricing-policy';
 import attributeControlsExtract from '@/lib/db/seed-data/sals3-category-attribute-controls-v1.json';
+import { applyAttributeControlCorrections } from './attribute-control-corrections';
 
 /**
  * `drizzle/meta/_journal.json`'s entry for tag `0020_shocking_hedge_knight`
@@ -295,7 +296,7 @@ export async function seedAttributeControlsData(
 
   const missingCategoryCodes = [
     ...new Set(
-      extract.controls
+      applyAttributeControlCorrections(extract.controls)
         .map((row) => row.categoryCode)
         .filter((code) => !categoryIdByCode.has(code)),
     ),
@@ -341,7 +342,15 @@ export async function seedAttributeControlsData(
     })
     .returning({ id: categoryAttributeDictionary.id });
 
-  const controlValues = extract.controls.map((row) => ({
+  /**
+   * The extract, minus the deviations recorded in
+   * `attribute-control-corrections.ts`. Applied here rather than in the JSON so
+   * a fresh environment and a corrected production database offer sellers the
+   * same fields — see that module for why the extract itself stays untouched.
+   */
+  const correctedControls = applyAttributeControlCorrections(extract.controls);
+
+  const controlValues = correctedControls.map((row) => ({
     categoryId: categoryIdByCode.get(row.categoryCode)!,
     controlsVersion: extract.controlsVersion,
     attributeName: row.attributeName,

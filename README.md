@@ -2617,6 +2617,41 @@ the category hierarchy is locked forever but attribute controls are
 expected to be revised — a corrected extraction lands beside the old one
 under a new version string rather than overwriting it.
 
+**Corrections to the extract live beside it, not inside it
+(2026-08-26).** The workbook wrote one attribute set for "Dresses & Skirts"
+as a single family and laid it over the skirt leaves, so four skirt-only
+categories asked a seller for a **Neckline** and a **Sleeve Style**, and
+`Dress / Skirt Style` — a `REQUIRED` field — offered `Maxi Dress`,
+`Midi Dress`, `Mini Dress`, `Wrap Dress`, `Slip Dress` and `Bodycon`.
+`CAT-GGL-1516 Skirt Suits` keeps both attributes: a skirt suit includes a
+jacket, so they describe the product.
+
+`attribute-control-corrections.ts` records the deviations; the extract JSON
+is left alone because it carries the workbook's `sha256` and its own row
+count, and editing rows inside it would make the file misdescribe itself —
+and a later re-extraction would silently reintroduce what had been
+hand-removed. `seedAttributeControlsData` applies the corrections before
+inserting, so a fresh environment never gets them.
+
+That seed is **additive only** (`onConflictDoNothing`), so it can never
+remove a row it once wrote: an already-seeded database needs
+`POST /api/internal/catalog/taxonomy/correct-attribute-controls`, reached
+through the `Taxonomy Correct Attribute Controls` workflow. **No
+`controlsVersion` bump** — every read joins on
+`ACTIVE_ATTRIBUTE_CONTROLS_VERSION`, so any window where the code names a
+version the database has not finished seeding is a window where _every_
+product's specifications disappear; eight wrong rows do not justify that.
+
+**No backfill is needed for values already stored.** The storefront's
+specification query `innerJoin`s the controls, so a value whose control is
+gone stops rendering on its own, and the editor builds its fields from the
+same controls. The rows in `product_category_attribute_values` are left in
+place — orphaned, reversible, and not this correction's to delete.
+Narrowing the allow list strands nobody either: `Dress / Skirt Style` has
+`allowCustomValue: true`, so a live skirt already recorded as `Maxi Dress`
+is still accepted as a custom value and simply stops being offered to the
+next seller.
+
 Seven input control types (`SINGLE_SELECT_DROPDOWN`,
 `MULTI_SELECT_DROPDOWN`, `TEXT_INPUT`, `NUMBER_INPUT`,
 `MEASUREMENT_INPUT`, `BOOLEAN_TOGGLE`, `DATE_PICKER`) — the workbook only
