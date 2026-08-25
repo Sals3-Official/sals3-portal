@@ -90,20 +90,32 @@ describe('listCategoryMarginOverview scope', () => {
     expect(sql).toContain('"l3" is null');
   });
 
-  it('still shows any category that already carries a policy', async () => {
+  it('keeps the depth escape hatch, and only that one', async () => {
     const sql = await renderedWhere();
 
     /**
-     * Both escape hatches are `OR`s against the policy id, and they are the
-     * reason this is "never offered fresh" rather than "never shown": a mirror
-     * that already carries a real, versioned policy must stay visible so it can
-     * be deactivated. Hiding it would strand the row where nobody could reach
-     * it.
+     * One `OR … policy IS NOT NULL`, not two.
+     *
+     * The depth arm stays: a real `CAT-GGL-` category deeper than L2 that
+     * already carries a policy must remain visible and editable, because a rate
+     * actively pricing products must never become unreachable.
+     *
+     * The code arm is gone. It shipped as "never offered fresh, not never
+     * shown" — a mirror carrying a policy stayed visible so it could be
+     * deactivated — and in production **every** mirror carries one, because the
+     * bulk 25% import wrote a policy to every row. The exception was written
+     * for a rare case that turned out to be the normal one, so the screen
+     * looked unchanged.
+     *
+     * Removing it strands nothing: a mirror's `path` is the supplier's raw
+     * string separated by `/`, never an ancestor of a real taxonomy path, so
+     * `findNearestActiveCategoryPolicy` can never select it. The row it leaves
+     * behind is dead, not live.
      */
     const policyEscapes = sql.match(
       /"pricing_category_policies"\."id" is not null/g,
     );
 
-    expect(policyEscapes).toHaveLength(2);
+    expect(policyEscapes).toHaveLength(1);
   });
 });
