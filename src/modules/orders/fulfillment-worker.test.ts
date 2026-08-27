@@ -34,7 +34,7 @@ const ORDER_ID = '11111111-1111-4111-8111-111111111111';
 const GROUP_ID = '22222222-2222-4222-8222-222222222222';
 const CONNECTION_ID = '33333333-3333-4333-8333-333333333333';
 
-function arrangeDb() {
+function arrangeDb(country = 'PH') {
   const { db, calls } = fakeDb([
     [
       {
@@ -48,7 +48,7 @@ function arrangeDb() {
           city: 'Manila',
           region: 'Metro Manila',
           postalCode: '1000',
-          country: 'PH',
+          country,
         },
       },
     ],
@@ -59,7 +59,7 @@ function arrangeDb() {
         packageId: 'pkg_1',
         supplierConnectionId: CONNECTION_ID,
         originCountry: 'CN',
-        destinationCountry: 'PH',
+        destinationCountry: country,
         logisticName: 'CJPacket Eub',
         optionId: 'option-1',
         channelId: 'channel-1',
@@ -154,5 +154,56 @@ describe('handleFulfillOrder CJ sandbox flag', () => {
 
     const request = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body));
     expect(request.isSandbox).toBe(0);
+  });
+});
+
+describe('handleFulfillOrder CJ destination country', () => {
+  beforeEach(() => {
+    delete process.env.CJ_ORDER_SANDBOX;
+    vi.clearAllMocks();
+    fetchMock.mockResolvedValue(
+      Response.json({ code: 500, message: 'country probe stops here' }),
+    );
+  });
+
+  /**
+   * CJ takes the destination twice and wants it in two different formats:
+   * `shippingCountry` is the country, `shippingCountryCode` its two-letter
+   * code. The worker used to send the alpha-2 code to both, so every order
+   * reached CJ reading `shippingCountry: 'PH'`.
+   */
+  it.each([
+    ['PH', 'Philippines'],
+    ['AU', 'Australia'],
+  ])(
+    'sends %s as a country name and a country code, not the code twice',
+    async (code, name) => {
+      arrangeDb(code);
+
+      await runUntilCreateOrderFails();
+
+      const request = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body));
+
+      expect(request.shippingCountry).toBe(name);
+      expect(request.shippingCountryCode).toBe(code);
+    },
+  );
+
+  it('records the country name in the step snapshot it will retry from', async () => {
+    // `supplier_order_steps.requestSnapshot` is what a resumed fulfilment
+    // replays. A snapshot holding the old code would re-send the wrong field
+    // on every retry even after this fix shipped.
+    const calls = arrangeDb('AU');
+
+    await runUntilCreateOrderFails();
+
+    const stepInsert = callsOf(calls, 'values').find((call) =>
+      Boolean((call.args[0] as { requestSnapshot?: unknown }).requestSnapshot),
+    );
+
+    expect(
+      (stepInsert!.args[0] as { requestSnapshot: { shippingCountry: string } })
+        .requestSnapshot.shippingCountry,
+    ).toBe('Australia');
   });
 });
