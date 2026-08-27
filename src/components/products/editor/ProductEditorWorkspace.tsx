@@ -78,6 +78,15 @@ import VariantImagePicker from './VariantImagePicker';
 import VariantOptionMappingSection from './VariantOptionMappingSection';
 import VariantPricingTable from './VariantPricingTable';
 
+/**
+ * A real `product_media_sources` id, as opposed to the placeholder the
+ * supplier panel falls back to when a product's only supplier photo is the
+ * feed's bare address with no provenance row behind it. Nothing can be
+ * positioned in that case, so the grip is withheld rather than offered and
+ * refused.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+
 type ProductEditorWorkspaceProps = {
   fixture: ProductEditorFixture;
   /**
@@ -1508,6 +1517,29 @@ export default function ProductEditorWorkspace({
         };
 
   /**
+   * The whole product-level ordering the server must be given, composed from
+   * the two panels that each arrange half of it.
+   *
+   * `reorderProductMedia` refuses anything that is not exactly this product's
+   * gallery, and it is right to: positions are only meaningful relative to each
+   * other, so writing one panel's rows would interleave them with rows still
+   * ordered by observation time and produce an order nobody chose. So the two
+   * panels are concatenated here rather than each writing its own slice.
+   *
+   * **Seller photos lead.** That is what makes the cover well defined with the
+   * arranging split across two places: position 0 is the seller's first photo
+   * whenever they have one, and the supplier's first otherwise — the same
+   * answer the storefront's own `sellerUploadsFirst` gives, so the editor and
+   * the buyer cannot disagree about which photograph leads.
+   */
+  const composeGalleryOrder = (
+    ownOrder: string[],
+    supplierOrder: string[],
+  ): string[] => [...ownOrder, ...supplierOrder];
+
+  const supplierMediaIds = fixture.supplierMedia.map((item) => item.id);
+
+  /**
    * Commits a new gallery order, optimistically and then for real.
    *
    * The local `setMedia` is what makes a drag feel like a drag; the action is
@@ -1912,7 +1944,14 @@ export default function ProductEditorWorkspace({
 
                 handleReorderMedia(reordered);
               }}
-              onReorderPhotos={handleReorderMedia}
+              onReorderPhotos={
+                handleReorderMedia === undefined
+                  ? undefined
+                  : (ownOrder) =>
+                      handleReorderMedia(
+                        composeGalleryOrder(ownOrder, supplierMediaIds),
+                      )
+              }
               isUploadingPhoto={isUploadingMedia}
               deletingPhotoId={deletingMediaId}
               showSupplierPhoto={showSupplierPhoto}
@@ -2114,6 +2153,21 @@ export default function ProductEditorWorkspace({
               supplierProductName={fixture.supplierProductName}
               supplierCategoryPath={fixture.supplierCategoryPath}
               supplierMedia={fixture.supplierMedia}
+              // Only when every tile carries a real row id. A product whose
+              // supplier photo exists as the feed's bare `imageUrl` has no row
+              // to position, and offering a grip there would save nothing.
+              onReorderSupplierMedia={
+                handleReorderMedia === undefined ||
+                !fixture.supplierMedia.every((item) => UUID.test(item.id))
+                  ? undefined
+                  : (supplierOrder) =>
+                      handleReorderMedia(
+                        composeGalleryOrder(
+                          media.map((item) => item.id),
+                          supplierOrder,
+                        ),
+                      )
+              }
               onOpenSourceDrawer={() => setSourceDrawerOpen(true)}
               specifications={specifications}
               onSpecificationChange={(key, value) => {

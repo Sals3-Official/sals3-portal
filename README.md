@@ -740,6 +740,30 @@ cover` moves a photo to the front, which is the same write as any other
   so tiles past that line are faded and the panel says _"Buyers see the first 12"_.
   Deciding which ones make the cut is the point of arranging.
 
+**Correction the same day: one origin per panel.** Supplier originals were
+briefly tiles in Basic Information's `Product media` grid. They are not any
+more, on the owner's call after seeing it — `Product media` counts what the
+seller uploaded, so a grid of six supplier photos under a counter reading
+`0 of 12 photos` was a panel arguing with itself. The supplier's photographs
+are arranged where they already live, in Supplier Details, and
+`SupplierMediaGallery` got the drag grip instead. Deleting and replacing are
+still absent there and still refused by `delete-seller-media.ts`'s own `WHERE`:
+the amendment relaxed exactly one of ADR-011 §3's three prohibitions.
+
+Both panels still write **one** ordering. `reorderProductMedia` refuses anything
+that is not exactly the product's whole gallery — positions are only meaningful
+relative to each other — so the editor concatenates the two panels rather than
+letting each write its own slice, **seller photos first**. That is what keeps the
+cover well defined with the arranging split across two places: position 0 is the
+seller's first photo whenever they have one and the supplier's first otherwise,
+which is the same answer `sellerUploadsFirst` gives on the storefront, so the
+editor and the buyer cannot disagree about which photograph leads.
+
+A product whose supplier photo exists only as the feed's bare `imageUrl`, with
+no `product_media_sources` row behind it, has nothing to position. The panel
+still shows it — that is the evidence — and the grip is withheld rather than
+offered and refused.
+
 **A latent delete bug fell out of the same change.** The editor's photo tiles
 carried synthesised ids (`${productId}-seller-media-N`), while
 `deleteSellerMediaAction`'s schema is `z.string().uuid()` — so deleting any
