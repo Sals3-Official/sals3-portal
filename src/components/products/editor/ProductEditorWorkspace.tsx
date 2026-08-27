@@ -45,6 +45,7 @@ import {
 } from '@/lib/seller-center/product-editor/types';
 import { suggestMetaDescription } from '@/lib/seller-center/product-editor/suggest-meta-description';
 import describeRefusedUploads from '@/lib/products/describe-refused-uploads';
+import previewMedia from '@/lib/products/preview-media';
 import { PUBLISH_GATES } from '@/lib/products/publish-gates';
 import predictPublishBlockers from '@/lib/seller-center/product-editor/publish-blockers';
 import {
@@ -1194,18 +1195,25 @@ export default function ProductEditorWorkspace({
     />
   );
 
-  // What the storefront will actually render: the seller's own uploads,
-  // plus the supplier's original photos unless the seller has explicitly
-  // turned that off (Basic Information's "Show supplier photo" switch).
-  // Never either/or - a seller upload must not silently hide the
-  // supplier's photo; only the toggle should. And the toggle only starts
-  // hiding once a seller photo exists to show instead - the storefront read
-  // model falls back to the supplier photo for an empty gallery, so the
-  // preview must too rather than showing a blank the buyer would never see.
-  const effectivePreviewMedia =
-    showSupplierPhoto || media.length === 0
-      ? [...media, ...fixture.supplierMedia]
-      : media;
+  // What the storefront will actually render, mirroring
+  // `storefront/read-model.ts`'s `mediaVisibleToBuyers`: a seller's own upload
+  // always shows, the supplier's original shows while the switch is on, and the
+  // switch off hides it **only once a gallery seller upload exists** - an empty
+  // gallery falls back to the supplier photo rather than rendering a blank the
+  // buyer would never see (owner decision 2026-08-20).
+  //
+  // This used to be `[...media, ...fixture.supplierMedia]`, which was right
+  // while `media` held seller uploads alone. It is not right now: `media` is the
+  // whole gallery and already contains the supplier's rows, so concatenating
+  // `supplierMedia` on top rendered every supplier photo **twice**. The fixture
+  // fallback below is the one case that still needs it - the illustrative
+  // fixtures carry no `assignableMedia`, so their gallery is empty while their
+  // supplier evidence is not.
+  const effectivePreviewMedia = previewMedia(
+    media,
+    fixture.supplierMedia,
+    showSupplierPhoto,
+  );
 
   const renderPreview = (showHeading: boolean) => (
     <DraftStorefrontPreview
