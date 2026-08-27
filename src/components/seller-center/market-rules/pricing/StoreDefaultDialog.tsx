@@ -25,12 +25,18 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { RoundingRule } from '@/modules/pricing/money-math';
-import type { PricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
+import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations';
 import StoreDefaultPreview from './StoreDefaultPreview';
 import type { StoreDefaultViewModel } from './store-default-model';
 
 type StoreDefaultDialogProps = {
-  destination: PricingScopeDestination;
+  /**
+   * The scope this rule is for — one of the six destinations, or Global.
+   *
+   * `scope.label` names it in every heading and field label; `scope.marketCode`
+   * — `null` for Global — is what the write stores.
+   */
+  scope: PricingScope;
   storeDefault: StoreDefaultViewModel | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -51,7 +57,7 @@ function rateToPercent(rate: string): string {
 }
 
 /**
- * The base margin and the floor beneath it, for one destination.
+ * The base margin and the floor beneath it, for one pricing scope.
  *
  * ## The two minimum fields are one choice, not two
  *
@@ -75,7 +81,7 @@ function rateToPercent(rate: string): string {
  * buyer's own currency.
  */
 export default function StoreDefaultDialog({
-  destination,
+  scope,
   storeDefault,
   open,
   onOpenChange,
@@ -119,7 +125,7 @@ export default function StoreDefaultDialog({
       minContribution: amountInUse ? floorAmount : '0',
       minContributionRate: percentInUse ? percentToRate(floorPercent) : null,
       roundingRule,
-      marketCode: destination.code,
+      marketCode: scope.marketCode,
       reason,
     };
 
@@ -136,7 +142,7 @@ export default function StoreDefaultDialog({
         return;
       }
 
-      toast.success(`Store default saved for ${destination.label}.`);
+      toast.success(`Store default saved for ${scope.label}.`);
       setReason('');
       onSaved();
     });
@@ -151,7 +157,7 @@ export default function StoreDefaultDialog({
         <DialogHeader>
           <DialogTitle>
             {storeDefault === null ? 'Set store default' : 'Edit store default'}{' '}
-            — {destination.label}
+            — {scope.label}
           </DialogTitle>
           <DialogDescription>
             Covers every category with no margin of its own and no priced
@@ -185,7 +191,7 @@ export default function StoreDefaultDialog({
                 max="99.99"
                 value={marginPercent}
                 onChange={(event) => setMarginPercent(event.target.value)}
-                aria-label={`Base margin percent for ${destination.label}`}
+                aria-label={`Base margin percent for ${scope.label}`}
                 className="w-24 text-right"
               />
               <span className="text-sm text-muted-foreground">%</span>
@@ -216,7 +222,7 @@ export default function StoreDefaultDialog({
                     value={floorPercent}
                     disabled={amountInUse}
                     onChange={(event) => setFloorPercent(event.target.value)}
-                    aria-label={`Minimum margin percent for ${destination.label}`}
+                    aria-label={`Minimum margin percent for ${scope.label}`}
                     className="w-24 text-right"
                   />
                   <span className="text-sm text-muted-foreground">%</span>
@@ -236,7 +242,7 @@ export default function StoreDefaultDialog({
                     value={floorAmount}
                     disabled={percentInUse}
                     onChange={(event) => setFloorAmount(event.target.value)}
-                    aria-label={`Minimum contribution amount for ${destination.label}`}
+                    aria-label={`Minimum contribution amount for ${scope.label}`}
                     className="w-28 text-right"
                   />
                 </div>
@@ -275,7 +281,7 @@ export default function StoreDefaultDialog({
             >
               <SelectTrigger
                 id="store-default-rounding"
-                aria-label={`Rounding for ${destination.label}`}
+                aria-label={`Rounding for ${scope.label}`}
                 className="w-48"
               >
                 <SelectValue />
@@ -294,7 +300,7 @@ export default function StoreDefaultDialog({
               value={reason}
               onChange={(event) => setReason(event.target.value)}
               placeholder={`Reason (min ${MIN_REASON_CHARS} characters)`}
-              aria-label={`Reason for change to ${destination.label}`}
+              aria-label={`Reason for change to ${scope.label}`}
             />
           </div>
 

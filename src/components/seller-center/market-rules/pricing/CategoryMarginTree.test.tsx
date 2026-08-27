@@ -34,13 +34,20 @@ import {
   type CategoryMarginPolicyViewModel,
 } from './category-margin-model';
 
-const DESTINATIONS = [
-  { code: 'AU', label: 'Australia' },
-  { code: 'PH', label: 'Philippines' },
-  { code: 'NZ', label: 'New Zealand' },
-  { code: 'US', label: 'United States' },
-  { code: 'CA', label: 'Canada' },
-  { code: 'FJ', label: 'Fiji' },
+/**
+ * The six measured destinations, then Global — the order the screen shows and
+ * the shape `listPricingScopes()` returns. Global's `marketCode` is `null`
+ * because that is what a Global rule stores; its `key` is what the column, the
+ * React key and the policy lookup use.
+ */
+const SCOPES = [
+  { key: 'AU', label: 'Australia', marketCode: 'AU', isGlobal: false },
+  { key: 'PH', label: 'Philippines', marketCode: 'PH', isGlobal: false },
+  { key: 'NZ', label: 'New Zealand', marketCode: 'NZ', isGlobal: false },
+  { key: 'US', label: 'United States', marketCode: 'US', isGlobal: false },
+  { key: 'CA', label: 'Canada', marketCode: 'CA', isGlobal: false },
+  { key: 'FJ', label: 'Fiji', marketCode: 'FJ', isGlobal: false },
+  { key: 'GLOBAL', label: 'Global', marketCode: null, isGlobal: true },
 ];
 
 function node(
@@ -77,9 +84,14 @@ function policy(
   };
 }
 
-/** Keyed the way the repository keys them — destination code, or the all-markets key. */
+/** Keyed the way the repository keys them — destination code, or the Global key. */
 function scoped(rate: string, marketCode: string) {
   return { [marketCode]: policy(rate, marketCode) };
+}
+
+/** A rule stored with `market_code IS NULL`, filed under the Global key. */
+function globalRule(rate: string) {
+  return { [ALL_MARKETS_KEY]: policy(rate, null) };
 }
 
 const STORE_DEFAULT = {
@@ -87,9 +99,9 @@ const STORE_DEFAULT = {
   roundingRule: 'NONE' as const,
 };
 
-/** Every destination sharing one default, which is the ordinary starting state. */
+/** Every scope sharing one default, which is the ordinary starting state. */
 const STORE_DEFAULTS = Object.fromEntries(
-  DESTINATIONS.map((destination) => [destination.code, STORE_DEFAULT]),
+  SCOPES.map((scope) => [scope.key, STORE_DEFAULT]),
 );
 
 const APPAREL = node('Apparel & Accessories', {
@@ -115,7 +127,7 @@ function renderTree(props: Partial<{ canManage: boolean }> = {}) {
   return render(
     <CategoryMarginTree
       nodes={NODES}
-      destinations={DESTINATIONS}
+      scopes={SCOPES}
       storeDefaults={STORE_DEFAULTS}
       sellerAccountId="seller-1"
       canManage={props.canManage ?? true}
@@ -127,32 +139,30 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('effectiveMarginFor — mirrors the resolver chain, per destination', () => {
-  it('reads each destination independently on the same category', () => {
+describe('effectiveMarginFor — mirrors the resolver chain, per scope', () => {
+  it('reads each scope independently on the same category', () => {
     const map = nodesByPath(NODES);
 
     // The whole point of the columns: one category, two different answers.
     expect(effectiveMarginFor(ELECTRONICS, map, STORE_DEFAULT, 'AU')).toEqual({
       source: 'SELF',
       rate: '0.400000',
-      viaAllMarkets: false,
     });
     expect(effectiveMarginFor(ELECTRONICS, map, STORE_DEFAULT, 'FJ')).toEqual({
       source: 'SELF',
       rate: '0.600000',
-      viaAllMarkets: false,
     });
   });
 
-  it('a destination with no rule of its own falls through, it does not borrow another', () => {
-    // PH must not show AU's 40%. Borrowing a sibling destination's rate is the
+  it('a scope with no rule of its own falls through, it does not borrow another', () => {
+    // PH must not show AU's 40%. Borrowing a sibling scope's rate is the
     // failure this whole screen would be worthless for.
     expect(
       effectiveMarginFor(ELECTRONICS, nodesByPath(NODES), STORE_DEFAULT, 'PH'),
     ).toEqual({ source: 'STORE_DEFAULT', rate: '0.350000' });
   });
 
-  it('a deep node inherits the NEAREST priced ancestor for that destination', () => {
+  it('a deep node inherits the NEAREST priced ancestor for that scope', () => {
     const pricedApparel = node('Apparel & Accessories', {
       policies: scoped('0.200000', 'AU'),
       childCount: 1,
@@ -169,36 +179,46 @@ describe('effectiveMarginFor — mirrors the resolver chain, per destination', (
       source: 'ANCESTOR',
       rate: '0.550000',
       ancestorName: 'Clothing',
-      viaAllMarkets: false,
     });
   });
 
-  it('prefers the destination rule over an all-destinations rule at the same depth', () => {
+  it('reads each scope on its own, with no widening between them', () => {
     const both = node('Electronics', {
-      policies: {
-        ...scoped('0.400000', 'AU'),
-        [ALL_MARKETS_KEY]: policy('0.250000', null),
-      },
+      policies: { ...scoped('0.400000', 'AU'), ...globalRule('0.250000') },
     });
+    const map = nodesByPath([both]);
 
-    // `outranks` in the resolver: depth beats market, and market beats
-    // unscoped only at equal depth. Reversing these two here would display a
-    // rate the resolver would never use.
+    // Owner decision 2026-08-27 narrowed Global from "all destinations" to
+    // "every country without a column of its own", and `outranks` became
+    // depth-only to match. Each column is one lookup: Australia reads
+    // Australia's rule, Global reads Global's, and neither reaches the other.
+    expect(effectiveMarginFor(both, map, STORE_DEFAULT, 'AU')).toEqual({
+      source: 'SELF',
+      rate: '0.400000',
+    });
     expect(
-      effectiveMarginFor(both, nodesByPath([both]), STORE_DEFAULT, 'AU'),
-    ).toEqual({ source: 'SELF', rate: '0.400000', viaAllMarkets: false });
+      effectiveMarginFor(both, map, STORE_DEFAULT, ALL_MARKETS_KEY),
+    ).toEqual({ source: 'SELF', rate: '0.250000' });
   });
 
-  it('still shows an all-destinations rule rather than pretending it is unset', () => {
-    const legacy = node('Electronics', {
-      policies: { [ALL_MARKETS_KEY]: policy('0.250000', null) },
+  it('a Global rule does not price a destination that has a column of its own', () => {
+    const globalOnly = node('Electronics', {
+      policies: globalRule('0.250000'),
     });
+    const map = nodesByPath([globalOnly]);
 
-    // Before the fan-out migration runs, these are the rows actually pricing.
-    // A reader that ignored them would show "—" for a live rule.
+    // The reverse of what this file asserted until 2026-08-27, and deliberately
+    // so: showing 25% under Philippines would display a rate the resolver will
+    // never apply there, which is the exact thing per-destination margins exist
+    // to stop.
+    expect(effectiveMarginFor(globalOnly, map, STORE_DEFAULT, 'PH')).toEqual({
+      source: 'STORE_DEFAULT',
+      rate: '0.350000',
+    });
+    // The rule is not lost, though — it prices its own scope.
     expect(
-      effectiveMarginFor(legacy, nodesByPath([legacy]), STORE_DEFAULT, 'PH'),
-    ).toEqual({ source: 'SELF', rate: '0.250000', viaAllMarkets: true });
+      effectiveMarginFor(globalOnly, map, STORE_DEFAULT, ALL_MARKETS_KEY),
+    ).toEqual({ source: 'SELF', rate: '0.250000' });
   });
 
   it('reports NONE honestly when nothing anywhere prices it', () => {
@@ -209,12 +229,12 @@ describe('effectiveMarginFor — mirrors the resolver chain, per destination', (
 });
 
 describe('CategoryMarginTree', () => {
-  it('gives every destination a column header', () => {
+  it('gives every scope a column header, Global included', () => {
     renderTree();
 
-    DESTINATIONS.forEach((destination) => {
+    SCOPES.forEach((scope) => {
       expect(
-        screen.getByRole('columnheader', { name: destination.code }),
+        screen.getByRole('columnheader', { name: scope.key }),
       ).toBeInTheDocument();
     });
   });
@@ -234,7 +254,7 @@ describe('CategoryMarginTree', () => {
     expect(screen.getByText('60%')).toBeInTheDocument();
   });
 
-  it('names the destination in each cell, so the column is not the only clue', () => {
+  it('names the scope in each cell, so the column is not the only clue', () => {
     renderTree();
 
     expect(
@@ -272,7 +292,7 @@ describe('CategoryMarginTree', () => {
     expect(screen.getByText(/No category matches/)).toBeInTheDocument();
   });
 
-  it('saves against the destination whose cell was clicked, not the first one', async () => {
+  it('saves against the scope whose cell was clicked, not the first one', async () => {
     mocks.saveCategoryPolicyAction.mockResolvedValue({ ok: true });
 
     renderTree();
@@ -313,7 +333,7 @@ describe('CategoryMarginTree', () => {
     );
   });
 
-  it('names the destination in the editor, which the cell behind it no longer can', async () => {
+  it('names the scope in the editor, which the cell behind it no longer can', async () => {
     renderTree();
 
     fireEvent.click(
@@ -325,6 +345,66 @@ describe('CategoryMarginTree', () => {
     expect(
       await screen.findByText(/Edit margin — Electronics · Fiji/),
     ).toBeInTheDocument();
+  });
+
+  it('shows a Global rule in the Global column and nowhere else', () => {
+    const globalOnly = node('Electronics', {
+      policies: globalRule('0.250000'),
+    });
+
+    render(
+      <CategoryMarginTree
+        nodes={[globalOnly]}
+        scopes={SCOPES}
+        storeDefaults={STORE_DEFAULTS}
+        sellerAccountId="seller-1"
+        canManage
+      />,
+    );
+
+    expect(
+      screen.getByRole('button', {
+        name: 'Electronics — Global: Set on this category. Edit.',
+      }),
+    ).toBeInTheDocument();
+    // Australia has a column of its own, so it falls to its own store default
+    // rather than borrowing the everywhere-else rate.
+    expect(
+      screen.getByRole('button', {
+        name: 'Electronics — Australia: Store default. Edit.',
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it('saves the Global cell as a null market code, never as its column key', async () => {
+    mocks.saveCategoryPolicyAction.mockResolvedValue({ ok: true });
+
+    renderTree();
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Apparel & Accessories — Global: Store default. Edit.',
+      }),
+    );
+
+    fireEvent.change(
+      await screen.findByLabelText('Margin percent for Apparel & Accessories'),
+      { target: { value: '25' } },
+    );
+    fireEvent.change(
+      screen.getByLabelText('Reason for change to Apparel & Accessories'),
+      { target: { value: 'Everywhere we have not measured freight for.' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save margin' }));
+
+    // `GLOBAL` is the column's name and nothing else. `market_code` holds a
+    // country code or NULL, and the action's schema refuses anything that is
+    // neither — so sending the key would fail the save outright.
+    await waitFor(() =>
+      expect(mocks.saveCategoryPolicyAction).toHaveBeenCalledWith(
+        expect.objectContaining({ marketCode: null }),
+      ),
+    );
   });
 
   it('read-only callers get no editable cells at all', () => {

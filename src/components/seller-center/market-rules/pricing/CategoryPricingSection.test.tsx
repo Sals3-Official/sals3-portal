@@ -30,10 +30,11 @@ const ROWS = [
   },
 ];
 
-/** Two lanes are enough; the section's job is the wiring, not the count. */
-const DESTINATIONS = [
-  { code: 'AU', label: 'Australia' },
-  { code: 'FJ', label: 'Fiji' },
+/** Two lanes and Global; the section's job is the wiring, not the count. */
+const SCOPES = [
+  { key: 'AU', label: 'Australia', marketCode: 'AU', isGlobal: false },
+  { key: 'FJ', label: 'Fiji', marketCode: 'FJ', isGlobal: false },
+  { key: 'GLOBAL', label: 'Global', marketCode: null, isGlobal: true },
 ];
 
 /**
@@ -49,7 +50,7 @@ async function renderToTree(): Promise<string> {
   const element = await CategoryPricingSection({
     sellerAccountId: 'seller-1',
     canManage: true,
-    destinations: DESTINATIONS,
+    scopes: SCOPES,
   });
 
   return JSON.stringify(element);
@@ -149,5 +150,31 @@ describe('CategoryPricingSection — descendant counts', () => {
     const output = await renderToTree();
 
     expect(output).toContain('"subtreeCount":0');
+  });
+});
+
+describe('CategoryPricingSection — the Global scope reads its own row', () => {
+  /**
+   * `null` is the scope Global stores, not "any scope".
+   * `findStoreDefaultForScope` matches `market_code IS NULL` on it, so passing
+   * the column key `'GLOBAL'` instead would look for a country code the table
+   * has never held and report every Global default as missing.
+   */
+  it('reads each scope by its market code, and Global by null', async () => {
+    await renderToTree();
+
+    const scopesRead = mocks.findStoreDefaultForScope.mock.calls.map(
+      (call) => call[2],
+    );
+
+    expect(scopesRead).toEqual(['AU', 'FJ', null]);
+  });
+
+  it('names an unset scope by its label, so the banner says Global and not GLOBAL', async () => {
+    const output = await renderToTree();
+
+    // The joined list the banner renders. `scope.key` would put the storage
+    // spelling in front of a seller.
+    expect(output).toContain('Australia, Fiji, Global');
   });
 });

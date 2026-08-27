@@ -3,10 +3,11 @@
 import { useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import type { PricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
+import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations';
 import CategoryMarginNodeRow from './CategoryMarginNodeRow';
 import {
   ROW_GRID,
+  rowGridStyle,
   type CategoryMarginNodeViewModel,
   type StoreDefaultSummary,
 } from './category-margin-model';
@@ -15,9 +16,9 @@ const SEARCH_RESULT_CAP = 50;
 
 type CategoryMarginTreeProps = {
   nodes: CategoryMarginNodeViewModel[];
-  /** One column each, in the order they are shown. */
-  destinations: PricingScopeDestination[];
-  /** The store default per destination — the last fallback in each column. */
+  /** One column each, in the order they are shown — the six, then Global. */
+  scopes: PricingScope[];
+  /** The store default per scope key — the last fallback in each column. */
   storeDefaults: Record<string, StoreDefaultSummary | null>;
   sellerAccountId: string;
   canManage: boolean;
@@ -37,7 +38,7 @@ type CategoryMarginTreeProps = {
  */
 export default function CategoryMarginTree({
   nodes,
-  destinations,
+  scopes,
   storeDefaults,
   sellerAccountId,
   canManage,
@@ -138,6 +139,7 @@ export default function CategoryMarginTree({
       >
         <div
           role="row"
+          style={rowGridStyle(scopes.length)}
           className={`${ROW_GRID} border-b border-border bg-surface px-3 py-1.5`}
         >
           <span
@@ -146,14 +148,14 @@ export default function CategoryMarginTree({
           >
             Category
           </span>
-          {destinations.map((destination) => (
+          {scopes.map((scope) => (
             <span
-              key={destination.code}
+              key={scope.key}
               role="columnheader"
-              title={destination.label}
+              title={scope.label}
               className="text-center text-[11px] font-bold tracking-wider text-ink-faint uppercase"
             >
-              {destination.code}
+              {scope.key}
             </span>
           ))}
           <span
@@ -176,7 +178,7 @@ export default function CategoryMarginTree({
               key={node.categoryId}
               node={node}
               nodesByPath={nodesByPath}
-              destinations={destinations}
+              scopes={scopes}
               storeDefaults={storeDefaults}
               sellerAccountId={sellerAccountId}
               canManage={canManage}

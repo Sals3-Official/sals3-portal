@@ -1,3 +1,5 @@
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   PricingCategoryPolicyRow,
@@ -9,17 +11,31 @@ import {
 } from './repository';
 
 /**
- * **Depth beats market** — owner decision, 2026-08-25, confirmed explicitly.
+ * **Depth decides, within one scope** — owner decision 2026-08-25 ("depth beats
+ * market"), narrowed by owner decision 2026-08-27 (Global covers only the
+ * countries with no column of their own).
  *
  * These are the cases that decide whether a per-destination rate is a useful
  * override or a silent one. If market outranked depth, setting a single country
  * rate on a department would quietly replace every product-level decision
  * beneath it, and nothing on the screen would show that it had.
  *
- * A fake executor answers with canned rows, so what is exercised is the
- * precedence rule rather than the SQL — the `WHERE` is Postgres's job, per the
- * convention `repository.test.ts` documents.
+ * Two halves, deliberately tested by two different means:
+ *
+ * 1. **Which scope's rows the query asks for** is a `WHERE`/`ON` clause, so it
+ *    is pinned by rendering the SQL through `PgDialect` — the convention
+ *    `category-margin-scope.test.ts` established, and the only way to see it,
+ *    since a drizzle `SQL` has no meaningful `toString()`.
+ * 2. **Which of the returned rows wins** is pinned with a fake executor
+ *    answering canned rows.
+ *
+ * The fake ignores the join condition, so every fixture below is deliberately
+ * **single-scoped**. Since 2026-08-27 a mixed-scope result set is not something
+ * the query can return, and a test that fed one would be asserting behaviour
+ * for a state the database cannot produce.
  */
+
+const dialect = new PgDialect();
 
 function category(path: string): Sals3CategoryRow {
   const segments = path.split(CATEGORY_PATH_SEPARATOR);
@@ -62,6 +78,22 @@ function fakeExecutor(rows: unknown[]) {
   return { select: vi.fn(() => ({ from })) } as never;
 }
 
+/** Captures the join condition so the scope predicate can be rendered. */
+function recordingExecutor() {
+  const joins: string[] = [];
+  const where = vi.fn().mockResolvedValue([]);
+  const innerJoin = vi.fn((_table: unknown, condition: SQL | undefined) => {
+    joins.push(
+      condition === undefined ? '' : dialect.sqlToQuery(condition).sql,
+    );
+
+    return { where };
+  });
+  const from = vi.fn(() => ({ innerJoin }));
+
+  return { executor: { select: vi.fn(() => ({ from })) } as never, joins };
+}
+
 const DEPARTMENT = 'Apparel & Accessories';
 const GROUP = 'Apparel & Accessories > Clothing';
 const LEAF = 'Apparel & Accessories > Clothing > Shirts & Tops';
@@ -76,62 +108,90 @@ async function resolve(rows: unknown[]) {
 }
 
 describe('depth beats market', () => {
-  it('prefers a deeper unscoped rule over a shallower rule for this destination', async () => {
+  it('prefers a deeper rule over a shallower one for the same destination', async () => {
     const result = await resolve([
       { category: category(DEPARTMENT), policy: policy('department-au', 'AU') },
-      { category: category(LEAF), policy: policy('leaf-any', null) },
-    ]);
-
-    /**
-     * The case the whole rule exists for. A seller who set an AU rate on the
-     * department has NOT overridden the specific decision they made on the leaf
-     * — the leaf is the more specific statement about this product, and a
-     * destination rate one level up must not reach past it.
-     */
-    expect(result?.policy.id).toBe('leaf-any');
-  });
-
-  it('prefers this destination over all-destinations at the same depth', async () => {
-    const result = await resolve([
-      { category: category(LEAF), policy: policy('leaf-any', null) },
       { category: category(LEAF), policy: policy('leaf-au', 'AU') },
     ]);
 
-    // Market is the tie-break *within* one depth, which is the only place the
-    // two partial unique indexes allow both rows to exist.
+    /**
+     * The case the whole rule exists for. A seller who set a rate on the
+     * department has NOT overridden the specific decision they made on the leaf
+     * — the leaf is the more specific statement about this product, and a rate
+     * one level up must not reach past it.
+     */
     expect(result?.policy.id).toBe('leaf-au');
   });
 
   it('does not depend on the order the rows come back in', async () => {
-    const scoped = {
-      category: category(LEAF),
-      policy: policy('leaf-au', 'AU'),
-    };
-    const unscoped = {
-      category: category(LEAF),
-      policy: policy('leaf-any', null),
+    const deep = { category: category(LEAF), policy: policy('leaf-au', 'AU') };
+    const shallow = {
+      category: category(GROUP),
+      policy: policy('group-au', 'AU'),
     };
 
     // A reduce that only ever replaced on a strict improvement would give a
     // different answer for a different physical row order — an unreproducible
     // price.
-    await expect(resolve([scoped, unscoped])).resolves.toMatchObject({
+    await expect(resolve([deep, shallow])).resolves.toMatchObject({
       policy: { id: 'leaf-au' },
     });
-    await expect(resolve([unscoped, scoped])).resolves.toMatchObject({
+    await expect(resolve([shallow, deep])).resolves.toMatchObject({
       policy: { id: 'leaf-au' },
     });
   });
+});
 
-  it('still walks the chain when this destination has nothing anywhere', async () => {
-    const result = await resolve([
-      { category: category(GROUP), policy: policy('group-any', null) },
-    ]);
+describe('a named destination and Global never see each other', () => {
+  /**
+   * The rule the 2026-08-27 decision turns on, and it lives in the join
+   * condition rather than in `outranks`. A Global rule set on a deep category
+   * used to win an Australian order outright, because the query returned it and
+   * depth beat market. Both halves of that are gone: Australia no longer asks
+   * for `NULL` rows at all.
+   */
+  it('asks only for this destination when the country has a column', async () => {
+    const { executor, joins } = recordingExecutor();
 
-    // The query widens to `market = $x OR market IS NULL`; it does not narrow.
-    // A seller who has configured no destination-specific rule must keep every
-    // margin they already had.
-    expect(result?.policy.id).toBe('group-any');
+    await findNearestActiveCategoryPolicy(
+      executor,
+      'seller-1',
+      category(LEAF),
+      'AU',
+    );
+
+    expect(joins).toHaveLength(1);
+    expect(joins[0]).toContain('"market_code" = $');
+    expect(joins[0]).not.toContain('is null');
+  });
+
+  it('asks only for Global when the country has no column', async () => {
+    const { executor, joins } = recordingExecutor();
+
+    // Great Britain is a real country code and deliberately not one of the six.
+    await findNearestActiveCategoryPolicy(
+      executor,
+      'seller-1',
+      category(LEAF),
+      'GB',
+    );
+
+    expect(joins).toHaveLength(1);
+    expect(joins[0]).toContain('"market_code" is null');
+    expect(joins[0]).not.toContain('"market_code" = $');
+  });
+
+  it('resolves a Global rule for a country with no column', async () => {
+    const result = await findNearestActiveCategoryPolicy(
+      fakeExecutor([
+        { category: category(GROUP), policy: policy('group-global', null) },
+      ]),
+      'seller-1',
+      category(LEAF),
+      'GB',
+    );
+
+    expect(result?.policy.id).toBe('group-global');
   });
 
   it('returns null when the chain carries nothing at all', async () => {
