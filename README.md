@@ -1176,6 +1176,31 @@ no colour's other sizes go pictureless for buyers; where it shows is the frozen
 order-line image, which falls back to the product primary for a different size of
 the same colour.
 
+**A single-variant product can save its Variant Matrix (2026-08-27).** Reported
+on `Bamboo Storage Box`, `Human Lung Anatomical Model` and `Mohair Knit Beanie`:
+the section rendered, the axis took a name, `Save Variant Matrix` enabled, and
+every press answered _"Those variant options could not be read. Give every option
+a name and at least two values."_ — a demand the product could not meet, since it
+has one variant.
+
+`deriveOptionSplit` dropped its own floor of two on 2026-08-19 by owner decision,
+so a one-variant product gets a proposal in which every position holds exactly one
+value. **The splitter was corrected and `optionMappingInputSchema` was not**, and
+the leftover `.min(2)` sat three lines above `renameMappingInputSchema`'s `.min(1)`
+in the same file, contradicting it. Nothing else enforced two anywhere: the writer
+has no such check, `mappingBlocksPublish` is `variants.length >= 2 && labelWidth >= 2`,
+and the Save button gates on a name alone — so the editor offered a control that
+could not succeed.
+
+**A degenerate one-value axis on a multi-variant product is still refused, and not
+by counting.** `deriveOptionSplit` drops a constant position unless there is exactly
+one variant, so it never proposes one; a crafted payload naming one is refused by
+`saveOptionMapping`'s shape check against the re-derived split, as `SHAPE_MISMATCH`.
+A floor in the schema would be a second, weaker copy of that rule — one that cannot
+see the variant count that would make it right. The shared `invalid_input` sentence
+now says _at least one value_, which is what both schemas actually enforce; it was
+wrong for the rename action too.
+
 ## Product Catalogue: narrower table, Live landing tab (2026-08-22)
 
 Four owner-reported changes to `/listings`. Presentation and default state only —

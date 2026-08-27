@@ -68,7 +68,30 @@ const optionMappingInputSchema = z.object({
               label: z.string().trim().min(1).max(120),
             }),
           )
-          .min(2),
+          /**
+           * One value is enough, corrected 2026-08-27.
+           *
+           * The floor of two outlived the rule it came from. `deriveOptionSplit`
+           * dropped its own two-variant floor on 2026-08-19 by owner decision, so
+           * a single-variant product now gets a proposal in which *every* position
+           * holds exactly one value. Three live products are that shape — `Bamboo
+           * Storage Box`, `Human Lung Anatomical Model`, `Mohair Knit Beanie` — and
+           * for them this was the only mapping submittable and the one thing this
+           * schema refused. The seller read "at least two values" about a product
+           * that has one, with no way to comply, while `renameMappingInputSchema`
+           * three lines below had already accepted a single value.
+           *
+           * A degenerate single-value axis on a *multi*-variant product is still
+           * refused — just not here, and not by counting. `deriveOptionSplit` never
+           * proposes one (a constant position is dropped unless there is exactly
+           * one variant), and a crafted payload carrying one is refused by
+           * `saveOptionMapping`'s shape check against the re-derived split, as
+           * `SHAPE_MISMATCH`. A floor here would be a second, weaker copy of that
+           * rule: it cannot see the variant count that would make it right, and
+           * inventing a structural opinion in this schema is exactly what the
+           * boundary note above forbids.
+           */
+          .min(1),
       }),
     )
     .min(1),
@@ -118,7 +141,11 @@ export type OptionMappingActionResult =
  */
 const REFUSAL_MESSAGES: Record<string, string> = {
   invalid_input:
-    'Those variant options could not be read. Give every option a name and at least two values.',
+    // Both actions share this line, and both schemas ask for the same thing: a
+    // name on every option and at least one value under it. It said "at least
+    // two values" for a rule reversed on 2026-08-19 — copy that named a floor
+    // neither schema enforces, in front of sellers who could not satisfy it.
+    'Those variant options could not be read. Give every option a name and at least one value.',
   denied: 'Your account cannot edit this product.',
   rate_limited: 'Too many attempts. Wait a moment and try again.',
   not_configured: 'The catalogue database is not available right now.',

@@ -7,6 +7,7 @@ import {
   productVariants,
   products,
 } from '@/lib/db/schema';
+import { normalizeOptionToken } from './identity';
 
 const mocks = vi.hoisted(() => ({
   appendAuditEvent: vi.fn(),
@@ -235,6 +236,27 @@ const MASK_AXES = [
   },
 ];
 
+/**
+ * `Bamboo Storage Box` — one variant, one undelimited label. Reported unsavable
+ * on 2026-08-27 along with `Human Lung Anatomical Model` and `Mohair Knit
+ * Beanie`.
+ *
+ * With a single variant `deriveOptionSplit` keeps its constant position instead
+ * of dropping it: there is no choice to fake, so what survives is the seller
+ * naming what the supplier's own words read as. The axis therefore holds exactly
+ * one value, and that is the shape the action's schema used to refuse.
+ */
+function loneVariant() {
+  return [{ variantId: 'variant-1', label: 'Storage box' }];
+}
+
+const LONE_AXES = [
+  {
+    name: 'Style',
+    values: [{ raw: 'Storage box', label: 'Bamboo storage box' }],
+  },
+];
+
 describe('saveOptionMapping', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -379,6 +401,103 @@ describe('saveOptionMapping', () => {
     variantUpdates.forEach((write) => {
       expect(write.values.optionCombinationKey).toEqual(expect.any(String));
     });
+  });
+
+  it('maps a single-variant product whose one axis holds one value', async () => {
+    const { db, writes } = transactionalDb({ variants: loneVariant() });
+
+    const result = await save(db, LONE_AXES);
+
+    expect(result).toMatchObject({
+      ok: true,
+      axisCount: 1,
+      mappedVariantCount: 1,
+    });
+
+    const optionWrite = writes.find((write) => write.table === productOptions);
+    expect(optionWrite?.values).toMatchObject({ name: 'Style', position: 0 });
+
+    // The buyer label is the seller's, the join key is the supplier's - the same
+    // separation every other shape relies on, asserted here because a one-value
+    // axis is the case where the two are easiest to conflate.
+    const valueWrite = writes.find(
+      (write) => write.table === productOptionValues,
+    );
+    expect(valueWrite?.values).toMatchObject({
+      label: 'Bamboo storage box',
+      normalizedValue: normalizeOptionToken('Storage box'),
+    });
+
+    const linkWrites = writes.filter(
+      (write) => write.table === productVariantOptionValues,
+    );
+    expect(linkWrites).toHaveLength(1);
+
+    // The variant earns a combination key, so it is genuinely mapped rather
+    // than reported mapped and left `null` - the Khaki failure mode.
+    const variantUpdates = writes.filter(
+      (write) => write.table === productVariants,
+    );
+    expect(variantUpdates).toHaveLength(1);
+    expect(variantUpdates[0]?.values.optionCombinationKey).toEqual(
+      expect.any(String),
+    );
+  });
+
+  /**
+   * One variant carrying a delimited label. Both positions are constant and both
+   * survive, so the seller names two axes of one value each - and neither is
+   * dropped, unlike every multi-variant shape above.
+   */
+  it('keeps both positions of a single variant with a delimited label', async () => {
+    const { db, writes } = transactionalDb({
+      variants: [{ variantId: 'variant-1', label: 'Black-XL' }],
+    });
+
+    const result = await save(db, [
+      { name: 'Colour', values: [{ raw: 'Black', label: 'Black' }] },
+      { name: 'Size', values: [{ raw: 'XL', label: 'XL' }] },
+    ]);
+
+    expect(result).toMatchObject({
+      ok: true,
+      axisCount: 2,
+      mappedVariantCount: 1,
+    });
+
+    const optionWrites = writes.filter(
+      (write) => write.table === productOptions,
+    );
+    expect(optionWrites.map((write) => write.values.position)).toEqual([0, 1]);
+
+    // Two links from one variant: label positions 0 and 1 both resolved, which
+    // is what proves neither constant position was silently dropped.
+    const linkWrites = writes.filter(
+      (write) => write.table === productVariantOptionValues,
+    );
+    expect(linkWrites).toHaveLength(2);
+    expect(new Set(linkWrites.map((write) => write.values.optionId))).toEqual(
+      new Set(['option-1', 'option-2']),
+    );
+  });
+
+  /**
+   * The other half of the question the schema floor was answering badly. A
+   * one-value axis is legitimate only where the split proposes one; on a
+   * multi-variant product `deriveOptionSplit` drops a constant position, so a
+   * payload naming it is refused here, against the re-derived structure, rather
+   * than by a value count that cannot see how many variants exist.
+   */
+  it('refuses a degenerate one-value axis on a multi-variant product', async () => {
+    const { db, writes } = transactionalDb({ variants: khakiVariants() });
+
+    const result = await save(db, [
+      { name: 'Colour', values: [{ raw: 'Khaki', label: 'Khaki' }] },
+    ]);
+
+    expect(result).toMatchObject({ ok: false, reason: 'SHAPE_MISMATCH' });
+    // Refused before any row was written, not rolled back after.
+    expect(writes).toHaveLength(0);
   });
 
   it('answers not_found for a missing or foreign product', async () => {
