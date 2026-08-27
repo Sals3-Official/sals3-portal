@@ -2,6 +2,7 @@ import 'server-only';
 
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
+import cjShippingCountryName from '@/lib/cj/country-names';
 import getDb, { type DbExecutor } from '@/lib/db/client';
 import {
   checkoutIntents,
@@ -239,7 +240,13 @@ function createOrderBody(input: {
   return {
     orderNumber: `${input.orderNumber}-${input.group.packageId}`,
     shippingZip: input.address.postalCode,
-    shippingCountry: input.address.country,
+    /**
+     * Two fields, two formats. CJ documents `shippingCountry` as the
+     * destination country and `shippingCountryCode` as its two-letter code;
+     * `addressSnapshot.country` is the code, so only the second one may take it
+     * raw. See `cjShippingCountryName` for CJ's own spelling of each name.
+     */
+    shippingCountry: cjShippingCountryName(input.address.country),
     shippingCountryCode: input.address.country,
     shippingProvince: input.address.region,
     shippingCity: input.address.city,
