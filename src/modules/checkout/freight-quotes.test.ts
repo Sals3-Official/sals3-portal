@@ -329,6 +329,6 @@ describe('quoteCheckoutFreight', () => {
           },
         ],
       }),
-    ).rejects.toThrow('CJ returned no delivery methods');
+    ).rejects.toThrow('No delivery method is available');
   });
 });
