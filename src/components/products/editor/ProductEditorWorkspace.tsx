@@ -101,6 +101,7 @@ type ProductEditorWorkspaceProps = {
           | 'version_conflict'
           | 'revision_in_review'
           | 'image_not_stored'
+          | 'price_persistence_failed'
           | 'failed';
       }
   >;
@@ -291,6 +292,8 @@ const DRAFT_SAVE_FAILURE_MESSAGES: Record<string, string> = {
     'This listing is in review. Changes are blocked until the review finishes.',
   image_not_stored:
     'One image is not stored in Sals3. Upload it again and save.',
+  price_persistence_failed:
+    'One retail price could not be saved. Refresh and try again before publishing.',
 };
 
 /** Falls back rather than claiming a cause the server did not give. */
@@ -1024,7 +1027,11 @@ export default function ProductEditorWorkspace({
           descriptionMode,
         ),
         variantRetailPrices: variants
-          .filter((variant) => UUID_PATTERN.test(variant.id))
+          .filter(
+            (variant) =>
+              UUID_PATTERN.test(variant.id) &&
+              variant.retailPrice.amountMinor > 0,
+          )
           .map((variant) => ({
             variantId: variant.id,
             amountMinor: variant.retailPrice.amountMinor,

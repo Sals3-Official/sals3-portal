@@ -174,6 +174,43 @@ describe('updateSellerRetailPrices', () => {
       pricingUnavailableReason: null,
     });
   });
+
+  it('reports a submitted variant whose seller offer did not update', async () => {
+    const executor = priceUpdateExecutor([{ id: 'variant-a' }], []);
+
+    await expect(
+      updateSellerRetailPrices(executor as never, {
+        productId: 'product-a',
+        sellerAccountId: 'seller-a',
+        prices: [
+          { variantId: 'variant-a', amountMinor: 1999, currency: 'USD' },
+        ],
+        actorId: 'actor-a',
+      }),
+    ).resolves.toEqual({
+      updatedOfferCount: 0,
+      missedVariantIds: ['variant-a'],
+    });
+  });
+
+  it('reports a submitted variant that is not part of the product', async () => {
+    const executor = priceUpdateExecutor([], []);
+
+    await expect(
+      updateSellerRetailPrices(executor as never, {
+        productId: 'product-a',
+        sellerAccountId: 'seller-a',
+        prices: [
+          { variantId: 'variant-b', amountMinor: 1999, currency: 'USD' },
+        ],
+        actorId: 'actor-a',
+      }),
+    ).resolves.toEqual({
+      updatedOfferCount: 0,
+      missedVariantIds: ['variant-b'],
+    });
+    expect(executor.update).not.toHaveBeenCalled();
+  });
 });
 
 describe('saveDraftRevisionContent', () => {
