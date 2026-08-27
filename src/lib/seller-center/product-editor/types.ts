@@ -470,8 +470,18 @@ export type ProductEditorFixture = {
   markets: MarketEvidenceFixture[];
   /** Markets not enabled for this seller - stated, never rendered as evidence. */
   marketsNotEnabledCount: number;
-  /** The seller's own uploaded photos only (ADR-011). Editable in Media section. */
+  /**
+   * The seller's own **gallery** photos (ADR-011), editable in Basic
+   * Information's Product media. Variation photos are excluded — see
+   * `variantPhotoCount`.
+   */
   media: MediaItemFixture[];
+  /**
+   * How many seller uploads are attached to a variation rather than the
+   * gallery. Named beside the Product media counter so a photo moved onto a
+   * variation reads as moved, not lost.
+   */
+  variantPhotoCount: number;
   /**
    * The supplier's own photos (or the feed's bare `imageUrl` when no
    * `product_media_sources` row exists yet) - read-only provenance shown in

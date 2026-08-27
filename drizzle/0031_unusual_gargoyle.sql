@@ -1,0 +1,1 @@
+ALTER TABLE "product_media_sources" ADD COLUMN "position" integer;

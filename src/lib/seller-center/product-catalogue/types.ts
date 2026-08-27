@@ -358,11 +358,26 @@ export type CatalogueProductFixture = {
    */
   assignableMedia?: AssignableMediaFixture[];
   /**
-   * The subset of `mediaImageUrls` the seller actually uploaded themselves
-   * (`product_media_sources` rows with `sourceType: 'SELLER_UPLOAD'`).
-   * Empty today on every real product - no upload path writes this row yet.
+   * The seller's own **gallery** photos: `product_media_sources` rows with
+   * `sourceType: 'SELLER_UPLOAD'` and no `variant_id`.
+   *
+   * Variation photos are deliberately not here (2026-08-28). They are seller
+   * uploads too, but they belong to a separate budget and a separate control —
+   * the Variants & Pricing rail — and counting them in the Product media grid
+   * is what made one "12" answer two questions. `variantPhotoCount` carries
+   * their number so the editor can say where they went instead of letting them
+   * look deleted.
    */
   sellerMediaUrls?: string[];
+  /**
+   * How many of this product's seller uploads are variation photos
+   * (`variant_id is not null`).
+   *
+   * A count rather than a list: Product media only needs to name them and point
+   * at the section that manages them. The photos themselves are rendered from
+   * `assignableMedia` where they are actually edited.
+   */
+  variantPhotoCount?: number;
   /**
    * Whether the supplier's own photo (`supplierMediaUrls`) shows to buyers
    * alongside a seller upload, not only as a fallback when none exists. Off

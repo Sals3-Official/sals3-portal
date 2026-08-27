@@ -2,10 +2,10 @@ import 'server-only';
 
 import { createHash, randomUUID } from 'node:crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull } from 'drizzle-orm';
 import getDb, { type Database } from '@/lib/db/client';
 import uniqueViolationConstraint from '@/lib/db/constraint-errors';
-import { productMediaSources } from '@/lib/db/schema';
+import { productMediaSources, productVariants } from '@/lib/db/schema';
 import { getR2Client, readR2Config } from '@/lib/storage/r2-client';
 import { r2PublicImageUrl, r2PublicUrlForKey } from '@/lib/storage/r2-url';
 import { appendAuditEvent } from '@/modules/catalog/candidates/repository';
@@ -33,9 +33,11 @@ import { findProductForSteward } from './repository';
  * 1. Ownership - `findProductForSteward` re-reads the product under this
  *    seller's own id, inside the same request. A well-formed `productId` the
  *    caller does not own resolves identically to an unknown one.
- * 2. Count - capped at `MAX_SELLER_IMAGES_PER_PRODUCT`, same reasoning as the
- *    supplier side's own cap: a page that renders 40 thumbnails is a page
- *    nobody scrolls.
+ * 2. Count - capped against one of two separate budgets, chosen by whether
+ *    this upload is a gallery photo or a variation photo. See "Two budgets"
+ *    below; the short version is that a page nobody scrolls and a variation
+ *    nobody can tell apart are different problems and no longer share a
+ *    number.
  * 3. Size - rejected before any decode is attempted.
  * 4. Actual bytes - `sniffImageContentType` reads the file's own magic
  *    number rather than trusting `file.type`, which is a client-supplied
@@ -76,7 +78,64 @@ import { findProductForSteward } from './repository';
  * orientation in as pixels first, so the photo does not flip on delivery.
  */
 
-const MAX_SELLER_IMAGES_PER_PRODUCT = 12;
+/**
+ * ## Two budgets, split by `variant_id` (2026-08-28)
+ *
+ * Until this change one constant of `12` bounded every `SELLER_UPLOAD` row on a
+ * product, and it was answering two unrelated questions at once:
+ *
+ * - **how many photos a buyer scrolls** in the gallery — the reviewed argument,
+ *   quoted from `media-projection.ts`: "a product page that renders 40
+ *   thumbnails is a page nobody scrolls and a row count nobody reviews";
+ * - **how many variations can be told apart** — one photo per option, which a
+ *   buyer never scrolls, because they are shown exactly one, chosen by the
+ *   option they picked.
+ *
+ * Sharing one budget meant the second starved the first. The reported case: a
+ * beanie selling 21 flag designs consumed all 12 slots with variation photos,
+ * left nine designs indistinguishable, and — because the storefront gallery had
+ * no `variant_id` filter — turned the gallery itself into twelve near-identical
+ * close-ups. Both halves of that were the shared budget.
+ *
+ * They are separate here because `variant_id` already separates them in the
+ * table: `assignVariantMedia` *moves* a row between product level and a variant
+ * rather than copying it, so a photo has exactly one home and the two counts
+ * can never double-count the same row. No column was added and no migration is
+ * needed.
+ *
+ * The gallery number is deliberately unchanged. It is the reviewed one, the
+ * storefront's own `MAX_DETAIL_IMAGES` agrees with it, and this change removes
+ * the pressure that made it look too small rather than arguing with it.
+ */
+const MAX_GALLERY_PHOTOS_PER_PRODUCT = 12;
+
+/**
+ * One photo per variation, because one is all a buyer is ever served.
+ *
+ * `read-model.ts`'s `variantImageUrl` is a correlated subquery with `limit 1`:
+ * a second photo on the same variant is bytes stored, paid for, and shown to
+ * nobody. Refusing it is more honest than accepting an upload whose only effect
+ * is an R2 bill, and a seller replacing a variation photo deletes the old one
+ * first — which is a visible, reversible act rather than a silent overwrite of
+ * the file an order line may have frozen.
+ *
+ * A *group* still needs only one: `shareFirstAxisPhotos` spreads a first-axis
+ * value's photo across every variant carrying that value, so a `Colour x Size`
+ * product needs one photo per colour, not one per row.
+ */
+const MAX_PHOTOS_PER_VARIANT = 1;
+
+/**
+ * A backstop on total variation photos per product, not a UX limit.
+ *
+ * The real bound is one per variant and variants come from the supplier's own
+ * list, so this never binds on a real catalogue product — the largest first
+ * axis in the live catalogue is 21. It exists because "one per variant" is
+ * unbounded in principle, and an unbounded storage path with no ceiling is the
+ * kind of thing that is only ever discovered from a bill. Raise it if a real
+ * product needs more; do not remove it.
+ */
+const MAX_VARIANT_PHOTOS_PER_PRODUCT = 60;
 
 export type UploadSellerMediaResult =
   | {
@@ -91,7 +150,10 @@ export type UploadSellerMediaResult =
       };
     }
   | { ok: false; reason: 'NOT_FOUND' }
+  | { ok: false; reason: 'VARIANT_NOT_FOUND' }
   | { ok: false; reason: 'LIMIT_REACHED'; limit: number }
+  | { ok: false; reason: 'VARIANT_PHOTO_EXISTS' }
+  | { ok: false; reason: 'VARIANT_LIMIT_REACHED'; limit: number }
   | { ok: false; reason: 'FILE_TOO_LARGE'; maxBytes: number }
   | { ok: false; reason: 'EMPTY_FILE' }
   | { ok: false; reason: 'UNSUPPORTED_FILE_TYPE' }
@@ -103,6 +165,15 @@ export type UploadSellerMediaResult =
 
 export async function uploadSellerProductMedia(input: {
   productId: string;
+  /**
+   * The variation this photo depicts, or `null`/omitted for a gallery photo.
+   *
+   * Set at insert time rather than assigned afterwards, so a variation photo
+   * never occupies a gallery slot even momentarily and the seller never has to
+   * make a second decision to keep the two budgets straight. `assignVariantMedia`
+   * remains the way to move an *existing* photo between the two.
+   */
+  variantId?: string | null;
   sellerAccountId: string;
   actorId: string;
   fileBytes: ArrayBuffer;
@@ -128,22 +199,82 @@ export async function uploadSellerProductMedia(input: {
 
   if (product === null) return { ok: false, reason: 'NOT_FOUND' };
 
-  const existingCount = await db
-    .select({ id: productMediaSources.id })
-    .from(productMediaSources)
-    .where(
-      and(
-        eq(productMediaSources.productId, product.id),
-        eq(productMediaSources.sourceType, 'SELLER_UPLOAD'),
-      ),
-    );
+  const variantId = input.variantId ?? null;
 
-  if (existingCount.length >= MAX_SELLER_IMAGES_PER_PRODUCT) {
-    return {
-      ok: false,
-      reason: 'LIMIT_REACHED',
-      limit: MAX_SELLER_IMAGES_PER_PRODUCT,
-    };
+  if (variantId === null) {
+    // Gallery budget: product-level seller uploads only. A variation photo is
+    // not competing for these slots any more, which is the whole point of the
+    // split.
+    const galleryRows = await db
+      .select({ id: productMediaSources.id })
+      .from(productMediaSources)
+      .where(
+        and(
+          eq(productMediaSources.productId, product.id),
+          isNull(productMediaSources.variantId),
+          eq(productMediaSources.sourceType, 'SELLER_UPLOAD'),
+        ),
+      );
+
+    if (galleryRows.length >= MAX_GALLERY_PHOTOS_PER_PRODUCT) {
+      return {
+        ok: false,
+        reason: 'LIMIT_REACHED',
+        limit: MAX_GALLERY_PHOTOS_PER_PRODUCT,
+      };
+    }
+  } else {
+    // Matched on this product's own id, not merely on the variant's - the same
+    // check and the same reason as `assignVariantMedia`: a variant belonging to
+    // a *different* product of the *same* seller would pass a tenant check and
+    // put this photo on goods it does not depict.
+    const variantRows = await db
+      .select({ id: productVariants.id })
+      .from(productVariants)
+      .where(
+        and(
+          eq(productVariants.id, variantId),
+          eq(productVariants.productId, product.id),
+        ),
+      );
+
+    if (variantRows.length === 0) {
+      return { ok: false, reason: 'VARIANT_NOT_FOUND' };
+    }
+
+    const onThisVariant = await db
+      .select({ id: productMediaSources.id })
+      .from(productMediaSources)
+      .where(
+        and(
+          eq(productMediaSources.productId, product.id),
+          eq(productMediaSources.variantId, variantId),
+          eq(productMediaSources.sourceType, 'SELLER_UPLOAD'),
+        ),
+      );
+
+    if (onThisVariant.length >= MAX_PHOTOS_PER_VARIANT) {
+      return { ok: false, reason: 'VARIANT_PHOTO_EXISTS' };
+    }
+
+    const variantPhotoRows = await db
+      .select({ id: productMediaSources.id })
+      .from(productMediaSources)
+      .where(
+        and(
+          eq(productMediaSources.productId, product.id),
+          isNotNull(productMediaSources.variantId),
+          eq(productMediaSources.sourceType, 'SELLER_UPLOAD'),
+        ),
+      );
+
+    if (variantPhotoRows.length >= MAX_VARIANT_PHOTOS_PER_PRODUCT) {
+      return {
+        ok: false,
+        reason: 'VARIANT_LIMIT_REACHED',
+        limit: MAX_VARIANT_PHOTOS_PER_PRODUCT,
+      };
+    }
   }
 
   // Object storage (Cloudflare R2), never the Postgres database - only the
@@ -193,7 +324,7 @@ export async function uploadSellerProductMedia(input: {
       .insert(productMediaSources)
       .values({
         productId: product.id,
-        variantId: null,
+        variantId,
         sourceType: 'SELLER_UPLOAD',
         sourceUrl: verifiedUrl,
         checksum,
@@ -234,6 +365,7 @@ export async function uploadSellerProductMedia(input: {
     entityId: inserted.id,
     payload: {
       productId: product.id,
+      variantId,
       sellerAccountId: input.sellerAccountId,
       contentType: OUTPUT_CONTENT_TYPE,
       byteSize: processed.buffer.byteLength,

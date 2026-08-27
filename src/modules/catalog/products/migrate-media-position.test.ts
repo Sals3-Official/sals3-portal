@@ -1,4 +1,6 @@
 // @vitest-environment node
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   DDL_LOCK_TIMEOUT,
@@ -209,5 +211,70 @@ describe('migrateMediaPosition', () => {
       columnExistsAfter: true,
       ddl: { statementsRun: 1 },
     });
+  });
+});
+
+/**
+ * The hard-coded ledger constants and the migration file are two records of one
+ * fact, kept apart on purpose — the endpoint must not depend on the migration
+ * file being in the deployed bundle — so nothing but this test would notice them
+ * drifting apart. Same shape as `migrate-media-stored-copy.test.ts`, for the same
+ * reason.
+ */
+describe('media-position migration ledger constants', () => {
+  const MODULE_TEXT = readFileSync(
+    'src/modules/catalog/products/migrate-media-position.ts',
+    'utf8',
+  );
+  const MIGRATION_SQL = readFileSync(
+    'drizzle/0031_unusual_gargoyle.sql',
+    'utf8',
+  );
+
+  it('match the migration file and its journal entry', () => {
+    const journal = JSON.parse(
+      readFileSync('drizzle/meta/_journal.json', 'utf8'),
+    ) as { entries: { tag: string; when: number }[] };
+    const entry = journal.entries.find(
+      (item) => item.tag === '0031_unusual_gargoyle',
+    );
+
+    expect(entry).toBeDefined();
+    expect(MODULE_TEXT).toContain(String(entry?.when));
+    expect(MODULE_TEXT).toContain(
+      createHash('sha256').update(MIGRATION_SQL).digest('hex'),
+    );
+  });
+
+  /**
+   * One additive column and nothing else. A `DROP`, a `NOT NULL`, or a touch of
+   * `source_url` would make this DDL something other than the safe-in-any-order
+   * add it is documented to be.
+   */
+  it('ships a migration that adds exactly one nullable column', () => {
+    expect(MIGRATION_SQL).toContain('product_media_sources');
+    expect(MIGRATION_SQL).toContain('"position"');
+    expect(MIGRATION_SQL).not.toMatch(/DROP|NOT NULL|source_url|DEFAULT/u);
+  });
+
+  /**
+   * `IF NOT EXISTS` is what makes a re-run a no-op rather than an error, which is
+   * the whole idempotency claim the route and the workflow both rest on.
+   */
+  it('is idempotent by construction', () => {
+    expect(MEDIA_POSITION_DDL_STATEMENTS).toHaveLength(1);
+    expect(MEDIA_POSITION_DDL_STATEMENTS[0]).toContain(
+      'ADD COLUMN IF NOT EXISTS',
+    );
+  });
+
+  /**
+   * The real hazard is the lock, not the column: without a timeout an `ALTER`
+   * behind a long query queues every catalogue read and media write behind
+   * itself. Failing fast is the rollback story for a DDL that has none.
+   */
+  it('bounds the ALTER with a lock timeout', () => {
+    expect(DDL_LOCK_TIMEOUT).toBe('5s');
+    expect(MODULE_TEXT).toContain('SET LOCAL lock_timeout');
   });
 });

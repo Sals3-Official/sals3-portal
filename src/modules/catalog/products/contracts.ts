@@ -265,6 +265,16 @@ export const PRODUCT_AUDIT_ACTIONS = {
   showSupplierPhotoSaved: 'catalog_product.show_supplier_photo_saved',
   optionMappingRenamed: 'catalog_product_option.mapping_renamed',
   variantMediaAssigned: 'catalog_product_media.variant_assigned',
+  /**
+   * The seller arranged the product's gallery, which is also how the cover is
+   * chosen (ADR-011 amendment 2026-08-28: the cover is position 0).
+   *
+   * One event for the whole arrangement rather than one per moved row: a
+   * reorder is a single decision about an ordered set, and a per-row series
+   * would record eight events for one drag while making the resulting order
+   * unreadable from the trail.
+   */
+  mediaReordered: 'catalog_product_media.reordered',
 } as const;
 
 /** Operation name recorded on `idempotency_records.operation`. */

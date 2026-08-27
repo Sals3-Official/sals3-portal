@@ -26,31 +26,43 @@ vi.mock('@/modules/catalog/products/delete-seller-media', () => ({
   deleteSellerProductMedia: vi.fn(),
 }));
 
+vi.mock('@/modules/catalog/products/reorder-product-media', () => ({
+  default: vi.fn(),
+}));
+
 /* eslint-disable import/first */
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { deleteSellerProductMedia } from '@/modules/catalog/products/delete-seller-media';
+import reorderProductMedia from '@/modules/catalog/products/reorder-product-media';
 import { uploadSellerProductMedia } from '@/modules/catalog/products/upload-seller-media';
 import { revalidatePath } from 'next/cache';
 
 import {
   deleteSellerMediaAction,
+  reorderProductMediaAction,
   uploadSellerMediaAction,
 } from './media-actions';
 /* eslint-enable import/first */
 
 const PRODUCT_ID = '11111111-1111-4111-8111-111111111111';
+const VARIANT_ID = '22222222-2222-4222-8222-222222222222';
 
 function formDataWith(overrides: {
   productId?: string;
+  variantId?: string;
   file?: File | null;
 }): FormData {
   const formData = new FormData();
 
   if (overrides.productId !== undefined) {
     formData.set('productId', overrides.productId);
+  }
+
+  if (overrides.variantId !== undefined) {
+    formData.set('variantId', overrides.variantId);
   }
 
   if (overrides.file !== undefined && overrides.file !== null) {
@@ -132,6 +144,9 @@ describe('uploadSellerMediaAction', () => {
       ok: true,
       media: {
         id: 'media-1',
+        // `null` because no `variantId` field was sent: this is a gallery
+        // photo, and the client uses this to decide which grid it belongs in.
+        variantId: null,
         sourceUrl: 'https://media.example-r2.dev/a.jpg',
         contentType: 'image/webp',
         byteSize: 3,
@@ -140,6 +155,54 @@ describe('uploadSellerMediaAction', () => {
       },
     });
     expect(revalidatePath).toHaveBeenCalledWith('/listings', 'layout');
+  });
+
+  /**
+   * The variation-photo path (2026-08-28). `variantId` has to reach the domain
+   * module, because that is what decides which of the two budgets the upload is
+   * counted against and what gets written on the row.
+   */
+  it('passes a variation id through to the domain module and back to the caller', async () => {
+    vi.mocked(uploadSellerProductMedia).mockResolvedValue({
+      ok: true,
+      media: {
+        id: 'media-2',
+        sourceUrl: 'https://media.example-r2.dev/b.jpg',
+        contentType: 'image/webp',
+        byteSize: 3,
+        widthPixels: 800,
+        heightPixels: 800,
+      },
+    });
+
+    const result = await uploadSellerMediaAction(
+      formDataWith({
+        productId: PRODUCT_ID,
+        variantId: VARIANT_ID,
+        file: realFile(),
+      }),
+    );
+
+    expect(uploadSellerProductMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ variantId: VARIANT_ID }),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      media: { variantId: VARIANT_ID },
+    });
+  });
+
+  it('refuses a variation id that is not a uuid rather than ignoring it', async () => {
+    const result = await uploadSellerMediaAction(
+      formDataWith({
+        productId: PRODUCT_ID,
+        variantId: 'not-a-uuid',
+        file: realFile(),
+      }),
+    );
+
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+    expect(uploadSellerProductMedia).not.toHaveBeenCalled();
   });
 
   it('does not revalidate when the domain module refuses', async () => {
@@ -334,5 +397,100 @@ describe('deleteSellerMediaAction', () => {
     if (result.ok) throw new Error('expected a refusal');
     expect(result.reason).toBe('rate_limited');
     expect(deleteSellerProductMedia).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Arranging the gallery (ADR-011 amendment 2026-08-28). The action's own job is
+ * authorization, shape validation, and revalidation — `reorderProductMedia` owns
+ * whether the list is genuinely this product's gallery, so these tests pin the
+ * boundary rather than re-testing the domain rule.
+ */
+describe('reorderProductMediaAction', () => {
+  const ORDER = [
+    '33333333-3333-4333-8333-333333333333',
+    '44444444-4444-4444-8444-444444444444',
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isDatabaseConfigured).mockReturnValue(true);
+    vi.mocked(checkRateLimit).mockReturnValue({
+      allowed: true,
+      retryAfterMs: 0,
+    });
+    authorized();
+    vi.mocked(reorderProductMedia).mockResolvedValue({
+      ok: true,
+      positioned: 2,
+    });
+  });
+
+  it('hands a server-resolved tenant and actor to the domain module', async () => {
+    const result = await reorderProductMediaAction({
+      productId: PRODUCT_ID,
+      mediaIds: ORDER,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(reorderProductMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        productId: PRODUCT_ID,
+        mediaIds: ORDER,
+        sellerAccountId: 'seller-1',
+        actorId: 'user-1',
+      }),
+    );
+    expect(revalidatePath).toHaveBeenCalledWith('/listings', 'layout');
+  });
+
+  it('refuses a caller without product:edit', async () => {
+    vi.mocked(requirePermission).mockRejectedValue(new PermissionError());
+
+    const result = await reorderProductMediaAction({
+      productId: PRODUCT_ID,
+      mediaIds: ORDER,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'denied' });
+    expect(reorderProductMedia).not.toHaveBeenCalled();
+  });
+
+  it('refuses an id that is not a uuid rather than passing it through', async () => {
+    const result = await reorderProductMediaAction({
+      productId: PRODUCT_ID,
+      mediaIds: ['not-a-uuid'],
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+    expect(reorderProductMedia).not.toHaveBeenCalled();
+  });
+
+  it('refuses an empty order, which would position nothing and report success', async () => {
+    const result = await reorderProductMediaAction({
+      productId: PRODUCT_ID,
+      mediaIds: [],
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+    expect(reorderProductMedia).not.toHaveBeenCalled();
+  });
+
+  it('names the divergence when the domain module refuses a partial list', async () => {
+    vi.mocked(reorderProductMedia).mockResolvedValue({
+      ok: false,
+      reason: 'INCOMPLETE_ORDER',
+    });
+
+    const result = await reorderProductMediaAction({
+      productId: PRODUCT_ID,
+      mediaIds: ORDER,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      message: expect.stringContaining('Reload'),
+    });
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });

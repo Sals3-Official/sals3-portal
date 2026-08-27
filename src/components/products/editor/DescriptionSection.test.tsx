@@ -36,6 +36,7 @@ vi.mock('@/app/(portal)/listings/category-mapping-actions', () => ({
 vi.mock('@/app/(portal)/listings/media-actions', () => ({
   uploadSellerMediaAction: vi.fn(),
   deleteSellerMediaAction: vi.fn(),
+  reorderProductMediaAction: vi.fn(),
 }));
 
 // Same reasoning: `assign-variant-media.ts` reaches the server-only db client.

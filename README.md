@@ -653,6 +653,137 @@ refresh, and the storefront contract's description block union gained the
 `image` block on the consumer side (`sals3-ecommerce`), so seller-placed
 description photos finally render on the product page.
 
+**Gallery photos and variation photos are separate budgets (2026-08-28).**
+Reported as a product that could not be finished: `Knitted Tam Beanie` sells 21
+flag designs, each needing its own photo so a buyer can tell them apart, and the
+per-product cap was 12. One constant of `12` was answering two unrelated
+questions — how many photos a buyer _scrolls_ in the gallery, and how many
+variations can be _told apart_, which a buyer never scrolls because they are
+shown exactly one, chosen by the option they picked. The second starved the
+first.
+
+Three things changed, and the reviewed number did not move:
+
+- **The buyer's gallery is product-level rows only.** In
+  `modules/catalog/storefront/read-model.ts`, `loadApprovedImages` had
+  `variant_id is null` in its `ORDER BY` and **not** in its `WHERE` — a sort, not
+  a filter — so every photo tagged to a variation was also a slide in the
+  gallery. On this product that made the gallery twelve near-identical flag
+  close-ups: exactly the outcome `media-projection.ts`'s cap comment ("a page
+  that renders 40 thumbnails is a page nobody scrolls") was written to prevent,
+  arriving through a door that did not exist when it was written. It is now a
+  predicate. A variation photo reaches the buyer through `variantImageUrl` — one
+  per variant, `limit 1`, spread across the first axis by
+  `shareFirstAxisPhotos` — which never needed a gallery slide.
+- **Two budgets in `upload-seller-media.ts`.** `MAX_GALLERY_PHOTOS_PER_PRODUCT`
+  stays **12** and counts only `SELLER_UPLOAD` rows with no `variant_id`;
+  `MAX_PHOTOS_PER_VARIANT` is **1**, because `variantImageUrl` serves exactly
+  one and a second is bytes shown to nobody; `MAX_VARIANT_PHOTOS_PER_PRODUCT` is
+  **60**, a storage backstop rather than a UX limit. No column was added and no
+  migration is needed — `variant_id` already separated the two, and
+  `assignVariantMedia` already _moves_ a row between them rather than copying,
+  so the counts cannot double-count one row. The editor's counter and the
+  storefront's `MAX_DETAIL_IMAGES` are the same 12 and must move together.
+- **A variation photo can be uploaded where it belongs.** `VariantImagePicker`
+  now carries its own upload control, which sends `variantId` so the row is
+  inserted with it already set — the photo never occupies a gallery slot and
+  never has to be assigned afterwards. Picking an already-stored photo stays
+  first in the dialog, and stays the shorter path on a product whose photos are
+  already uploaded. The picker's own doc comment used to argue against a second
+  upload control; it now records why that reasoning stopped applying.
+
+**Two consequences stated rather than discovered.** A photo moved onto a
+variation leaves Product media, so the panel names the count of variation photos
+beside the counter — without that line the move is indistinguishable from the
+vanishing-photo defect reported on 2026-08-25. And `show_supplier_photo` off now
+hides the supplier original only once a **gallery** photo exists: counting
+variation photos there would have hidden the supplier photo with nothing behind
+it, which is the blank page the owner's 2026-08-20 decision forbids. Both are
+test-pinned.
+
+**The seller arranges every photo, and the first one is the cover (2026-08-28,
+ADR-011 amended).** Requested by pointing at a marketplace seller centre's own
+product editor: one `Product Images` grid, every image draggable, the first tile
+badged `Cover`. Two things were in the way. ADR-011 §3 called the supplier set
+_"read-only"_ and `SupplierMediaGallery` honoured it literally — never
+reorderable, never a cover choice. And cover choice was never persisted at all
+(owner decision 2026-08-20 left it unstored), so "make this the cover" survived
+until the next render; for nearly every product in production the buyer's lead
+photo was whatever `sellerUploadsFirst` and observation time happened to pick.
+
+The rule was also already inconsistent with itself: `assign-variant-media.ts` has
+written `variant_id` onto a `SUPPLIER_ORIGINAL` row since 2026-08-20, arguing that
+_saying which variant a photo depicts is a Sals3 editorial fact about supplier
+evidence rather than a change to the evidence_. Display order is the same kind of
+fact, so a supplier row being assignable to a variant while being unmovable in
+the gallery was an inconsistency, not a rule.
+
+- **One grid, both origins.** Basic Information's `Product media` renders every
+  product-level media row — seller upload and supplier original alike — in
+  stored order, each tile draggable by a grip. The grip is a
+  `<span role="button">` and not a `<button>`, the same finding that shaped the
+  Variant Matrix grip on 2026-08-22: a bare `<button draggable="true">` never
+  fires `dragstart` in Chromium.
+- **The cover is position 0.** No `is_cover` column, and there must not be one —
+  "what order" and "which leads" are one question, and two columns holding one
+  answer can disagree invisibly until a buyer sees the wrong lead photo. `Set as
+cover` moves a photo to the front, which is the same write as any other
+  reorder, and stays a real button because native drag fires from neither
+  keyboard nor touch.
+- **Arranging is not deleting.** The delete button renders only on a
+  `SELLER_UPLOAD` tile and `delete-seller-media.ts` keeps `sourceType =
+'SELLER_UPLOAD'` inside its `WHERE`, so the UI is the courtesy and the query is
+  the guarantee. `reorderProductMedia` issues `UPDATE ... SET position` and
+  nothing else.
+- **The grid can be longer than the gallery.** Twelve seller uploads plus the
+  supplier's projected set can exceed the storefront's `MAX_DETAIL_IMAGES` of 12,
+  so tiles past that line are faded and the panel says _"Buyers see the first 12"_.
+  Deciding which ones make the cut is the point of arranging.
+
+**A latent delete bug fell out of the same change.** The editor's photo tiles
+carried synthesised ids (`${productId}-seller-media-N`), while
+`deleteSellerMediaAction`'s schema is `z.string().uuid()` — so deleting any
+server-rendered tile could only ever return _"That could not be identified.
+Reload and try again."_, while deleting a tile uploaded in the same session
+worked, because that one carried the real id the upload action returned. The grid
+now carries the real `product_media_sources` id, which reordering needed anyway.
+
+**Deployment order is not optional.** `product_media_sources.position` (migration
+`0031_unusual_gargoyle`) must exist in production **before** the deployment that
+names it. Drizzle names every schema column in an `INSERT`, and this table is
+written by draft creation, by publication, and by every seller upload, so a
+deployment carrying the column early breaks importing and publishing rather than
+one page — the 2026-08-18 shape of incident. Run the
+`Products Migrate Media Position` workflow
+(`POST /api/internal/catalog/products/migrate-media-position`), confirm
+`columnExistsAfter: true`, then deploy. The column is nullable and nothing is
+backfilled: null means "never arranged", and read paths order
+`position asc nulls last` before falling through to the previous rule, so a
+product nobody has touched is served exactly as it was.
+
+**Known limit:** the arrangement cannot be changed on a touchscreen. Native drag
+fires from neither keyboard nor touch and WCAG 2.5.7's single-pointer alternative
+is absent — the same accepted cost recorded for the Variant Matrix grip. `Set as
+cover` is the non-drag path to the decision that matters most.
+
+**A silent partial success became an honest report (2026-08-28).**
+`ProductPhotoManager` offers Upload whenever _one_ slot is free, and the editor
+uploads a chosen batch one file at a time. Handing it 21 files against 12 free
+slots stored 12 and refused 9 — correctly, at the server — but the client raised
+one `toast.error` per refused file: nine identical transient toasts into a stack
+that shows three at a time, arriving between successful uploads. The run read as
+silent and the only evidence was a counter reading `12 of 12`, which is how this
+listing looked finished when nine of its designs had no photo.
+`lib/products/describe-refused-uploads.ts` now composes **one** message that
+names the counts, groups a repeated reason instead of repeating it, and names the
+files so the seller can re-pick exactly those; it is raised with
+`duration: Infinity` and a close button, because the one message that says what
+was lost should not expire while it is being read. The
+`media-upload` rate limit moved from 20 to **60 per seller per minute** to match
+the larger legitimate first batch — the 5 MB / 2000 px per-request ceiling is
+unchanged, so this permits more of the same work in a burst, not more work per
+request.
+
 **A new `Specification` section sits between Basic Information and
 Description (2026-08-17)** — category-driven attribute controls
 (dropdowns, multi-selects, text/number/measurement/boolean/date fields)

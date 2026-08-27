@@ -427,6 +427,9 @@ const BASE: ProductEditorFixture = {
   // (ADR-011): every illustrative photo here is the supplier's, so `media`
   // (seller uploads) stays empty and `BASE_MEDIA` becomes `supplierMedia`.
   media: [],
+  // The illustrative fixtures carry no imagery at all, so they carry no
+  // variation photos either.
+  variantPhotoCount: 0,
   supplierMedia: BASE_MEDIA,
   showSupplierPhoto: true,
   policyVersion: '2026.08.01',

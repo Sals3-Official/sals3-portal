@@ -8,6 +8,7 @@ import {
   ilike,
   inArray,
   isNotNull,
+  isNull,
   lte,
   ne,
   sql,
@@ -248,15 +249,28 @@ function publishedScope() {
 }
 
 /**
- * True when the product has at least one approved, renderable photo the
- * seller uploaded themselves. Correlated on `products.id`, so it works both
- * inside the card's `primaryImageUrl` subquery and joined in
- * `loadApprovedImages`.
+ * True when the product has at least one approved, renderable photo the seller
+ * uploaded themselves **into the gallery** — `variant_id is null`. Correlated
+ * on `products.id`, so it works both inside the card's `primaryImageUrl`
+ * subquery and joined in `loadApprovedImages`.
+ *
+ * ## Why `variant_id is null` is load-bearing here
+ *
+ * This predicate is the *only* thing that lets `show_supplier_photo` off hide
+ * the supplier's original (owner decision 2026-08-20: an empty gallery falls
+ * back to the supplier photo rather than rendering a blank page). Since
+ * `loadApprovedImages` serves the gallery from product-level rows alone, a
+ * product whose every seller upload is a variation photo has **no gallery
+ * photo of its own** — and counting those variation photos here would let the
+ * switch hide the supplier original while leaving nothing to show in its
+ * place. That is precisely the blank page the owner's decision forbids, so the
+ * budget this reads has to be the same budget the gallery serves from.
  */
 const hasApprovedSellerUpload = sql`exists (
   select 1
   from ${productMediaSources} as seller_media
   where seller_media.product_id = ${products.id}
+    and seller_media.variant_id is null
     and seller_media.source_type = 'SELLER_UPLOAD'
     and seller_media.review_state = 'APPROVED'
     and seller_media.rights_basis <> 'UNKNOWN'
@@ -288,6 +302,24 @@ const mediaVisibleToBuyers = sql`(
  * a seller sees there is the cover a buyer gets.
  */
 const sellerUploadsFirst = sql`(${productMediaSources.sourceType} = 'SELLER_UPLOAD') desc`;
+
+/**
+ * The seller's own arrangement, when they have made one (ADR-011 amendment
+ * 2026-08-28).
+ *
+ * `nulls last`, and that is the entire backwards-compatibility story: `position`
+ * is null on every row written before the column existed, so a product nobody
+ * has arranged falls straight through to `sellerUploadsFirst` and the observation
+ * order underneath it — byte-identical to what it served yesterday. No backfill
+ * had to invent an order the seller never chose.
+ *
+ * It sorts **ahead of** `sellerUploadsFirst`, which is deliberate and is the
+ * point of the amendment: a seller who drags a supplier photo to the front means
+ * it, and a rule that silently promoted their own upload above it would be the
+ * editor overruling the control it just offered. On an unarranged product the
+ * old precedence still decides everything.
+ */
+const sellerArrangementFirst = sql`${productMediaSources.position} asc nulls last`;
 
 /**
  * One variant's own photo, under the same visibility rules as the cover.
@@ -324,6 +356,17 @@ const variantImageUrl = sql<string | null>`(
  * product-level before variant-level, oldest observation first so the choice
  * is stable across requests rather than whatever the planner returns.
  *
+ * Unlike `loadApprovedImages`, `variant_id is null` stays a *sort* term here
+ * rather than becoming a filter. The gallery is a set and may legitimately be
+ * short; a card is one image and an empty one is a hole in a grid. So a product
+ * with no product-level photo a buyer may see still gets a card image from a
+ * variation photo, as a last resort. In practice the two agree: draft creation
+ * and publication both project the supplier's own photo as a product-level
+ * `SUPPLIER_ORIGINAL` row, and `hasApprovedSellerUpload` now refuses to let the
+ * supplier switch hide it unless a product-level seller upload exists to take
+ * its place — so the fallback is reachable only for a product that never had a
+ * supplier photo at all.
+ *
  * `review_state = 'APPROVED'` and `rights_basis <> 'UNKNOWN'` are both
  * required. `product_media_sources_approved_requires_rights` makes the pair
  * consistent at write time; requiring both here means a public image always
@@ -346,7 +389,8 @@ const primaryImageUrl = sql<string | null>`(
     and ${productMediaSources.rightsBasis} <> 'UNKNOWN'
     and ${productMediaSources.sourceUrl} is not null
     and ${mediaVisibleToBuyers}
-  order by ${sellerUploadsFirst},
+  order by ${sellerArrangementFirst},
+           ${sellerUploadsFirst},
            (${productMediaSources.variantId} is null) desc,
            ${productMediaSources.observedAt} asc,
            ${productMediaSources.id} asc
@@ -815,11 +859,38 @@ export async function searchPublishedProducts(
  * endpoint.
  */
 /**
- * Every approved image a buyer may see for the product — the same
- * `mediaVisibleToBuyers` gate and seller-uploads-first precedence the card's
- * single image uses, so the gallery's lead photo is the one the card showed.
- * Joins `products` for `show_supplier_photo`; the join cannot fan out because
- * `product_id` references one row.
+ * The product's gallery — the strip of photos a buyer actually scrolls.
+ *
+ * Same `mediaVisibleToBuyers` gate and seller-uploads-first precedence as the
+ * card's single image, joined to `products` for `show_supplier_photo`; the join
+ * cannot fan out because `product_id` references one row.
+ *
+ * ## Product-level rows only, and why that is the whole point
+ *
+ * `variant_id is null` is a **filter**, not a sort. Until 2026-08-28 it was
+ * only the latter, and the difference was a real defect on the storefront: a
+ * variation photo is stored as an ordinary `product_media_sources` row, so
+ * every photo a seller tagged to a variant was silently also a slide in this
+ * gallery. On a product that uses variation photos properly — the 21-design
+ * `Knitted Tam Beanie` was the reported case — the gallery *became* twenty-one
+ * near-identical close-ups of the option the buyer had not chosen yet. That is
+ * exactly the outcome `media-projection.ts`'s own cap comment ("a page that
+ * renders 40 thumbnails is a page nobody scrolls") was written to prevent,
+ * arriving through a door that did not exist when it was written.
+ *
+ * Splitting the two is also what lets the gallery cap stay at the reviewed
+ * `MAX_DETAIL_IMAGES` while a product carries one photo per variant: the
+ * gallery is a curated set the seller chooses, and a variation photo reaches
+ * the buyer through `variantImageUrl` — one per variant, `limit 1`, spread
+ * across the first axis by `shareFirstAxisPhotos` — which never consumed a
+ * slide here and never needed one. The two budgets are enforced at the write
+ * side by `upload-seller-media.ts`.
+ *
+ * A consequence worth stating plainly: a seller who moves a photo from the
+ * gallery onto a variation removes a slide from this gallery. That is the
+ * model, not a loss — `assignVariantMedia` moves a pointer rather than copying,
+ * so the photo has one home at a time, and the editor names the count of
+ * variation photos beside the gallery so nothing disappears without a trace.
  */
 async function loadApprovedImages(
   executor: DbExecutor,
@@ -837,15 +908,19 @@ async function loadApprovedImages(
     .where(
       and(
         eq(productMediaSources.productId, productId),
+        isNull(productMediaSources.variantId),
         eq(productMediaSources.reviewState, 'APPROVED'),
         ne(productMediaSources.rightsBasis, 'UNKNOWN'),
         isNotNull(productMediaSources.sourceUrl),
         mediaVisibleToBuyers,
       ),
     )
+    // No `(variant_id is null)` sort term: it is a predicate above now, so
+    // every row here already satisfies it and sorting on it would order
+    // nothing.
     .orderBy(
+      sellerArrangementFirst,
       sellerUploadsFirst,
-      sql`(${productMediaSources.variantId} is null) desc`,
       asc(productMediaSources.observedAt),
       asc(productMediaSources.id),
     )

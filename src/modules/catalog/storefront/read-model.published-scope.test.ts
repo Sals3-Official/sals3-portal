@@ -284,7 +284,7 @@ describe('buyer-visible media selection', () => {
     expect(rendered).toMatch(/= 'SELLER_UPLOAD'\) desc/);
   });
 
-  it('applies the same gate and precedence to the detail gallery', async () => {
+  async function renderedDetailGallery(): Promise<{ recorded: Recorded[] }> {
     const { executor, recorded } = recordingExecutor([
       [
         {
@@ -321,11 +321,52 @@ describe('buyer-visible media selection', () => {
 
     await findPublishedProductBySlug('a-real-product', executor as never);
 
+    return { recorded };
+  }
+
+  it('applies the same gate and precedence to the detail gallery', async () => {
     // recorded[0] is the base row's scope; recorded[1] is the gallery's WHERE.
+    const { recorded } = await renderedDetailGallery();
     const gallery = recorded[1]?.rendered ?? '';
 
     expect(gallery).toContain('"show_supplier_photo"');
     expect(gallery).toContain(`= 'SELLER_UPLOAD'`);
     expect(gallery).toContain('not exists');
+  });
+
+  /**
+   * The gallery is the strip a buyer scrolls, and a variation photo is not one
+   * of its slides.
+   *
+   * Until 2026-08-28 `variant_id is null` appeared only in this query's
+   * `ORDER BY`, which sorts variation photos later without excluding them — so
+   * every photo a seller tagged to a variant was also a slide here. On the
+   * reported 21-design product that made the gallery twenty-one near-identical
+   * close-ups of an option the buyer had not chosen. A sort is not a filter,
+   * and the difference was the defect, so this is pinned as a predicate.
+   */
+  it('serves the gallery from product-level rows only, as a filter and not a sort', async () => {
+    const { recorded } = await renderedDetailGallery();
+    const gallery = recorded[1]?.rendered ?? '';
+
+    expect(gallery).toContain('"product_media_sources"."variant_id" is null');
+  });
+
+  /**
+   * `show_supplier_photo` off may hide the supplier's original only once a
+   * *gallery* photo exists to replace it (owner decision 2026-08-20: an empty
+   * gallery falls back to the supplier photo rather than rendering a blank
+   * page).
+   *
+   * Once the gallery serves product-level rows alone, counting variation photos
+   * in this subquery would satisfy it for a product that has no gallery photo
+   * at all — hiding the supplier original and leaving nothing behind it. That is
+   * the blank page the decision forbids, reachable only through the interaction
+   * of the two changes, so it is pinned here rather than left to be noticed.
+   */
+  it('lets the supplier switch hide the original only when a gallery photo exists', async () => {
+    const rendered = await renderedPrimaryImageSql();
+
+    expect(rendered).toContain('seller_media.variant_id is null');
   });
 });

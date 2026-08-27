@@ -37,10 +37,38 @@ function renderSection(overrides: Partial<ProductEditorFixture> = {}) {
 }
 
 describe('BasicInformationSection - Product media', () => {
-  it('shows the seller-uploaded photo count against the 12-photo cap', () => {
+  it('shows the seller-uploaded photo count against the 12-photo gallery cap', () => {
     renderSection({ media: [] });
 
     expect(screen.getByText('0 of 12 photos')).toBeInTheDocument();
+  });
+
+  /**
+   * A photo moved onto a variation legitimately leaves this grid, and that is
+   * indistinguishable from the vanishing-photo defect the owner already
+   * reported once unless the screen says where it went.
+   */
+  it('names the variation photos that are deliberately not in this grid', () => {
+    renderSection({ media: [], variantPhotoCount: 9 });
+
+    expect(
+      screen.getByText(/9 more photos are attached to variations/u),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/do not use these slots/u)).toBeInTheDocument();
+  });
+
+  it('says nothing about variations when there are none', () => {
+    renderSection({ media: [], variantPhotoCount: 0 });
+
+    expect(screen.queryByText(/attached to variation/u)).toBeNull();
+  });
+
+  it('uses the singular for one variation photo', () => {
+    renderSection({ media: [], variantPhotoCount: 1 });
+
+    expect(
+      screen.getByText(/One more photo is attached to a variation/u),
+    ).toBeInTheDocument();
   });
 
   it('counts the live media list, not the server-rendered fixture snapshot', () => {

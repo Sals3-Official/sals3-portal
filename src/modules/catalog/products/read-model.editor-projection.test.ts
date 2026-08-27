@@ -160,29 +160,98 @@ describe('productToEditorFixture — supplier media', () => {
 });
 
 /**
- * Seller-uploaded photos are a distinct, currently-always-empty pool
- * (ADR-011): no upload path writes a `SELLER_UPLOAD` `product_media_sources`
- * row yet, so `fixture.media` must never borrow the supplier's own picture to
- * fill the gap - that is exactly what `fixture.supplierMedia` is for.
+ * `fixture.media` is the product's **gallery** — the arrangeable grid, both
+ * origins, in stored order, with the cover first (ADR-011 amendment
+ * 2026-08-28).
+ *
+ * It used to be seller uploads only, projected from `sellerMediaUrls`. Two
+ * things changed together: a supplier original is now a tile a seller can drag
+ * and make the cover, and the tiles carry the **real** `product_media_sources`
+ * id rather than a synthesised `${productId}-seller-media-N`. The synthetic ids
+ * were not cosmetic — `deleteSellerMediaAction`'s schema is `z.string().uuid()`,
+ * so a delete on any server-rendered tile could only ever return
+ * `invalid_input`, while a delete on a tile from the current session's own
+ * upload worked because that one carried the id the upload action returned.
+ *
+ * `supplierMedia` is untouched by any of this: it is Supplier Details'
+ * read-only evidence gallery, which is the panel ADR-011 §3 exists to
+ * guarantee and which the amendment does not reach.
  */
-describe('productToEditorFixture — seller-uploaded media', () => {
-  it('is empty when no seller upload is recorded, not a copy of the supplier photo', () => {
+describe('productToEditorFixture — the gallery grid', () => {
+  const SELLER_ROW = {
+    mediaId: '55555555-5555-4555-8555-555555555555',
+    url: 'https://media.example-r2.dev/seller-media/p/own.webp',
+    sourceType: 'SELLER_UPLOAD' as const,
+    variantId: null,
+  };
+  const SUPPLIER_ROW = {
+    mediaId: '66666666-6666-4666-8666-666666666666',
+    url: 'https://cf.cjdropshipping.com/quick/product/supplier.jpg',
+    sourceType: 'SUPPLIER_ORIGINAL' as const,
+    variantId: null,
+  };
+  const VARIATION_ROW = {
+    mediaId: '77777777-7777-4777-8777-777777777777',
+    url: 'https://media.example-r2.dev/seller-media/p/flag-013.webp',
+    sourceType: 'SELLER_UPLOAD' as const,
+    variantId: '88888888-8888-4888-8888-888888888888',
+  };
+
+  it('is empty when the product has no stored media rows at all', () => {
     const { fixture } = productToEditorFixture(CATALOGUE_PRODUCT);
 
     expect(fixture.media).toEqual([]);
   });
 
-  it('carries a real seller upload as its own tile, distinct from supplier media', () => {
+  it('carries the real media row id, not a synthesised one a delete cannot parse', () => {
     const { fixture } = productToEditorFixture({
       ...CATALOGUE_PRODUCT,
-      sellerMediaUrls: [
-        'https://cf.cjdropshipping.com/quick/product/seller-owned.jpg',
-      ],
+      assignableMedia: [SELLER_ROW],
     });
 
     expect(fixture.media).toHaveLength(1);
-    expect(fixture.media[0].sourceType).toBe('SELLER_UPLOAD');
-    expect(fixture.media[0].storageState).toBe('SALS3_STORED');
+    expect(fixture.media[0]?.id).toBe(SELLER_ROW.mediaId);
+  });
+
+  it('puts a supplier original in the same grid, so it can be arranged', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      assignableMedia: [SUPPLIER_ROW, SELLER_ROW],
+    });
+
+    expect(fixture.media.map((item) => item.sourceType)).toEqual([
+      'SUPPLIER_ORIGINAL',
+      'SELLER_UPLOAD',
+    ]);
+  });
+
+  it('marks the first entry as the cover and only the first', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      assignableMedia: [SUPPLIER_ROW, SELLER_ROW],
+    });
+
+    expect(fixture.media.map((item) => item.isCover)).toEqual([true, false]);
+  });
+
+  it('leaves variation photos out of the gallery, and counts them instead', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      assignableMedia: [SELLER_ROW, VARIATION_ROW],
+      variantPhotoCount: 1,
+    });
+
+    expect(fixture.media).toHaveLength(1);
+    expect(fixture.media[0]?.id).toBe(SELLER_ROW.mediaId);
+    expect(fixture.variantPhotoCount).toBe(1);
+  });
+
+  it('keeps Supplier Details’ read-only evidence gallery separate', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      assignableMedia: [SELLER_ROW],
+    });
+
     expect(fixture.supplierMedia).toHaveLength(2);
   });
 });

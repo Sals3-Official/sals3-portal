@@ -1109,6 +1109,35 @@ export const productMediaSources = pgTable(
      */
     storedUrl: text('stored_url'),
     storedAt: timestamp('stored_at', { withTimezone: true }),
+    /**
+     * Where the seller arranged this photo in the product's gallery, and
+     * therefore which one is the cover (ADR-011 amendment 2026-08-28).
+     *
+     * **The cover is position 0.** One ordering answers both "what order do
+     * these appear in" and "which one is the main photo", the way the marketplace
+     * editors sellers already know work: the first tile carries the `Cover`
+     * badge. A separate `is_cover` column would be a second fact that can
+     * disagree with the first, and the disagreement would be invisible until a
+     * buyer saw the wrong lead photo.
+     *
+     * Nullable, and null is not a defect: it means "never arranged", which is
+     * the honest state of every row written before this column existed. Read
+     * paths order `position asc nulls last` and then fall through to the
+     * previous rule (seller uploads first, then oldest observation), so a
+     * product nobody has arranged is ordered exactly as it was before — no
+     * backfill, and no migration that has to guess an order the seller never
+     * chose.
+     *
+     * A `SUPPLIER_ORIGINAL` row may carry a position. That is the amendment:
+     * display order is a Sals3 editorial fact about the evidence, not a change
+     * to the evidence — the same argument `assignVariantMedia` already makes for
+     * `variant_id`. `source_url`, `checksum`, `observed_at`, `rights_basis`, and
+     * `review_state` remain untouched by any reorder.
+     *
+     * **This column may not be added to this schema before its DDL is applied
+     * to production** — see `storedUrl` above and `migrate-media-position.ts`.
+     */
+    position: integer('position'),
     /** SHA-256 of the observed bytes when they have actually been read. */
     checksum: text('checksum'),
     contentType: text('content_type'),
