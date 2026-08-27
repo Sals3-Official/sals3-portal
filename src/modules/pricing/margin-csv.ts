@@ -1,4 +1,5 @@
 import type { RoundingRule } from './money-math';
+import { isPricingScopeDestination } from './pricing-scope-destinations';
 
 /**
  * The CSV contract for bulk category-margin editing.
@@ -23,8 +24,9 @@ import type { RoundingRule } from './money-math';
  * - `rounding` accepts the two rule names, case-insensitively, and defaults
  *   to `NONE` when blank.
  * - `market_code` is the destination the line applies to, and **blank means
- *   all destinations** — the same meaning `pricing_category_policies.market_code`
- *   gives a null. ADR-015's `Amendment — 2026-08-25` flags this column as part
+ *   Global** — every country without a column of its own, the meaning
+ *   `pricing_category_policies.market_code` gives a null since owner decision
+ *   2026-08-27. ADR-015's `Amendment — 2026-08-25` flags this column as part
  *   of the decision rather than a detail, and the reason is the failure it
  *   prevents: a seller who exports Australia, edits it, and imports while the
  *   screen is showing the Philippines would otherwise write every Australian
@@ -54,7 +56,7 @@ export type MarginCsvRow = {
   /** `null` clears any margin on this category, in this row's own scope. */
   marginPercent: number | null;
   roundingRule: RoundingRule;
-  /** `null` is the all-destinations rule, matching the column it writes. */
+  /** `null` is the Global rule, matching the column it writes. */
   marketCode: string | null;
 };
 
@@ -178,7 +180,7 @@ export function parseMarginCsv(text: string): MarginCsvParseResult {
    * Keyed on category **and scope**, not category alone.
    *
    * The same category legitimately appears twice now — once for a destination
-   * and once blank for all destinations — and they are two different rows in
+   * and once blank for Global — and they are two different rows in
    * two different partial unique indexes. Deduping on the code alone would
    * reject that file as a duplicate and make the second scope unreachable
    * through import.
@@ -242,14 +244,21 @@ export function parseMarginCsv(text: string): MarginCsvParseResult {
       marketIndex === -1 ? '' : (cells[marketIndex] ?? '').trim().toUpperCase();
 
     /**
-     * Shape-checked against the same `^[A-Z]{2}$` the database enforces, so a
-     * typo is a numbered line rather than a row written to a destination that
-     * does not exist. Blank is the all-destinations rule and is not an error.
+     * Checked against the **allow list**, not only the `^[A-Z]{2}$` shape.
+     *
+     * The shape check alone let a hand-edited file write an ACTIVE policy
+     * scoped to a destination the screen never offered: `GB` passes
+     * `^[A-Z]{2}$` and the database CHECK, so the row would sit in the table
+     * with no column to display it and no buyer able to reach it. That is the
+     * exact failure `isPricingScopeDestination` exists to prevent, and this was
+     * the one write path that never asked it (found 2026-08-27).
+     *
+     * Blank is the Global rule and is not an error.
      */
-    if (rawMarket !== '' && !/^[A-Z]{2}$/.test(rawMarket)) {
+    if (rawMarket !== '' && !isPricingScopeDestination(rawMarket)) {
       errors.push({
         line: lineNumber,
-        message: `market_code "${rawMarket}" must be a two-letter country code, or blank for all destinations.`,
+        message: `market_code "${rawMarket}" is not a destination you can price for. Use one shown on Market Rules, or leave it blank for Global.`,
       });
       return;
     }
@@ -262,7 +271,7 @@ export function parseMarginCsv(text: string): MarginCsvParseResult {
         line: lineNumber,
         message:
           marketCode === null
-            ? `${categoryCode} appears more than once for all destinations.`
+            ? `${categoryCode} appears more than once for Global.`
             : `${categoryCode} appears more than once for ${marketCode}.`,
       });
       return;

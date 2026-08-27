@@ -9,8 +9,13 @@ import {
   like,
   or,
 } from 'drizzle-orm';
+import type { PgColumn } from 'drizzle-orm/pg-core';
 import { TAXONOMY_V1_CODE_PREFIX } from '@/lib/products/sals3-category-code';
 import type { Executor } from '@/modules/catalog/candidates/repository';
+import {
+  GLOBAL_PRICING_SCOPE_KEY,
+  isGlobalPricingDestination,
+} from '@/modules/pricing/pricing-scope-destinations';
 import {
   pricingCategoryPolicies,
   pricingFxAdjustmentPolicies,
@@ -165,17 +170,21 @@ export type NearestCategoryPolicy = {
 /**
  * Which of two candidate rows wins, in one place.
  *
- * **Depth beats market** — owner decision, 2026-08-25, confirmed explicitly.
- * A deeper category carrying only an all-destinations rule outranks a shallower
- * one carrying a rule for this exact destination. The alternative was tried on
- * paper and rejected: if market outranked depth, setting a single country rate
- * on a department would silently override every product-level decision beneath
- * it, and nothing in the UI would show that it had.
+ * **Depth decides, and it is the only thing left to decide** — owner decision
+ * 2026-08-25 ("depth beats market"), narrowed by owner decision 2026-08-27
+ * (Global covers only the countries with no column of their own).
  *
- * Market is the tie-break **within** one depth, where an exactly-scoped rule
- * beats the unscoped one. That pair can only exist because the two partial
- * unique indexes deliberately allow it: one ACTIVE row per `(seller, category)`
- * with a null scope, and one per `(seller, category, market_code)` without.
+ * The 2026-08-25 rule had to arbitrate between a scoped row and an unscoped one
+ * because `scopeCondition()` used to return both. It no longer does: a
+ * destination Sals3 has named sees only its own rows, and every other country
+ * sees only Global rows. The candidate set is therefore single-scoped, and
+ * within one scope the partial unique indexes permit exactly one ACTIVE row per
+ * category — so a same-depth tie is unrepresentable and market has nothing left
+ * to break.
+ *
+ * The original reasoning still holds and is why this did not become
+ * "market beats depth": setting one country's rate on a department must never
+ * silently override a product-level decision beneath it.
  *
  * Returns true when `row` should replace `best`.
  */
@@ -183,12 +192,33 @@ function outranks(
   row: { category: Sals3CategoryRow; policy: PricingCategoryPolicyRow },
   best: { category: Sals3CategoryRow; policy: PricingCategoryPolicyRow },
 ): boolean {
-  if (row.category.path.length !== best.category.path.length) {
-    return row.category.path.length > best.category.path.length;
-  }
+  return row.category.path.length > best.category.path.length;
+}
 
-  // Same category: the destination-specific rule is the more specific answer.
-  return row.policy.marketCode !== null && best.policy.marketCode === null;
+/**
+ * The scope predicate for a resolving read.
+ *
+ * Owner decision 2026-08-27. One destination sees **one** scope's rows:
+ *
+ * - a country with a column of its own → only rows scoped to that country;
+ * - every other country → only Global rows (`market_code IS NULL`).
+ *
+ * The two sets are disjoint, which is the whole point. Before this, the read
+ * widened to `market_code = $market OR market_code IS NULL`, so an
+ * all-destinations rule on a deeper category could win an Australian order that
+ * had an Australian rule higher up. That was correct while `null` meant "all
+ * destinations"; it is wrong now that `null` means "the countries we have not
+ * named", and nothing in the UI would have shown it happening.
+ *
+ * **This is behaviour-preserving on today's data.** `fanOutUnscopedMargins`
+ * retired every unscoped row on 2026-08-25 (213 → 0), so no `NULL` row exists
+ * for the widening to have found. The first Global rule a seller writes is the
+ * first row this predicate changes the fate of.
+ */
+function scopeCondition(column: PgColumn, marketCode: string) {
+  return isGlobalPricingDestination(marketCode)
+    ? isNull(column)
+    : eq(column, marketCode);
 }
 
 /**
@@ -196,14 +226,13 @@ function outranks(
  *
  * `marketCode` is required and deliberately not defaulted. ADR-015's
  * `Amendment — 2026-08-25`: a caller that cannot say which destination it is
- * pricing for must refuse rather than silently resolve the all-destinations
- * rule, for the same reason `minContributionCurrency` is explicit — an inferred
- * commercial input is one nobody can audit later.
+ * pricing for must refuse rather than silently resolve some other rule, for the
+ * same reason `minContributionCurrency` is explicit — an inferred commercial
+ * input is one nobody can audit later.
  *
- * The query widens to `market_code = $market OR market_code IS NULL`; it does
- * **not** narrow to the market alone. Dropping the unscoped rows would make a
- * seller who has configured nothing per-destination lose every margin they
- * have, which is the opposite of what "null means all destinations" promises.
+ * The scope is decided by `scopeCondition()`: a named destination reads its own
+ * rows, any other country reads Global's. See ADR-015's
+ * `Amendment — 2026-08-27`.
  */
 export async function findNearestActiveCategoryPolicy(
   executor: Executor,
@@ -228,10 +257,7 @@ export async function findNearestActiveCategoryPolicy(
         eq(pricingCategoryPolicies.categoryId, sals3Categories.id),
         eq(pricingCategoryPolicies.sellerAccountId, sellerAccountId),
         eq(pricingCategoryPolicies.status, 'ACTIVE'),
-        or(
-          eq(pricingCategoryPolicies.marketCode, marketCode),
-          isNull(pricingCategoryPolicies.marketCode),
-        ),
+        scopeCondition(pricingCategoryPolicies.marketCode, marketCode),
       ),
     )
     .where(inArray(sals3Categories.path, chainPaths));
@@ -520,13 +546,17 @@ export async function listCategoryMarginOverview(
  * with no rule at all still arrives once with a null policy. Grouping by
  * `categoryId` is what turns that back into one row per category.
  *
- * All-destinations rules (`market_code IS NULL`) are read and reported under
- * the `ALL_MARKETS_KEY` rather than dropped. They are retired by
- * `fanOutUnscopedMargins`, but a reader that silently ignored one would show
- * "Not set" for a category a live rule is still pricing — the exact failure the
- * migration exists to prevent, reintroduced one layer up.
+ * Global rules (`market_code IS NULL`) are read and reported under
+ * `ALL_MARKETS_KEY` alongside the six, so the screen can render a Global column
+ * from the same single scan.
+ *
+ * The key was `'__all__'` until 2026-08-27, when the owner named this scope
+ * **Global** and narrowed its meaning from "all destinations" to "every country
+ * without a column of its own". It is re-exported from
+ * `pricing-scope-destinations` so the read key, the column key and the CSV
+ * keyword cannot drift into three spellings of one idea.
  */
-export const ALL_MARKETS_KEY = '__all__';
+export const ALL_MARKETS_KEY = GLOBAL_PRICING_SCOPE_KEY;
 
 export async function listCategoryMarginOverviewByMarket(
   executor: Executor,
@@ -1041,26 +1071,27 @@ export async function deactivateFundingBufferPolicy(
  * `min_contribution_minor` carries. So the scope applies here too, or the rule
  * would only have moved by half.
  *
- * There is no depth here, so market is the only key: an exactly-scoped default
- * beats the unscoped one, and `.limit(1)` is gone because both can exist. Taking
- * the first row of two would have made the answer depend on Postgres's physical
- * ordering — a silent, unreproducible pick between two real configurations.
+ * There is no depth here, so the scope is the only key. `.limit(1)` is back as
+ * of 2026-08-27: `scopeCondition()` matches exactly one scope, and each scope
+ * permits at most one ACTIVE row per seller through the two partial unique
+ * indexes, so the query can no longer return two real configurations for
+ * Postgres's physical ordering to choose between. It was removed on 2026-08-25
+ * for exactly that hazard, and the hazard is what went away, not the caution.
  */
 /**
  * The store default for **exactly** one scope, with no fallback.
  *
- * Deliberately separate from `findActiveStoreDefault`, which resolves — walks
- * the scoped rule then the unscoped one — because a screen and a resolver want
+ * Deliberately separate from `findActiveStoreDefault`, which resolves the scope
+ * a *buyer's destination* lands on, because a screen and a resolver want
  * opposite things from the same table.
  *
  * The resolver wants "whatever applies to this destination". An editor wants
  * "the row this scope owns, or nothing". Handing the editor the resolver's
- * answer is how a screen ends up **displaying the unscoped rule and writing a
- * scoped one**, or displaying a rule inherited from all-destinations and
- * offering a Deactivate that silently creates a new row instead.
+ * answer is how a screen ends up **displaying one scope's rule and writing
+ * another's**, or offering a Deactivate that silently creates a new row.
  *
- * `null` asks for the unscoped rule, which is what the Market Rules screen
- * edits until it grows a destination selector.
+ * `null` asks for the **Global** rule (owner decision 2026-08-27) — the row
+ * that prices every country without a column of its own.
  */
 export async function findStoreDefaultForScope(
   executor: Executor,
@@ -1096,14 +1127,12 @@ export async function findActiveStoreDefault(
       and(
         eq(pricingStoreDefaults.sellerAccountId, sellerAccountId),
         eq(pricingStoreDefaults.status, 'ACTIVE'),
-        or(
-          eq(pricingStoreDefaults.marketCode, marketCode),
-          isNull(pricingStoreDefaults.marketCode),
-        ),
+        scopeCondition(pricingStoreDefaults.marketCode, marketCode),
       ),
-    );
+    )
+    .limit(1);
 
-  return rows.find((row) => row.marketCode !== null) ?? rows[0] ?? null;
+  return rows[0] ?? null;
 }
 
 export async function createStoreDefault(

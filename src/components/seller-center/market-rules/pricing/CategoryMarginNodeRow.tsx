@@ -7,11 +7,12 @@ import { useRouter } from 'next/navigation';
 import { ChevronRight } from 'lucide-react';
 import { getCategoryPolicyHistoryAction } from '@/app/(portal)/market-rules/pricing-actions';
 import { Button } from '@/components/ui/button';
-import type { PricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
+import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations';
 import CategoryMarginDialog from './CategoryMarginDialog';
 import {
   effectiveMarginFor,
   ROW_GRID,
+  rowGridStyle,
   type CategoryMarginNodeViewModel,
   type EffectiveMargin,
   type StoreDefaultSummary,
@@ -21,7 +22,9 @@ import PolicyHistoryButton from './PolicyHistoryButton';
 type CategoryMarginNodeRowProps = {
   node: CategoryMarginNodeViewModel;
   nodesByPath: Map<string, CategoryMarginNodeViewModel>;
-  destinations: PricingScopeDestination[];
+  /** One cell each, in the order they are shown — the six, then Global. */
+  scopes: PricingScope[];
+  /** Keyed by scope key — the last fallback in that scope's column. */
   storeDefaults: Record<string, StoreDefaultSummary | null>;
   sellerAccountId: string;
   canManage: boolean;
@@ -44,20 +47,23 @@ function formatPercent(rate: string): string {
 /**
  * What a cell means, spelled out for the tooltip and the screen reader.
  *
- * The column header already says which destination this is, so these name the
- * origin only. With the source column gone, this string is the only place an
- * inherited rate explains itself in words.
+ * The column header already says which scope this is, so these name the origin
+ * only. With the source column gone, this string is the only place an inherited
+ * rate explains itself in words.
+ *
+ * There is no longer a "for all destinations" variant — owner decision
+ * 2026-08-27. A `market_code IS NULL` rule is the Global scope's own rule, and
+ * Global covers only the countries with no column of its own, so it can never
+ * be the origin of a rate shown in a named destination's column. Saying "for
+ * all destinations" anywhere here would describe a widening the resolver stopped
+ * doing.
  */
 function sourceLabel(effective: EffectiveMargin): string {
   switch (effective.source) {
     case 'SELF':
-      return effective.viaAllMarkets
-        ? 'Set on this category for all destinations'
-        : 'Set on this category';
+      return 'Set on this category';
     case 'ANCESTOR':
-      return effective.viaAllMarkets
-        ? `From ${effective.ancestorName}, for all destinations`
-        : `From ${effective.ancestorName}`;
+      return `From ${effective.ancestorName}`;
     case 'STORE_DEFAULT':
       return 'Store default';
     default:
@@ -66,13 +72,18 @@ function sourceLabel(effective: EffectiveMargin): string {
 }
 
 /**
- * One destination's rate for one category.
+ * One scope's rate for one category.
  *
- * Solid green when the category carries its own rule for this destination, a
+ * Solid green when the category carries its own rule for this scope, a
  * `sals3-bright`-outlined tint when the rate is inherited: an inherited rate is
  * real and effective, but the outline says "editing the parent moves this too".
  * `sals3-bright` is used only as a border (it fails 4.5:1 — see the token's own
  * doc comment); the chip text is `sals3-deep`, 14.3:1 on white.
+ *
+ * Every `SELF` rate is solid since 2026-08-27. A rule used to be shown weakened
+ * when it reached the cell through the all-destinations scope rather than the
+ * column's own; that path is gone, so a `SELF` rate is now always the rule this
+ * column owns and the outline would understate it.
  */
 function MarginChip({ effective }: { effective: EffectiveMargin }) {
   if (effective.source === 'NONE') {
@@ -83,7 +94,7 @@ function MarginChip({ effective }: { effective: EffectiveMargin }) {
     );
   }
 
-  if (effective.source === 'SELF' && !effective.viaAllMarkets) {
+  if (effective.source === 'SELF') {
     return (
       <span className="inline-flex w-full items-center justify-center rounded-full bg-success-surface px-1.5 py-0.5 text-[11px] font-bold whitespace-nowrap text-green-700 tabular-nums">
         {formatPercent(effective.rate)}
@@ -99,21 +110,23 @@ function MarginChip({ effective }: { effective: EffectiveMargin }) {
 }
 
 /**
- * One taxonomy node — department or group — across every open destination.
+ * One taxonomy node — department or group — across every pricing scope.
  *
  * Owner decision 2026-08-25: the destinations are columns rather than a mode
  * the whole screen is switched into. Reading a rate for one country used to
  * mean reloading the page and holding the previous number in your head; the
  * point of a column is that the comparison is the default view, not a task.
+ * Global joined them as a column on 2026-08-27 and is read exactly like the
+ * rest — its key is `GLOBAL` and it stores `market_code = NULL`.
  *
  * Editing happens in a pop-out opened from the cell, so the click that says
- * which destination is the same click that opens the editor — there is no
- * separate step in which the two could disagree.
+ * which scope is the same click that opens the editor — there is no separate
+ * step in which the two could disagree.
  */
 export default function CategoryMarginNodeRow({
   node,
   nodesByPath,
-  destinations,
+  scopes,
   storeDefaults,
   sellerAccountId,
   canManage,
@@ -135,16 +148,16 @@ export default function CategoryMarginNodeRow({
 
   const indent = flat ? 0 : (node.depth - 1) * 20;
   const hasChildren = node.childCount > 0;
-  const editingDestination =
+  const editingScope =
     editing === null
       ? null
-      : (destinations.find((destination) => destination.code === editing) ??
-        null);
+      : (scopes.find((scope) => scope.key === editing) ?? null);
 
   return (
     <>
       <div
         role="row"
+        style={rowGridStyle(scopes.length)}
         className={`${ROW_GRID} border-b border-border px-3 py-1.5 last:border-b-0 hover:bg-surface/60`}
       >
         <div
@@ -187,27 +200,27 @@ export default function CategoryMarginNodeRow({
           </div>
         </div>
 
-        {destinations.map((destination) => {
+        {scopes.map((scope) => {
           const effective = effectiveMarginFor(
             node,
             nodesByPath,
-            storeDefaults[destination.code] ?? null,
-            destination.code,
+            storeDefaults[scope.key] ?? null,
+            scope.key,
           );
-          const description = `${destination.label}: ${sourceLabel(effective)}`;
+          const description = `${scope.label}: ${sourceLabel(effective)}`;
 
           return (
-            <div role="cell" key={destination.code} className="min-w-0">
+            <div role="cell" key={scope.key} className="min-w-0">
               {canManage ? (
                 <button
                   type="button"
-                  // The destination is named in the label, not only in the
-                  // column position — a screen reader gets no column header
-                  // from a CSS grid.
+                  // The scope is named in the label, not only in the column
+                  // position — a screen reader gets no column header from a CSS
+                  // grid.
                   aria-label={`${node.name} — ${description}. Edit.`}
                   title={description}
                   className="w-full cursor-pointer rounded-full focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                  onClick={() => setEditing(destination.code)}
+                  onClick={() => setEditing(scope.key)}
                 >
                   <MarginChip effective={effective} />
                 </button>
@@ -229,15 +242,15 @@ export default function CategoryMarginNodeRow({
         </div>
       </div>
 
-      {canManage && editingDestination !== null ? (
+      {canManage && editingScope !== null ? (
         <CategoryMarginDialog
           node={node}
-          destination={editingDestination}
+          scope={editingScope}
           effective={effectiveMarginFor(
             node,
             nodesByPath,
-            storeDefaults[editingDestination.code] ?? null,
-            editingDestination.code,
+            storeDefaults[editingScope.key] ?? null,
+            editingScope.key,
           )}
           sellerAccountId={sellerAccountId}
           open

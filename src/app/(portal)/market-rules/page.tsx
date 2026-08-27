@@ -8,7 +8,7 @@ import PricingSectionFallback from '@/components/seller-center/market-rules/pric
 import StoreDefaultSection from '@/components/seller-center/market-rules/pricing/StoreDefaultSection';
 import { can } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
-import { listPricingScopeDestinations } from '@/modules/pricing/pricing-scope-destinations';
+import { listPricingScopes } from '@/modules/pricing/pricing-scope-destinations';
 
 export const metadata: Metadata = { title: 'Market rules · Seller Center' };
 
@@ -59,8 +59,13 @@ export default async function MarketRulesPage() {
    * margin costs nothing and prices nothing until a destination is separately
    * approved, so the two lists are deliberately different. See
    * `pricing-scope-destinations.ts`.
+   *
+   * Scopes rather than destinations since 2026-08-27: the six measured
+   * destinations plus Global, which prices every country without a column of
+   * its own. Global carries `marketCode: null`, which is what the reads and the
+   * writes use; `key` is what the columns and the lookups use.
    */
-  const destinations = listPricingScopeDestinations();
+  const scopes = listPricingScopes();
 
   const canReadPricing = can(session.role, 'pricing_policy:read');
   const canManagePricing = can(session.role, 'pricing_policy:manage');
@@ -94,11 +99,14 @@ export default async function MarketRulesPage() {
           */}
           <Suspense
             fallback={
-              <PricingSectionFallback label="Store default pricing" rows={6} />
+              <PricingSectionFallback
+                label="Store default pricing"
+                rows={scopes.length}
+              />
             }
           >
             <StoreDefaultSection
-              destinations={destinations}
+              scopes={scopes}
               sellerAccountId={session.sellerId}
               canManage={canManagePricing}
             />
@@ -109,7 +117,7 @@ export default async function MarketRulesPage() {
             }
           >
             <CategoryPricingSection
-              destinations={destinations}
+              scopes={scopes}
               sellerAccountId={session.sellerId}
               canManage={canManagePricing}
             />

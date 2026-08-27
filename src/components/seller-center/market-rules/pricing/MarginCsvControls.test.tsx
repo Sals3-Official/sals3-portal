@@ -40,10 +40,11 @@ function node(
   };
 }
 
-/** The two pilot lanes are enough to prove one line per destination. */
-const DESTINATIONS = [
-  { code: 'AU', label: 'Australia' },
-  { code: 'FJ', label: 'Fiji' },
+/** Two pilot lanes and Global — enough to prove one line per scope. */
+const SCOPES = [
+  { key: 'AU', label: 'Australia', marketCode: 'AU', isGlobal: false },
+  { key: 'FJ', label: 'Fiji', marketCode: 'FJ', isGlobal: false },
+  { key: 'GLOBAL', label: 'Global', marketCode: null, isGlobal: true },
 ];
 
 beforeEach(() => {
@@ -57,13 +58,7 @@ describe('MarginCsvControls', () => {
    * buttons presented a sequence as a choice.
    */
   it('offers a single button, not a separate export and import', () => {
-    render(
-      <MarginCsvControls
-        nodes={[node()]}
-        canManage
-        destinations={DESTINATIONS}
-      />,
-    );
+    render(<MarginCsvControls nodes={[node()]} canManage scopes={SCOPES} />);
 
     expect(
       screen.getByRole('button', { name: /Import \/ export/ }),
@@ -73,13 +68,7 @@ describe('MarginCsvControls', () => {
   });
 
   it('opens a dialog that numbers the download before the upload', () => {
-    render(
-      <MarginCsvControls
-        nodes={[node()]}
-        canManage
-        destinations={DESTINATIONS}
-      />,
-    );
+    render(<MarginCsvControls nodes={[node()]} canManage scopes={SCOPES} />);
 
     fireEvent.click(screen.getByRole('button', { name: /Import \/ export/ }));
 
@@ -89,11 +78,7 @@ describe('MarginCsvControls', () => {
 
   it('lets a read-only caller download, but never upload', () => {
     render(
-      <MarginCsvControls
-        nodes={[node()]}
-        canManage={false}
-        destinations={DESTINATIONS}
-      />,
+      <MarginCsvControls nodes={[node()]} canManage={false} scopes={SCOPES} />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /Import \/ export/ }));
@@ -106,13 +91,7 @@ describe('MarginCsvControls', () => {
   });
 
   it('refuses to apply until a file and a long enough reason are both present', () => {
-    render(
-      <MarginCsvControls
-        nodes={[node()]}
-        canManage
-        destinations={DESTINATIONS}
-      />,
-    );
+    render(<MarginCsvControls nodes={[node()]} canManage scopes={SCOPES} />);
 
     fireEvent.click(screen.getByRole('button', { name: /Import \/ export/ }));
 
@@ -128,13 +107,7 @@ describe('MarginCsvControls', () => {
   });
 
   it('counts the reason down as it is typed', () => {
-    render(
-      <MarginCsvControls
-        nodes={[node()]}
-        canManage
-        destinations={DESTINATIONS}
-      />,
-    );
+    render(<MarginCsvControls nodes={[node()]} canManage scopes={SCOPES} />);
 
     fireEvent.click(screen.getByRole('button', { name: /Import \/ export/ }));
     fireEvent.change(screen.getByLabelText('Reason for change'), {
@@ -153,13 +126,7 @@ describe('MarginCsvControls', () => {
       rowErrors: ['Line 3: margin_percent "zzz" is not a number.'],
     });
 
-    render(
-      <MarginCsvControls
-        nodes={[node()]}
-        canManage
-        destinations={DESTINATIONS}
-      />,
-    );
+    render(<MarginCsvControls nodes={[node()]} canManage scopes={SCOPES} />);
 
     fireEvent.click(screen.getByRole('button', { name: /Import \/ export/ }));
 
@@ -196,13 +163,7 @@ describe('MarginCsvControls', () => {
       data: { written: 2, cleared: 1, unchanged: 5 },
     });
 
-    render(
-      <MarginCsvControls
-        nodes={[node()]}
-        canManage
-        destinations={DESTINATIONS}
-      />,
-    );
+    render(<MarginCsvControls nodes={[node()]} canManage scopes={SCOPES} />);
 
     fireEvent.click(screen.getByRole('button', { name: /Import \/ export/ }));
 

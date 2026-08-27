@@ -283,7 +283,38 @@ describe('the file carries its own destination', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.errors[0]).toMatchObject({ line: 2 });
-    expect(result.errors[0]?.message).toContain('two-letter country code');
+    expect(result.errors[0]?.message).toContain(
+      'not a destination you can price for',
+    );
+  });
+
+  it('refuses a well-formed country that is not an offered destination', () => {
+    /**
+     * The hole this closed (2026-08-27). `GB` passes `^[A-Z]{2}$` and the
+     * database CHECK, so until the allow list ran here a hand-edited file could
+     * write an ACTIVE policy scoped to a country with no column to show it and
+     * no buyer able to reach it. Import was the only write path that never
+     * asked `isPricingScopeDestination`.
+     */
+    const result = parseMarginCsv(
+      'category_code,margin_percent,market_code\nCAT-GGL-1,25,GB\n',
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors[0]).toMatchObject({ line: 2 });
+  });
+
+  it('accepts a blank destination as the Global rule', () => {
+    // Blank is how a Global rule round-trips: the exporter writes an empty cell
+    // for it, and this is the read half of that contract.
+    const result = parseMarginCsv(
+      'category_code,margin_percent,market_code\nCAT-GGL-1,25,\n',
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows[0]).toMatchObject({ marketCode: null });
   });
 
   it('treats a file with no market_code column as all destinations', () => {

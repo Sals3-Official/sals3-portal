@@ -23,9 +23,11 @@ vi.mock('@/app/(portal)/market-rules/pricing-actions', () => ({
 import StoreDefaultsTable from './StoreDefaultsTable';
 import type { StoreDefaultViewModel } from './store-default-model';
 
-const DESTINATIONS = [
-  { code: 'AU', label: 'Australia' },
-  { code: 'FJ', label: 'Fiji' },
+/** Two named lanes and Global, which is a row here like any other. */
+const SCOPES = [
+  { key: 'AU', label: 'Australia', marketCode: 'AU', isGlobal: false },
+  { key: 'FJ', label: 'Fiji', marketCode: 'FJ', isGlobal: false },
+  { key: 'GLOBAL', label: 'Global', marketCode: null, isGlobal: true },
 ];
 
 function storeDefault(
@@ -51,7 +53,7 @@ describe('StoreDefaultsTable', () => {
   it('shows each destination its own base margin and minimum', () => {
     render(
       <StoreDefaultsTable
-        destinations={DESTINATIONS}
+        scopes={SCOPES}
         storeDefaults={{
           AU: storeDefault({ minContributionRate: '0.180000' }),
           FJ: storeDefault({ minContributionMinor: 400 }),
@@ -69,7 +71,7 @@ describe('StoreDefaultsTable', () => {
   it('says None rather than zero when a destination has no minimum', () => {
     render(
       <StoreDefaultsTable
-        destinations={DESTINATIONS}
+        scopes={SCOPES}
         storeDefaults={{ AU: storeDefault(), FJ: null }}
         canManage
       />,
@@ -83,7 +85,7 @@ describe('StoreDefaultsTable', () => {
   it('offers Set where no rule exists and Edit where one does', () => {
     render(
       <StoreDefaultsTable
-        destinations={DESTINATIONS}
+        scopes={SCOPES}
         storeDefaults={{ AU: storeDefault(), FJ: null }}
         canManage
       />,
@@ -97,10 +99,30 @@ describe('StoreDefaultsTable', () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * Global is a scope, so it is a row — owner decision 2026-08-27. Nothing in
+   * this component knows about it; it arrives in `scopes` and iterates like the
+   * rest.
+   */
+  it('gives Global a row of its own, named in words', () => {
+    render(
+      <StoreDefaultsTable
+        scopes={SCOPES}
+        storeDefaults={{ AU: storeDefault(), FJ: null, GLOBAL: null }}
+        canManage
+      />,
+    );
+
+    expect(screen.getByText('Global')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Set store default for Global' }),
+    ).toBeInTheDocument();
+  });
+
   it('read-only callers get no editing controls', () => {
     render(
       <StoreDefaultsTable
-        destinations={DESTINATIONS}
+        scopes={SCOPES}
         storeDefaults={{ AU: storeDefault(), FJ: null }}
         canManage={false}
       />,
@@ -116,7 +138,7 @@ describe('the minimum is one choice, not two fields', () => {
   function openFiji() {
     render(
       <StoreDefaultsTable
-        destinations={DESTINATIONS}
+        scopes={SCOPES}
         storeDefaults={{ AU: null, FJ: null }}
         canManage
       />,
@@ -182,6 +204,45 @@ describe('the minimum is one choice, not two fields', () => {
         marketCode: 'FJ',
         reason: 'Fiji freight is four times the PH lane.',
       }),
+    );
+  });
+});
+
+describe('Global writes the null market code, never its column key', () => {
+  /**
+   * `'GLOBAL'` is the name this scope has on screen and nowhere else.
+   * `pricing_store_defaults.market_code` is a country code or `NULL`, and the
+   * action's own schema refuses anything that is neither — so sending the key
+   * would fail the save outright, and sending a country code would quietly
+   * price the wrong one.
+   */
+  it('sends marketCode: null when the Global row is edited', async () => {
+    mocks.saveStoreDefaultAction.mockResolvedValue({ ok: true });
+
+    render(
+      <StoreDefaultsTable
+        scopes={SCOPES}
+        storeDefaults={{ AU: null, FJ: null, GLOBAL: null }}
+        canManage
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Set store default for Global' }),
+    );
+
+    fireEvent.change(screen.getByLabelText('Base margin percent for Global'), {
+      target: { value: '30' },
+    });
+    fireEvent.change(screen.getByLabelText('Reason for change to Global'), {
+      target: { value: 'Everywhere we have not measured freight for yet.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(mocks.saveStoreDefaultAction).toHaveBeenCalledWith(
+        expect.objectContaining({ marketCode: null }),
+      ),
     );
   });
 });

@@ -52,9 +52,100 @@ export function listPricingScopeDestinations(): PricingScopeDestination[] {
  * hand-edited CSV cannot store a scope the screen never offered. Deliberately
  * an allow list rather than "any two letters": a typo should be refused, not
  * stored as a destination nobody will ever price for and nobody will notice.
+ *
+ * Answers **false for Global**, which is not a country and is never carried in
+ * a `market_code`. Callers deciding whether a *scope key* is legitimate want
+ * `pricingScopeMarketCode()`; this one answers only "is this a named
+ * destination".
  */
 export function isPricingScopeDestination(code: string): boolean {
   return listPricingScopeDestinations().some(
     (destination) => destination.code === code,
   );
+}
+
+/**
+ * The key the screens and the CSV use for the Global scope.
+ *
+ * Deliberately **not** a country code. `market_code` is `NULL` in the database
+ * for a Global rule, and `null` is not a value a URL, a table column key or a
+ * CSV cell can carry unambiguously — a blank cell is indistinguishable from a
+ * missing one at a glance. This constant is that null's name at the edges, and
+ * `pricingScopeMarketCode()` is the only place the two representations meet.
+ *
+ * It must never enter `PILOT_DESTINATIONS` or the buyer-destination policy:
+ * `destinationCountryCode` is consumed as a real country by `publishProduct`
+ * and written onto `product_offers.market_code`, and a non-country there would
+ * publish a product into a market no carrier can quote.
+ */
+export const GLOBAL_PRICING_SCOPE_KEY = 'GLOBAL';
+
+/**
+ * A destination column, or Global.
+ *
+ * `marketCode` is what gets stored: a country code for the six, `null` for
+ * Global. Owner decision 2026-08-27.
+ */
+export type PricingScope = {
+  key: string;
+  label: string;
+  marketCode: string | null;
+  isGlobal: boolean;
+};
+
+/**
+ * Every scope a margin may be set for: the six measured destinations, then
+ * Global.
+ *
+ * **Global is last on purpose.** `publishProduct` uses `destinations[0]` as its
+ * fallback publication market, and while that reads from
+ * `listPricingScopeDestinations()` rather than from here, the two lists are
+ * close enough that ordering deserves to be deliberate in both.
+ */
+export function listPricingScopes(): PricingScope[] {
+  return [
+    ...listPricingScopeDestinations().map((destination) => ({
+      key: destination.code,
+      label: destination.label,
+      marketCode: destination.code,
+      isGlobal: false,
+    })),
+    {
+      key: GLOBAL_PRICING_SCOPE_KEY,
+      label: 'Global',
+      marketCode: null,
+      isGlobal: true,
+    },
+  ];
+}
+
+/**
+ * The `market_code` a scope key stores, or `undefined` when the key is not a
+ * scope this seller may price for.
+ *
+ * `undefined` rather than `null` for the refusal, because `null` is a valid
+ * answer here — it is Global. Callers must test with `=== undefined`, never for
+ * falsiness.
+ */
+export function pricingScopeMarketCode(key: string): string | null | undefined {
+  if (key === GLOBAL_PRICING_SCOPE_KEY) return null;
+  return isPricingScopeDestination(key) ? key : undefined;
+}
+
+/**
+ * Whether a buyer destination falls to the Global rule.
+ *
+ * Owner decision 2026-08-27: **Global covers only the countries with no column
+ * of their own.** A destination Sals3 has named and measured never silently
+ * takes the everywhere-else rate — if its column is blank it cannot price, and
+ * the screen already says so. The alternative (Global as a fallback for any
+ * unset destination) was considered and refused: it would let one number price
+ * Australia again, which is the exact thing per-destination margins exist to
+ * stop.
+ *
+ * A buyer whose country *is* one of the six is routed to that country's own
+ * scope, so this can only ever answer true for a country Sals3 has not named.
+ */
+export function isGlobalPricingDestination(marketCode: string): boolean {
+  return !isPricingScopeDestination(marketCode);
 }

@@ -22,16 +22,33 @@ export { ALL_MARKETS_KEY };
  *
  * Owner decision 2026-08-25 replaced the scope selector with a column per
  * destination, which changed what this grid has to do. The old layout gave a
- * whole column to "source" text; the six destination columns now occupy that
- * span, and the source of an inherited rate is carried by the chip's outline
- * and its tooltip instead of by a column of its own.
+ * whole column to "source" text; the scope columns now occupy that span, and
+ * the source of an inherited rate is carried by the chip's outline and its
+ * tooltip instead of by a column of its own.
  *
- * Destination columns are fixed-width and equal so the eye can compare a rate
- * down a column, which is the entire reason for showing them side by side. The
- * category column takes the slack.
+ * Scope columns are fixed-width and equal so the eye can compare a rate down a
+ * column, which is the entire reason for showing them side by side. The
+ * category column takes the slack. The track list itself moved to
+ * `rowGridStyle()` when the count stopped being a constant.
  */
-export const ROW_GRID =
-  'grid grid-cols-[minmax(9rem,1fr)_repeat(6,minmax(3.5rem,4.5rem))_2.75rem] items-center gap-x-2';
+export const ROW_GRID = 'grid items-center gap-x-2';
+
+/**
+ * The column track list, derived from the scopes actually being rendered.
+ *
+ * An inline style rather than a Tailwind class because the count is data now:
+ * it was `repeat(6,…)` until 2026-08-27, when Global became a seventh column,
+ * and a hard-coded count is a layout that silently collapses the first time the
+ * list changes. Tailwind cannot generate a class from a runtime number, so the
+ * track list is the one thing here that does not go through a utility.
+ */
+export function rowGridStyle(scopeCount: number): {
+  gridTemplateColumns: string;
+} {
+  return {
+    gridTemplateColumns: `minmax(9rem,1fr) repeat(${scopeCount},minmax(3.5rem,4.5rem)) 2.75rem`,
+  };
+}
 
 export type CategoryMarginPolicyViewModel = {
   id: string;
@@ -40,7 +57,7 @@ export type CategoryMarginPolicyViewModel = {
   version: number;
   updatedAt: Date;
   /**
-   * The destination this rule is for, or `null` for all destinations.
+   * The destination this rule is for, or `null` for Global.
    *
    * Carried on the view model, not only in the query, because the CSV export
    * is built from these nodes — a file that did not say which scope it came
@@ -64,10 +81,11 @@ export type CategoryMarginNodeViewModel = {
   /** All descendants in the full taxonomy — the "N categories" count. */
   subtreeCount: number;
   /**
-   * This category's own rules, keyed by destination.
+   * This category's own rules, keyed by **scope key** — a country code for the
+   * six named destinations, `ALL_MARKETS_KEY` for Global.
    *
-   * An all-destinations rule, if one still exists, is keyed by
-   * `ALL_MARKETS_KEY` — see `listCategoryMarginOverviewByMarket`.
+   * See `listCategoryMarginOverviewByMarket`, which files a `market_code IS
+   * NULL` row under that key.
    */
   policies: Record<string, CategoryMarginPolicyViewModel>;
 };
@@ -77,40 +95,32 @@ export type StoreDefaultSummary = {
   roundingRule: RoundingRule;
 };
 
-/** Where a node's effective margin actually comes from, for one destination. */
+/** Where a node's effective margin actually comes from, for one scope. */
 export type EffectiveMargin =
-  | { source: 'SELF'; rate: string; viaAllMarkets: boolean }
-  | {
-      source: 'ANCESTOR';
-      rate: string;
-      ancestorName: string;
-      viaAllMarkets: boolean;
-    }
+  | { source: 'SELF'; rate: string }
+  | { source: 'ANCESTOR'; rate: string; ancestorName: string }
   | { source: 'STORE_DEFAULT'; rate: string }
   | { source: 'NONE' };
 
 /**
- * The rule that applies to one category in one destination, if it has one.
+ * The rule this category owns in one scope, if it has one.
  *
- * Destination first, all-destinations second — the same precedence the
- * resolver applies through `outranks`, where depth beats market and a
- * market-scoped rule only wins against an unscoped one at the same depth.
- * Reversing these two here would show a rate the resolver would never use.
+ * **One scope, no fallback** — owner decision 2026-08-27. This used to try the
+ * destination and then fall back to the all-destinations rule, mirroring a
+ * resolver that widened the same way. Both stopped: Global now covers only the
+ * countries with no column of their own, so a rate set on Global must never be
+ * shown in the Australia column, because the resolver would never use it there.
+ *
+ * Global is not a special case here. It arrives as just another key
+ * (`ALL_MARKETS_KEY`, the key `listCategoryMarginOverviewByMarket` files a
+ * `market_code IS NULL` row under), so the Global column looks itself up the
+ * same way Australia does.
  */
 function ownPolicyFor(
   node: CategoryMarginNodeViewModel,
-  marketCode: string,
-): { policy: CategoryMarginPolicyViewModel; viaAllMarkets: boolean } | null {
-  const scoped = node.policies[marketCode];
-
-  if (scoped !== undefined) return { policy: scoped, viaAllMarkets: false };
-
-  const allMarkets = node.policies[ALL_MARKETS_KEY];
-
-  if (allMarkets !== undefined)
-    return { policy: allMarkets, viaAllMarkets: true };
-
-  return null;
+  scopeKey: string,
+): CategoryMarginPolicyViewModel | null {
+  return node.policies[scopeKey] ?? null;
 }
 
 /**
@@ -125,16 +135,12 @@ export function effectiveMarginFor(
   node: CategoryMarginNodeViewModel,
   nodesByPath: Map<string, CategoryMarginNodeViewModel>,
   storeDefault: StoreDefaultSummary | null,
-  marketCode: string,
+  scopeKey: string,
 ): EffectiveMargin {
-  const own = ownPolicyFor(node, marketCode);
+  const own = ownPolicyFor(node, scopeKey);
 
   if (own !== null) {
-    return {
-      source: 'SELF',
-      rate: own.policy.targetMarginRate,
-      viaAllMarkets: own.viaAllMarkets,
-    };
+    return { source: 'SELF', rate: own.targetMarginRate };
   }
 
   const segments = node.path.split(PATH_SEPARATOR);
@@ -144,14 +150,13 @@ export function effectiveMarginFor(
     const ancestor = nodesByPath.get(ancestorPath);
 
     const inherited =
-      ancestor === undefined ? null : ownPolicyFor(ancestor, marketCode);
+      ancestor === undefined ? null : ownPolicyFor(ancestor, scopeKey);
 
     if (ancestor !== undefined && inherited !== null) {
       return {
         source: 'ANCESTOR',
-        rate: inherited.policy.targetMarginRate,
+        rate: inherited.targetMarginRate,
         ancestorName: ancestor.name,
-        viaAllMarkets: inherited.viaAllMarkets,
       };
     }
   }

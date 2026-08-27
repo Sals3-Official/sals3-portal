@@ -5,7 +5,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import type { PricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
+import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations';
 import StoreDefaultDialog from './StoreDefaultDialog';
 import {
   floorOf,
@@ -14,8 +14,9 @@ import {
 } from './store-default-model';
 
 type StoreDefaultsTableProps = {
-  destinations: PricingScopeDestination[];
-  /** Keyed by destination code; a destination with no rule maps to `null`. */
+  /** One row each, in the order they are shown — the six, then Global. */
+  scopes: PricingScope[];
+  /** Keyed by scope key; a scope with no rule maps to `null`. */
   storeDefaults: Record<string, StoreDefaultViewModel | null>;
   canManage: boolean;
 };
@@ -26,7 +27,7 @@ function formatPercent(rate: string): string {
   return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(2)}%`;
 }
 
-/** `.99` or `Exact`, or an em dash when the destination has no rule at all. */
+/** `.99` or `Exact`, or an em dash when the scope has no rule at all. */
 function formatRounding(storeDefault: StoreDefaultViewModel | null): string {
   if (storeDefault === null) return '—';
   return storeDefault.roundingRule === 'NEAREST_0_99' ? '.99' : 'Exact';
@@ -37,28 +38,30 @@ function formatAmount(minor: number, currency: string): string {
 }
 
 /**
- * A row per destination rather than one card, for the same reason the category
+ * A row per scope rather than one card, for the same reason the category
  * margins became columns: operating expense is not the same number in every
  * country, and a screen that shows one at a time hides the comparison the
  * seller is here to make.
  *
- * Deliberately a table and not six cards. These are five short values each; six
- * cards would be six headings, six borders and a page of scrolling to compare
+ * Deliberately a table and not a card each. These are five short values per
+ * scope; cards would be a heading, a border and a page of scrolling to compare
  * two numbers.
+ *
+ * The Global row arrives here as data — it is whatever `scopes` carries — so
+ * this component gained a seventh row on 2026-08-27 without a line changing.
  */
 export default function StoreDefaultsTable({
-  destinations,
+  scopes,
   storeDefaults,
   canManage,
 }: StoreDefaultsTableProps) {
   const router = useRouter();
   const [editing, setEditing] = useState<string | null>(null);
 
-  const editingDestination =
+  const editingScope =
     editing === null
       ? null
-      : (destinations.find((destination) => destination.code === editing) ??
-        null);
+      : (scopes.find((scope) => scope.key === editing) ?? null);
 
   function handleSaved() {
     setEditing(null);
@@ -76,7 +79,12 @@ export default function StoreDefaultsTable({
           role="row"
           className={`${STORE_DEFAULT_ROW_GRID} border-b border-border bg-surface px-3 py-1.5`}
         >
-          {['Destination', 'Base margin', 'Minimum', 'Rounding', ''].map(
+          {/*
+            "Scope", not "Destination" — the last row is Global, which is not a
+            destination. A heading that named one would be wrong for exactly the
+            row a seller is least sure about.
+          */}
+          {['Scope', 'Base margin', 'Minimum', 'Rounding', ''].map(
             (heading) => (
               <span
                 key={heading === '' ? 'actions' : heading}
@@ -89,18 +97,18 @@ export default function StoreDefaultsTable({
           )}
         </div>
 
-        {destinations.map((destination) => {
-          const storeDefault = storeDefaults[destination.code] ?? null;
+        {scopes.map((scope) => {
+          const storeDefault = storeDefaults[scope.key] ?? null;
           const floor = floorOf(storeDefault);
 
           return (
             <div
               role="row"
-              key={destination.code}
+              key={scope.key}
               className={`${STORE_DEFAULT_ROW_GRID} border-b border-border px-3 py-1.5 last:border-b-0 hover:bg-surface/60`}
             >
               <div role="cell" className="min-w-0">
-                <span className="truncate text-sm">{destination.label}</span>
+                <span className="truncate text-sm">{scope.label}</span>
               </div>
 
               <div role="cell">
@@ -140,8 +148,8 @@ export default function StoreDefaultsTable({
                     type="button"
                     variant="outline"
                     size="sm"
-                    aria-label={`${storeDefault === null ? 'Set' : 'Edit'} store default for ${destination.label}`}
-                    onClick={() => setEditing(destination.code)}
+                    aria-label={`${storeDefault === null ? 'Set' : 'Edit'} store default for ${scope.label}`}
+                    onClick={() => setEditing(scope.key)}
                   >
                     {storeDefault === null ? 'Set' : 'Edit'}
                   </Button>
@@ -152,10 +160,10 @@ export default function StoreDefaultsTable({
         })}
       </div>
 
-      {canManage && editingDestination !== null ? (
+      {canManage && editingScope !== null ? (
         <StoreDefaultDialog
-          destination={editingDestination}
-          storeDefault={storeDefaults[editingDestination.code] ?? null}
+          scope={editingScope}
+          storeDefault={storeDefaults[editingScope.key] ?? null}
           open
           onOpenChange={(next) => setEditing(next ? editing : null)}
           onSaved={handleSaved}

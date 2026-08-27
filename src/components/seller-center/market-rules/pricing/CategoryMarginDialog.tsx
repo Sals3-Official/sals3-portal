@@ -25,7 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { RoundingRule } from '@/modules/pricing/money-math';
-import type { PricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
+import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations';
 import DeactivateCategoryPolicyButton from './DeactivateCategoryPolicyButton';
 import type {
   CategoryMarginNodeViewModel,
@@ -36,14 +36,15 @@ type CategoryMarginDialogProps = {
   node: CategoryMarginNodeViewModel;
   effective: EffectiveMargin;
   /**
-   * The destination this edit is for.
+   * The scope this edit is for — one of the six destinations, or Global.
    *
-   * Passed as the whole destination rather than a bare code so the dialog can
-   * name it in words. "Edit margin — Apparel & Accessories" gave no clue which
-   * of six columns was clicked, and the cell that opened it is now hidden
-   * behind the dialog.
+   * Passed whole rather than as a bare key so the dialog can name it in words
+   * and still write the right column. "Edit margin — Apparel & Accessories"
+   * gave no clue which column was clicked, and the cell that opened it is now
+   * hidden behind the dialog. `scope.key` looks the rule up; `scope.marketCode`
+   * — `null` for Global — is what gets stored.
    */
-  destination: PricingScopeDestination;
+  scope: PricingScope;
   sellerAccountId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -82,17 +83,17 @@ function inheritedFrom(effective: EffectiveMargin): string | null {
 export default function CategoryMarginDialog({
   node,
   effective,
-  destination,
+  scope,
   sellerAccountId,
   open,
   onOpenChange,
   onSaved,
 }: CategoryMarginDialogProps) {
-  // The rule this destination carries in its own right, which is what Save
-  // revises and what Deactivate can remove. An inherited rate has no row here,
-  // and offering to deactivate one would promise something this screen cannot
-  // do — the rate belongs to an ancestor.
-  const ownPolicy = node.policies[destination.code] ?? null;
+  // The rule this scope carries in its own right, which is what Save revises
+  // and what Deactivate can remove. An inherited rate has no row here, and
+  // offering to deactivate one would promise something this screen cannot do —
+  // the rate belongs to an ancestor.
+  const ownPolicy = node.policies[scope.key] ?? null;
   const [isPending, startTransition] = useTransition();
   const [marginPercent, setMarginPercent] = useState(
     ownPolicy === null
@@ -121,7 +122,8 @@ export default function CategoryMarginDialog({
       targetMarginRate,
       roundingRule,
       reason,
-      marketCode: destination.code,
+      // What gets stored, not what the column is called: `null` for Global.
+      marketCode: scope.marketCode,
     };
 
     startTransition(async () => {
@@ -132,7 +134,7 @@ export default function CategoryMarginDialog({
         return;
       }
 
-      toast.success(`Margin saved for ${node.name} — ${destination.label}.`);
+      toast.success(`Margin saved for ${node.name} — ${scope.label}.`);
       setReason('');
       /**
        * Hand off instead of refreshing here.
@@ -159,7 +161,7 @@ export default function CategoryMarginDialog({
         <DialogHeader>
           <DialogTitle>
             {ownPolicy === null ? 'Set margin' : 'Edit margin'} — {node.name} ·{' '}
-            {destination.label}
+            {scope.label}
           </DialogTitle>
           <DialogDescription>
             {node.path}
@@ -243,16 +245,16 @@ export default function CategoryMarginDialog({
 
           <div className="flex items-center justify-between gap-2">
             {/*
-              Removing this destination's rule lives with the rule, not in the
-              row. The row has six of them now, and a Deactivate button beside
-              a row of six chips could not say which one it meant.
+              Removing this scope's rule lives with the rule, not in the row.
+              The row carries one chip per scope now, and a Deactivate button
+              beside a row of chips could not say which one it meant.
             */}
             <span>
               {ownPolicy === null ? null : (
                 <DeactivateCategoryPolicyButton
                   policyId={ownPolicy.id}
                   sellerAccountId={sellerAccountId}
-                  categoryPath={`${node.path} · ${destination.label}`}
+                  categoryPath={`${node.path} · ${scope.label}`}
                 />
               )}
             </span>

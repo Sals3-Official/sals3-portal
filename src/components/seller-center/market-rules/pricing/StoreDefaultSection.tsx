@@ -1,6 +1,6 @@
 import getDb from '@/lib/db/client';
 import { findStoreDefaultForScope } from '@/modules/pricing/repository';
-import type { PricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
+import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations';
 import DisclosureBanner from '@/components/seller-center/shared/DisclosureBanner';
 import StoreDefaultsTable from './StoreDefaultsTable';
 import type { StoreDefaultViewModel } from './store-default-model';
@@ -8,37 +8,38 @@ import type { StoreDefaultViewModel } from './store-default-model';
 type StoreDefaultSectionProps = {
   sellerAccountId: string;
   canManage: boolean;
-  /** One row each, in the order they are shown. */
-  destinations: PricingScopeDestination[];
+  /** One row each, in the order they are shown — the six, then Global. */
+  scopes: PricingScope[];
 };
 
 /**
  * `null` at the top level means the backend could not answer (unmigrated
  * schema, database down) — distinct from a successful read that finds no active
- * default for a destination, which is the ordinary first-run state the table
- * renders honestly as "—". Same discipline as `CategoryPricingSection`.
+ * default for a scope, which is the ordinary first-run state the table renders
+ * honestly as "—". Same discipline as `CategoryPricingSection`.
  *
- * One read per destination, issued together. `findStoreDefaultForScope` is the
+ * One read per scope, issued together. `findStoreDefaultForScope` is the
  * **exact** read, not the resolving one: this screen is an editor, and an editor
  * that showed Australia's rule under Fiji's heading would let a seller revise a
- * rule they never opened.
+ * rule they never opened. Global is read the same way — `scope.marketCode` is
+ * `null` there, which the query takes as `market_code IS NULL`, not as a wildcard.
  */
 async function readStoreDefaults(
   sellerAccountId: string,
-  destinations: PricingScopeDestination[],
+  scopes: PricingScope[],
 ): Promise<Record<string, StoreDefaultViewModel | null> | null> {
   try {
     const db = getDb();
     const rows = await Promise.all(
-      destinations.map(async (destination) => {
+      scopes.map(async (scope) => {
         const row = await findStoreDefaultForScope(
           db,
           sellerAccountId,
-          destination.code,
+          scope.marketCode,
         );
 
         return [
-          destination.code,
+          scope.key,
           row === null
             ? null
             : {
@@ -69,8 +70,8 @@ async function readStoreDefaults(
 }
 
 /**
- * ADR-015 §3's base layer, per destination: the margin every unpriced category
- * falls back to, and the minimum that margin may never fall below.
+ * ADR-015 §3's base layer, per scope: the margin every unpriced category falls
+ * back to, and the minimum that margin may never fall below.
  *
  * The minimum is the seller's operating expense — owner rule 2026-08-26 — and
  * it is expressible either as a percentage or as a fixed amount, never both.
@@ -85,15 +86,13 @@ async function readStoreDefaults(
 export default async function StoreDefaultSection({
   sellerAccountId,
   canManage,
-  destinations,
+  scopes,
 }: StoreDefaultSectionProps) {
-  const storeDefaults = await readStoreDefaults(sellerAccountId, destinations);
+  const storeDefaults = await readStoreDefaults(sellerAccountId, scopes);
   const missing =
     storeDefaults === null
       ? []
-      : destinations.filter(
-          (destination) => (storeDefaults[destination.code] ?? null) === null,
-        );
+      : scopes.filter((scope) => (storeDefaults[scope.key] ?? null) === null);
 
   return (
     <section
@@ -129,14 +128,14 @@ export default async function StoreDefaultSection({
           {missing.length > 0 ? (
             <DisclosureBanner tone="warning">
               No base margin yet for{' '}
-              {missing.map((destination) => destination.label).join(', ')}. A
-              category with no margin of its own cannot price at all in those
-              destinations — its products need a manual retail price until a
-              default or a parent margin covers them.
+              {missing.map((scope) => scope.label).join(', ')}. A category with
+              no margin of its own cannot price at all in those scopes — its
+              products need a manual retail price until a default or a parent
+              margin covers them.
             </DisclosureBanner>
           ) : null}
           <StoreDefaultsTable
-            destinations={destinations}
+            scopes={scopes}
             storeDefaults={storeDefaults}
             canManage={canManage}
           />

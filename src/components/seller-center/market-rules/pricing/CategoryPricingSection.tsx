@@ -5,7 +5,7 @@ import {
   listCategoryMarginOverviewByMarket,
   type CategoryMarginMarketRow,
 } from '@/modules/pricing/repository';
-import type { PricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
+import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations';
 import DisclosureBanner from '@/components/seller-center/shared/DisclosureBanner';
 import CategoryMarginTree from './CategoryMarginTree';
 import MarginCsvControls from './MarginCsvControls';
@@ -17,8 +17,8 @@ import type {
 type CategoryPricingSectionProps = {
   sellerAccountId: string;
   canManage: boolean;
-  /** One column each, in the order they are shown. */
-  destinations: PricingScopeDestination[];
+  /** One column each, in the order they are shown — the six, then Global. */
+  scopes: PricingScope[];
 };
 
 const PATH_SEPARATOR = ' > ';
@@ -69,14 +69,18 @@ async function readCategoryRows(sellerAccountId: string): Promise<{
  * backend could not answer). Only the last is an error worth a banner; the
  * middle one is normal and the tree already renders it honestly.
  *
- * One read per destination, because a store default is scoped like every
- * other rule. Six single-row index lookups, issued together — cheaper than
- * the one taxonomy scan beside it, and the alternative is showing one
- * destination's floor under all six columns.
+ * One read per scope, because a store default is scoped like every other rule.
+ * Seven single-row index lookups, issued together — cheaper than the one
+ * taxonomy scan beside it, and the alternative is showing one scope's floor
+ * under every column.
+ *
+ * Keyed by `scope.key` but read by `scope.marketCode`: the Global row is stored
+ * with `market_code IS NULL`, and `findStoreDefaultForScope` takes that `null`
+ * as the scope to match rather than as "any scope".
  */
 async function readStoreDefaults(
   sellerAccountId: string,
-  destinations: PricingScopeDestination[],
+  scopes: PricingScope[],
 ): Promise<
   | { state: 'ok'; storeDefaults: Record<string, StoreDefaultSummary | null> }
   | { state: 'unavailable' }
@@ -84,15 +88,15 @@ async function readStoreDefaults(
   try {
     const db = getDb();
     const rows = await Promise.all(
-      destinations.map(async (destination) => {
+      scopes.map(async (scope) => {
         const storeDefault = await findStoreDefaultForScope(
           db,
           sellerAccountId,
-          destination.code,
+          scope.marketCode,
         );
 
         return [
-          destination.code,
+          scope.key,
           storeDefault === null
             ? null
             : {
@@ -167,22 +171,26 @@ function toNodeViewModels(
  * roughly four times freight to the Philippines, so the comparison is the
  * point — and a screen showing one destination at a time hides exactly what
  * the seller came to decide.
+ *
+ * A seventh column, Global, was added 2026-08-27. It is a scope like the other
+ * six, not a summary of them: it prices the countries that have no column here,
+ * and a rate set on it is never shown or used in a named destination's column.
  */
 export default async function CategoryPricingSection({
   sellerAccountId,
   canManage,
-  destinations,
+  scopes,
 }: CategoryPricingSectionProps) {
   // Independent reads: a store-default failure must never hide the tree.
   const [categoryData, storeDefaultResult] = await Promise.all([
     readCategoryRows(sellerAccountId),
-    readStoreDefaults(sellerAccountId, destinations),
+    readStoreDefaults(sellerAccountId, scopes),
   ]);
 
   const storeDefaults =
     storeDefaultResult.state === 'ok' ? storeDefaultResult.storeDefaults : {};
-  const destinationsWithoutDefault = destinations.filter(
-    (destination) => (storeDefaults[destination.code] ?? null) === null,
+  const scopesWithoutDefault = scopes.filter(
+    (scope) => (storeDefaults[scope.key] ?? null) === null,
   );
 
   return (
@@ -196,10 +204,11 @@ export default async function CategoryPricingSection({
             Category margins
           </h2>
           <p className="max-w-[78ch] text-sm text-muted-foreground">
-            One column per destination. A category without its own margin for a
-            destination uses the nearest parent above it. Set a margin only
-            where a department genuinely differs; a product can still override
-            it in the Product Editor.
+            One column per destination, plus Global for every country without a
+            column of its own. A category without its own margin in a column
+            uses the nearest parent above it. Set a margin only where a
+            department genuinely differs; a product can still override it in the
+            Product Editor.
           </p>
         </div>
         {categoryData === null ? null : (
@@ -208,7 +217,7 @@ export default async function CategoryPricingSection({
               categoryData.rows,
               categoryData.descendantCounts,
             )}
-            destinations={destinations}
+            scopes={scopes}
             canManage={canManage}
           />
         )}
@@ -229,15 +238,13 @@ export default async function CategoryPricingSection({
             </DisclosureBanner>
           ) : null}
           {storeDefaultResult.state === 'ok' &&
-          destinationsWithoutDefault.length > 0 ? (
+          scopesWithoutDefault.length > 0 ? (
             <DisclosureBanner tone="warning">
               No store default exists yet for{' '}
-              {destinationsWithoutDefault
-                .map((destination) => destination.label)
-                .join(', ')}
-              , so a category shown as &quot;—&quot; in those columns cannot
-              price at all — its products need a manual retail price until a
-              default or a parent margin covers them.
+              {scopesWithoutDefault.map((scope) => scope.label).join(', ')}, so
+              a category shown as &quot;—&quot; in those columns cannot price at
+              all — its products need a manual retail price until a default or a
+              parent margin covers them.
             </DisclosureBanner>
           ) : null}
           <CategoryMarginTree
@@ -245,7 +252,7 @@ export default async function CategoryPricingSection({
               categoryData.rows,
               categoryData.descendantCounts,
             )}
-            destinations={destinations}
+            scopes={scopes}
             storeDefaults={storeDefaults}
             sellerAccountId={sellerAccountId}
             canManage={canManage}

@@ -19,13 +19,13 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { buildMarginCsv } from '@/modules/pricing/margin-csv';
-import type { PricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
+import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations';
 import type { CategoryMarginNodeViewModel } from './category-margin-model';
 
 type MarginCsvControlsProps = {
   nodes: CategoryMarginNodeViewModel[];
-  /** One exported line per node per destination — see `handleExport`. */
-  destinations: PricingScopeDestination[];
+  /** One exported line per node per scope — see `handleExport`. */
+  scopes: PricingScope[];
   canManage: boolean;
 };
 
@@ -56,7 +56,7 @@ const MAX_FILE_BYTES = 2_000_000;
  */
 export default function MarginCsvControls({
   nodes,
-  destinations,
+  scopes,
   canManage,
 }: MarginCsvControlsProps) {
   const router = useRouter();
@@ -82,27 +82,33 @@ export default function MarginCsvControls({
   function handleExport() {
     const csvText = buildMarginCsv(
       /*
-        One line per (category, destination) — the screen shows six columns
+        One line per (category, scope) — the screen shows a column per scope
         now, so a file with one line per category could only ever describe one
-        of them, and would silently flatten the other five on re-import.
+        of them, and would silently flatten the rest on re-import.
 
-        A destination with no rule of its own still gets a line with an empty
-        rate. Exporting only what is set would make the file a partial picture
-        that looks complete, and the round trip export → edit → import is the
-        main way a seller fills these in.
+        A scope with no rule of its own still gets a line with an empty rate.
+        Exporting only what is set would make the file a partial picture that
+        looks complete, and the round trip export → edit → import is the main
+        way a seller fills these in.
       */
       nodes.flatMap((node) =>
-        destinations.map((destination) => {
-          const policy = node.policies[destination.code] ?? null;
+        scopes.map((scope) => {
+          const policy = node.policies[scope.key] ?? null;
 
           return {
             code: node.code,
             path: node.path,
             ownMarginRate: policy?.targetMarginRate ?? null,
             ownRoundingRule: policy?.roundingRule ?? null,
-            // The scope this line describes, so the file carries its own
-            // destination and cannot be imported onto a different one.
-            marketCode: destination.code,
+            /*
+              The scope this line describes, so the file carries its own scope
+              and cannot be imported onto a different one.
+
+              `scope.marketCode`, not `scope.key` — Global's key is a word the
+              `market_code` column has never held. It exports as a blank cell,
+              which is exactly what the importer already reads back as `null`.
+            */
+            marketCode: scope.marketCode,
           };
         }),
       ),
