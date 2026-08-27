@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, asc, desc, eq, inArray, or } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import getDb, { type Database } from '@/lib/db/client';
@@ -630,8 +630,14 @@ async function listCoreRows(executor: Executor, sellerAccountId: string) {
       .select()
       .from(productMediaSources)
       .where(inArray(productMediaSources.productId, ids))
+      // `position` first, `nulls last`, so the editor's grid shows the order
+      // the seller arranged and the storefront serves (ADR-011 amendment
+      // 2026-08-28: the cover is position 0). A product nobody has arranged has
+      // `position` null on every row and falls through to `created_at`, exactly
+      // as before — the ordering is unchanged until a seller drags something.
       .orderBy(
         asc(productMediaSources.productId),
+        sql`${productMediaSources.position} asc nulls last`,
         asc(productMediaSources.createdAt),
       ),
     // Whether a seller has already named this product's option axes. Ordered
@@ -951,9 +957,20 @@ function buildCatalogueProducts(
         recordedSupplierImageUrls.length === 0 && supplier.imageUrl !== null
           ? [supplier.imageUrl]
           : recordedSupplierImageUrls;
-      const sellerMediaUrls = productImageUrls(
-        media.filter((item) => item.sourceType === 'SELLER_UPLOAD'),
+      // Gallery photos only. A seller upload carrying a `variant_id` belongs
+      // to the variation budget and is managed on the Variants & Pricing rail,
+      // not in Product media - the split that stopped one "12" from bounding
+      // both the buyer's gallery and the number of tellable-apart options
+      // (`upload-seller-media.ts`, 2026-08-28).
+      const sellerMedia = media.filter(
+        (item) => item.sourceType === 'SELLER_UPLOAD',
       );
+      const sellerMediaUrls = productImageUrls(
+        sellerMedia.filter((item) => item.variantId === null),
+      );
+      const variantPhotoCount = sellerMedia.filter(
+        (item) => item.variantId !== null,
+      ).length;
       /**
        * Every stored photo with its row id, for pointing a variant at one.
        *
@@ -1064,6 +1081,7 @@ function buildCatalogueProducts(
         mediaImageUrls,
         supplierMediaUrls,
         sellerMediaUrls,
+        variantPhotoCount,
         assignableMedia,
         showSupplierPhoto: product.showSupplierPhoto,
         status,
@@ -1691,22 +1709,59 @@ function editorSupplierMedia(
  * product today: no upload path exists yet to write a `SELLER_UPLOAD` row,
  * so this is honestly `[]` rather than borrowing the supplier's picture.
  */
-function editorSellerMedia(
+/**
+ * The product's gallery, as the editor's arrangeable grid renders it.
+ *
+ * ## Both origins, one grid (ADR-011 amendment 2026-08-28)
+ *
+ * A supplier original and a seller upload are both slides a buyer scrolls, so
+ * they are both tiles the seller arranges, and the first is the cover. Supplier
+ * Details keeps its separate read-only evidence gallery — that panel is
+ * provenance and ADR-011 §3 still governs it — but the *gallery* copy of a
+ * supplier photo is now editorial, not read-only. Deleting is still gated to
+ * `SELLER_UPLOAD` at the write side (`delete-seller-media.ts`), so this widens
+ * what may be arranged without widening what may be destroyed.
+ *
+ * ## Real row ids, and the bug that hid behind synthetic ones
+ *
+ * This used to synthesise `${product.id}-seller-media-${n}` as each tile's id.
+ * Those ids reached `deleteSellerMediaAction`, whose schema is
+ * `z.string().uuid()` — so a delete on any server-rendered tile could only ever
+ * return `invalid_input` ("That could not be identified. Reload and try
+ * again."), while a delete on a tile from the current session's own upload
+ * worked, because that one carried the real id the action returned. Reordering
+ * needs the real row anyway; carrying it fixes the older defect in the same
+ * move.
+ *
+ * Read from `assignableMedia` rather than the `sellerMediaUrls` projection
+ * because that projection is deduplicated by address and drops the row identity
+ * both the delete and the reorder write to. Product-level only: a variation
+ * photo has no place in an ordering whose whole meaning is "which of these does
+ * a buyer see first".
+ */
+function editorGalleryMedia(
   product: CatalogueProductFixture,
 ): MediaItemFixture[] {
-  const imageUrls = product.sellerMediaUrls ?? [];
+  const gallery = (product.assignableMedia ?? []).filter(
+    (item) => item.variantId === null,
+  );
 
-  return imageUrls.map((imageUrl, index) => ({
-    id: `${product.id}-seller-media-${index + 1}`,
+  return gallery.map((item, index) => ({
+    id: item.mediaId,
     label: `Photo ${index + 1}`,
-    sourceUrl: imageUrl,
-    altText: `Seller-uploaded photo for ${product.name}`,
+    sourceUrl: item.url,
+    altText:
+      item.sourceType === 'SELLER_UPLOAD'
+        ? `Seller-uploaded photo for ${product.name}`
+        : `Supplier photo for ${product.name}`,
     rightsCheck: 'VERIFIED',
     storageState: 'SALS3_STORED',
-    sourceType: 'SELLER_UPLOAD',
+    sourceType: item.sourceType,
     pixelWidth: 0,
     pixelHeight: 0,
     note: null,
+    // The cover is position 0 — one ordering answers both questions, so there
+    // is no separate flag here that could disagree with the order above it.
     isCover: index === 0,
   }));
 }
@@ -1844,7 +1899,8 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
     variants,
     markets: editorMarkets(product),
     marketsNotEnabledCount: 0,
-    media: editorSellerMedia(product),
+    media: editorGalleryMedia(product),
+    variantPhotoCount: product.variantPhotoCount ?? 0,
     supplierMedia: editorSupplierMedia(product),
     // Both origins, in one list: which variant a photo depicts is a Sals3
     // editorial fact, so a supplier original is as assignable as an upload.

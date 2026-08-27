@@ -20,7 +20,31 @@ import Sals3CategoryPicker, {
 } from './Sals3CategoryPicker';
 
 const PRODUCT_NAME_MAX = 120;
-const MAX_SELLER_PHOTOS = 12;
+/**
+ * The gallery budget, matching `upload-seller-media.ts`'s
+ * `MAX_GALLERY_PHOTOS_PER_PRODUCT` and the storefront's own
+ * `MAX_DETAIL_IMAGES`. All three are the same reviewed number and must move
+ * together.
+ *
+ * This bounds the photos a buyer scrolls, and nothing else. Variation photos
+ * have their own budget (one per variation) and their own control on the
+ * Variants & Pricing rail, so a product selling 21 designs no longer spends
+ * this allowance telling them apart.
+ */
+const MAX_GALLERY_PHOTOS = 12;
+
+/**
+ * How many leading gallery photos a buyer is actually served — the storefront's
+ * own `MAX_DETAIL_IMAGES`.
+ *
+ * The same reviewed number as the upload budget, but a different fact, and they
+ * stopped being interchangeable when supplier originals joined this grid
+ * (ADR-011 amendment 2026-08-28): a product can now hold twelve seller uploads
+ * *and* the supplier's own photos, so the grid can be longer than the gallery a
+ * buyer scrolls. The seller is the one deciding which ones make the cut, so the
+ * grid has to show them where the cut is.
+ */
+const BUYER_VISIBLE_PHOTOS = 12;
 
 const BRAND_OPTIONS = [
   'No brand / generic',
@@ -55,6 +79,23 @@ function photoManagerCaption(hasOwnPhotos: boolean): string {
   return "Shown from the supplier's own photo until you upload one — see Supplier Details for the original.";
 }
 
+/**
+ * Names the variation photos that are deliberately not in this grid.
+ *
+ * Without this line a photo moved onto a variation simply disappears from
+ * Product media, which is the exact shape of a defect the owner has already
+ * reported once ("pag nakapag select na ako ng photos ay nawawala din ito
+ * agad"). It is a different cause — the photo is where it should be — but a
+ * seller cannot tell those apart from the screen, so the screen has to say it.
+ */
+function variantPhotoCaption(variantPhotoCount: number): string | null {
+  if (variantPhotoCount === 0) return null;
+
+  return variantPhotoCount === 1
+    ? 'One more photo is attached to a variation, managed in Variants & Pricing. Variation photos do not use these slots.'
+    : `${variantPhotoCount} more photos are attached to variations, managed in Variants & Pricing. Variation photos do not use these slots.`;
+}
+
 type BasicInformationSectionProps = {
   fixture: ProductEditorFixture;
   /**
@@ -72,6 +113,11 @@ type BasicInformationSectionProps = {
   onUploadPhoto?: (files: FileList) => void;
   onDeletePhoto?: (id: string) => void;
   onMakeCoverPhoto: (id: string) => void;
+  /**
+   * Commits a whole new gallery order. Absent in fixture/preview mode, where
+   * the grid is then not draggable rather than draggable and forgetful.
+   */
+  onReorderPhotos?: (mediaIds: string[]) => void;
   isUploadingPhoto: boolean;
   deletingPhotoId: string | null;
   /** Whether the supplier's own photo shows to buyers alongside any of the seller's own uploads. */
@@ -106,6 +152,7 @@ export default function BasicInformationSection({
   onUploadPhoto,
   onDeletePhoto,
   onMakeCoverPhoto,
+  onReorderPhotos,
   isUploadingPhoto,
   deletingPhotoId,
   showSupplierPhoto,
@@ -118,7 +165,14 @@ export default function BasicInformationSection({
     (issue) => issue.reasonCode === 'COUNTERFEIT_HIGH_CONFIDENCE',
   );
 
-  const hasOwnPhotos = media.length > 0;
+  // `media` is the whole gallery now, supplier originals included, so neither
+  // the counter nor the supplier-photo caption may read its length: both are
+  // about what the seller uploaded themselves.
+  const sellerPhotoCount = media.filter(
+    (item) => item.sourceType === 'SELLER_UPLOAD',
+  ).length;
+  const hasOwnPhotos = sellerPhotoCount > 0;
+  const variantCaption = variantPhotoCaption(fixture.variantPhotoCount);
 
   return (
     <div className="flex flex-col gap-5">
@@ -126,7 +180,7 @@ export default function BasicInformationSection({
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h3 className="text-[13px] font-semibold">Product media</h3>
           <span className="text-xs text-muted-foreground">
-            {media.length} of {MAX_SELLER_PHOTOS} photos
+            {sellerPhotoCount} of {MAX_GALLERY_PHOTOS} photos
           </span>
         </div>
 
@@ -165,7 +219,9 @@ export default function BasicInformationSection({
             onMakeCover={onMakeCoverPhoto}
             isUploading={isUploadingPhoto}
             deletingId={deletingPhotoId}
-            maxPhotos={MAX_SELLER_PHOTOS}
+            onReorder={onReorderPhotos}
+            maxPhotos={MAX_GALLERY_PHOTOS}
+            buyerVisibleCount={BUYER_VISIBLE_PHOTOS}
           />
         </div>
 
@@ -173,6 +229,10 @@ export default function BasicInformationSection({
           {photoManagerCaption(hasOwnPhotos)} {IMAGE_UPLOAD_LIMITS_COPY} ·
           compressed automatically on upload.
         </p>
+
+        {variantCaption === null ? null : (
+          <p className="mt-1 text-xs text-muted-foreground">{variantCaption}</p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 @2xl:grid-cols-2">

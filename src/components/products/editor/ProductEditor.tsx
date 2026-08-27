@@ -4,6 +4,7 @@ import saveCategoryAttributesAction from '@/app/(portal)/listings/category-attri
 import { decideCategoryMappingAction } from '@/app/(portal)/listings/category-mapping-actions';
 import {
   deleteSellerMediaAction,
+  reorderProductMediaAction,
   uploadSellerMediaAction,
 } from '@/app/(portal)/listings/media-actions';
 import saveDescriptionAction from '@/app/(portal)/listings/description-actions';
@@ -115,6 +116,9 @@ export default function ProductEditor({
         }
         deleteMediaAction={
           isDatabaseBacked ? deleteSellerMediaAction : undefined
+        }
+        reorderMediaAction={
+          isDatabaseBacked ? reorderProductMediaAction : undefined
         }
         assignVariantMediaAction={
           isDatabaseBacked ? assignVariantMediaAction : undefined

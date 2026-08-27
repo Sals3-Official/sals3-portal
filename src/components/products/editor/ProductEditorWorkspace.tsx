@@ -44,6 +44,7 @@ import {
   type VariantFixture,
 } from '@/lib/seller-center/product-editor/types';
 import { suggestMetaDescription } from '@/lib/seller-center/product-editor/suggest-meta-description';
+import describeRefusedUploads from '@/lib/products/describe-refused-uploads';
 import { PUBLISH_GATES } from '@/lib/products/publish-gates';
 import predictPublishBlockers from '@/lib/seller-center/product-editor/publish-blockers';
 import {
@@ -205,6 +206,14 @@ type ProductEditorWorkspaceProps = {
   >;
   /** Seller-photo delete boundary. Omitted for fixture/design-preview mode. */
   deleteMediaAction?: (
+    input: unknown,
+  ) => Promise<{ ok: true } | { ok: false; reason: string; message: string }>;
+  /**
+   * Gallery-arrangement boundary — order, and therefore the cover. Omitted for
+   * fixture/design-preview mode, where the grid renders without a drag grip
+   * rather than with one that forgets.
+   */
+  reorderMediaAction?: (
     input: unknown,
   ) => Promise<{ ok: true } | { ok: false; reason: string; message: string }>;
   /**
@@ -449,6 +458,7 @@ export default function ProductEditorWorkspace({
   decideCategoryAction,
   uploadMediaAction,
   deleteMediaAction,
+  reorderMediaAction,
   assignVariantMediaAction,
   saveCategoryAttributesAction,
   saveMetaDescriptionAction,
@@ -1490,6 +1500,96 @@ export default function ProductEditorWorkspace({
         };
 
   /**
+   * Commits a new gallery order, optimistically and then for real.
+   *
+   * The local `setMedia` is what makes a drag feel like a drag; the action is
+   * what makes it survive a reload. On refusal the server's own message is
+   * shown and `router.refresh()` pulls the true order back, because the
+   * optimistic list is now known to be wrong and leaving it on screen would be
+   * the editor asserting an arrangement the database rejected.
+   *
+   * `isCover` is recomputed from the new index rather than carried: the cover is
+   * position 0 and deriving it here is what stops a stale flag surviving a move.
+   */
+  const handleReorderMedia =
+    reorderMediaAction === undefined || optionMappingTarget === null
+      ? undefined
+      : (mediaIds: string[]) => {
+          setMedia((current) => {
+            const byId = new Map(current.map((item) => [item.id, item]));
+
+            return mediaIds.flatMap((mediaId, index) => {
+              const item = byId.get(mediaId);
+
+              return item === undefined
+                ? []
+                : [{ ...item, isCover: index === 0 }];
+            });
+          });
+
+          reorderMediaAction({
+            productId: optionMappingTarget.productId,
+            mediaIds,
+          })
+            .then((result) => {
+              if (result.ok) return;
+
+              toast.error(result.message);
+              router.refresh();
+            })
+            // Deliberately not awaited by the caller: a drag fires this per tile
+            // crossed and blocking the pointer on a round trip would make the
+            // grid stutter. A rejected promise still has to be reported rather
+            // than left unhandled, and refreshing is what puts the true order
+            // back on screen.
+            .catch(() => {
+              toast.error('That new order could not be saved.');
+              router.refresh();
+            });
+        };
+
+  /**
+   * Uploads one file directly onto the variant the picker is open for.
+   *
+   * `variantId` goes to the server, which writes it on the inserted row, so the
+   * photo is a variation photo from the moment it exists — it never occupies a
+   * gallery slot and never has to be assigned afterwards. `router.refresh()`
+   * is what brings it back as an `assignableMedia` row and as the variant's own
+   * thumbnail; the local `updateVariant` below is what makes it visible before
+   * that round trip lands, the same optimistic pattern as `handleAssignVariantMedia`.
+   *
+   * It deliberately does **not** append to `media`: that state is Product
+   * media's gallery grid, and a variation photo is not one of those.
+   */
+  const handleUploadVariantMedia =
+    uploadMediaAction === undefined ||
+    optionMappingTarget === null ||
+    imagePickerVariant === null
+      ? undefined
+      : async (file: File) => {
+          const formData = new FormData();
+
+          formData.set('productId', optionMappingTarget.productId);
+          formData.set('variantId', imagePickerVariant.id);
+          formData.set('file', file);
+
+          const result = await uploadMediaAction(formData);
+
+          if (!result.ok) {
+            return { ok: false, message: result.message };
+          }
+
+          updateVariant(imagePickerVariant.id, {
+            hasImage: true,
+            imageUrl: result.media.sourceUrl,
+            imageMediaId: result.media.id,
+          });
+          router.refresh();
+
+          return { ok: true };
+        };
+
+  /**
    * Same compare-and-set token as the other product-level saves above —
    * `products.metaDescription` is a plain column, not part of the
    * revisioned draft body `saveDraftAction` writes.
@@ -1581,15 +1681,39 @@ export default function ProductEditorWorkspace({
             : ({ ok: false, message: result.message } as const);
         };
 
+  /**
+   * Uploads a chosen batch and reports, once, what did not land.
+   *
+   * ## Why one summary instead of a toast per file
+   *
+   * This loop used to call `toast.error` per refused file. That looks like
+   * reporting and is not: handing it 21 files against 12 free slots produced
+   * nine identical "maximum number of photos" toasts into a stack that shows
+   * three at a time and expires them, while successful uploads kept arriving
+   * behind them. The reported symptom was that the run "said nothing" and the
+   * only evidence was the counter reading `12 of 12` — a silent partial
+   * success, which is how the 21-design beanie looked finished when nine of its
+   * designs had no photo.
+   *
+   * So: outcomes are collected, and the failures are named at the end, with the
+   * file names, and with `duration: Infinity` so the one message that says what
+   * the seller lost is the one message that does not disappear while they read
+   * it. Identical refusals are grouped, because nine copies of one sentence is
+   * the noise this is replacing.
+   */
   const handleUploadMedia =
     uploadMediaAction === undefined || optionMappingTarget === null
       ? undefined
       : async (files: FileList) => {
           setIsUploadingMedia(true);
 
+          const chosen = Array.from(files);
+          const refused: { name: string; message: string }[] = [];
+          let accepted = 0;
+
           try {
             // eslint-disable-next-line no-restricted-syntax -- sequential: each upload is its own request and DB write against the same product row.
-            for (const file of Array.from(files)) {
+            for (const file of chosen) {
               const formData = new FormData();
 
               formData.set('productId', optionMappingTarget.productId);
@@ -1599,10 +1723,12 @@ export default function ProductEditorWorkspace({
               const result = await uploadMediaAction(formData);
 
               if (!result.ok) {
-                toast.error(result.message);
+                refused.push({ name: file.name, message: result.message });
                 // eslint-disable-next-line no-continue
                 continue;
               }
+
+              accepted += 1;
 
               setMedia((current) => [
                 ...current,
@@ -1623,6 +1749,13 @@ export default function ProductEditorWorkspace({
             }
           } finally {
             setIsUploadingMedia(false);
+          }
+
+          if (refused.length > 0) {
+            toast.error(describeRefusedUploads(refused, accepted), {
+              duration: Infinity,
+              closeButton: true,
+            });
           }
         };
 
@@ -1744,15 +1877,34 @@ export default function ProductEditorWorkspace({
               }}
               onUploadPhoto={handleUploadMedia}
               onDeletePhoto={handleDeleteMedia}
+              // Making a photo the cover *is* moving it to the front: one
+              // ordering, one write, nothing that can disagree with itself. It
+              // stays a button because native drag fires from neither keyboard
+              // nor touch, so this is the only path to the arrangement decision
+              // that matters most.
               onMakeCoverPhoto={(id) => {
-                setMedia((current) =>
-                  current.map((item) => ({
-                    ...item,
-                    isCover: item.id === id,
-                  })),
-                );
-                touch();
+                const reordered = [
+                  id,
+                  ...media
+                    .filter((item) => item.id !== id)
+                    .map((item) => item.id),
+                ];
+
+                if (handleReorderMedia === undefined) {
+                  setMedia((current) =>
+                    current.map((item) => ({
+                      ...item,
+                      isCover: item.id === id,
+                    })),
+                  );
+                  touch();
+
+                  return;
+                }
+
+                handleReorderMedia(reordered);
               }}
+              onReorderPhotos={handleReorderMedia}
               isUploadingPhoto={isUploadingMedia}
               deletingPhotoId={deletingMediaId}
               showSupplierPhoto={showSupplierPhoto}
@@ -2081,6 +2233,7 @@ export default function ProductEditorWorkspace({
           media={fixture.assignableMedia ?? []}
           currentMediaId={imagePickerVariant.imageMediaId ?? null}
           onAssign={handleAssignVariantMedia}
+          onUpload={handleUploadVariantMedia}
         />
       )}
 

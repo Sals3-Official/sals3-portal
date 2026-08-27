@@ -76,9 +76,18 @@ const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x01]);
 
 const PROCESSED_BUFFER = Buffer.from('processed-webp-bytes');
 
+/**
+ * @param options.existingSellerMediaCount rows returned to *every* `select`,
+ *   which is all the gallery path needs — it runs exactly one count query.
+ * @param options.selectQueue one result array per `select`, in order, for the
+ *   variation path: it runs three (variant exists, photos on that variant,
+ *   variation photos on the product) and they must be answered differently.
+ *   Falls back to `existingSellerMediaCount` once the queue is exhausted.
+ */
 function fakeDb(
   options: {
     existingSellerMediaCount?: number;
+    selectQueue?: unknown[][];
     insertError?: unknown;
   } = {},
 ) {
@@ -87,11 +96,19 @@ function fakeDb(
     { length: options.existingSellerMediaCount ?? 0 },
     (_, index) => ({ id: `existing-${index}` }),
   );
+  const queue = [...(options.selectQueue ?? [])];
+  let selectCount = 0;
 
   const db = {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
-        where: vi.fn(() => Promise.resolve(existingRows)),
+        where: vi.fn(() => {
+          selectCount += 1;
+
+          return Promise.resolve(
+            queue.length > 0 ? queue.shift() : existingRows,
+          );
+        }),
       })),
     })),
     insert: vi.fn(() => ({
@@ -111,7 +128,11 @@ function fakeDb(
     })),
   };
 
-  return { db: db as never, inserted };
+  return {
+    db: db as never,
+    inserted,
+    selectCalls: () => selectCount,
+  };
 }
 
 const BASE_INPUT = {
@@ -275,7 +296,7 @@ describe('uploadSellerProductMedia', () => {
     expect(mocks.send).not.toHaveBeenCalled();
   });
 
-  it('refuses once the product already has the maximum number of seller photos', async () => {
+  it('refuses once the product already has the maximum number of gallery photos', async () => {
     const { db } = fakeDb({ existingSellerMediaCount: 12 });
 
     expect(await uploadSellerProductMedia({ ...BASE_INPUT, db })).toEqual({
@@ -284,6 +305,109 @@ describe('uploadSellerProductMedia', () => {
       limit: 12,
     });
     expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  describe('the two budgets are separate (2026-08-28)', () => {
+    it('stores a variation photo with its variant_id already set, so it never occupies a gallery slot', async () => {
+      const { db, inserted } = fakeDb({
+        selectQueue: [
+          [{ id: 'variant-9' }], // the variant exists on this product
+          [], // no photo on that variant yet
+          [], // no variation photos on the product yet
+        ],
+      });
+
+      const result = await uploadSellerProductMedia({
+        ...BASE_INPUT,
+        variantId: 'variant-9',
+        db,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(inserted[0]).toMatchObject({
+        variantId: 'variant-9',
+        sourceType: 'SELLER_UPLOAD',
+      });
+    });
+
+    it('accepts a variation photo on a product whose gallery is already full - the whole point of the split', async () => {
+      const { db } = fakeDb({
+        selectQueue: [
+          [{ id: 'variant-9' }],
+          [],
+          // Twelve variation photos already stored: the gallery budget is
+          // irrelevant to this path, and twelve is nowhere near the backstop.
+          Array.from({ length: 12 }, (_, index) => ({ id: `v-${index}` })),
+        ],
+      });
+
+      const result = await uploadSellerProductMedia({
+        ...BASE_INPUT,
+        variantId: 'variant-9',
+        db,
+      });
+
+      expect(result.ok).toBe(true);
+    });
+
+    it('counts only product-level rows against the gallery, never a variation photo', async () => {
+      // One select on the gallery path, and it is the one carrying the
+      // `variant_id is null` predicate. Asserting the call count is what pins
+      // that the variation rows are not fetched into the same tally.
+      const { db, selectCalls } = fakeDb({ existingSellerMediaCount: 11 });
+
+      const result = await uploadSellerProductMedia({ ...BASE_INPUT, db });
+
+      expect(result.ok).toBe(true);
+      expect(selectCalls()).toBe(1);
+    });
+
+    it('refuses a second photo on the same variation, because only one is ever served', async () => {
+      const { db } = fakeDb({
+        selectQueue: [[{ id: 'variant-9' }], [{ id: 'already-there' }]],
+      });
+
+      expect(
+        await uploadSellerProductMedia({
+          ...BASE_INPUT,
+          variantId: 'variant-9',
+          db,
+        }),
+      ).toEqual({ ok: false, reason: 'VARIANT_PHOTO_EXISTS' });
+      expect(mocks.send).not.toHaveBeenCalled();
+    });
+
+    it("refuses a variant id that is not this product's, before storing anything", async () => {
+      const { db } = fakeDb({ selectQueue: [[]] });
+
+      expect(
+        await uploadSellerProductMedia({
+          ...BASE_INPUT,
+          variantId: 'variant-of-another-product',
+          db,
+        }),
+      ).toEqual({ ok: false, reason: 'VARIANT_NOT_FOUND' });
+      expect(mocks.send).not.toHaveBeenCalled();
+    });
+
+    it('refuses past the per-product variation-photo backstop', async () => {
+      const { db } = fakeDb({
+        selectQueue: [
+          [{ id: 'variant-9' }],
+          [],
+          Array.from({ length: 60 }, (_, index) => ({ id: `v-${index}` })),
+        ],
+      });
+
+      expect(
+        await uploadSellerProductMedia({
+          ...BASE_INPUT,
+          variantId: 'variant-9',
+          db,
+        }),
+      ).toEqual({ ok: false, reason: 'VARIANT_LIMIT_REACHED', limit: 60 });
+      expect(mocks.send).not.toHaveBeenCalled();
+    });
   });
 
   it('re-encodes to WebP, downscale-only, and records a SELLER_UPLOAD row with the real processed dimensions - never trusting the caller filename or path', async () => {

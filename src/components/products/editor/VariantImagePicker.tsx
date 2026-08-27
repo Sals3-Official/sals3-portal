@@ -1,8 +1,8 @@
 'use client';
 
 import Image from 'next/image';
-import { ImageOff, Loader } from 'lucide-react';
-import { useState } from 'react';
+import { ImageOff, Loader, Upload } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { IMAGE_UPLOAD_LIMITS_COPY } from '@/lib/products/image-upload-limits';
 import type { AssignableMediaFixture } from '@/lib/seller-center/product-catalogue/types';
 import { cn } from '@/lib/utils';
 
@@ -22,11 +23,25 @@ import { cn } from '@/lib/utils';
  * reported from it, and nothing could write it — so a seller with twelve photos
  * uploaded looked at ten rows of "No variant image" with no control to press.
  *
- * Nothing is uploaded here. The photos already exist, supplier originals and
- * seller uploads alike, and this only says which variant each one depicts.
- * Uploading belongs to the Media section in Basic Information, which is where a
- * seller already goes to add one — a second upload control on a pricing table
- * would be a second place for the same job to drift.
+ * ## Uploading here is a different job, not a second copy of one (2026-08-28)
+ *
+ * This used to refuse to carry an upload control, on the reasoning that
+ * "uploading belongs to the Media section in Basic Information … a second
+ * upload control on a pricing table would be a second place for the same job to
+ * drift". That reasoning held only while every seller upload landed in one pool
+ * and one budget. It no longer does: a variation photo is inserted with
+ * `variant_id` already set, counts against the per-variation budget rather than
+ * the gallery's twelve, and never becomes a slide in the buyer's gallery
+ * (`storefront/read-model.ts`'s `loadApprovedImages`). Uploading *here* is
+ * therefore not the Media section's job performed in a second place — it is the
+ * only place the other job can be done in one step.
+ *
+ * The old route still works and is still the honest one for a gallery photo:
+ * upload in Product media, then pick it here, and `assignVariantMedia` moves it
+ * across. What is gone is the requirement to spend a gallery slot on the way.
+ *
+ * Picking from what already exists stays first in the dialog, because on a
+ * product whose photos are already uploaded that is the shorter path.
  *
  * A photo already pointed at another variant is shown, labelled with that
  * variant, and selectable: one photo depicts one variant, so choosing it here
@@ -47,7 +62,15 @@ export type VariantImagePickerProps = {
   onAssign: (
     mediaId: string | null,
   ) => Promise<{ ok: boolean; message?: string }>;
+  /**
+   * Uploads one file straight onto this variant. Omitted in fixture/preview
+   * mode, where no real product exists to attach it to — the control is then
+   * absent rather than present and dead.
+   */
+  onUpload?: (file: File) => Promise<{ ok: boolean; message?: string }>;
 };
+
+const ACCEPTED_TYPES = 'image/jpeg,image/png,image/webp';
 
 const SOURCE_LABEL: Record<AssignableMediaFixture['sourceType'], string> = {
   SUPPLIER_ORIGINAL: "Supplier's photo",
@@ -62,9 +85,30 @@ export default function VariantImagePicker({
   media,
   currentMediaId,
   onAssign,
+  onUpload,
 }: VariantImagePickerProps) {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function upload(file: File) {
+    if (onUpload === undefined) return;
+
+    setPending('upload');
+    setError(null);
+
+    const result = await onUpload(file);
+
+    setPending(null);
+
+    if (!result.ok) {
+      setError(result.message ?? 'That photo could not be uploaded.');
+
+      return;
+    }
+
+    onOpenChange(false);
+  }
 
   async function choose(mediaId: string | null) {
     setPending(mediaId ?? 'clear');
@@ -91,8 +135,9 @@ export default function VariantImagePicker({
             Photo for {variantLabel}
           </DialogTitle>
           <DialogDescription>
-            Pick from the photos already stored on this product. Add new ones in
-            Product media, under Basic Information.
+            Pick from the photos already stored on this product, or upload one
+            just for this variation. A variation photo does not use a Product
+            media slot.
           </DialogDescription>
         </DialogHeader>
 
@@ -158,6 +203,52 @@ export default function VariantImagePicker({
               );
             })}
           </ul>
+        )}
+
+        {onUpload === undefined ? null : (
+          <div className="border-t border-border pt-3">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ACCEPTED_TYPES}
+              hidden
+              onChange={(event) => {
+                const control = event.target;
+                const file = control.files?.[0];
+
+                // Reset first, so choosing the same file again still fires
+                // `onChange` even when this upload is refused. Same idiom as
+                // `ProductPhotoManager`: read the element out of the event
+                // rather than assigning through the parameter.
+                control.value = '';
+
+                if (file !== undefined) {
+                  upload(file).catch(() =>
+                    setError('That photo could not be uploaded.'),
+                  );
+                }
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={pending !== null}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {pending === 'upload' ? (
+                <Loader aria-hidden="true" className="size-4 animate-spin" />
+              ) : (
+                <Upload aria-hidden="true" className="size-4" />
+              )}
+              {pending === 'upload'
+                ? 'Uploading…'
+                : 'Upload a photo for this variation'}
+            </Button>
+            <p className="mt-1.5 mb-0 text-[11.5px] text-ink-subtle">
+              {IMAGE_UPLOAD_LIMITS_COPY} · one photo per variation.
+            </p>
+          </div>
         )}
 
         {error === null ? null : (
