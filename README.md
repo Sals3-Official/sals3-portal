@@ -595,10 +595,14 @@ dedicated persistence paths exist. The screen says which mode it loaded in the
 notice at the top.
 
 Retail prices must be at least **2.5% above** the stored supplier cost for every
-listed variant. The per-row editor clamps too-low entries up to the rounded-up
-minor-unit floor, the bulk price dialog refuses a value below that same floor,
-and `publishProduct` refuses the value again server-side; the manual
-seller-price path cannot record a zero-spread or thin-spread offer as resolved.
+listed variant. Draft save sends only positive seller-entered prices; an
+unpriced variant remains unresolved instead of being recorded as a zero-dollar
+seller decision. Clearing an existing seller price back to unresolved is not a
+UI path yet and needs an explicit server operation. The per-row editor clamps
+too-low entries up to the rounded-up minor-unit floor, the bulk price dialog
+refuses a value below that same floor, and `publishProduct` refuses the value
+again server-side; the manual seller-price path cannot record a zero-spread or
+thin-spread offer as resolved.
 
 **A seller's own product photos persist for real (2026-08-17, Cloudflare R2 +
 sharp — migrated the same day from an initial Vercel Blob backend once
@@ -3021,7 +3025,9 @@ update names the revision id, the product id, `workflow_state = 'DRAFT'`, and
 the expected version in one `WHERE` clause, so a stale editor, a replayed
 submit, and an attempt to rewrite an already-approved revision all match zero
 rows. Retail price updates are seller-scoped and product-variant-scoped before
-they touch offers. A rejected stale write is audited rather than dropped.
+they touch offers; if a submitted seller price cannot update an offer row, the
+draft save is refused instead of reporting success with an empty price write. A
+rejected stale write is audited rather than dropped.
 
 The description is a structured allow-listed block format
 (`paragraph`, `heading`, `bulletList`, `keyValueList`) with no raw-HTML block

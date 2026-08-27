@@ -89,7 +89,10 @@ beforeEach(() => {
   asMock(updateProductEditorialForSteward).mockResolvedValue({
     id: REQUEST.productId,
   });
-  asMock(updateSellerRetailPrices).mockResolvedValue(1);
+  asMock(updateSellerRetailPrices).mockResolvedValue({
+    updatedOfferCount: 1,
+    missedVariantIds: [],
+  });
   asMock(openDraftForEdit).mockResolvedValue({
     ok: true,
     revisionId: REQUEST.revisionId,
@@ -251,6 +254,24 @@ describe('saveProductDraft', () => {
           version: 4,
           pricedOfferCount: 1,
         }),
+      }),
+    );
+  });
+
+  it('refuses the save when a submitted retail price does not update an offer', async () => {
+    asMock(updateSellerRetailPrices).mockResolvedValue({
+      updatedOfferCount: 0,
+      missedVariantIds: [REQUEST.variantRetailPrices[0].variantId],
+    });
+
+    await expect(run()).resolves.toEqual({
+      ok: false,
+      reason: 'price_persistence_failed',
+    });
+    expect(appendAuditEvent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'catalog_product_revision.saved',
       }),
     );
   });

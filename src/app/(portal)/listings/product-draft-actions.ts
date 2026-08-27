@@ -320,6 +320,7 @@ export type SaveProductDraftActionResult =
         | 'version_conflict'
         | 'revision_in_review'
         | 'image_not_stored'
+        | 'price_persistence_failed'
         | 'failed';
     };
 

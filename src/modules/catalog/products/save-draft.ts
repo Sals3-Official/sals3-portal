@@ -58,8 +58,15 @@ export type SaveProductDraftOutcome =
         | 'not_found'
         | 'version_conflict'
         | 'revision_in_review'
-        | 'image_not_stored';
+        | 'image_not_stored'
+        | 'price_persistence_failed';
     };
+
+class PricePersistenceError extends Error {
+  constructor(readonly missedVariantIds: string[]) {
+    super('Seller retail prices did not persist for submitted variants.');
+  }
+}
 
 export default async function saveProductDraft(input: {
   request: SaveProductDraftInput;
@@ -83,107 +90,119 @@ export default async function saveProductDraft(input: {
     request.descriptionDocument,
   );
 
-  return database.transaction(async (tx) => {
-    const product = await findProductForSteward(
-      tx,
-      request.productId,
-      input.sellerAccountId,
-    );
+  try {
+    return await database.transaction(async (tx) => {
+      const product = await findProductForSteward(
+        tx,
+        request.productId,
+        input.sellerAccountId,
+      );
 
-    if (product === null) return { ok: false as const, reason: 'not_found' };
+      if (product === null) return { ok: false as const, reason: 'not_found' };
 
-    const draft = await openDraftForEdit(tx, {
-      product,
-      revisionId: request.revisionId,
-      expectedRevisionVersion: request.expectedRevisionVersion,
-      actorId: input.actorId,
-    });
-
-    if (!draft.ok) {
-      await appendAuditEvent(tx, {
+      const draft = await openDraftForEdit(tx, {
+        product,
+        revisionId: request.revisionId,
+        expectedRevisionVersion: request.expectedRevisionVersion,
         actorId: input.actorId,
-        action: PRODUCT_AUDIT_ACTIONS.revisionSaveRejected,
-        entityType: 'ProductRevision',
-        entityId: request.revisionId,
-        payload: {
-          productId: request.productId,
-          expectedVersion: request.expectedRevisionVersion,
-          outcome:
-            draft.reason === 'revision_in_review'
-              ? 'REVISION_UNDER_REVIEW'
-              : 'STALE_OR_NOT_EDITABLE',
-        },
       });
 
-      return { ok: false as const, reason: draft.reason };
-    }
+      if (!draft.ok) {
+        await appendAuditEvent(tx, {
+          actorId: input.actorId,
+          action: PRODUCT_AUDIT_ACTIONS.revisionSaveRejected,
+          entityType: 'ProductRevision',
+          entityId: request.revisionId,
+          payload: {
+            productId: request.productId,
+            expectedVersion: request.expectedRevisionVersion,
+            outcome:
+              draft.reason === 'revision_in_review'
+                ? 'REVISION_UNDER_REVIEW'
+                : 'STALE_OR_NOT_EDITABLE',
+          },
+        });
 
-    const revision = await saveDraftRevisionContent(tx, {
-      revisionId: draft.revisionId,
-      productId: request.productId,
-      expectedVersion: draft.expectedVersion,
-      contentDocument: request.descriptionDocument,
-      contentChecksum,
-      actorId: input.actorId,
-    });
+        return { ok: false as const, reason: draft.reason };
+      }
 
-    if (revision === null) {
-      await appendAuditEvent(tx, {
-        actorId: input.actorId,
-        action: PRODUCT_AUDIT_ACTIONS.revisionSaveRejected,
-        entityType: 'ProductRevision',
-        entityId: draft.revisionId,
-        payload: {
-          productId: request.productId,
-          expectedVersion: draft.expectedVersion,
-          // Which of "wrong version", "not a draft any more", or "not this
-          // product's revision" failed is deliberately not distinguished for
-          // the caller; the audit records what was attempted.
-          outcome: 'STALE_OR_NOT_EDITABLE',
-        },
-      });
-
-      return { ok: false as const, reason: 'version_conflict' };
-    }
-
-    await updateProductEditorialForSteward(tx, {
-      productId: request.productId,
-      stewardSellerAccountId: input.sellerAccountId,
-      title: request.title,
-      sals3CategoryL1: request.sals3CategoryL1,
-      actorId: input.actorId,
-    });
-    const pricedOfferCount = await updateSellerRetailPrices(tx, {
-      productId: request.productId,
-      sellerAccountId: input.sellerAccountId,
-      prices: request.variantRetailPrices,
-      actorId: input.actorId,
-    });
-
-    await appendAuditEvent(tx, {
-      actorId: input.actorId,
-      action: PRODUCT_AUDIT_ACTIONS.revisionSaved,
-      entityType: 'ProductRevision',
-      entityId: revision.id,
-      payload: {
+      const revision = await saveDraftRevisionContent(tx, {
+        revisionId: draft.revisionId,
         productId: request.productId,
-        previousVersion: draft.expectedVersion,
-        version: revision.version,
+        expectedVersion: draft.expectedVersion,
+        contentDocument: request.descriptionDocument,
         contentChecksum,
-        /** Set only when this save forked; see `save-description-document.ts`. */
-        forkedFromRevisionId: draft.forked ? request.revisionId : undefined,
-        blockCount: request.descriptionDocument.blocks.length,
-        sals3CategoryL1: request.sals3CategoryL1,
-        pricedOfferCount,
-      },
-    });
+        actorId: input.actorId,
+      });
 
-    return {
-      ok: true as const,
-      revisionId: revision.id,
-      revisionVersion: revision.version,
-      contentChecksum,
-      forked: draft.forked,
-    };
-  });
+      if (revision === null) {
+        await appendAuditEvent(tx, {
+          actorId: input.actorId,
+          action: PRODUCT_AUDIT_ACTIONS.revisionSaveRejected,
+          entityType: 'ProductRevision',
+          entityId: draft.revisionId,
+          payload: {
+            productId: request.productId,
+            expectedVersion: draft.expectedVersion,
+            // Which of "wrong version", "not a draft any more", or "not this
+            // product's revision" failed is deliberately not distinguished for
+            // the caller; the audit records what was attempted.
+            outcome: 'STALE_OR_NOT_EDITABLE',
+          },
+        });
+
+        return { ok: false as const, reason: 'version_conflict' };
+      }
+
+      await updateProductEditorialForSteward(tx, {
+        productId: request.productId,
+        sals3CategoryL1: request.sals3CategoryL1,
+        stewardSellerAccountId: input.sellerAccountId,
+        title: request.title,
+        actorId: input.actorId,
+      });
+      const priceWrite = await updateSellerRetailPrices(tx, {
+        productId: request.productId,
+        sellerAccountId: input.sellerAccountId,
+        prices: request.variantRetailPrices,
+        actorId: input.actorId,
+      });
+
+      if (priceWrite.missedVariantIds.length > 0) {
+        throw new PricePersistenceError(priceWrite.missedVariantIds);
+      }
+
+      await appendAuditEvent(tx, {
+        actorId: input.actorId,
+        action: PRODUCT_AUDIT_ACTIONS.revisionSaved,
+        entityType: 'ProductRevision',
+        entityId: revision.id,
+        payload: {
+          productId: request.productId,
+          previousVersion: draft.expectedVersion,
+          version: revision.version,
+          contentChecksum,
+          /** Set only when this save forked; see `save-description-document.ts`. */
+          forkedFromRevisionId: draft.forked ? request.revisionId : undefined,
+          blockCount: request.descriptionDocument.blocks.length,
+          sals3CategoryL1: request.sals3CategoryL1,
+          pricedOfferCount: priceWrite.updatedOfferCount,
+        },
+      });
+
+      return {
+        ok: true as const,
+        revisionId: revision.id,
+        revisionVersion: revision.version,
+        contentChecksum,
+        forked: draft.forked,
+      };
+    });
+  } catch (error) {
+    if (error instanceof PricePersistenceError) {
+      return { ok: false, reason: 'price_persistence_failed' };
+    }
+
+    throw error;
+  }
 }

@@ -718,8 +718,9 @@ export async function updateSellerRetailPrices(
     }>;
     actorId: string;
   },
-): Promise<number> {
-  if (input.prices.length === 0) return 0;
+): Promise<{ updatedOfferCount: number; missedVariantIds: string[] }> {
+  if (input.prices.length === 0)
+    return { updatedOfferCount: 0, missedVariantIds: [] };
 
   const requestedVariantIds = input.prices.map((price) => price.variantId);
   const variantRows = await executor
@@ -732,10 +733,17 @@ export async function updateSellerRetailPrices(
       ),
     );
   const productVariantIds = new Set(variantRows.map((row) => row.id));
-  return input.prices
-    .filter((price) => productVariantIds.has(price.variantId))
-    .reduce<Promise<number>>(async (totalPromise, price) => {
+  const missedVariantIds: string[] = [];
+  const updatedOfferCount = await input.prices.reduce<Promise<number>>(
+    async (totalPromise, price) => {
       const total = await totalPromise;
+
+      if (!productVariantIds.has(price.variantId)) {
+        missedVariantIds.push(price.variantId);
+
+        return total;
+      }
+
       const rows = await executor
         .update(productOffers)
         .set({
@@ -760,8 +768,14 @@ export async function updateSellerRetailPrices(
         )
         .returning({ id: productOffers.id });
 
+      if (rows.length === 0) missedVariantIds.push(price.variantId);
+
       return total + rows.length;
-    }, Promise.resolve(0));
+    },
+    Promise.resolve(0),
+  );
+
+  return { updatedOfferCount, missedVariantIds };
 }
 
 export async function findBinding(
