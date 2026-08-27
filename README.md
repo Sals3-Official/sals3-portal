@@ -1201,6 +1201,42 @@ see the variant count that would make it right. The shared `invalid_input` sente
 now says _at least one value_, which is what both schemas actually enforce; it was
 wrong for the rename action too.
 
+**Checkout quotes stock from CJ, not from the frozen offer flag (2026-08-28).**
+Reported from the live storefront: a Philippines cart answered _"A cart item is
+not available for delivery to this address."_ The address was never the reason.
+`loadQuoteLines` required `product_offers.availability_state = 'AVAILABLE'`, and
+that column is written once, at publish, from
+`provider_variant_references.last_observed_inventory` — and only when that
+observation is under 72 hours old (`publish.ts` `availabilityFromEvidence`).
+Nothing refreshes the observation after `create-draft.ts` writes it, so the
+2026-08-27 catalogue-wide republish for the per-destination margin work stored
+`UNKNOWN` on every published offer at once. All 20 published PDPs read _"Supplier
+stock: Not confirmed recently."_, the predicate matched nothing, and no cart could
+be quoted for **any** destination — CJ held 214,362 units of the reported product
+at the time.
+
+The predicate is now `<> 'UNAVAILABLE'`. It gated nothing worth keeping: the same
+request re-confirms stock against CJ's live inventory a few lines later, and
+`chooseOrigin` refuses a line with no stocked warehouse — the check ADR-013 §1
+actually asks for, and a stronger one than a flag that may be three days stale. A
+supplier-confirmed `UNAVAILABLE` offer is still refused before any CJ call, which
+matches what `sals3-ecommerce`'s own cart validation blocks.
+
+Two consequences of opening that path. Three buyer-facing refusals named the
+supplier — _"no current stocked CJ origin"_, _"missing CJ logistics properties"_,
+_"CJ returned no delivery methods"_ — and every one of them was unreachable while
+the availability gate refused first; they now say the same thing without naming
+who Sals3 buys from. And `freight-quotes.availability-scope.test.ts` renders the
+real `WHERE` clause, because the behavioural tests stub the executor and hand back
+rows: the predicate that decides whether any row comes back was untested, which is
+how a catalogue-wide outage shipped green.
+
+**Still open: the PDP tells the truth and it is a stale truth.** Nothing refreshes
+`last_observed_inventory` after draft creation, so every product will keep reading
+_"Not confirmed recently."_ and no republish can restore `AVAILABLE` on a product
+drafted more than 72 hours earlier. Checkout no longer depends on it; the PDP's
+supplier-stock line and the seller's inventory figures still do.
+
 ## Product Catalogue: narrower table, Live landing tab (2026-08-22)
 
 Four owner-reported changes to `/listings`. Presentation and default state only —

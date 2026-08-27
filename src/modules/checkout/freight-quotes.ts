@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, eq, isNotNull, sql, type SQL } from 'drizzle-orm';
+import { and, eq, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import getDb, { type DbExecutor } from '@/lib/db/client';
 import {
@@ -371,7 +371,33 @@ export async function loadQuoteLines(
         eq(productOffers.publishState, 'PUBLISHED'),
         eq(productOffers.pricingState, 'RESOLVED'),
         isNotNull(productOffers.priceAmountMinor),
-        eq(productOffers.availabilityState, 'AVAILABLE'),
+        /**
+         * `<> 'UNAVAILABLE'`, not `= 'AVAILABLE'`.
+         *
+         * `availability_state` is frozen onto the offer at publish, from
+         * `provider_variant_references.last_observed_inventory` and only when
+         * that observation is under 72 hours old (`publish.ts`
+         * `availabilityFromEvidence`). Nothing refreshes the observation after
+         * draft creation, so any product published more than three days after
+         * it was drafted stores `UNKNOWN` — permanently. On 2026-08-27 the
+         * catalogue was republished for the per-destination margin work and
+         * every published offer went `UNKNOWN` at once; requiring
+         * `= 'AVAILABLE'` here meant no cart on the storefront could be
+         * quoted, for any destination, and the buyer was told the item was
+         * "not available for delivery to this address".
+         *
+         * Requiring the frozen claim also gated nothing. Stock is re-confirmed
+         * a few lines down against CJ's live inventory, and `chooseOrigin`
+         * refuses any line with no stocked warehouse — a stronger check than a
+         * flag that may be three days stale, and the one ADR-013 §1 asks for
+         * ("publication and checkout re-confirm the exact variant, current
+         * orderability, cost, stock, and destination freight").
+         *
+         * `UNAVAILABLE` is still refused: that is a supplier-confirmed
+         * out-of-stock, the same state the storefront's own cart validation
+         * blocks, and spending a CJ freight call on it is waste.
+         */
+        ne(productOffers.availabilityState, 'UNAVAILABLE'),
       ];
       const bindingConditions: Array<SQL | undefined> = [
         ...baseConditions,
@@ -556,8 +582,13 @@ function chooseOrigin(
   const origin = cjStock ?? factoryStock ?? anyStock;
 
   if (origin === undefined || origin.countryCode === '') {
+    // The buyer-safe sentence names no supplier. This is the live stock check
+    // the offer's frozen `availability_state` used to stand in for, so it is
+    // now the sentence a genuinely out-of-stock cart reaches; who Sals3 buys
+    // from is not the buyer's business, and the storefront prints the portal's
+    // message verbatim on a 422.
     throw new CheckoutFreightQuoteError(
-      'A cart item has no current stocked CJ origin.',
+      'A cart item is out of stock with the supplier right now.',
     );
   }
 
@@ -581,7 +612,7 @@ function requireDetailVariant(detail: CjProductDetail, line: QuoteLine) {
 
   if (productProps.length === 0) {
     throw new CheckoutFreightQuoteError(
-      'A cart item is missing CJ logistics properties.',
+      'A cart item is missing the supplier detail needed to quote delivery.',
     );
   }
 
@@ -886,7 +917,7 @@ export async function quoteCheckoutFreight(
       packageOrigins: packages.map((pkg) => pkg.originCountry),
     });
     throw new CheckoutFreightQuoteError(
-      'CJ returned no delivery methods for this cart and address.',
+      'No delivery method is available for this cart and address.',
     );
   }
 
