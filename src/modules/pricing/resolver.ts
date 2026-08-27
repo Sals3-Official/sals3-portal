@@ -89,16 +89,20 @@ export async function resolveProductPricing(
   /**
    * Refused before any read, not defaulted.
    *
-   * Both policy tables now carry a destination scope, and an unscoped rule is a
-   * real configuration meaning "all destinations" rather than an absence. So a
-   * caller that cannot name its destination cannot be quietly given the
-   * unscoped answer: that would price a Fiji order off a rule the seller wrote
-   * for everywhere, and produce a number instead of an error.
+   * A caller that cannot name its destination must not be given an answer at
+   * all. Since owner decision 2026-08-27 a well-formed code that is **not** one
+   * of the named destinations resolves the **Global** rule by design, which
+   * makes this shape check load-bearing in a way it was not before: it is now
+   * the only thing between a malformed input and a real Global price.
    *
-   * Shape-checked here against the same `^[A-Z]{2}$` the database enforces, so
-   * a typo is a refusal rather than a silent miss — `market_code = 'aus'`
-   * matches no row and would otherwise fall through to the unscoped rule
-   * looking exactly like success.
+   * `''`, `'aus'` and `'AUS'` are refused here. `'AS'` is not — it is a valid
+   * country code Sals3 has not named, so it is a Global order, and that is the
+   * feature rather than a silent miss. The line this guard draws is
+   * **malformed vs. unnamed**, not named vs. unnamed.
+   *
+   * `create-draft.ts` passes `''` deliberately for exactly this refusal; its
+   * own comment explains why inferring `'AU'` there would be the fabricated
+   * commercial input ADR-015's amendment forbids.
    */
   if (!/^[A-Z]{2}$/.test(input.marketCode)) {
     return unavailable('MARKET_REQUIRED');

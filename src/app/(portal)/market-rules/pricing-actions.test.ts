@@ -142,6 +142,23 @@ describe('saveCategoryPolicyAction', () => {
     expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
   });
 
+  /**
+   * A **present** `null` is the Global scope and must be accepted — the exact
+   * opposite of the case above, where the field is absent.
+   *
+   * `marketCode` is `z.string().refine(isPricingScopeDestination).nullable()`,
+   * and `.nullable()` short-circuits before the refine, so `null` never meets
+   * an allow list that would reject it for not being a country. The Global
+   * column depends on that ordering, and reasoning about a Zod short-circuit is
+   * exactly the kind of reasoning that produced 2026-08-25's two hours of
+   * refused saves. Asserted rather than assumed.
+   */
+  it('accepts null as the Global scope', async () => {
+    const result = await saveCategoryPolicyAction({ ...VALID_INPUT });
+
+    expect(result).not.toMatchObject({ reason: 'invalid_input' });
+  });
+
   it('denies a caller without pricing_policy:manage', async () => {
     requirePermissionMock.mockRejectedValue(new PermissionError());
 
