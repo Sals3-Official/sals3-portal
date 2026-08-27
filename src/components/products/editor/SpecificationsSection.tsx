@@ -20,6 +20,12 @@ type SpecificationsSectionProps = {
   supplierProductName: string;
   supplierCategoryPath: string;
   supplierMedia: MediaItemFixture[];
+  /**
+   * Commits a new order for the supplier's photos (owner decision
+   * 2026-08-28: they are arranged here, not in Product media). Omitted in
+   * fixture/preview mode.
+   */
+  onReorderSupplierMedia?: (mediaIds: string[]) => void;
   onOpenSourceDrawer: () => void;
   specifications: SpecificationFixture[];
   onSpecificationChange: (key: string, value: string) => void;
@@ -169,6 +175,7 @@ export default function SpecificationsSection({
   supplierProductName,
   supplierCategoryPath,
   supplierMedia,
+  onReorderSupplierMedia,
   onOpenSourceDrawer,
   specifications,
   onSpecificationChange,
@@ -187,7 +194,10 @@ export default function SpecificationsSection({
           <span className="text-xs font-semibold text-ink-muted">
             Original photos
           </span>
-          <SupplierMediaGallery media={supplierMedia} />
+          <SupplierMediaGallery
+            media={supplierMedia}
+            onReorder={onReorderSupplierMedia}
+          />
         </div>
 
         <div className="grid grid-cols-1 gap-3 @lg:grid-cols-3">

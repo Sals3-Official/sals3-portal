@@ -213,22 +213,63 @@ describe('productToEditorFixture — the gallery grid', () => {
     expect(fixture.media[0]?.id).toBe(SELLER_ROW.mediaId);
   });
 
-  it('puts a supplier original in the same grid, so it can be arranged', () => {
+  /**
+   * One origin per panel (owner decision 2026-08-28). Supplier originals were
+   * briefly tiles in this grid; they are not any more, because `Product media`
+   * counts what the seller uploaded and a grid of supplier photos under a
+   * counter reading `0 of 12 photos` was a panel arguing with itself.
+   */
+  it('keeps supplier originals out of Product media', () => {
     const { fixture } = productToEditorFixture({
       ...CATALOGUE_PRODUCT,
       assignableMedia: [SUPPLIER_ROW, SELLER_ROW],
     });
 
     expect(fixture.media.map((item) => item.sourceType)).toEqual([
-      'SUPPLIER_ORIGINAL',
       'SELLER_UPLOAD',
     ]);
+    expect(fixture.media[0]?.id).toBe(SELLER_ROW.mediaId);
   });
 
-  it('marks the first entry as the cover and only the first', () => {
+  /**
+   * Supplier Details is where they are arranged, so its tiles need the real row
+   * id a reorder writes to — the same reason Product media stopped reading its
+   * deduplicated URL projection.
+   */
+  it('gives Supplier Details the real row ids, in stored order', () => {
     const { fixture } = productToEditorFixture({
       ...CATALOGUE_PRODUCT,
       assignableMedia: [SUPPLIER_ROW, SELLER_ROW],
+    });
+
+    expect(fixture.supplierMedia.map((item) => item.id)).toEqual([
+      SUPPLIER_ROW.mediaId,
+    ]);
+  });
+
+  /**
+   * A product whose supplier photo exists only as the feed's bare address has
+   * no provenance row to position. The panel still shows it — that is the
+   * evidence — and the editor withholds the grip rather than offering one that
+   * cannot save.
+   */
+  it('falls back to the address projection when no supplier row exists', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      assignableMedia: [SELLER_ROW],
+    });
+
+    expect(fixture.supplierMedia.length).toBeGreaterThan(0);
+    expect(fixture.supplierMedia[0]?.id).toContain('-supplier-media-');
+  });
+
+  it('marks the first Product media entry as the cover and only the first', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      assignableMedia: [
+        SELLER_ROW,
+        { ...SELLER_ROW, mediaId: '99999999-9999-4999-8999-999999999999' },
+      ],
     });
 
     expect(fixture.media.map((item) => item.isCover)).toEqual([true, false]);

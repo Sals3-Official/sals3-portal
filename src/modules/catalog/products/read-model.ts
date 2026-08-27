@@ -1678,12 +1678,35 @@ function editorSpecifications(
 function editorSupplierMedia(
   product: CatalogueProductFixture,
 ): MediaItemFixture[] {
-  const imageUrls = product.supplierMediaUrls ?? [];
+  /**
+   * Real `product_media_sources` ids, in stored order, so this panel can be
+   * arranged (owner decision 2026-08-28: the supplier's photos move here, not
+   * in Product media).
+   *
+   * Read from `assignableMedia` rather than the `supplierMediaUrls`
+   * projection, for the same reason the seller's own grid had to stop reading
+   * its projection: that list is deduplicated by address and drops the row
+   * identity a reorder writes to. The projection is still the fallback for a
+   * product whose supplier photo exists only as the feed's bare `imageUrl`
+   * with no provenance row behind it — there is no row to arrange there, and
+   * the panel says so through the note below.
+   */
+  const rows = (product.assignableMedia ?? []).filter(
+    (item) =>
+      item.variantId === null && item.sourceType === 'SUPPLIER_ORIGINAL',
+  );
+
+  const imageUrls =
+    rows.length > 0
+      ? rows.map((row) => row.url)
+      : (product.supplierMediaUrls ?? []);
+  const idFor = (index: number) =>
+    rows[index]?.mediaId ?? `${product.id}-supplier-media-${index + 1}`;
 
   if (imageUrls.length === 0) return [];
 
   return imageUrls.map((imageUrl, index) => ({
-    id: `${product.id}-supplier-media-${index + 1}`,
+    id: idFor(index),
     label: `Supplier photo ${index + 1}`,
     sourceUrl: imageUrl,
     altText: `Supplier listing photo for ${product.name}`,
@@ -1710,17 +1733,23 @@ function editorSupplierMedia(
  * so this is honestly `[]` rather than borrowing the supplier's picture.
  */
 /**
- * The product's gallery, as the editor's arrangeable grid renders it.
+ * Product media: the seller's **own** photos, as the editor's arrangeable grid
+ * renders them.
  *
- * ## Both origins, one grid (ADR-011 amendment 2026-08-28)
+ * ## One origin per panel (owner decision 2026-08-28)
  *
- * A supplier original and a seller upload are both slides a buyer scrolls, so
- * they are both tiles the seller arranges, and the first is the cover. Supplier
- * Details keeps its separate read-only evidence gallery — that panel is
- * provenance and ADR-011 §3 still governs it — but the *gallery* copy of a
- * supplier photo is now editorial, not read-only. Deleting is still gated to
- * `SELLER_UPLOAD` at the write side (`delete-seller-media.ts`), so this widens
- * what may be arranged without widening what may be destroyed.
+ * Supplier originals were briefly tiles in this grid. They are not any more, on
+ * the owner's call after seeing it: `Product media` counts what the seller
+ * uploaded, so a grid of six supplier photos under a counter reading
+ * `0 of 12 photos` was a panel arguing with itself. The supplier's photographs
+ * are arranged where they already live — Supplier Details — and that panel got
+ * the drag grip instead.
+ *
+ * Both panels still write one ordering. `reorderProductMedia` takes the whole
+ * product-level set, and the editor composes it as *seller photos first, then
+ * supplier photos*, each in its own panel's order. So the cover — position 0 —
+ * is the seller's first photo whenever they have one, and the supplier's first
+ * otherwise, which is also exactly what the storefront serves.
  *
  * ## Real row ids, and the bug that hid behind synthetic ones
  *
@@ -1743,7 +1772,7 @@ function editorGalleryMedia(
   product: CatalogueProductFixture,
 ): MediaItemFixture[] {
   const gallery = (product.assignableMedia ?? []).filter(
-    (item) => item.variantId === null,
+    (item) => item.variantId === null && item.sourceType === 'SELLER_UPLOAD',
   );
 
   return gallery.map((item, index) => ({
