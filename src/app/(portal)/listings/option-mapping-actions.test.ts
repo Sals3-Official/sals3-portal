@@ -200,13 +200,53 @@ describe('saveOptionMappingAction', () => {
     expect(saveOptionMapping).not.toHaveBeenCalled();
   });
 
-  it('refuses an axis with fewer than two values', async () => {
+  /**
+   * The single-variant case, reported live on `Bamboo Storage Box`, `Human Lung
+   * Anatomical Model` and `Mohair Knit Beanie`.
+   *
+   * `deriveOptionSplit` keeps every position for a one-variant product, and each
+   * of them holds exactly one value, so this is the only mapping the editor can
+   * offer for these three — and the schema's floor of two refused all of it. The
+   * seller met a sentence demanding a second value for a product that has one
+   * variant. This test fails against that floor.
+   */
+  it('accepts a single-value axis, the only shape a one-variant product has', async () => {
+    vi.mocked(saveOptionMapping).mockResolvedValue({
+      ok: true,
+      axisCount: 1,
+      mappedVariantCount: 1,
+    });
+
+    const axes = [
+      { name: 'Style', values: [{ raw: 'Storage box', label: 'Storage box' }] },
+    ];
+    const result = await saveOptionMappingAction({ ...VALID_INPUT, axes });
+
+    expect(result).toMatchObject({ ok: true, axisCount: 1 });
+    // Passed through untouched: the boundary validates, it does not reshape.
+    expect(saveOptionMapping).toHaveBeenCalledWith(
+      expect.objectContaining({ axes }),
+    );
+  });
+
+  /**
+   * The floor moved to one, not to zero. An axis with no values at all is not a
+   * shape any product has — `deriveOptionSplit` cannot emit an empty bucket — so
+   * it is still nothing the writer should be asked to interpret.
+   */
+  it('still refuses an axis carrying no values at all', async () => {
     const result = await saveOptionMappingAction({
       ...VALID_INPUT,
-      axes: [{ name: 'Colour', values: [{ raw: 'Black', label: 'Black' }] }],
+      axes: [{ name: 'Colour', values: [] }],
     });
 
     expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.reason).toBe('invalid_input');
+    // The copy may not name a floor neither schema enforces. `renameMappingInput`
+    // has accepted one value since it was written, so "at least two values" was
+    // wrong on this shared line for both actions, not only for this one.
+    expect(result.message).not.toMatch(/two values/i);
     expect(saveOptionMapping).not.toHaveBeenCalled();
   });
 
