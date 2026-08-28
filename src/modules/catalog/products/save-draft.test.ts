@@ -66,9 +66,12 @@ const REQUEST = {
   ],
 } satisfies SaveProductDraftInput;
 
-function run(sellerAccountId = 'seller-a') {
+function run(
+  overrides: Partial<SaveProductDraftInput> = {},
+  sellerAccountId = 'seller-a',
+) {
   return saveProductDraft({
-    request: REQUEST,
+    request: { ...REQUEST, ...overrides },
     sellerAccountId,
     actorId: 'actor-1',
     database: DATABASE,
@@ -92,6 +95,8 @@ beforeEach(() => {
   asMock(updateSellerRetailPrices).mockResolvedValue({
     updatedOfferCount: 1,
     missedVariantIds: [],
+    // No price moved by default, so the ordinary save emits no override audit.
+    changes: [],
   });
   asMock(openDraftForEdit).mockResolvedValue({
     ok: true,
@@ -181,7 +186,7 @@ describe('saveProductDraft', () => {
   it('refuses and writes nothing for a product this account does not steward', async () => {
     asMock(findProductForSteward).mockResolvedValue(null);
 
-    await expect(run('seller-b')).resolves.toEqual({
+    await expect(run({}, 'seller-b')).resolves.toEqual({
       ok: false,
       reason: 'not_found',
     });
@@ -258,10 +263,66 @@ describe('saveProductDraft', () => {
     );
   });
 
+  /**
+   * Owner requirement 2026-08-28: a retail price moved off the rules has to be
+   * traceable to a person and a reason. `actorId` is server-resolved, so the
+   * name on the event is never one the browser supplied.
+   */
+  it('audits each price that moved, with the value it moved from', async () => {
+    asMock(updateSellerRetailPrices).mockResolvedValue({
+      updatedOfferCount: 1,
+      missedVariantIds: [],
+      changes: [
+        {
+          offerId: 'offer-1',
+          variantId: REQUEST.variantRetailPrices[0].variantId,
+          previousAmountMinor: 1235,
+          previousCurrency: 'USD',
+          previousResolverVersion: 'PRICING_RESOLVER_V3',
+          amountMinor: 4580,
+          currency: 'USD',
+        },
+      ],
+    });
+
+    await run({ retailPriceOverrideReason: 'matching a competitor' });
+
+    expect(appendAuditEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorId: 'actor-1',
+        action: 'product_offer.retail_price_overridden',
+        entityType: 'ProductOffer',
+        entityId: 'offer-1',
+        payload: expect.objectContaining({
+          previousAmountMinor: 1235,
+          amountMinor: 4580,
+          reason: 'matching a competitor',
+        }),
+      }),
+    );
+  });
+
+  /**
+   * Pressing Save on an untouched product is not an edit. Without this, one
+   * audit row per variant would bury the one time somebody moved a price.
+   */
+  it('writes no override audit when no price moved', async () => {
+    await run();
+
+    expect(appendAuditEvent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'product_offer.retail_price_overridden',
+      }),
+    );
+  });
+
   it('refuses the save when a submitted retail price does not update an offer', async () => {
     asMock(updateSellerRetailPrices).mockResolvedValue({
       updatedOfferCount: 0,
       missedVariantIds: [REQUEST.variantRetailPrices[0].variantId],
+      changes: [],
     });
 
     await expect(run()).resolves.toEqual({

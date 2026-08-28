@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -792,6 +794,22 @@ export default function ProductEditorWorkspace({
   const [isDirty, setIsDirty] = useState(false);
   const [lifecycle, setLifecycle] = useState<EditorLifecycle>(initialLifecycle);
   const [activeSection, setActiveSection] = useState<EditorSectionId>('basic');
+  /*
+    Which retail cells this session has unlocked, and why.
+
+    Session state on purpose, not persisted: the lock exists to stop an
+    accidental edit, and re-opening the editor is a fresh intention. The reason
+    rides along to `save-draft.ts`, which writes it onto the audit event beside
+    the old and the new price.
+  */
+  const [unlockedVariantIds, setUnlockedVariantIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const [priceOverrideReason, setPriceOverrideReason] = useState('');
+  const [unlockDraftReason, setUnlockDraftReason] = useState('');
+  const [unlockTargetVariantId, setUnlockTargetVariantId] = useState<
+    string | null
+  >(null);
   const [expandedVariantId, setExpandedVariantId] = useState<string | null>(
     null,
   );
@@ -1243,6 +1261,10 @@ export default function ProductEditorWorkspace({
           descriptionBlocks,
           descriptionMode,
         ),
+        // Recorded, never checked: `save-draft.ts` writes it onto the audit
+        // event for each price that actually moved.
+        retailPriceOverrideReason:
+          priceOverrideReason.length === 0 ? undefined : priceOverrideReason,
         variantRetailPrices: variants
           .filter(
             (variant) =>
@@ -2293,6 +2315,20 @@ export default function ProductEditorWorkspace({
 
               <VariantPricingTable
                 variants={variants}
+                unlockedVariantIds={unlockedVariantIds}
+                /*
+                  Only where a save can actually record the override. Fixture
+                  mode has no server behind it, so the lock would collect a
+                  reason nothing writes down.
+                */
+                onRequestPriceUnlock={
+                  saveDraftAction === undefined
+                    ? undefined
+                    : (variantId) => {
+                        setUnlockDraftReason(priceOverrideReason);
+                        setUnlockTargetVariantId(variantId);
+                      }
+                }
                 expandedVariantId={expandedVariantId}
                 onToggleExpanded={(variantId) =>
                   setExpandedVariantId((current) =>
@@ -2500,6 +2536,75 @@ export default function ProductEditorWorkspace({
         onCancel={() => setBulkPricingMode(null)}
         onApply={applyBulkPricing}
       />
+
+      {/*
+        Unlocking a retail cell.
+
+        A reason is required to open the field, not to save it: asking at the
+        moment of intent is what makes the note describe the decision, and it
+        keeps the Save button from turning into an interrogation over an edit
+        somebody made twenty minutes ago. One reason covers the session, so
+        overriding six variants of one product is one sentence, not six.
+      */}
+      <AlertDialog
+        open={unlockTargetVariantId !== null}
+        onOpenChange={(open) => {
+          if (!open) setUnlockTargetVariantId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Override the rule price?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This price comes from your margin rules. Typing your own exempts
+              this variant from them permanently — repricing will skip it, and a
+              later change to your margins will not reach it. Say why, and it is
+              recorded against your name.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="flex flex-col gap-1.5 text-sm">
+            <Label htmlFor="retail-price-override-reason">
+              Reason for the override
+            </Label>
+            <Input
+              id="retail-price-override-reason"
+              value={unlockDraftReason}
+              onChange={(event) => setUnlockDraftReason(event.target.value)}
+              placeholder="e.g. matching a competitor on this size"
+              aria-describedby="retail-price-override-reason-hint"
+            />
+            <span
+              id="retail-price-override-reason-hint"
+              className="text-xs text-muted-foreground"
+            >
+              At least 10 characters.
+            </span>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep the rule price</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={unlockDraftReason.trim().length < 10}
+              onClick={() => {
+                const variantId = unlockTargetVariantId;
+
+                if (variantId === null) return;
+
+                setPriceOverrideReason(unlockDraftReason.trim());
+                setUnlockedVariantIds((current) => {
+                  const next = new Set(current);
+
+                  next.add(variantId);
+
+                  return next;
+                });
+                setUnlockTargetVariantId(null);
+              }}
+            >
+              Unlock this price
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={discardDialogOpen}

@@ -76,6 +76,16 @@ export const saveProductDraftInputSchema = z.object({
         .regex(/^[A-Z]{3}$/),
     }),
   ),
+  /**
+   * Why a person moved a price off the rules, collected when they unlocked the
+   * field.
+   *
+   * Optional on the wire and never trusted as authorization — it is recorded,
+   * not checked. Optional because the bulk `Set retail price` path and any
+   * older client do not collect one, and refusing the save over a missing note
+   * would turn it into a lost edit; the audit records its absence instead.
+   */
+  retailPriceOverrideReason: z.string().trim().min(1).max(280).optional(),
 });
 
 export type SaveProductDraftInput = z.infer<typeof saveProductDraftInputSchema>;
@@ -284,6 +294,15 @@ export type BulkProductDraftActionResult =
 
 /** Audit action names. Stable strings — a rename breaks historical queries. */
 export const PRODUCT_AUDIT_ACTIONS = {
+  /**
+   * A person moved a retail price off the number the margin rules produced.
+   *
+   * Its own action rather than a field on `revisionSaved`: a price override is
+   * the one editor change that decides what a buyer is charged, and the owner
+   * asked to be able to see who made it and why. One event per offer whose
+   * price actually moved — an unchanged save emits none.
+   */
+  retailPriceOverridden: 'product_offer.retail_price_overridden',
   productCreated: 'catalog_product.created',
   productReused: 'catalog_product.reused',
   /**

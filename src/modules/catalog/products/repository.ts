@@ -767,6 +767,19 @@ export async function insertUnpublishedOffer(
   return row;
 }
 
+/** One offer whose retail price moved, and what it moved from. */
+export type RetailPriceChange = {
+  offerId: string;
+  variantId: string;
+  /** `null` when the offer had no price at all before this write. */
+  previousAmountMinor: number | null;
+  previousCurrency: string | null;
+  /** `SELLER_RETAIL_PRICE_V1` means a person had already overridden it. */
+  previousResolverVersion: string | null;
+  amountMinor: number;
+  currency: string;
+};
+
 export async function updateSellerRetailPrices(
   executor: Executor,
   input: {
@@ -779,9 +792,18 @@ export async function updateSellerRetailPrices(
     }>;
     actorId: string;
   },
-): Promise<{ updatedOfferCount: number; missedVariantIds: string[] }> {
+): Promise<{
+  updatedOfferCount: number;
+  missedVariantIds: string[];
+  /**
+   * Only the offers whose price actually moved, with the value they carried
+   * before. An unchanged save produces none, so an audit built from this
+   * records edits rather than every time somebody pressed Save.
+   */
+  changes: RetailPriceChange[];
+}> {
   if (input.prices.length === 0)
-    return { updatedOfferCount: 0, missedVariantIds: [] };
+    return { updatedOfferCount: 0, missedVariantIds: [], changes: [] };
 
   const requestedVariantIds = input.prices.map((price) => price.variantId);
   const variantRows = await executor
@@ -795,6 +817,7 @@ export async function updateSellerRetailPrices(
     );
   const productVariantIds = new Set(variantRows.map((row) => row.id));
   const missedVariantIds: string[] = [];
+  const changes: RetailPriceChange[] = [];
   const updatedOfferCount = await input.prices.reduce<Promise<number>>(
     async (totalPromise, price) => {
       const total = await totalPromise;
@@ -804,6 +827,26 @@ export async function updateSellerRetailPrices(
 
         return total;
       }
+
+      /*
+        Read before writing. `UPDATE ... RETURNING` in Postgres reports the row
+        *after* the statement, so it cannot supply the previous value — and the
+        previous value is the whole point of a price audit.
+      */
+      const before = await executor
+        .select({
+          id: productOffers.id,
+          priceAmountMinor: productOffers.priceAmountMinor,
+          priceCurrency: productOffers.priceCurrency,
+          pricingResolverVersion: productOffers.pricingResolverVersion,
+        })
+        .from(productOffers)
+        .where(
+          and(
+            eq(productOffers.sellerAccountId, input.sellerAccountId),
+            eq(productOffers.variantId, price.variantId),
+          ),
+        );
 
       const rows = await executor
         .update(productOffers)
@@ -831,12 +874,32 @@ export async function updateSellerRetailPrices(
 
       if (rows.length === 0) missedVariantIds.push(price.variantId);
 
+      before.forEach((row) => {
+        const previousMinor =
+          row.priceAmountMinor === null ? null : Number(row.priceAmountMinor);
+
+        // Unchanged saves are not edits. Without this, pressing Save on an
+        // untouched product would write one audit row per variant and bury the
+        // one time somebody actually moved a price.
+        if (previousMinor === price.amountMinor) return;
+
+        changes.push({
+          offerId: row.id,
+          variantId: price.variantId,
+          previousAmountMinor: previousMinor,
+          previousCurrency: row.priceCurrency,
+          previousResolverVersion: row.pricingResolverVersion,
+          amountMinor: price.amountMinor,
+          currency: price.currency,
+        });
+      });
+
       return total + rows.length;
     },
     Promise.resolve(0),
   );
 
-  return { updatedOfferCount, missedVariantIds };
+  return { updatedOfferCount, missedVariantIds, changes };
 }
 
 export async function findBinding(
