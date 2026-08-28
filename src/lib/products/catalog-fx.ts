@@ -262,7 +262,28 @@ export async function resolveCatalogFxRates(): Promise<CatalogFxRates> {
     built on an unconfigured cushion is one the viewer cannot tell from a
     configured one.
   */
-  const buffer = await readStorefrontFxBuffer();
+  /*
+    Wrapped, because this is the only database read on the design-preview page
+    that calls it -- everything else there is fixtures. An unmigrated schema or
+    a connection blip would otherwise turn a page that always rendered into a
+    500, which is a worse trade than losing the PHP estimates beside the costs.
+
+    Same discipline as `FundingBufferSection`: a failed read and a successful
+    read that finds no policy are different events, and both end in no
+    estimate, so the distinction lives in the log rather than in the return.
+  */
+  let buffer;
+
+  try {
+    buffer = await readStorefrontFxBuffer();
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[catalog-fx] failed to read the FX buffer', {
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+
+    return {};
+  }
 
   if (buffer.outcome !== 'RESOLVED') return {};
 
