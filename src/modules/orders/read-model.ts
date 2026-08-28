@@ -72,11 +72,16 @@ import { arrivalWindowsByPackage, readAddressSnapshot } from './snapshots';
  */
 
 /**
- * Hard ceiling on parcels read for one seller, matching `buyer-read.ts`'s own
- * `MAX_ORDERS`. An unbounded scan over a table that grows with every sale is
- * the kind of query that is fine for a year and then is not.
+ * Hard ceiling on **orders** read for one seller, matching `buyer-read.ts`'s
+ * own `MAX_ORDERS`. An unbounded scan over a table that grows with every sale
+ * is the kind of query that is fine for a year and then is not.
+ *
+ * Named for orders because that is what it limits: the predicate sits on the
+ * distinct-order query, and a split order yields more than one parcel, so the
+ * number of *parcels* returned can exceed this. It was called `MAX_PARCELS`,
+ * which described a ceiling the code does not enforce.
  */
-const MAX_PARCELS = 200;
+const MAX_ORDERS = 200;
 
 /** The tables this screen cannot render without. */
 const REQUIRED_TABLES = [
@@ -756,7 +761,7 @@ export async function listOrderParcelsForSeller(
     .innerJoin(sals3Orders, eq(sals3Orders.id, sals3OrderLines.orderId))
     .where(eq(supplierConnections.sellerAccountId, sellerAccountId))
     .orderBy(desc(sals3Orders.createdAt))
-    .limit(MAX_PARCELS);
+    .limit(MAX_ORDERS);
 
   const orderIds = orderIdRows.map((row) => row.orderId);
 
@@ -982,7 +987,23 @@ function supplierSpendOf(connectionLabel: string): SupplierSpend {
  */
 function riskFactsOf(
   group: SellerGroupRow | null,
-  lines: SellerLineRow[],
+  /**
+   * The parcel's own lines, taken from the seller-scoped list rather than
+   * re-queried.
+   *
+   * This used to re-read `sals3_order_lines` by `order_id` with **no seller
+   * predicate** and narrow the result with a JavaScript `.filter()` — the
+   * exact thing this module's header says it never does. On a split order
+   * where two sellers each hold ungrouped lines, the `unassigned` parcel
+   * counted the other seller's lines as its own: a wrong number, and a small
+   * cross-tenant read.
+   *
+   * The fix is not a `WHERE` clause, it is deleting the query. `parcel.lines`
+   * is already this parcel's lines, already scoped, already grouped — so the
+   * boundary cannot be re-derived incorrectly because there is nothing left to
+   * re-derive, and the detail read costs one statement less.
+   */
+  lines: readonly ParcelLine[],
   events: TrackingEvent[],
 ): FulfilmentRiskFact[] {
   const exceptions = events.filter((event) => event.isException).length;
@@ -1004,7 +1025,10 @@ function riskFactsOf(
       id: 'tracking',
       label: 'Tracking number',
       value: group?.trackingNumber ?? 'Not issued yet',
-      tone: group?.trackingNumber ? 'neutral' : 'neutral',
+      // Neutral either way: a parcel with no waybill yet is the normal state
+      // for most of its life, not a warning. The branch that used to be here
+      // returned 'neutral' from both arms.
+      tone: 'neutral',
     },
     {
       id: 'exceptions',
@@ -1130,17 +1154,6 @@ export async function findOrderParcelDetailForSeller(
     isException: event.isException,
   }));
 
-  const lineRows = await executor
-    .select(SELLER_LINE_COLUMNS)
-    .from(sals3OrderLines)
-    .where(eq(sals3OrderLines.orderId, order.id));
-
-  const parcelLines = (lineRows as SellerLineRow[]).filter((line) =>
-    group === null
-      ? line.fulfillmentGroupId === null
-      : line.fulfillmentGroupId === group.id,
-  );
-
   const buyer: BuyerIdentity = {
     maskedName: address === null ? 'Buyer' : maskName(address.fullName),
     maskedPhone: maskPhone(address?.phone),
@@ -1162,7 +1175,7 @@ export async function findOrderParcelDetailForSeller(
     parcel,
     actions: parcel.actions,
     buyer,
-    riskFacts: riskFactsOf(group, parcelLines, trackingEvents),
+    riskFacts: riskFactsOf(group, parcel.lines, trackingEvents),
     // No write path exists for a seller note, and a read-only null renders
     // nothing rather than an empty box implying one can be typed.
     sellerNote: null,
