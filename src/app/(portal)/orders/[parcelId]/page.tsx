@@ -43,8 +43,14 @@ export default async function ParcelDetailPage({
   // crash before reaching the protected part. See `lib/db/availability.ts`.
   const resolved = await readOrUnavailable('parcel detail', async () => {
     const session = await requirePermission('order:read');
+    const repository = getOrdersRepository();
 
-    return getOrdersRepository().findParcelDetail(
+    // No tables here means no parcel here. A 404 is the honest answer for a
+    // single parcel - the list screen is where the migration gap is explained,
+    // because that is where somebody arrives asking where their orders went.
+    if (!(await repository.tablesExist())) return null;
+
+    return repository.findParcelDetail(
       parcelId,
       session.sellerId,
       // Decides whether the *button* renders. The action re-checks

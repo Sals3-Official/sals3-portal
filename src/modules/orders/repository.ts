@@ -2,6 +2,7 @@ import type { DbExecutor } from '@/lib/db/client';
 import {
   findOrderParcelDetailForSeller,
   listOrderParcelsForSeller,
+  orderTablesExist,
   revealParcelContactForSeller,
 } from './read-model';
 import type { OrderParcel, ParcelDetail, RevealedContact } from './contracts';
@@ -36,6 +37,17 @@ import type { OrderParcel, ParcelDetail, RevealedContact } from './contracts';
  * tenant boundary, and `read-model.ts` applies it inside the SQL.
  */
 export type OrdersRepository = {
+  /**
+   * Whether the order tables exist at all.
+   *
+   * Part of this seam rather than imported straight from the read model, so a
+   * page still talks to exactly one thing about orders. The pages call it
+   * before reading, because "not migrated here" and "no orders yet" render
+   * very differently and only one of them is a reason to go looking for lost
+   * sales.
+   */
+  tablesExist(): Promise<boolean>;
+
   listParcels(sellerId: string): Promise<OrderParcel[]>;
 
   findParcelDetail(
@@ -60,6 +72,10 @@ function databaseOrdersRepository(executor?: DbExecutor): OrdersRepository {
   const options = executor === undefined ? {} : { executor };
 
   return {
+    async tablesExist() {
+      return orderTablesExist(options);
+    },
+
     async listParcels(sellerId) {
       return listOrderParcelsForSeller(sellerId, options);
     },

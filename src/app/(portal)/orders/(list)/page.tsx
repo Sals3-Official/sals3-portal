@@ -59,6 +59,14 @@ const DROPSHIPPER_STAGE_CHIPS = [
 ];
 
 /**
+ * Returned by the read when the tables themselves are absent.
+ *
+ * A sentinel rather than an exception, because it is not an error: it is a
+ * legible state that has its own copy. Same shape `reviews/page.tsx` uses.
+ */
+const NOT_MIGRATED = 'NOT_MIGRATED' as const;
+
+/**
  * A page-level notice. Two different reasons, one shape, so neither can be
  * mistaken for an empty order book: "no database here" and "the database did
  * not answer" both mean *we do not know*, which is not the same as *no orders*.
@@ -112,10 +120,13 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
 
   const resolved = await readOrUnavailable('orders', async () => {
     const session = await requirePermission('order:read');
+    const repository = getOrdersRepository();
+
+    if (!(await repository.tablesExist())) return NOT_MIGRATED;
 
     return {
       session,
-      parcels: await getOrdersRepository().listParcels(session.sellerId),
+      parcels: await repository.listParcels(session.sellerId),
     };
   });
 
@@ -124,6 +135,15 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
       <OrdersNotice
         title="Cannot reach the database right now"
         description="Orders could not be loaded because the database did not respond. This is not an empty order book, and nothing was changed."
+      />
+    );
+  }
+
+  if (resolved.data === NOT_MIGRATED) {
+    return (
+      <OrdersNotice
+        title="The order tables are not in this database yet"
+        description="Orders reach a database through the break-glass migration run, not through the deploy. Until it has run here, this screen has nothing to read - which is not the same as having no orders."
       />
     );
   }

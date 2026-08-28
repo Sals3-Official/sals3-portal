@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import getDb, { type DbExecutor } from '@/lib/db/client';
 import {
   checkoutIntents,
@@ -77,6 +77,57 @@ import { arrivalWindowsByPackage, readAddressSnapshot } from './snapshots';
  * the kind of query that is fine for a year and then is not.
  */
 const MAX_PARCELS = 200;
+
+/** The tables this screen cannot render without. */
+const REQUIRED_TABLES = [
+  'checkout_intents',
+  'sals3_orders',
+  'sals3_order_lines',
+  'fulfillment_groups',
+] as const;
+
+/**
+ * Distinguishes "not migrated here" from "the database is down".
+ *
+ * The order tables reach a database through a `CRON_SECRET` break-glass run,
+ * not through the deploy, so there is a real window where this screen exists
+ * and its tables do not — and a developer's local database is in that window
+ * indefinitely, because the standing rule is never to migrate it. Production
+ * has them; a laptop does not.
+ *
+ * `readOrUnavailable` cannot answer this and should not: it treats only
+ * connection-class errors as unavailable and rethrows `undefined_table`, which
+ * is correct, because a portal-wide helper that swallowed `42P01` would hide
+ * genuine schema drift everywhere. So the check is explicit and its copy names
+ * the migration. The PR #102 lesson is that **a migration gap has to be
+ * legible as a migration gap**, not dressed up as an outage — and certainly
+ * not as an empty order book, which is the reading that would send someone
+ * hunting for lost sales.
+ *
+ * Modelled on `readExistingReviewTables`, which solved the same problem for
+ * `/reviews`.
+ */
+export async function orderTablesExist(
+  options: { executor?: DbExecutor } = {},
+): Promise<boolean> {
+  const executor = options.executor ?? getDb();
+  const names = REQUIRED_TABLES.map((name) => `'${name}'`).join(', ');
+
+  const rows = (await executor.execute(
+    sql.raw(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name IN (${names})`,
+    ),
+  )) as unknown as { table_name?: unknown }[];
+
+  const present = new Set(
+    rows
+      .map((row) => row.table_name)
+      .filter((name) => typeof name === 'string'),
+  );
+
+  return REQUIRED_TABLES.every((name) => present.has(name));
+}
 
 /**
  * Named columns, never a bare `.select()`.
