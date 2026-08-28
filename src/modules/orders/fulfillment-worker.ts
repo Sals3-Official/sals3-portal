@@ -12,21 +12,15 @@ import {
   supplierOrderSteps,
 } from '@/lib/db/schema';
 import PostgresSupplierSecretStore from '@/lib/secrets/postgres-supplier-secret-store';
-import createGovernedFetch from '@/modules/catalog/discovery/governed-fetch';
 import type { FulfillOrderMessage } from '@/modules/catalog/discovery/messages';
 import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
-import { CJ_BASE_URL, CjApiError } from '@/services/cj/config';
-
-const CJ_ORDER_TIMEOUT_MS = 10_000;
-
-const cjResponseSchema = z.object({
-  code: z.number(),
-  result: z.boolean().optional(),
-  success: z.boolean().optional(),
-  message: z.string().optional(),
-  data: z.unknown().optional(),
-  requestId: z.string().optional(),
-});
+import { CjApiError } from '@/services/cj/config';
+import {
+  cjEnvelopeSchema,
+  getCjJson,
+  postCjJson,
+  type CjEnvelope,
+} from './cj-http';
 
 const createOrderDataSchema = z.object({
   orderId: z.string().min(1).nullish(),
@@ -87,10 +81,6 @@ const LINE_COLUMNS = {
   storeLineItemId: sals3OrderLines.storeLineItemId,
 } as const;
 
-function timeoutSignal(): AbortSignal {
-  return AbortSignal.timeout(CJ_ORDER_TIMEOUT_MS);
-}
-
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
   const parsed = raw === undefined ? Number.NaN : Number.parseInt(raw, 10);
@@ -102,49 +92,44 @@ function isSandboxOrderEnabled(): boolean {
   return process.env.CJ_ORDER_SANDBOX !== '0';
 }
 
-async function postCjJson(
-  connectionId: string,
-  path: string,
-  body: unknown,
-  tokenManager: CjTokenManager,
-): Promise<unknown> {
-  const token = await tokenManager.getAccessToken(connectionId);
-  const fetcher = createGovernedFetch(connectionId);
-  let response: Response;
+/**
+ * `platformToken` is an account-specific CJ field and only `createOrderV3`
+ * takes it. Passed explicitly rather than inferred from the path, so
+ * `cj-http.ts` stays a transport and knows nothing about which call is which.
+ */
+function createOrderHeaders(): Record<string, string> {
+  const platformToken = process.env.CJ_PLATFORM_TOKEN;
 
-  try {
-    response = await fetcher(`${CJ_BASE_URL}${path}`, {
-      method: 'POST',
-      headers: {
-        'CJ-Access-Token': token,
-        ...(path.endsWith('/createOrderV3') &&
-        process.env.CJ_PLATFORM_TOKEN !== undefined
-          ? { platformToken: process.env.CJ_PLATFORM_TOKEN }
-          : {}),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      cache: 'no-store',
-      signal: timeoutSignal(),
-    });
-  } catch {
-    throw new CjApiError('upstream-unavailable');
-  }
+  return platformToken === undefined ? {} : { platformToken };
+}
 
-  if (response.status === 429) throw new CjApiError('rate-limited');
-  if (!response.ok) throw new CjApiError('upstream-unavailable');
+/**
+ * One structured line per failed supplier step.
+ *
+ * This worker logged nothing at all until 2026-08-28, which is why an order CJ
+ * had actually created took a database console and a supplier API call to
+ * explain. `detail` carries CJ's own code and message; nothing here carries the
+ * address, email, or phone, which rule 35 forbids and which answer no question
+ * this log exists for.
+ */
+function logSupplierFailure(
+  scope: 'step' | 'group',
+  context: { groupId: string; step?: CjStep },
+  error: unknown,
+): void {
+  const cj = error instanceof CjApiError ? error : undefined;
 
-  const parsed = cjResponseSchema.safeParse(await response.json());
-
-  if (
-    !parsed.success ||
-    parsed.data.code !== 200 ||
-    (parsed.data.result === false && parsed.data.success === false)
-  ) {
-    throw new CjApiError('unexpected-response');
-  }
-
-  return parsed.data;
+  // eslint-disable-next-line no-console
+  console.error('[portal] supplier fulfillment failed', {
+    scope,
+    groupId: context.groupId,
+    ...(context.step === undefined ? {} : { step: context.step }),
+    reason: cj?.reason ?? 'unexpected-response',
+    ...(cj?.detail?.code === undefined ? {} : { cjCode: cj.detail.code }),
+    ...(cj?.detail?.message === undefined
+      ? {}
+      : { cjMessage: cj.detail.message }),
+  });
 }
 
 async function runStep(
@@ -208,6 +193,13 @@ async function runStep(
   } catch (error) {
     const reason =
       error instanceof CjApiError ? error.reason : 'unexpected-response';
+    const detail = error instanceof CjApiError ? error.detail : undefined;
+
+    logSupplierFailure(
+      'step',
+      { groupId: input.groupId, step: input.step },
+      error,
+    );
 
     await executor
       .update(supplierOrderSteps)
@@ -215,6 +207,10 @@ async function runStep(
         status: 'FAILED',
         attempts: attempts + 1,
         errorCode: reason,
+        // The five reason codes cannot tell a refused order from a refused
+        // variant. CJ's own words can, and this column is already nullable
+        // jsonb, so keeping them costs no migration and no schema change.
+        ...(detail === undefined ? {} : { responseSnapshot: detail }),
         updatedAt: new Date(),
       })
       .where(eq(supplierOrderSteps.idempotencyKey, input.idempotencyKey));
@@ -224,7 +220,7 @@ async function runStep(
 }
 
 function responseData(response: unknown): unknown {
-  return cjResponseSchema.parse(response).data;
+  return cjEnvelopeSchema.parse(response).data;
 }
 
 function moneyDecimal(minor: bigint): number {
@@ -274,6 +270,115 @@ function createOrderBody(input: {
   };
 }
 
+/**
+ * `/shopping/order/getOrderDetail` answering about an order we may have
+ * orphaned. Only `orderId` is read; CJ's payload is far wider and drifts.
+ *
+ * Deliberately not `orderDetailSchema` from `status-sync.ts`: that one reads
+ * the shipping fields and never looks at `orderId`, and widening it to serve
+ * both would couple a status read to an order-creation recovery.
+ */
+const recoveredOrderSchema = z.object({
+  orderId: z.union([z.string(), z.number()]).nullish(),
+});
+
+/**
+ * Whether CJ said "no such order" rather than "something went wrong".
+ *
+ * Both arrive as `unexpected-response`, and telling them apart matters more
+ * here than anywhere else in this file: read it as not-found when CJ actually
+ * failed and the next line creates a second supplier order for a buyer who
+ * ordered once. So this matches CJ's own words and everything else falls
+ * through to a rethrow — a stuck retry is recoverable, a duplicate order is
+ * money.
+ */
+function isOrderNotFound(error: unknown): boolean {
+  return (
+    error instanceof CjApiError &&
+    /not\s*found/i.test(error.detail?.message ?? '')
+  );
+}
+
+/**
+ * Recovers a supplier order CJ created but this worker never learned the id of.
+ *
+ * The failure this exists for, from 2026-08-28: `createOrderV3` was abandoned
+ * at the client timeout, CJ completed the write anyway, and the group was left
+ * `FULFILLMENT_FAILED` with a null `cj_order_id`. Every replay then re-sent the
+ * same deterministic `orderNumber`, which CJ refused as a duplicate, so the
+ * order could never move and never self-heal — `status-sync` skips groups
+ * whose `cj_order_id` is null, by design.
+ *
+ * `orderNumber` is `${order.orderNumber}-${group.packageId}`, stable across
+ * every attempt, which makes it an idempotency key on CJ's side. Asking CJ
+ * about it before creating turns the timeout from a lost order into a slow one.
+ *
+ * Scoped to a **previously failed** create on purpose. A group with no step row
+ * has never called CJ, so there is nothing to adopt and the lookup would be a
+ * wasted call on every first attempt; a `SUCCEEDED` row is already served from
+ * `runStep`'s own cache. Returning `null` means "create it".
+ */
+async function adoptOrphanedCjOrder(
+  executor: DbExecutor,
+  input: { group: Group; tokenManager: CjTokenManager },
+  orderNumber: string,
+): Promise<{ envelope: CjEnvelope } | null> {
+  const [existing] = await executor
+    .select()
+    .from(supplierOrderSteps)
+    .where(
+      and(
+        eq(supplierOrderSteps.fulfillmentGroupId, input.group.id),
+        eq(supplierOrderSteps.step, 'CREATE_ORDER_V3'),
+      ),
+    )
+    .limit(1);
+
+  if (existing === undefined || existing.status !== 'FAILED') return null;
+
+  let detailRaw: unknown;
+
+  try {
+    detailRaw = await getCjJson(
+      input.group.supplierConnectionId,
+      `/shopping/order/getOrderDetail?orderId=${encodeURIComponent(orderNumber)}`,
+      input.tokenManager,
+    );
+  } catch (error) {
+    if (isOrderNotFound(error)) return null;
+
+    throw error;
+  }
+
+  const orderId = recoveredOrderSchema.parse(detailRaw ?? {}).orderId ?? null;
+
+  if (orderId === null) return null;
+
+  const envelope: CjEnvelope = {
+    code: 200,
+    data: { orderId: String(orderId) },
+  };
+
+  // eslint-disable-next-line no-console
+  console.error('[portal] adopted an orphaned CJ order', {
+    groupId: input.group.id,
+    orderNumber,
+  });
+
+  await executor
+    .update(supplierOrderSteps)
+    .set({
+      status: 'SUCCEEDED',
+      responseSnapshot: envelope,
+      attempts: existing.attempts + 1,
+      errorCode: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(supplierOrderSteps.id, existing.id));
+
+  return { envelope };
+}
+
 async function fulfillGroup(input: {
   orderNumber: string;
   group: Group;
@@ -283,19 +388,28 @@ async function fulfillGroup(input: {
 }) {
   const db = getDb();
   const createRequest = createOrderBody(input);
-  const createResponse = await runStep(db, {
-    groupId: input.group.id,
-    step: 'CREATE_ORDER_V3',
-    idempotencyKey: `cj:create:${input.group.id}`,
-    request: createRequest,
-    call: () =>
-      postCjJson(
-        input.group.supplierConnectionId,
-        '/shopping/order/createOrderV3',
-        createRequest,
-        input.tokenManager,
-      ),
-  });
+  const adopted = await adoptOrphanedCjOrder(
+    db,
+    input,
+    createRequest.orderNumber,
+  );
+  const createResponse =
+    adopted === null
+      ? await runStep(db, {
+          groupId: input.group.id,
+          step: 'CREATE_ORDER_V3',
+          idempotencyKey: `cj:create:${input.group.id}`,
+          request: createRequest,
+          call: () =>
+            postCjJson(
+              input.group.supplierConnectionId,
+              '/shopping/order/createOrderV3',
+              createRequest,
+              input.tokenManager,
+              { headers: createOrderHeaders() },
+            ),
+        })
+      : adopted.envelope;
   const createData = createOrderDataSchema.parse(responseData(createResponse));
   const cjOrderId = createData.orderId ?? createData.shipmentOrderId;
 
@@ -462,6 +576,8 @@ export default async function handleFulfillOrder(
           tokenManager,
         });
       } catch (error) {
+        logSupplierFailure('group', { groupId: group.id }, error);
+
         await db
           .update(fulfillmentGroups)
           .set({
