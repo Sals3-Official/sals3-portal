@@ -1,8 +1,5 @@
-import {
-  getFxBufferPercent,
-  resolveUsdToPhpRate,
-  type UsdToPhpRate,
-} from '@/lib/storefront/fx';
+import { resolveUsdToPhpRate, type UsdToPhpRate } from '@/lib/storefront/fx';
+import readStorefrontFxBuffer from '@/lib/storefront/fx-buffer-cache';
 import type { CatalogFxRates } from '@/lib/products/catalog-types';
 
 /**
@@ -19,12 +16,12 @@ import type { CatalogFxRates } from '@/lib/products/catalog-types';
  * so both currencies share one reviewed cache/fallback implementation
  * instead of two.
  *
- * Reuses the real `getFxBufferPercent()` - the buffer is about what payment
- * rails charge to convert to PHP, which does not depend on which currency is
- * being converted from.
+ * Takes the same buffer the caller resolved for USD - the buffer is about what
+ * payment rails charge to convert to PHP, which does not depend on which
+ * currency is being converted from.
  */
 
-const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const CACHE_TTL_MS = 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 4_000;
 
 /** AUD/PHP has historically sat well under USD/PHP; outside this band the answer is not real. */
@@ -155,9 +152,9 @@ async function refresh(bufferPercent: number): Promise<UsdToPhpRate> {
   return fallback;
 }
 
-export async function resolveAudToPhpRate(): Promise<UsdToPhpRate> {
-  const bufferPercent = getFxBufferPercent();
-
+export async function resolveAudToPhpRate(
+  bufferPercent: number,
+): Promise<UsdToPhpRate> {
   if (cached !== null && cached.expiresAt > Date.now()) {
     return {
       ...cached.rate,
@@ -257,9 +254,44 @@ export async function resolveUsdToAudMidRate(): Promise<MidRate | null> {
  * `estimatePhpMinor()` return `null` for it instead of guessing.
  */
 export async function resolveCatalogFxRates(): Promise<CatalogFxRates> {
+  /*
+    No configured buffer, no estimates — an empty map rather than a new `null`
+    return, because absence is already this type's way of saying "cannot
+    estimate this currency" and `estimatePhpMinor` already answers `null` to it.
+    Reusing that keeps the four components downstream untouched, and an estimate
+    built on an unconfigured cushion is one the viewer cannot tell from a
+    configured one.
+  */
+  /*
+    Wrapped, because this is the only database read on the design-preview page
+    that calls it -- everything else there is fixtures. An unmigrated schema or
+    a connection blip would otherwise turn a page that always rendered into a
+    500, which is a worse trade than losing the PHP estimates beside the costs.
+
+    Same discipline as `FundingBufferSection`: a failed read and a successful
+    read that finds no policy are different events, and both end in no
+    estimate, so the distinction lives in the log rather than in the return.
+  */
+  let buffer;
+
+  try {
+    buffer = await readStorefrontFxBuffer();
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[catalog-fx] failed to read the FX buffer', {
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+
+    return {};
+  }
+
+  if (buffer.outcome !== 'RESOLVED') return {};
+
+  const { bufferPercent } = buffer.buffer;
+
   const [usd, aud] = await Promise.all([
-    resolveUsdToPhpRate(),
-    resolveAudToPhpRate(),
+    resolveUsdToPhpRate(bufferPercent),
+    resolveAudToPhpRate(bufferPercent),
   ]);
 
   return {

@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearUsdToPhpRateCache, resolveUsdToPhpRate } from './fx';
 
+/**
+ * The buffer is now an argument rather than an env read, so these cases state
+ * it. `1.5` is deliberately the value the live Market Rules funding buffer
+ * carries (+1.50%), so the arithmetic below is the arithmetic production does.
+ */
+const BUFFER = 1.5;
+
 function jsonResponse(body: unknown, ok = true): Response {
   return {
     ok,
@@ -13,7 +20,6 @@ describe('USD to PHP rate', () => {
 
   beforeEach(() => {
     clearUsdToPhpRateCache();
-    vi.stubEnv('CJ_FX_BUFFER_PERCENT', '1.5');
     vi.stubEnv('CJ_USD_TO_PHP_RATE', '58');
     errorLog = vi
       .spyOn(console, 'error')
@@ -25,16 +31,17 @@ describe('USD to PHP rate', () => {
     vi.restoreAllMocks();
   });
 
-  it('adds the buffer on top of the published mid rate', async () => {
+  it('adds the caller-supplied buffer on top of the published mid rate', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(jsonResponse({ rates: { PHP: 60 } })),
     );
 
-    const rate = await resolveUsdToPhpRate();
+    const rate = await resolveUsdToPhpRate(BUFFER);
 
     expect(rate.spot).toBe(60);
     expect(rate.effective).toBeCloseTo(60.9, 6); // 60 * 1.015
+    expect(rate.bufferPercent).toBe(BUFFER);
     expect(rate.source).toBe('ecb-frankfurter');
     expect(rate.stale).toBe(false);
   });
@@ -46,7 +53,7 @@ describe('USD to PHP rate', () => {
       .mockResolvedValueOnce(jsonResponse({ rates: { PHP: 61 } }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const rate = await resolveUsdToPhpRate();
+    const rate = await resolveUsdToPhpRate(BUFFER);
 
     expect(rate.spot).toBe(61);
     expect(rate.source).toBe('open-er-api');
@@ -59,7 +66,7 @@ describe('USD to PHP rate', () => {
       vi.fn().mockResolvedValue(jsonResponse({ rates: { PHP: 3 } })),
     );
 
-    const rate = await resolveUsdToPhpRate();
+    const rate = await resolveUsdToPhpRate(BUFFER);
 
     expect(rate.spot).toBe(58);
     expect(rate.source).toBe('configured-fallback');
@@ -71,19 +78,19 @@ describe('USD to PHP rate', () => {
       'fetch',
       vi.fn().mockResolvedValue(jsonResponse({ rates: { PHP: 60 } })),
     );
-    await resolveUsdToPhpRate();
+    await resolveUsdToPhpRate(BUFFER);
 
     clearUsdToPhpRateCache();
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(jsonResponse({ rates: { PHP: 60 } })),
     );
-    const first = await resolveUsdToPhpRate();
+    const first = await resolveUsdToPhpRate(BUFFER);
     expect(first.spot).toBe(60);
 
     // Cache is warm, so a broken upstream is never even consulted.
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
-    const second = await resolveUsdToPhpRate();
+    const second = await resolveUsdToPhpRate(BUFFER);
 
     expect(second.spot).toBe(60);
     expect(second.stale).toBe(false);
@@ -92,7 +99,7 @@ describe('USD to PHP rate', () => {
   it('uses the configured fallback when every source fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
 
-    const rate = await resolveUsdToPhpRate();
+    const rate = await resolveUsdToPhpRate(BUFFER);
 
     expect(rate.spot).toBe(58);
     expect(rate.effective).toBeCloseTo(58.87, 6); // 58 * 1.015
@@ -106,9 +113,9 @@ describe('USD to PHP rate', () => {
       .mockResolvedValue(jsonResponse({ rates: { PHP: 60 } }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await resolveUsdToPhpRate();
-    await resolveUsdToPhpRate();
-    await resolveUsdToPhpRate();
+    await resolveUsdToPhpRate(BUFFER);
+    await resolveUsdToPhpRate(BUFFER);
+    await resolveUsdToPhpRate(BUFFER);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -120,9 +127,9 @@ describe('USD to PHP rate', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await Promise.all([
-      resolveUsdToPhpRate(),
-      resolveUsdToPhpRate(),
-      resolveUsdToPhpRate(),
+      resolveUsdToPhpRate(BUFFER),
+      resolveUsdToPhpRate(BUFFER),
+      resolveUsdToPhpRate(BUFFER),
     ]);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -133,10 +140,11 @@ describe('USD to PHP rate', () => {
       'fetch',
       vi.fn().mockResolvedValue(jsonResponse({ rates: { PHP: 60 } })),
     );
-    await resolveUsdToPhpRate();
+    await resolveUsdToPhpRate(BUFFER);
 
-    vi.stubEnv('CJ_FX_BUFFER_PERCENT', '3');
-    const rate = await resolveUsdToPhpRate();
+    // The point of re-applying rather than returning the stored `effective`:
+    // a Market Rules edit reaches the next render, not the next cache expiry.
+    const rate = await resolveUsdToPhpRate(3);
 
     expect(rate.effective).toBeCloseTo(61.8, 6); // 60 * 1.03
   });

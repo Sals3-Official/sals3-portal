@@ -25,6 +25,14 @@
  * mid rate plus a small buffer, the same shape a money changer quotes, only
  * a narrower one.
  *
+ * That buffer is no longer a constant in this file. It is the Market Rules
+ * funding buffer, and callers pass it in — owner decision 2026-08-28, after
+ * this module's hard-coded `2.5` was found sitting beside a screen showing
+ * `+1.50%`. Resolve it with `modules/pricing/storefront-fx-buffer.ts` rather
+ * than reintroducing a default here: a fallback percentage is indistinguishable
+ * from a configured one at the point it renders, which is exactly how the two
+ * drifted apart in the first place.
+ *
  * Sourced from the European Central Bank's daily reference rates, which
  * publish once per business day - deliberately, so shopper prices change at
  * most once a day rather than drifting all afternoon.
@@ -35,7 +43,20 @@
  * quietly costs margin, so a failure to refresh is logged.
  */
 
-const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+/**
+ * One hour (owner decision 2026-08-28), down from twelve.
+ *
+ * The published *rate* does not move that fast — the ECB set behind this
+ * refreshes once per business day — so this is not buying rate accuracy. What
+ * it buys is propagation: the buffer is now a Market Rules setting somebody can
+ * change, and an hour is how long a change takes to reach every instance.
+ *
+ * Note the ceiling this cache actually has: `cached` is module state, so the
+ * TTL is per serverless instance and a cold start refetches regardless. The
+ * honest reading is "at most one upstream call per instance per hour", the same
+ * shape `lib/auth/rate-limit.ts` documents about itself.
+ */
+const CACHE_TTL_MS = 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 4_000;
 
 /** Outside this band the answer is not a USD/PHP rate, whatever it claims. */
@@ -44,19 +65,6 @@ const MAX_PLAUSIBLE_RATE = 120;
 
 /** A genuine daily move is small; a large jump is far more likely bad data. */
 const MAX_DRIFT_PERCENT = 10;
-
-/**
- * Sized from what the payment rails actually charge above mid, not guessed:
- * a PH credit card runs about 1.85% (1% Visa/Mastercard assessment plus
- * ~0.85% issuer FX conversion), and PayPal is 3-4%. 2.5% covers the card case
- * with room for the rate moving between daily ECB publications, and is still
- * under the 2-3% a money changer quotes.
- *
- * Revisit once the real CJ payment route is confirmed. Topping the CJ wallet
- * up by wire transfer or Payoneer earns a 2-3% CJ bonus that offsets most of
- * this, and a thinner buffer would then be the correct answer.
- */
-const DEFAULT_BUFFER_PERCENT = 2.5;
 
 const FALLBACK_RATE = 58;
 
@@ -107,10 +115,6 @@ function readEnvNumber(name: string, fallback: number): number {
   const parsed = Number(process.env[name]);
 
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-export function getFxBufferPercent(): number {
-  return readEnvNumber('CJ_FX_BUFFER_PERCENT', DEFAULT_BUFFER_PERCENT);
 }
 
 function applyBuffer(spot: number, bufferPercent: number): number {
@@ -203,9 +207,9 @@ async function refresh(bufferPercent: number): Promise<UsdToPhpRate> {
   return fallback;
 }
 
-export async function resolveUsdToPhpRate(): Promise<UsdToPhpRate> {
-  const bufferPercent = getFxBufferPercent();
-
+export async function resolveUsdToPhpRate(
+  bufferPercent: number,
+): Promise<UsdToPhpRate> {
   if (cached !== null && cached.expiresAt > Date.now()) {
     // Re-apply the buffer rather than returning the stored effective rate, so
     // changing the buffer takes effect without waiting out the cache.

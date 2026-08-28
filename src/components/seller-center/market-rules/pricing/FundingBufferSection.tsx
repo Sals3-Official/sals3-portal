@@ -59,8 +59,9 @@ export default async function FundingBufferSection({
           Funding buffer
         </h2>
         <p className="max-w-[78ch] text-sm text-muted-foreground">
-          Covers what it costs you to convert your own funding currency when you
-          top up a supplier wallet. One buffer is active at a time.
+          Covers what currency conversion costs you. It lifts your cost basis
+          when you publish, and the approximate local price buyers see on the
+          storefront. One buffer is active at a time.
         </p>
       </div>
       {result.ok ? (

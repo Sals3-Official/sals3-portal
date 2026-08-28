@@ -3572,6 +3572,39 @@ The response carries an explicit `currency` field so the consumer never has to
 assume one. `src/lib/storefront/fx.ts` (USD→PHP) no longer prices anything
 customer-facing and is forbidden to the storefront's import graph.
 
+### The FX buffer is served, not duplicated
+
+`GET /api/storefront/fx-buffer` (bearer token, same as every other storefront
+route) serves the **Market Rules → Funding buffer** so `sals3-ecommerce` can put
+an allowance on its approximate local price. Owner decision 2026-08-28, after
+`src/lib/storefront/fx.ts` was found carrying a hard-coded `2.5` while the screen
+a seller actually edits showed `+1.50%` — two places stating one fact.
+
+- Resolved by `src/modules/pricing/storefront-fx-buffer.ts` through the seller
+  who owns **published offers**, because the buffer is per-seller and the
+  storefront has no seller context. One seller today, so the answer is
+  unambiguous; two sellers with different buffers resolve to `null` and log,
+  rather than charging one seller's cushion against another's goods.
+- Cached by `src/lib/storefront/fx-buffer-cache.ts` on the same two-layer idiom
+  as `catalog-cache.ts` (`React.cache` + `unstable_cache`, 60s, tagged
+  `storefront-fx-buffer`). Saving or deactivating the buffer calls
+  `updateTag(STOREFRONT_FX_BUFFER_TAG)`, so an edit propagates instead of
+  waiting out a TTL.
+- `200 {"buffer": null}` is a real answer — no policy, expired, out-of-band
+  rate, or ambiguous — and the consumer shows **no local price** for all of
+  them. A `503` means the question could not be asked, which the consumer
+  distinguishes so a database blip does not clear every local price.
+- **This does not change what anyone is charged.** The resolver still applies
+  the same policy to the cost basis exactly once at publish time; ADR-015 §4
+  forbids merging a funding buffer into a buyer-_settlement_ conversion, and the
+  approximate local price is a display estimate that is deliberately not a
+  `Money`.
+
+`resolveUsdToPhpRate()` and `resolveAudToPhpRate()` now take the buffer as an
+argument. Do not reintroduce a default in either: a fallback percentage is
+indistinguishable from a configured one by the time it renders. Their own rate
+cache also moved from 12 hours to **1 hour**.
+
 ### The contract is additive-only
 
 `sals3-ecommerce`'s Zod schema **rejects the entire page** if a legacy key is
