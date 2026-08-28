@@ -19,6 +19,7 @@ const LINE: ParcelLine = {
   imageUrl: 'https://cf.cjdropshipping.com/item/mask.jpg',
   acceptedOnLabel: 'as ordered on 24 Aug 2026',
   sku: 'S3V-ABAA8A8E7770',
+  storefrontUrl: null,
   deliveryRangeLabel: null,
 };
 

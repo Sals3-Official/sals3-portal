@@ -248,6 +248,19 @@ export type ParcelLine = {
   acceptedOnLabel: string;
   sku: string;
   /**
+   * The public product page for this item, or `null`.
+   *
+   * `null` whenever the link would not work: the product is not live, or this
+   * deployment has no `SALS3_STOREFRONT_BASE_URL`. Offering a link that 404s
+   * is the failure this screen has already removed twice.
+   *
+   * It resolves the product's *current* slug rather than the one frozen on the
+   * order (ADR-007). That is not a contradiction: the frozen snapshot is the
+   * record of what the buyer bought, and this is a way to go and look at the
+   * listing as it stands. A re-slugged product should still open.
+   */
+  storefrontUrl: string | null;
+  /**
    * Pre-formatted delivery window, e.g. `18–22 Aug 2026`.
    *
    * `null` on own-stock parcels, and that is not an oversight. The only

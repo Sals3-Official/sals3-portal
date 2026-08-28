@@ -46,9 +46,26 @@ export default function ParcelContentsCard({
           />
           <div className="flex min-w-0 flex-1 flex-col gap-[5px]">
             <div className="flex flex-wrap items-baseline justify-between gap-4">
-              <span className="text-[14px] font-semibold text-ink">
-                {line.title}
-              </span>
+              {/* Leaves the portal for the public product page, so it opens
+                  in a new tab: a seller checking a listing mid-fulfilment
+                  should not lose the parcel they were working on. `rel` is
+                  set because `target="_blank"` without it hands the opened
+                  page a live `window.opener` handle back into an
+                  authenticated session. */}
+              {line.storefrontUrl === null ? (
+                <span className="text-[14px] font-semibold text-ink">
+                  {line.title}
+                </span>
+              ) : (
+                <a
+                  href={line.storefrontUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[14px] font-semibold text-ink hover:text-primary hover:underline"
+                >
+                  {line.title}
+                </a>
+              )}
               <span className="text-[13px] font-medium text-ink-muted">
                 ×{line.quantity}
               </span>
