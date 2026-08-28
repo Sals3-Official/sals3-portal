@@ -55,6 +55,7 @@ function candidate(overrides: Record<string, unknown> = {}) {
     currentPriceMinor: BigInt(2399),
     currentPriceCurrency: 'USD',
     pricingDecision: { resolvedLayer: 'CATEGORY' },
+    pricingResolverVersion: 'pricing-resolver-v3',
     variantId: 'variant-1',
     sku: 'SALS3-1',
     productId: 'product-1',
@@ -127,10 +128,36 @@ describe('planReprice', () => {
    * replace a number a person chose with one a rule computed, silently, in a
    * bulk action — so the resolver is never even asked about it.
    */
-  it('never reprices a price a person typed', async () => {
-    const { executor } = recordingExecutor([
-      candidate({ pricingDecision: { resolvedLayer: 'SELLER_RETAIL_PRICE' } }),
-    ]);
+  it.each([
+    {
+      label: 'publish-time shape',
+      row: {
+        pricingDecision: { resolvedLayer: 'SELLER_RETAIL_PRICE' },
+        pricingResolverVersion: 'SELLER_RETAIL_PRICE_V1',
+      },
+    },
+    {
+      /**
+       * The shape `updateSellerRetailPrices` writes on a draft save — no
+       * `resolvedLayer` at all. A check that recognised only the publish-time
+       * shape would have repriced every price entered this way, which is most
+       * of them.
+       */
+      label: 'draft-save shape',
+      row: {
+        pricingDecision: { source: 'SELLER_RETAIL_PRICE', amountMinor: 330 },
+        pricingResolverVersion: 'SELLER_RETAIL_PRICE_V1',
+      },
+    },
+    {
+      label: 'resolver version alone',
+      row: {
+        pricingDecision: null,
+        pricingResolverVersion: 'SELLER_RETAIL_PRICE_V1',
+      },
+    },
+  ])('never reprices a price a person typed ($label)', async ({ row }) => {
+    const { executor } = recordingExecutor([candidate(row)]);
 
     const plan = await planReprice(executor as never, SELLER_ID);
 

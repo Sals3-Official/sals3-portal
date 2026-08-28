@@ -42,6 +42,7 @@ import {
   type ReadinessIssue,
   type SpecificationFixture,
   type VariantFixture,
+  type VariantPricingGuidance,
 } from '@/lib/seller-center/product-editor/types';
 import { suggestMetaDescription } from '@/lib/seller-center/product-editor/suggest-meta-description';
 import describeRefusedUploads from '@/lib/products/describe-refused-uploads';
@@ -89,6 +90,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
 type ProductEditorWorkspaceProps = {
   fixture: ProductEditorFixture;
+  /** What this account's margin rules say each variant should sell for. */
+  variantGuidance?: VariantPricingGuidance[];
   /**
    * Server-rendered evidence, passed in as a slot. Markets needs
    * no client state, so rendering it on the server keeps it out of the
@@ -513,6 +516,7 @@ function categoryAttributeIssues(
  */
 export default function ProductEditorWorkspace({
   fixture,
+  variantGuidance = [],
   marketsSection,
   initialLifecycle,
   saveDraftAction,
@@ -1055,6 +1059,9 @@ export default function ProductEditorWorkspace({
             ),
             currency: variant.retailPrice.currency,
           },
+          // Setting a price in bulk is the seller deciding it, exactly as
+          // typing one is — see `retailPriceIsSellerSet`.
+          retailPriceIsSellerSet: true,
           attention: amountMinor <= 0 ? 'Retail price required' : null,
         };
       }),
@@ -1174,7 +1181,11 @@ export default function ProductEditorWorkspace({
           .filter(
             (variant) =>
               UUID_PATTERN.test(variant.id) &&
-              variant.retailPrice.amountMinor > 0,
+              variant.retailPrice.amountMinor > 0 &&
+              // See `retailPriceIsSellerSet`: a draft save writes straight onto
+              // the offer row as SELLER_RETAIL_PRICE, so sending the rules'
+              // own default here would freeze this product at today's rate.
+              variant.retailPriceIsSellerSet === true,
           )
           .map((variant) => ({
             variantId: variant.id,
@@ -1259,7 +1270,16 @@ export default function ProductEditorWorkspace({
         productId: fixture.publishTarget.productId,
         expectedProductVersion,
         variantRetailPrices: variants
-          .filter((variant) => UUID_PATTERN.test(variant.id))
+          .filter(
+            (variant) =>
+              UUID_PATTERN.test(variant.id) &&
+              // Only a price a person decided. Every other variant is left to
+              // the resolver, which produces exactly the number already shown
+              // in the cell — that is what keeps the editor, the offer, and
+              // the storefront on one price.
+              variant.retailPriceIsSellerSet === true &&
+              variant.retailPrice.amountMinor > 0,
+          )
           .map((variant) => ({
             variantId: variant.id,
             amountMinor: variant.retailPrice.amountMinor,
@@ -2220,6 +2240,22 @@ export default function ProductEditorWorkspace({
 
                   updateVariant(variantId, { enabled: !target.enabled });
                 }}
+                onUseRulePrice={(variantId) => {
+                  const rule = variantGuidance.find(
+                    (row) => row.variantId === variantId,
+                  );
+
+                  if (rule?.suggestedPrice == null) return;
+
+                  // Clearing the flag is the point: the price is handed back
+                  // to the rules, so publication resolves it again instead of
+                  // storing it as this seller's own for good.
+                  updateVariant(variantId, {
+                    retailPrice: rule.suggestedPrice,
+                    retailPriceIsSellerSet: false,
+                    attention: null,
+                  });
+                }}
                 onRetailChange={(variantId, amountMinor) => {
                   const target = variants.find((item) => item.id === variantId);
 
@@ -2234,6 +2270,14 @@ export default function ProductEditorWorkspace({
                       ),
                       currency: target.retailPrice.currency,
                     },
+                    /*
+                      Typing in this cell is the seller deciding the price.
+                      Until they do, the number here is the margin rules' own
+                      answer and must not be sent back as theirs — anything
+                      sent as a retail price is stored as SELLER_RETAIL_PRICE
+                      and is then exempt from every future rule change.
+                    */
+                    retailPriceIsSellerSet: true,
                     attention:
                       amountMinor <= 0 ? 'Retail price required' : null,
                   });
@@ -2241,6 +2285,7 @@ export default function ProductEditorWorkspace({
                 onSellerSkuChange={(variantId, value) =>
                   updateVariant(variantId, { sellerSku: value })
                 }
+                pricingGuidance={variantGuidance}
                 onBulkSetPrice={() => setBulkPricingMode('SET_PRICE')}
                 onPickImage={
                   assignVariantMediaAction === undefined

@@ -143,6 +143,7 @@ export default async function AddProductPage({ searchParams }: PageProps) {
         initialLifecycle={lifecycleFromParam(query.state)}
         dataMode="database"
         sals3CategoryOptions={await listSals3CategoryV1Options(getDb())}
+        variantGuidance={record.variantGuidance}
       />
     );
   }

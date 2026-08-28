@@ -85,6 +85,9 @@ vi.mock('@/app/(portal)/listings/show-supplier-photo-actions', () => ({
   default: vi.fn(),
 }));
 
+/** A real UUID, because the editor only sends prices for variants that have one. */
+const RULE_PRICED_VARIANT_ID = '33333333-3333-4333-8333-333333333333';
+
 function fixture(key: string): ProductEditorFixture {
   const resolved = resolveProductEditorFixture(key);
 
@@ -165,6 +168,116 @@ describe('Product Editor - publication outcomes', () => {
         expectedProductVersion: 7,
         variantRetailPrices: [],
       }),
+    );
+  });
+
+  /**
+   * The guarantee this whole path exists for.
+   *
+   * Anything sent as a `variantRetailPrice` is stored as `SELLER_RETAIL_PRICE`
+   * and is then permanently exempt from margin rules and from repricing. The
+   * editor used to send every price it was showing — including the ones the
+   * rules had produced — so a category margin only ever reached a product's
+   * first publication and every republish froze it again.
+   */
+  it('publishes a rule-priced variant WITHOUT sending its price back', async () => {
+    const resolved = fixture('attention');
+    vi.mocked(publishProductAction).mockResolvedValue({
+      ok: true,
+      slug: 'aurelis-daypack',
+      offerCount: 1,
+      availability: 'AVAILABLE',
+    });
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          variants: resolved.variants.map((variant, index) =>
+            index === 0
+              ? {
+                  ...variant,
+                  id: RULE_PRICED_VARIANT_ID,
+                  retailPriceIsSellerSet: false,
+                }
+              : variant,
+          ),
+          publishTarget: {
+            productId: '11111111-1111-4111-8111-111111111111',
+            expectedProductVersion: 7,
+          },
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Publish with Attention' }),
+    );
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Publish with Attention' }),
+    );
+
+    await waitFor(() =>
+      expect(publishProductAction).toHaveBeenCalledWith({
+        productId: '11111111-1111-4111-8111-111111111111',
+        expectedProductVersion: 7,
+        // Empty: the resolver runs and writes the same number the cell shows.
+        variantRetailPrices: [],
+      }),
+    );
+  });
+
+  it('publishes a price the seller typed AS the seller’s', async () => {
+    const resolved = fixture('attention');
+    vi.mocked(publishProductAction).mockResolvedValue({
+      ok: true,
+      slug: 'aurelis-daypack',
+      offerCount: 1,
+      availability: 'AVAILABLE',
+    });
+
+    render(
+      <ProductEditor
+        fixture={{
+          ...resolved,
+          variants: resolved.variants.map((variant, index) =>
+            index === 0
+              ? {
+                  ...variant,
+                  id: RULE_PRICED_VARIANT_ID,
+                  retailPriceIsSellerSet: true,
+                }
+              : variant,
+          ),
+          publishTarget: {
+            productId: '11111111-1111-4111-8111-111111111111',
+            expectedProductVersion: 7,
+          },
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Publish with Attention' }),
+    );
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Publish with Attention' }),
+    );
+
+    await waitFor(() =>
+      expect(publishProductAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variantRetailPrices: [
+            expect.objectContaining({ variantId: RULE_PRICED_VARIANT_ID }),
+          ],
+        }),
+      ),
     );
   });
 

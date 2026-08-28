@@ -19,17 +19,100 @@ import {
   formatDateTime,
   formatMoney,
 } from '@/lib/seller-center/product-editor/format';
-import type { VariantFixture } from '@/lib/seller-center/product-editor/types';
+import type {
+  VariantFixture,
+  VariantPricingGuidance,
+} from '@/lib/seller-center/product-editor/types';
 import resolveVariantAxisColumns, {
   resolveFirstAxisGroups,
 } from '@/lib/seller-center/product-editor/variant-axis-columns';
 
+/**
+ * Which rule produced the number in the cell beside it.
+ *
+ * A seller could set a department to 300% and have no way to tell whether it
+ * had reached a given product: the rate lived only on Market rules, and the
+ * price lived only here. This is the one line that connects them — and it names
+ * the category the rule actually sits on, which is often a parent of the
+ * product's own.
+ *
+ * Markup, not the stored margin rate, because markup over cost is the unit the
+ * bulk sheet speaks and the one a seller sourcing from a supplier thinks in.
+ */
+function PricingRuleNote({
+  guidance,
+  isSellerSet,
+  onUseRulePrice,
+}: {
+  guidance: VariantPricingGuidance | undefined;
+  isSellerSet: boolean;
+  onUseRulePrice: () => void;
+}) {
+  if (isSellerSet) {
+    /*
+      The way back to the rules.
+
+      Every price entered before this screen resolved anything is stamped as
+      the seller's — the editor used to send all of them on every save — so
+      without this, an existing catalogue could never be handed back to its
+      own margin rules. The button restores the rule's number AND clears the
+      flag, which is what lets publication resolve it again from then on.
+    */
+    return (
+      <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+        Your price — margin rules do not change it
+        {guidance?.suggestedPrice === null ||
+        guidance?.suggestedPrice === undefined ? null : (
+          <button
+            type="button"
+            className="underline underline-offset-2 hover:text-foreground"
+            onClick={onUseRulePrice}
+          >
+            Use {formatMoney(guidance.suggestedPrice)} from your rules
+          </button>
+        )}
+      </span>
+    );
+  }
+
+  if (guidance === undefined) return null;
+
+  if (guidance.suggestedPrice === null) {
+    return (
+      <span className="text-xs text-amber-700 dark:text-amber-500">
+        {guidance.unavailableLabel ?? 'No margin rule prices this yet'}
+      </span>
+    );
+  }
+
+  const rule =
+    guidance.markupPercent === null
+      ? 'your margin rules'
+      : `${guidance.markupPercent}% markup`;
+
+  return (
+    <span className="text-xs text-muted-foreground">
+      From {rule}
+      {guidance.sourceCategoryPath === null
+        ? ''
+        : ` on ${guidance.sourceCategoryPath}`}
+    </span>
+  );
+}
+
 type VariantPricingTableProps = {
   variants: VariantFixture[];
+  /**
+   * What this account's margin rules say each variant should sell for, keyed
+   * by variant id. Empty in fixture mode, where no rule can be resolved.
+   */
+  pricingGuidance?: VariantPricingGuidance[];
   expandedVariantId: string | null;
   onToggleExpanded: (variantId: string) => void;
   onToggleEnabled: (variantId: string) => void;
   onRetailChange: (variantId: string, amountMinor: number) => void;
+  /** Hands a seller-set price back to the margin rules. */
+  onUseRulePrice: (variantId: string) => void;
   onSellerSkuChange: (variantId: string, value: string) => void;
   onBulkSetPrice: () => void;
   /**
@@ -288,6 +371,8 @@ function VariantEvidenceRow({ variant, columnCount }: VariantEvidenceRowProps) {
  * screen in the portal.
  */
 export default function VariantPricingTable({
+  pricingGuidance = [],
+  onUseRulePrice,
   variants,
   expandedVariantId,
   onToggleExpanded,
@@ -297,6 +382,10 @@ export default function VariantPricingTable({
   onBulkSetPrice,
   onPickImage,
 }: VariantPricingTableProps) {
+  const guidanceByVariantId = new Map(
+    pricingGuidance.map((row) => [row.variantId, row]),
+  );
+
   /**
    * Presentation only, and derived from `variants` rather than from the fixture,
    * so it follows the same rows the table is about to render.
@@ -551,14 +640,21 @@ export default function VariantPricingTable({
                     </div>
                   </TableCell>
                   <TableCell>
-                    <RetailPriceInput
-                      label={`Retail price for ${variant.optionLabel}`}
-                      value={variant.retailPrice}
-                      supplierCost={variant.supplierCost}
-                      onChange={(amountMinor) =>
-                        onRetailChange(variant.id, amountMinor)
-                      }
-                    />
+                    <div className="flex flex-col gap-1">
+                      <RetailPriceInput
+                        label={`Retail price for ${variant.optionLabel}`}
+                        value={variant.retailPrice}
+                        supplierCost={variant.supplierCost}
+                        onChange={(amountMinor) =>
+                          onRetailChange(variant.id, amountMinor)
+                        }
+                      />
+                      <PricingRuleNote
+                        guidance={guidanceByVariantId.get(variant.id)}
+                        isSellerSet={variant.retailPriceIsSellerSet === true}
+                        onUseRulePrice={() => onUseRulePrice(variant.id)}
+                      />
+                    </div>
                   </TableCell>
                   <TableCell className={EVIDENCE_CELL}>
                     <div className="flex flex-col gap-0.5 tabular-nums">
