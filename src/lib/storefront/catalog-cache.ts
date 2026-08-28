@@ -18,6 +18,7 @@ import {
   type StorefrontPage,
   type StorefrontSection,
 } from '@/modules/catalog/storefront/read-model';
+import { STOREFRONT_CATALOG_TAG } from './catalog-tag';
 
 /**
  * The published-catalogue reads, memoised per request and across requests.
@@ -59,8 +60,15 @@ import {
  * idiom in this repository, not three.
  */
 
-/** Invalidated by every write that can publish, pause, or reprice a product. */
-export const STOREFRONT_CATALOG_TAG = 'storefront-catalog';
+/**
+ * Invalidated by every write that can publish, pause, or reprice a product.
+ *
+ * Defined in `catalog-tag.ts` and re-exported here so a caller that only needs
+ * to expire the cache does not have to import the cache — and with it
+ * `server-only` and the whole read model. Existing importers of this name are
+ * unaffected.
+ */
+export { STOREFRONT_CATALOG_TAG } from './catalog-tag';
 
 /**
  * Bounds the staleness a missed `revalidateTag` can cause. Short, because the

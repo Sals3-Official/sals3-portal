@@ -7,6 +7,10 @@ import {
   formatScaledRate,
   isValidFxAdjustmentRate,
   isValidMarginRate,
+  isValidTargetMarginRate,
+  markupPercentFromMarginRateScaled,
+  markupPercentToMarginRateScaled,
+  MAX_MARKUP_PERCENT,
   parseScaledRate,
   RATE_SCALE,
   suggestedPriceMinor,
@@ -120,12 +124,52 @@ describe('suggestedPriceMinor', () => {
     expect(Number.isFinite(Number(result))).toBe(true);
   });
 
-  it('rejects margin rate of exactly 0 (still an invalid rate, not just a no-op)', () => {
-    expect(() => suggestedPriceMinor(b(1000), b(0))).toThrow(RangeError);
+  /**
+   * Owner decision 2026-08-28: a target margin of 0 is a rule, not a typo, and
+   * it prices at cost. The floor keeps the strict `> 0` bound — see
+   * `isValidMarginRate` — so the two are still not interchangeable.
+   */
+  it('prices at cost for a target margin of exactly 0', () => {
+    expect(suggestedPriceMinor(b(1000), b(0))).toBe(b(1000));
   });
 
   it('rejects margin rate of exactly 1 (division by zero)', () => {
     expect(() => suggestedPriceMinor(b(1000), RATE_SCALE)).toThrow(RangeError);
+  });
+});
+
+describe('markup <-> margin', () => {
+  it('turns a 300% markup into the margin that prices at four times cost', () => {
+    const rate = markupPercentToMarginRateScaled(300);
+
+    expect(formatScaledRate(rate)).toBe('0.750000');
+    expect(suggestedPriceMinor(b(1000), rate)).toBe(b(4000));
+  });
+
+  it('turns a 0% markup into a rule that prices at cost', () => {
+    const rate = markupPercentToMarginRateScaled(0);
+
+    expect(rate).toBe(b(0));
+    expect(suggestedPriceMinor(b(1000), rate)).toBe(b(1000));
+  });
+
+  it('keeps the top of the range priceable', () => {
+    const rate = markupPercentToMarginRateScaled(MAX_MARKUP_PERCENT);
+
+    expect(isValidTargetMarginRate(rate)).toBe(true);
+    // 500% markup: six times cost, to the rounding a numeric(8, 6) allows.
+    expect(suggestedPriceMinor(b(1000), rate)).toBe(b(6000));
+  });
+
+  it('round-trips a markup that does not divide evenly', () => {
+    const rate = markupPercentToMarginRateScaled(35);
+
+    expect(formatScaledRate(rate)).toBe('0.259259');
+    expect(markupPercentFromMarginRateScaled(rate)).toBe(35);
+  });
+
+  it('refuses a negative markup rather than storing a negative rate', () => {
+    expect(() => markupPercentToMarginRateScaled(-1)).toThrow(RangeError);
   });
 
   it('rejects a margin rate above 1 (would produce a negative price)', () => {

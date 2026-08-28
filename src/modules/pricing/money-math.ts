@@ -60,13 +60,25 @@ export function isValidMarginRate(rateScaled: bigint): boolean {
   return rateScaled > BigInt(0) && rateScaled < RATE_SCALE;
 }
 
-/** A signed buffer within the sanity bound above. */
-export function isValidFxAdjustmentRate(rateScaled: bigint): boolean {
-  return (
-    rateScaled >= -MAX_FX_ADJUSTMENT_MAGNITUDE &&
-    rateScaled <= MAX_FX_ADJUSTMENT_MAGNITUDE
-  );
+/**
+ * `0 <= rate < 1` — the bound a TARGET margin must satisfy.
+ *
+ * Deliberately one notch wider than `isValidMarginRate`, and only for the
+ * target: a target of exactly 0 is a real rule a seller can mean ("sell this
+ * category at cost"), and `price = cost / (1 - 0)` prices it correctly. A
+ * *floor* of 0 means nothing — it is a typo — so the floor keeps the strict
+ * bound and the two are not interchangeable. Owner decision 2026-08-28.
+ */
+export function isValidTargetMarginRate(rateScaled: bigint): boolean {
+  return rateScaled >= BigInt(0) && rateScaled < RATE_SCALE;
 }
+
+/**
+ * The widest markup a bulk import may carry, in percent: `500` sells at six
+ * times cost. A sanity bound, not a business rule — it is the fat-finger
+ * guard `margin_percent`'s old `< 100` used to provide.
+ */
+export const MAX_MARKUP_PERCENT = 500;
 
 /** Round-half-up integer division. Both operands must be non-negative/positive respectively — every call site in this module guarantees that by construction. */
 function roundHalfUpDiv(numerator: bigint, denominator: bigint): bigint {
@@ -78,6 +90,60 @@ function roundHalfUpDiv(numerator: bigint, denominator: bigint): bigint {
   }
 
   return (numerator + denominator / BigInt(2)) / denominator;
+}
+
+/**
+ * Markup percent -> the margin rate this codebase stores.
+ *
+ * The two are different numbers for the same price and confusing them is a
+ * mispricing, so the conversion lives here rather than at a call site:
+ * markup is measured against COST (`300` = sell at four times cost), margin
+ * against the SELLING PRICE, and `margin = markup / (100 + markup)` is the
+ * identity that makes `price = cost / (1 - margin)` land on `cost * 4`.
+ *
+ * Fixed-point throughout: the percent is scaled to a bigint before any
+ * division, so no float ever reaches a stored rate. `300` converts to exactly
+ * `0.750000`; a percent that does not divide evenly rounds half-up at the
+ * sixth decimal place, which is all a `numeric(8, 6)` column can hold anyway.
+ */
+export function markupPercentToMarginRateScaled(markupPercent: number): bigint {
+  if (!Number.isFinite(markupPercent) || markupPercent < 0) {
+    throw new RangeError('markup percent must be zero or more');
+  }
+
+  const markupScaled = BigInt(Math.round(markupPercent * Number(RATE_SCALE)));
+  const denominator = BigInt(100) * RATE_SCALE + markupScaled;
+
+  return roundHalfUpDiv(markupScaled * RATE_SCALE, denominator);
+}
+
+/**
+ * Inverse of `markupPercentToMarginRateScaled`, to two decimal places — what
+ * an export writes back into the file a seller edits.
+ *
+ * Two decimals because the file is a spreadsheet a person reads, and because
+ * a round trip has to be stable: `300` exports as `300`, and a rate that came
+ * from `35` exports as `35` rather than `34.999999`.
+ */
+export function markupPercentFromMarginRateScaled(rateScaled: bigint): number {
+  if (!isValidTargetMarginRate(rateScaled)) {
+    throw new RangeError('margin rate must satisfy 0 <= rate < 1');
+  }
+
+  const hundredths = roundHalfUpDiv(
+    rateScaled * BigInt(10_000),
+    RATE_SCALE - rateScaled,
+  );
+
+  return Number(hundredths) / 100;
+}
+
+/** A signed buffer within the sanity bound above. */
+export function isValidFxAdjustmentRate(rateScaled: bigint): boolean {
+  return (
+    rateScaled >= -MAX_FX_ADJUSTMENT_MAGNITUDE &&
+    rateScaled <= MAX_FX_ADJUSTMENT_MAGNITUDE
+  );
 }
 
 /** Converts a minor-unit amount using a `RATE_SCALE`-scaled rate. */
@@ -120,13 +186,16 @@ export function applyFxAdjustment(
  * an out-of-range rate — the resolver must catch this before it can ever
  * fire (defense in depth: the same bound is validated at every write
  * boundary too).
+ *
+ * A rate of exactly 0 is allowed and prices at cost; only `>= 1`, where the
+ * denominator vanishes or turns negative, is refused.
  */
 export function suggestedPriceMinor(
   effectiveCostMinor: bigint,
   marginRateScaled: bigint,
 ): bigint {
-  if (!isValidMarginRate(marginRateScaled)) {
-    throw new RangeError('target margin rate must satisfy 0 < rate < 1');
+  if (!isValidTargetMarginRate(marginRateScaled)) {
+    throw new RangeError('target margin rate must satisfy 0 <= rate < 1');
   }
 
   const denominatorScaled = RATE_SCALE - marginRateScaled;

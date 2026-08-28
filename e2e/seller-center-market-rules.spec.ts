@@ -51,4 +51,29 @@ test.describe('Seller Center market rules', () => {
       ),
     );
   });
+
+  /**
+   * A live price must never move because somebody opened a dialog.
+   *
+   * The write is gated behind a preview the seller has to ask for, and this
+   * asserts the gate exists on the real screen rather than only in the
+   * component test — the ordering is the whole safety property.
+   */
+  test('repricing live prices is offered, and cannot be applied unlooked-at', async ({
+    page,
+  }) => {
+    await page.goto('/market-rules');
+
+    await page.getByRole('button', { name: /Reprice live products/ }).click();
+
+    await expect(
+      page.getByRole('heading', { name: 'Reprice published products' }),
+    ).toBeVisible();
+    await expect(page.getByText('1. Check what would change')).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Apply new prices' }),
+    ).toBeDisabled();
+    // The reason field only appears once there is something to explain.
+    await expect(page.getByLabel('Reason for change')).toHaveCount(0);
+  });
 });

@@ -19,6 +19,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { buildMarginCsv } from '@/modules/pricing/margin-csv';
+import { MAX_MARKUP_PERCENT } from '@/modules/pricing/money-math';
 import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations';
 import type { CategoryMarginNodeViewModel } from './category-margin-model';
 
@@ -123,7 +124,12 @@ export default function MarginCsvControls({
     const link = document.createElement('a');
 
     link.href = url;
-    link.download = 'sals3-category-margins.csv';
+    /*
+      Named for the column it carries. The old `sals3-category-margins.csv`
+      held a margin column that no longer exists, so a distinct name keeps an
+      old download on disk from being mistaken for a file this importer reads.
+    */
+    link.download = 'sals3-category-markups.csv';
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -145,7 +151,7 @@ export default function MarginCsvControls({
     if (file.size > MAX_FILE_BYTES) {
       setCsv(null);
       setFileName(file.name);
-      setError('That file is too large to be a margin sheet.');
+      setError('That file is too large to be a markup sheet.');
       return;
     }
 
@@ -220,9 +226,9 @@ export default function MarginCsvControls({
           overlayClassName="bg-foreground/15 supports-backdrop-filter:backdrop-blur-md"
         >
           <DialogHeader>
-            <DialogTitle>Category margins as a spreadsheet</DialogTitle>
+            <DialogTitle>Category markups as a spreadsheet</DialogTitle>
             <DialogDescription>
-              Download the file. Change the margin_percent column. Then upload
+              Download the file. Change the markup_percent column. Then upload
               the same file.
             </DialogDescription>
           </DialogHeader>
@@ -231,8 +237,8 @@ export default function MarginCsvControls({
             <section className="flex flex-col gap-2">
               <h3 className="text-sm font-semibold">1. Download the file</h3>
               <p className="text-xs text-ink-faint">
-                The file contains every category and the margin you already set.
-                A category with no margin has an empty cell. This file is also
+                The file contains every category and the markup you already set.
+                A category with no markup has an empty cell. This file is also
                 the template.
               </p>
               <Button
@@ -263,7 +269,10 @@ export default function MarginCsvControls({
                     <span className="text-xs text-ink-faint">{fileName}</span>
                   )}
                   <span className="text-xs text-ink-faint">
-                    An empty margin cell removes the margin from that category.
+                    markup_percent is measured against your supplier cost, from
+                    0 to {MAX_MARKUP_PERCENT}. 300 means sell at four times
+                    cost; 0 means sell at cost. An empty cell removes the markup
+                    from that category.
                   </span>
                 </div>
 
@@ -273,7 +282,7 @@ export default function MarginCsvControls({
                     id="margin-csv-reason"
                     value={reason}
                     onChange={(event) => setReason(event.target.value)}
-                    placeholder="Why did you change these margins?"
+                    placeholder="Why did you change these markups?"
                     aria-describedby="margin-csv-reason-hint"
                   />
                   <span

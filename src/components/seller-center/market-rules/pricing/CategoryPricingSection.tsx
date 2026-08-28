@@ -9,6 +9,7 @@ import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations'
 import DisclosureBanner from '@/components/seller-center/shared/DisclosureBanner';
 import CategoryMarginTree from './CategoryMarginTree';
 import MarginCsvControls from './MarginCsvControls';
+import RepriceControls from './RepriceControls';
 import type {
   CategoryMarginNodeViewModel,
   StoreDefaultSummary,
@@ -211,16 +212,25 @@ export default async function CategoryPricingSection({
             Product Editor.
           </p>
         </div>
-        {categoryData === null ? null : (
-          <MarginCsvControls
-            nodes={toNodeViewModels(
-              categoryData.rows,
-              categoryData.descendantCounts,
-            )}
-            scopes={scopes}
-            canManage={canManage}
-          />
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {/*
+            Beside the spreadsheet, because they are the two halves of one job:
+            that one changes the rules, this one applies them to prices that are
+            already live. A margin saved without this reaching the offer rows is
+            a rule nobody is charged by.
+          */}
+          <RepriceControls canManage={canManage} />
+          {categoryData === null ? null : (
+            <MarginCsvControls
+              nodes={toNodeViewModels(
+                categoryData.rows,
+                categoryData.descendantCounts,
+              )}
+              scopes={scopes}
+              canManage={canManage}
+            />
+          )}
+        </div>
       </div>
       {categoryData === null ? (
         <DisclosureBanner tone="warning">
