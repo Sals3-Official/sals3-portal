@@ -30,6 +30,7 @@ import {
   formatScaledRate,
   markupPercentFromMarginRateScaled,
   markupPercentToMarginRateScaled,
+  MAX_MARKUP_PERCENT,
   parseScaledRate,
 } from '@/modules/pricing/money-math';
 import StoreDefaultPreview from './StoreDefaultPreview';
@@ -52,18 +53,12 @@ type StoreDefaultDialogProps = {
 
 const MIN_REASON_CHARS = 10;
 
-function percentToRate(percent: string): string {
-  return (Number(percent) / 100).toString();
-}
-
-function rateToPercent(rate: string): string {
-  const value = Number(rate) * 100;
-  const rounded = Math.round(value * 100) / 100;
-  return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(2)}`;
-}
-
 /**
- * The base margin and the floor beneath it, for one pricing scope.
+ * The base markup and the reserve beneath it, for one pricing scope.
+ *
+ * Both are markups over cost. They were a markup and a margin, which read as
+ * two numbers in one unit and priced as two rules in different ones -- see
+ * `StoreDefaultPreview` for the same fault on the same screen.
  *
  * ## The two minimum fields are one choice, not two
  *
@@ -104,7 +99,9 @@ export default function StoreDefaultDialog({
   const [floorPercent, setFloorPercent] = useState(
     storeDefault?.minContributionRate == null
       ? ''
-      : rateToPercent(storeDefault.minContributionRate),
+      : markupPercentFromMarginRateScaled(
+          parseScaledRate(storeDefault.minContributionRate),
+        ).toString(),
   );
   const [floorAmount, setFloorAmount] = useState(
     storeDefault === null || storeDefault.minContributionMinor === 0
@@ -119,23 +116,6 @@ export default function StoreDefaultDialog({
 
   const amountInUse = floorAmount.trim() !== '';
   const percentInUse = floorPercent.trim() !== '';
-  /*
-    The reserve restated as a share of cost, for the hint under the field.
-    `null` whenever the entry is not a usable rate, so a half-typed number
-    shows nothing rather than a figure that changes under the caret.
-  */
-  const floorRate = Number(floorPercent) / 100;
-  const floorUsable =
-    floorPercent.trim() !== '' &&
-    Number.isFinite(floorRate) &&
-    floorRate > 0 &&
-    floorRate < 1;
-  const floorAsMarkup = floorUsable
-    ? Math.round((floorRate / (1 - floorRate)) * 10000) / 100
-    : null;
-  const floorOnOneDollar = floorUsable
-    ? `US$${(1 / (1 - floorRate)).toFixed(2)}`
-    : null;
 
   const ready =
     markupPercent.trim() !== '' && reason.trim().length >= MIN_REASON_CHARS;
@@ -155,7 +135,14 @@ export default function StoreDefaultDialog({
       // the amount and `null` for the rate, which is what "no floor of this
       // kind" means in the two columns respectively.
       minContribution: amountInUse ? floorAmount : '0',
-      minContributionRate: percentInUse ? percentToRate(floorPercent) : null,
+      // Markup in, margin rate stored -- the same conversion the base markup
+      // above uses, so one unit reaches the seller and the other reaches the
+      // resolver, and neither has to be guessed at.
+      minContributionRate: percentInUse
+        ? formatScaledRate(
+            markupPercentToMarginRateScaled(Number(floorPercent)),
+          )
+        : null,
       roundingRule,
       marketCode: scope.marketCode,
       reason,
@@ -211,6 +198,16 @@ export default function StoreDefaultDialog({
             </p>
           )}
 
+          {/*
+            Both fields are markups now, so the only thing separating them is
+            what they are for. Said once, here, rather than left to be inferred
+            from two labels that look alike.
+          */}
+          <p className="text-xs text-muted-foreground">
+            The first is the markup to aim for. The second is the one you will
+            never go under.
+          </p>
+
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="store-default-margin">Base markup over cost</Label>
             <div className="flex items-center gap-1.5">
@@ -250,9 +247,7 @@ export default function StoreDefaultDialog({
                   field, a seller reasonably reads both as the same unit — the
                   owner did, and 50 here does not mean what 50 above means.
                 */}
-                <Label htmlFor="store-default-floor-percent">
-                  As a share of the selling price
-                </Label>
+                <Label htmlFor="store-default-floor-percent">As a markup</Label>
                 <div className="flex items-center gap-1.5">
                   <Input
                     id="store-default-floor-percent"
@@ -260,32 +255,15 @@ export default function StoreDefaultDialog({
                     inputMode="decimal"
                     step="0.01"
                     min="0.01"
-                    max="99.99"
+                    max={MAX_MARKUP_PERCENT}
                     value={floorPercent}
                     disabled={amountInUse}
                     onChange={(event) => setFloorPercent(event.target.value)}
-                    aria-label={`Minimum margin percent for ${scope.label}`}
+                    aria-label={`Minimum markup percent for ${scope.label}`}
                     className="w-24 text-right"
                   />
                   <span className="text-sm text-muted-foreground">%</span>
                 </div>
-                {/*
-                  The bridge between how a seller thinks about opex and what
-                  this field stores.
-
-                  Opex is held in the head as a share of COST — "half again on
-                  top of what I paid". The floor is a share of the PRICE. The
-                  two are the same rule in different units, and nothing on
-                  screen connected them, so 50 got typed where 33.33 was meant.
-                  Restating the number the other way, live, is cheaper than
-                  another paragraph nobody reads.
-                */}
-                {floorAsMarkup === null ? null : (
-                  <span className="text-xs text-muted-foreground">
-                    Same as {floorAsMarkup}% over cost — a US$1.00 cost never
-                    sells below {floorOnOneDollar}.
-                  </span>
-                )}
               </div>
 
               <div className="flex flex-col gap-1.5">
