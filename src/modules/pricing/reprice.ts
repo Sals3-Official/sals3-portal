@@ -9,6 +9,7 @@ import {
 } from '@/lib/db/schema';
 import type { Executor } from '@/modules/catalog/candidates/repository';
 import { MAX_REPRICE_OFFERS } from './reprice-limits';
+import { isSellerEnteredPrice } from './seller-entered-price';
 import { resolveProductPricing } from './resolver';
 import type {
   CategoryMappingConfidence,
@@ -124,6 +125,7 @@ type CandidateRow = {
   currentPriceMinor: bigint | null;
   currentPriceCurrency: string | null;
   pricingDecision: unknown;
+  pricingResolverVersion: string | null;
   variantId: string;
   sku: string;
   productId: string;
@@ -159,6 +161,7 @@ async function loadCandidates(
       currentPriceMinor: productOffers.priceAmountMinor,
       currentPriceCurrency: productOffers.priceCurrency,
       pricingDecision: productOffers.pricingDecision,
+      pricingResolverVersion: productOffers.pricingResolverVersion,
       variantId: productVariants.id,
       sku: productVariants.sals3Sku,
       productId: products.id,
@@ -194,26 +197,6 @@ async function loadCandidates(
     )
     .orderBy(asc(products.title), asc(productVariants.sals3Sku))
     .limit(MAX_REPRICE_OFFERS + 1) as Promise<CandidateRow[]>;
-}
-
-/**
- * Was this offer's price typed by a person rather than resolved?
- *
- * Read from the stored decision rather than from a column, because that is
- * where `publishProduct` records it: the manual branch stamps
- * `resolvedLayer: 'SELLER_RETAIL_PRICE'` and its own resolver version. An
- * offer with no decision at all predates the stamp and is treated as resolved —
- * repricing it is the point of this module, and its own resolver run decides
- * whether the number moves.
- */
-function isManualPrice(pricingDecision: unknown): boolean {
-  if (pricingDecision === null || typeof pricingDecision !== 'object') {
-    return false;
-  }
-
-  const layer = (pricingDecision as { resolvedLayer?: unknown }).resolvedLayer;
-
-  return layer === 'SELLER_RETAIL_PRICE';
 }
 
 /** Runs `task` over `items` a few at a time — enough parallelism to keep a preview quick, not enough to flood the pool. */
@@ -294,7 +277,14 @@ export async function planReprice(
         decision: null,
       };
 
-      if (isManualPrice(row.pricingDecision)) {
+      /*
+        An offer with no decision at all predates the stamp and is treated as
+        resolved — repricing it is the point of this module, and its own
+        resolver run decides whether the number moves.
+      */
+      if (
+        isSellerEnteredPrice(row.pricingDecision, row.pricingResolverVersion)
+      ) {
         return { ...base, status: 'MANUAL' };
       }
 

@@ -8,7 +8,6 @@ import type {
   EvaluationStatus,
   ReasonCode,
 } from '@/modules/catalog/candidates/rules/contracts';
-import type { PricingDecision } from '@/modules/pricing/types';
 
 /**
  * Types for the Product Editor ("Add Product" prefilled from a qualified
@@ -114,6 +113,21 @@ export type VariantFixture = {
   sellerSku: string;
   supplierCost: MoneyValue;
   retailPrice: MoneyValue;
+  /**
+   * Whether `retailPrice` is a number a person decided, rather than the one
+   * this account's margin rules produce.
+   *
+   * Load-bearing on save and on publish: only a seller-set price is sent to
+   * the server as a retail price, because anything sent there is stored as
+   * `SELLER_RETAIL_PRICE` and is then permanently exempt from the margin
+   * rules and from repricing. Sending back a rule's own default would freeze
+   * every product at the moment it was last opened.
+   *
+   * Optional because the illustrative fixtures carry no server guidance;
+   * absent means "not seller-set", which is the safe reading — the rules stay
+   * in charge until somebody types over them.
+   */
+  retailPriceIsSellerSet?: boolean;
   supplierStock: number;
   warehouseLabel: string;
   hasImage: boolean;
@@ -544,16 +558,27 @@ export type EditorLifecycle =
   | 'SESSION_EXPIRED';
 
 /**
- * One variant's server-resolved pricing guidance (`resolveProductPricing`).
- * `decision` is `null` only when the resolver itself could not run (e.g.
- * the pricing-policy tables are not migrated in this environment yet) —
- * distinct from a real `PRICING_UNAVAILABLE` outcome, but rendered the
- * same neutral way so the editor never crashes on a missing schema.
+ * What this account's margin rules say one variant should sell for, resolved
+ * server-side by `resolveProductPricing` — the same function publication and
+ * the repricer call.
+ *
+ * Every field is already display-shaped. The editor is a client component and
+ * must not be handed a whole `PricingDecision` to pick apart: that object
+ * carries FX sources, policy ids, and cost bases a buyer-facing screen has no
+ * business serialising.
  */
 export type VariantPricingGuidance = {
   variantId: string;
-  optionLabel: string;
-  decision: PricingDecision | null;
+  /** What the rules say. `null` when they cannot say — see `unavailableLabel`. */
+  suggestedPrice: MoneyValue | null;
+  /** The resolver's own reason, written for a seller who has to fix it. */
+  unavailableLabel: string | null;
+  /** The category the winning rule sits on. `null` when a store default or an override priced it. */
+  sourceCategoryPath: string | null;
+  /** Markup over cost, in percent — the unit the bulk sheet speaks. */
+  markupPercent: number | null;
+  /** True when this variant's live price was typed by a person. */
+  sellerOverridden: boolean;
 };
 
 export const EDITOR_SECTIONS: ReadonlyArray<{

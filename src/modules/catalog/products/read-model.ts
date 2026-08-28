@@ -66,6 +66,9 @@ import type { CategoryAttributeContract } from '@/modules/catalog/taxonomy/attri
 import { validateCategoryAttributeSubmission } from '@/modules/catalog/taxonomy/attribute-contract';
 import { suggestedAxisNameOptionsForCategory } from '@/modules/catalog/taxonomy/variation-families';
 import type { DescriptionMode } from '@/lib/products/simple-description';
+import resolveEditorPricingGuidance, {
+  type EditorVariantPricing,
+} from './pricing-guidance';
 import { descriptionDocumentSchema } from './description-document';
 import { deriveOptionSplit } from './option-split';
 import { deriveSourceChanges } from './source-changes';
@@ -1997,12 +2000,109 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
      * policy. `/listings/new` calls `resolveFixtureVariantGuidance` for the
      * real answer.
      */
-    variantGuidance: variants.map((variant) => ({
-      variantId: variant.id,
-      optionLabel: variant.optionLabel,
-      decision: null,
-    })),
+    /*
+      Empty, not a list of nulls.
+
+      This function is synchronous and has no executor, so it cannot resolve
+      anything; the real guidance is attached by
+      `findProductEditorFixtureForSeller`, which does. A row per variant saying
+      "no answer" reads on screen exactly like a real refusal, which is the
+      confusion the previous `decision: null` shape caused — the comment beside
+      it pointed at a `resolveFixtureVariantGuidance` that has never existed in
+      this repository.
+    */
+    variantGuidance: [],
   };
+}
+
+/**
+ * The editor's variants, with the Retail price cell seeded from this account's
+ * own margin rules rather than from whatever the variant already carries.
+ *
+ * The old seeding — `variant.sellingPrice ?? ZERO_USD` — is what made a margin
+ * rule unable to reach a published product: the editor sent that number back on
+ * every publish, `publishProduct` read any supplied retail price as one a person
+ * typed, and the resolver was skipped. A category set to 300% moved nothing.
+ *
+ * Three cases, and the distinction between them is the whole point:
+ *
+ * - **The seller decided this price.** Their number stands, untouched, and is
+ *   flagged so it is sent back as theirs.
+ * - **The rules can price it.** Their number is the default, and it is NOT
+ *   flagged — publication resolves it again and writes the same figure, which
+ *   is what keeps the cell, the offer, and the storefront showing one price.
+ * - **The rules cannot price it.** Whatever the variant already carries is left
+ *   in the cell for the seller to fix by hand.
+ */
+function withRuleDerivedRetailPrices(
+  fixture: ProductEditorFixture,
+  guidance: EditorVariantPricing[],
+): ProductEditorFixture {
+  if (guidance.length === 0) return fixture;
+
+  const byVariantId = new Map(guidance.map((row) => [row.variantId, row]));
+
+  return {
+    ...fixture,
+    variants: fixture.variants.map((variant) => {
+      const resolved = byVariantId.get(variant.id);
+
+      if (resolved === undefined) return variant;
+
+      if (
+        resolved.sellerOverridden ||
+        resolved.suggestedPriceMinor === null ||
+        resolved.suggestedPriceCurrency === null
+      ) {
+        return {
+          ...variant,
+          retailPriceIsSellerSet: resolved.sellerOverridden,
+        };
+      }
+
+      return {
+        ...variant,
+        retailPrice: {
+          amountMinor: resolved.suggestedPriceMinor,
+          currency: resolved.suggestedPriceCurrency,
+        },
+        retailPriceIsSellerSet: false,
+        // The rules answered, so "Retail price required" is no longer true —
+        // leaving it would tell a seller to fix a field that is already right.
+        attention:
+          variant.attention === 'Retail price required'
+            ? null
+            : variant.attention,
+      };
+    }),
+  };
+}
+
+/** Display shaping only — the client is never handed a whole `PricingDecision`. */
+function toVariantGuidance(
+  fixture: ProductEditorFixture,
+  guidance: EditorVariantPricing[],
+): VariantPricingGuidance[] {
+  const labels = new Map(
+    fixture.variants.map((variant) => [variant.id, variant.optionLabel]),
+  );
+
+  return guidance
+    .filter((row) => labels.has(row.variantId))
+    .map((row) => ({
+      variantId: row.variantId,
+      suggestedPrice:
+        row.suggestedPriceMinor === null || row.suggestedPriceCurrency === null
+          ? null
+          : {
+              amountMinor: row.suggestedPriceMinor,
+              currency: row.suggestedPriceCurrency,
+            },
+      unavailableLabel: row.unavailableLabel,
+      sourceCategoryPath: row.sourceCategoryPath,
+      markupPercent: row.markupPercent,
+      sellerOverridden: row.sellerOverridden,
+    }));
 }
 
 export async function findProductEditorFixtureForSeller(
@@ -2016,5 +2116,33 @@ export async function findProductEditorFixtureForSeller(
   );
   const product = productsForSeller.find((row) => row.id === productId);
 
-  return product === undefined ? null : productToEditorFixture(product);
+  if (product === undefined) return null;
+
+  const base = productToEditorFixture(product);
+
+  /*
+    A pricing read must never take the editor down with it. The rules live in
+    tables that were unmigrated in this environment as recently as 2026-08-19,
+    and a seller who cannot open their own product is a worse outcome than one
+    who sees the price the variant already carries.
+  */
+  let guidance: EditorVariantPricing[] = [];
+
+  try {
+    guidance = await resolveEditorPricingGuidance(executor, {
+      sellerAccountId,
+      productId,
+    });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] editor pricing guidance failed', {
+      productId,
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+  }
+
+  return {
+    fixture: withRuleDerivedRetailPrices(base.fixture, guidance),
+    variantGuidance: toVariantGuidance(base.fixture, guidance),
+  };
 }

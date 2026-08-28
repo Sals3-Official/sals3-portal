@@ -30,6 +30,7 @@ describe('VariantPricingTable', () => {
         onToggleExpanded={vi.fn()}
         onToggleEnabled={vi.fn()}
         onRetailChange={vi.fn()}
+        onUseRulePrice={vi.fn()}
         onSellerSkuChange={vi.fn()}
         onBulkSetPrice={vi.fn()}
       />,
@@ -55,6 +56,7 @@ describe('VariantPricingTable', () => {
         onToggleExpanded={vi.fn()}
         onToggleEnabled={vi.fn()}
         onRetailChange={vi.fn()}
+        onUseRulePrice={vi.fn()}
         onSellerSkuChange={vi.fn()}
         onBulkSetPrice={vi.fn()}
       />,
@@ -79,6 +81,7 @@ describe('VariantPricingTable', () => {
         onToggleExpanded={vi.fn()}
         onToggleEnabled={onToggleEnabled}
         onRetailChange={vi.fn()}
+        onUseRulePrice={vi.fn()}
         onSellerSkuChange={vi.fn()}
         onBulkSetPrice={vi.fn()}
       />,
@@ -99,6 +102,7 @@ describe('VariantPricingTable', () => {
         onToggleExpanded={vi.fn()}
         onToggleEnabled={vi.fn()}
         onRetailChange={vi.fn()}
+        onUseRulePrice={vi.fn()}
         onSellerSkuChange={vi.fn()}
         onBulkSetPrice={vi.fn()}
       />,
@@ -144,6 +148,7 @@ describe('VariantPricingTable', () => {
         onToggleExpanded={vi.fn()}
         onToggleEnabled={vi.fn()}
         onRetailChange={vi.fn()}
+        onUseRulePrice={vi.fn()}
         onSellerSkuChange={vi.fn()}
         onBulkSetPrice={vi.fn()}
       />,
@@ -165,11 +170,138 @@ describe('VariantPricingTable', () => {
         onToggleExpanded={vi.fn()}
         onToggleEnabled={vi.fn()}
         onRetailChange={vi.fn()}
+        onUseRulePrice={vi.fn()}
         onSellerSkuChange={vi.fn()}
         onBulkSetPrice={vi.fn()}
       />,
     );
 
     expect(screen.getByText('Army Green-XL')).toBeInTheDocument();
+  });
+});
+
+describe('the rule behind the price', () => {
+  function renderWith(
+    guidance: Parameters<typeof VariantPricingTable>[0]['pricingGuidance'],
+    variant: VariantFixture = VARIANT,
+  ) {
+    return render(
+      <VariantPricingTable
+        variants={[variant]}
+        pricingGuidance={guidance}
+        expandedVariantId={null}
+        onToggleExpanded={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onRetailChange={vi.fn()}
+        onUseRulePrice={vi.fn()}
+        onSellerSkuChange={vi.fn()}
+        onBulkSetPrice={vi.fn()}
+      />,
+    );
+  }
+
+  /**
+   * Before this line existed, a seller could set a department to 300% and had
+   * no way to tell whether it had reached a given product: the rate lived only
+   * on Market rules and the price lived only here.
+   */
+  it('names the markup and the category the rule sits on', () => {
+    renderWith([
+      {
+        variantId: 'variant-1',
+        suggestedPrice: { amountMinor: 3499, currency: 'USD' },
+        unavailableLabel: null,
+        sourceCategoryPath: 'Apparel & Accessories > Clothing Accessories',
+        markupPercent: 300,
+        sellerOverridden: false,
+      },
+    ]);
+
+    expect(
+      screen.getByText(
+        'From 300% markup on Apparel & Accessories > Clothing Accessories',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The way back. Every price entered before this screen resolved anything is
+   * stamped as the seller's, so without this an existing catalogue could never
+   * be handed back to its own margin rules.
+   */
+  it('offers a seller-set price back to the rules, and clears the flag when taken', () => {
+    const onUseRulePrice = vi.fn();
+
+    render(
+      <VariantPricingTable
+        variants={[{ ...VARIANT, retailPriceIsSellerSet: true }]}
+        pricingGuidance={[
+          {
+            variantId: 'variant-1',
+            suggestedPrice: { amountMinor: 4400, currency: 'USD' },
+            unavailableLabel: null,
+            sourceCategoryPath: 'Apparel & Accessories',
+            markupPercent: 300,
+            sellerOverridden: true,
+          },
+        ]}
+        expandedVariantId={null}
+        onToggleExpanded={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onRetailChange={vi.fn()}
+        onUseRulePrice={onUseRulePrice}
+        onSellerSkuChange={vi.fn()}
+        onBulkSetPrice={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Use $44.00 from your rules' }),
+    );
+
+    expect(onUseRulePrice).toHaveBeenCalledWith('variant-1');
+  });
+
+  it('says a price is the seller’s own, and that rules will not move it', () => {
+    renderWith(
+      [
+        {
+          variantId: 'variant-1',
+          suggestedPrice: { amountMinor: 3499, currency: 'USD' },
+          unavailableLabel: null,
+          sourceCategoryPath: 'Apparel & Accessories',
+          markupPercent: 300,
+          sellerOverridden: true,
+        },
+      ],
+      { ...VARIANT, retailPriceIsSellerSet: true },
+    );
+
+    expect(
+      screen.getByText('Your price — margin rules do not change it'),
+    ).toBeInTheDocument();
+  });
+
+  it('carries the resolver’s own refusal rather than a blank cell', () => {
+    renderWith([
+      {
+        variantId: 'variant-1',
+        suggestedPrice: null,
+        unavailableLabel:
+          'No margin policy — set a store default or a category margin in Market rules',
+        sourceCategoryPath: null,
+        markupPercent: null,
+        sellerOverridden: false,
+      },
+    ]);
+
+    expect(screen.getByText(/No margin policy/)).toBeInTheDocument();
+  });
+
+  it('says nothing at all when no rule was resolved for this variant', () => {
+    renderWith([]);
+
+    expect(screen.queryByText(/From /)).toBeNull();
+    expect(screen.queryByText(/Your price/)).toBeNull();
   });
 });

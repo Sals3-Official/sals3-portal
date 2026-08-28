@@ -24,6 +24,7 @@ import { sectionSeverity } from '@/lib/seller-center/product-editor/derive';
 import type {
   EditorLifecycle,
   ProductEditorFixture,
+  VariantPricingGuidance,
 } from '@/lib/seller-center/product-editor/types';
 import EditorSectionCard from './EditorSectionCard';
 import MarketShippingEvidence from './MarketShippingEvidence';
@@ -35,6 +36,11 @@ type ProductEditorProps = {
   dataMode?: 'fixture' | 'database';
   /** The full Sals3 Taxonomy v1 tree, for the category picker's search. */
   sals3CategoryOptions?: { code: string; path: string }[];
+  /**
+   * What this account's margin rules say each variant should sell for.
+   * Empty in fixture mode: a fictional product has no rule to resolve.
+   */
+  variantGuidance?: VariantPricingGuidance[];
 };
 
 /**
@@ -55,6 +61,7 @@ export default function ProductEditor({
   initialLifecycle,
   dataMode = 'fixture',
   sals3CategoryOptions = [],
+  variantGuidance = [],
 }: ProductEditorProps) {
   const isDatabaseBacked = dataMode === 'database';
 
@@ -81,6 +88,7 @@ export default function ProductEditor({
       <ProductEditorWorkspace
         fixture={fixture}
         initialLifecycle={initialLifecycle}
+        variantGuidance={variantGuidance}
         marketsSection={
           <EditorSectionCard
             id="markets"
