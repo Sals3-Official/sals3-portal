@@ -315,7 +315,7 @@ describe('findOrderParcelDetailForSeller', () => {
    */
   it('reads the order-line table only through the seller-scoped list', async () => {
     const { db, calls } = fakeDb([
-      [{ orderId: ORDER_ID, createdAt: ORDER_ROW.createdAt }],
+      [{ orderId: ORDER_ID }], // resolveOwnedOrderId
       [ORDER_ROW],
       [GROUP_ROW],
       [LINE_ROW],
@@ -334,9 +334,60 @@ describe('findOrderParcelDetailForSeller', () => {
       call.args.some((arg) => arg === sals3OrderLines),
     );
 
-    expect(lineReads).toHaveLength(2);
+    expect(lineReads).toHaveLength(1);
   });
 
+  /**
+   * The ceiling belongs to the list and nothing else.
+   *
+   * The detail read used to reach its parcel by scanning the seller's most
+   * recent `MAX_ORDERS` orders and searching the result, so a parcel on the
+   * 201st-most-recent order was not slow to open — it answered 404. A real
+   * order, owned by the seller asking for it, reported as not existing.
+   *
+   * `selectDistinct` is the capped scan, and it must not appear here. Asserting
+   * its absence pins the property directly; asserting a statement count would
+   * pass again the moment someone re-added the scan alongside a cheaper query.
+   */
+  it('opens a parcel without the list ceiling', async () => {
+    const { db, calls } = fakeDb([
+      [{ orderId: ORDER_ID }],
+      [ORDER_ROW],
+      [GROUP_ROW],
+      [LINE_ROW],
+      [INTENT_ROW],
+      [CONNECTION_ROW],
+      [GROUP_ROW],
+      [ORDER_ROW],
+      [INTENT_ROW],
+      [],
+    ]);
+    dbState.db = db;
+
+    const detail = await findOrderParcelDetailForSeller(
+      GROUP_ID,
+      SELLER_ID,
+      false,
+    );
+
+    expect(detail).not.toBeNull();
+    expect(callsOf(calls, 'selectDistinct')).toHaveLength(0);
+    expect(callsOf(calls, 'limit').length).toBeGreaterThan(0);
+  });
+
+  /**
+   * The ownership check moved from "is it in the seller's list" to a single
+   * scoped lookup, so it has to keep answering the same way for a parcel that
+   * is not theirs: nothing, and nothing distinguishable from absent.
+   */
+  it('refuses a parcel whose owning query returns no row', async () => {
+    const { db } = fakeDb([[]]);
+    dbState.db = db;
+
+    await expect(
+      findOrderParcelDetailForSeller(GROUP_ID, SELLER_ID, false),
+    ).resolves.toBeNull();
+  });
   it('refuses a parcel belonging to another seller', async () => {
     const { db } = fakeDb([[]]);
     dbState.db = db;
