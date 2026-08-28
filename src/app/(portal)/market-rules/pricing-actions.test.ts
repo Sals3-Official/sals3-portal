@@ -74,12 +74,38 @@ const pricingRepositoryMocks = vi.hoisted(() => ({
 
 vi.mock('@/modules/pricing/repository', () => pricingRepositoryMocks);
 
-vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+const { updateTagMock } = vi.hoisted(() => ({ updateTagMock: vi.fn() }));
+
+vi.mock('next/cache', () => ({
+  revalidatePath: vi.fn(),
+  updateTag: updateTagMock,
+}));
+
+/*
+  Mocked rather than imported: `catalog-cache.ts` opens with `server-only` and
+  pulls the whole storefront read model in behind it. This suite needs the tag's
+  value, not its module.
+*/
+vi.mock('@/lib/storefront/catalog-cache', () => ({
+  STOREFRONT_CATALOG_TAG: 'storefront-catalog',
+}));
+
+const repriceMocks = vi.hoisted(() => ({
+  planReprice: vi.fn(),
+  writeReprice: vi.fn(),
+}));
+
+vi.mock('@/modules/pricing/reprice', () => ({
+  ...repriceMocks,
+  MAX_REPRICE_OFFERS: 500,
+}));
 
 /* eslint-disable import/first */
 import { PermissionError } from '@/lib/auth/permissions';
 import {
   applyMarginCsvAction,
+  applyRepriceAction,
+  previewRepriceAction,
   deactivateCategoryPolicyAction,
   deactivateFundingBufferPolicyAction,
   deactivateStoreDefaultAction,
@@ -100,7 +126,12 @@ const POLICY_ID = '33333333-3333-4333-a333-333333333333';
 const CANDIDATE_ID = '44444444-4444-4444-a444-444444444444';
 const OVERRIDE_ID = '55555555-5555-4555-a555-555555555555';
 
-const SESSION = { sellerId: SELLER_A_ID, userId: 'user-1' };
+/** `seller_manager` is the Seller Center Owner — it holds both `pricing_policy:manage` and `product:publish`. */
+const SESSION = {
+  sellerId: SELLER_A_ID,
+  userId: 'user-1',
+  role: 'seller_manager',
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -1059,7 +1090,7 @@ describe('field-level validation messages', () => {
 });
 
 describe('applyMarginCsvAction', () => {
-  const HEADER = 'category_code,category_path,margin_percent,rounding';
+  const HEADER = 'category_code,category_path,markup_percent,rounding';
   const REASON = 'Bulk repricing after the supplier cost review.';
 
   function category(code: string, id: string) {
@@ -1159,7 +1190,7 @@ describe('applyMarginCsvAction', () => {
     expect(transactionMock).not.toHaveBeenCalled();
   });
 
-  it('an empty margin cell deactivates that category rather than writing zero', async () => {
+  it('an empty markup cell deactivates that category rather than writing zero', async () => {
     pricingRepositoryMocks.findActiveCategoryPolicy.mockResolvedValue({
       id: 'policy-1',
       targetMarginRate: '0.350000',
@@ -1184,13 +1215,15 @@ describe('applyMarginCsvAction', () => {
   it('skips a row that already matches, so no version or audit event records a non-change', async () => {
     pricingRepositoryMocks.findActiveCategoryPolicy.mockResolvedValue({
       id: 'policy-1',
-      targetMarginRate: '0.350000',
+      // The stored margin a 300% markup means. The comparison converts before
+      // it compares, so the file and the table are read in the same unit.
+      targetMarginRate: '0.750000',
       roundingRule: 'NONE',
       version: 1,
     });
 
     const result = await applyMarginCsvAction({
-      csv: `${HEADER}\nCAT-GGL-1,Anything,35,NONE`,
+      csv: `${HEADER}\nCAT-GGL-1,Anything,300,NONE`,
       reason: REASON,
     });
 
@@ -1225,6 +1258,64 @@ describe('applyMarginCsvAction', () => {
     expect(pricingRepositoryMocks.createCategoryPolicy).not.toHaveBeenCalled();
   });
 
+  /**
+   * The file speaks markup over cost; the column stores a margin rate. The
+   * conversion is the whole point of the column rename — a 300 written
+   * through as `3.000000` would price nothing at all.
+   */
+  it('converts a markup to the margin rate the column stores', async () => {
+    const result = await applyMarginCsvAction({
+      csv: `${HEADER}\nCAT-GGL-1,Anything,300,NONE`,
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({ ok: true, data: { written: 1 } });
+    expect(pricingRepositoryMocks.createCategoryPolicy).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({ targetMarginRate: '0.750000' }),
+    );
+  });
+
+  it('writes a 0 markup as a real rule — sell at cost — not as a clear', async () => {
+    const result = await applyMarginCsvAction({
+      csv: `${HEADER}\nCAT-GGL-1,Anything,0,NONE`,
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: { written: 1, cleared: 0 },
+    });
+    expect(pricingRepositoryMocks.createCategoryPolicy).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({ targetMarginRate: '0.000000' }),
+    );
+    expect(
+      pricingRepositoryMocks.deactivateCategoryPolicy,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('accepts the top of the range', async () => {
+    const result = await applyMarginCsvAction({
+      csv: `${HEADER}\nCAT-GGL-1,Anything,500,NONE`,
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({ ok: true, data: { written: 1 } });
+  });
+
+  it('refuses a markup above the range, and writes nothing', async () => {
+    const result = await applyMarginCsvAction({
+      csv: `${HEADER}\nCAT-GGL-1,Anything,501,NONE`,
+      reason: REASON,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.rowErrors?.[0]).toMatch(/must be from 0 to 500/);
+    expect(transactionMock).not.toHaveBeenCalled();
+  });
+
   it('refuses a reason too short to explain a bulk change', async () => {
     const result = await applyMarginCsvAction({
       csv: `${HEADER}\nCAT-GGL-1,Anything,35,NONE`,
@@ -1234,5 +1325,225 @@ describe('applyMarginCsvAction', () => {
     expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
     if (result.ok) throw new Error('expected a refusal');
     expect(result.fieldErrors?.reason).toBeDefined();
+  });
+});
+
+describe('repricing live offers', () => {
+  const OFFER_ID = '66666666-6666-4666-a666-666666666666';
+
+  function changedLine(overrides: Record<string, unknown> = {}) {
+    return {
+      offerId: OFFER_ID,
+      offerVersion: 3,
+      productId: 'product-1',
+      productTitle: 'Corduroy jacket',
+      sku: 'SALS3-1',
+      marketCode: 'AU',
+      currentPriceMinor: 2399,
+      currentPriceCurrency: 'USD',
+      newPriceMinor: 2999,
+      newPriceCurrency: 'USD',
+      status: 'CHANGED',
+      reason: null,
+      reasonLabel: null,
+      decision: {
+        outcome: 'PRODUCT_MARGIN_ESTIMATE',
+        resolvedLayer: 'CATEGORY',
+        resolverVersion: 'pricing-resolver-v3',
+        roundedSuggestedItemPrice: { amountMinor: 2999, currency: 'USD' },
+      },
+      ...overrides,
+    };
+  }
+
+  function plan(overrides: Record<string, unknown> = {}) {
+    return {
+      lines: [changedLine()],
+      counts: { changed: 1, unchanged: 4, unpriceable: 0, manual: 0 },
+      truncated: false,
+      candidateCount: 5,
+      fingerprint: '1-abc',
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    repriceMocks.planReprice.mockResolvedValue(plan());
+    repriceMocks.writeReprice.mockResolvedValue({ ok: true, written: 1 });
+  });
+
+  describe('previewRepriceAction', () => {
+    it('writes nothing', async () => {
+      const result = await previewRepriceAction();
+
+      expect(result).toMatchObject({ ok: true });
+      expect(transactionMock).not.toHaveBeenCalled();
+      expect(repriceMocks.writeReprice).not.toHaveBeenCalled();
+    });
+
+    it('lists the rows that move and counts the ones that do not', async () => {
+      const result = await previewRepriceAction();
+
+      if (!result.ok) throw new Error('expected a preview');
+      expect(result.data.counts.unchanged).toBe(4);
+      expect(result.data.lines).toHaveLength(1);
+      expect(result.data.lines[0]).toMatchObject({
+        productTitle: 'Corduroy jacket',
+        currentPriceMinor: 2399,
+        newPriceMinor: 2999,
+      });
+    });
+
+    /** The unchanged majority says nothing and would bury the rows that matter. */
+    it('leaves unchanged rows out of the list', async () => {
+      repriceMocks.planReprice.mockResolvedValue(
+        plan({
+          lines: [changedLine({ status: 'UNCHANGED', newPriceMinor: null })],
+          counts: { changed: 0, unchanged: 1, unpriceable: 0, manual: 0 },
+        }),
+      );
+
+      const result = await previewRepriceAction();
+
+      if (!result.ok) throw new Error('expected a preview');
+      expect(result.data.lines).toHaveLength(0);
+    });
+
+    it('denies a role that may set margins but not publish', async () => {
+      requirePermissionMock.mockResolvedValue({ ...SESSION, role: 'viewer' });
+
+      const result = await previewRepriceAction();
+
+      expect(result).toEqual({ ok: false, reason: 'denied' });
+      expect(repriceMocks.planReprice).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('applyRepriceAction', () => {
+    const VALID_INPUT = {
+      fingerprint: '1-abc',
+      reason: 'Supplier costs rose across the department.',
+    };
+
+    it('writes the plan it recomputed, not one the caller sent', async () => {
+      const result = await applyRepriceAction({
+        ...VALID_INPUT,
+        // A caller-supplied price must have no effect whatsoever.
+        lines: [{ offerId: OFFER_ID, newPriceMinor: 1 }],
+      });
+
+      expect(result).toMatchObject({ ok: true, data: { written: 1 } });
+      expect(repriceMocks.planReprice).toHaveBeenCalledTimes(1);
+      expect(repriceMocks.writeReprice).toHaveBeenCalledWith(TX, plan().lines, {
+        actorId: 'user-1',
+        sellerAccountId: SELLER_A_ID,
+      });
+    });
+
+    /**
+     * The seller approved a set of numbers. If the numbers moved underneath
+     * them — a rule saved in another tab, a supplier cost that landed — they
+     * have not approved the new ones.
+     */
+    it('refuses when the plan moved since the preview', async () => {
+      repriceMocks.planReprice.mockResolvedValue(
+        plan({ fingerprint: '1-zzz' }),
+      );
+
+      const result = await applyRepriceAction(VALID_INPUT);
+
+      expect(result).toEqual({ ok: false, reason: 'stale_preview' });
+      expect(repriceMocks.writeReprice).not.toHaveBeenCalled();
+    });
+
+    it('reports a concurrent republish rather than half-applying', async () => {
+      repriceMocks.writeReprice.mockResolvedValue({
+        ok: false,
+        reason: 'version_conflict',
+      });
+
+      const result = await applyRepriceAction(VALID_INPUT);
+
+      expect(result).toEqual({ ok: false, reason: 'version_conflict' });
+      expect(updateTagMock).not.toHaveBeenCalled();
+    });
+
+    it('audits every offer it repriced', async () => {
+      await applyRepriceAction(VALID_INPUT);
+
+      expect(appendAuditEventMock).toHaveBeenCalledTimes(1);
+      expect(appendAuditEventMock).toHaveBeenCalledWith(
+        TX,
+        expect.objectContaining({
+          action: 'catalog_product_offer.repriced',
+          entityId: OFFER_ID,
+          payload: expect.objectContaining({
+            previousPriceMinor: 2399,
+            priceMinor: 2999,
+            reason: VALID_INPUT.reason,
+            source: 'market-rules-reprice',
+          }),
+        }),
+      );
+    });
+
+    /** The buyer-facing cache is expired only once the write has committed. */
+    it('expires the storefront cache after a successful apply', async () => {
+      await applyRepriceAction(VALID_INPUT);
+
+      expect(updateTagMock).toHaveBeenCalledWith('storefront-catalog');
+    });
+
+    it('does not open a transaction when nothing would move', async () => {
+      repriceMocks.planReprice.mockResolvedValue(
+        plan({
+          lines: [],
+          counts: { changed: 0, unchanged: 5, unpriceable: 0, manual: 0 },
+          fingerprint: 'empty',
+        }),
+      );
+
+      const result = await applyRepriceAction({
+        ...VALID_INPUT,
+        fingerprint: 'empty',
+      });
+
+      expect(result).toMatchObject({ ok: true, data: { written: 0 } });
+      expect(transactionMock).not.toHaveBeenCalled();
+    });
+
+    it('reports the offers it could not price instead of hiding them', async () => {
+      repriceMocks.planReprice.mockResolvedValue(
+        plan({
+          counts: { changed: 1, unchanged: 2, unpriceable: 3, manual: 4 },
+        }),
+      );
+
+      const result = await applyRepriceAction(VALID_INPUT);
+
+      expect(result).toMatchObject({
+        ok: true,
+        data: { written: 1, unpriceable: 3, manual: 4 },
+      });
+    });
+
+    it('refuses a reason too short to explain a bulk price change', async () => {
+      const result = await applyRepriceAction({
+        ...VALID_INPUT,
+        reason: 'nope',
+      });
+
+      expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+      expect(repriceMocks.planReprice).not.toHaveBeenCalled();
+    });
+
+    it('denies a role that may set margins but not publish', async () => {
+      requirePermissionMock.mockResolvedValue({ ...SESSION, role: 'viewer' });
+
+      const result = await applyRepriceAction(VALID_INPUT);
+
+      expect(result).toEqual({ ok: false, reason: 'denied' });
+      expect(repriceMocks.writeReprice).not.toHaveBeenCalled();
+    });
   });
 });

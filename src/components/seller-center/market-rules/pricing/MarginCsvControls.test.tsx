@@ -123,7 +123,7 @@ describe('MarginCsvControls', () => {
     mocks.applyMarginCsvAction.mockResolvedValue({
       ok: false,
       reason: 'invalid_input',
-      rowErrors: ['Line 3: margin_percent "zzz" is not a number.'],
+      rowErrors: ['Line 3: markup_percent "zzz" is not a number.'],
     });
 
     render(<MarginCsvControls nodes={[node()]} canManage scopes={SCOPES} />);
@@ -131,7 +131,7 @@ describe('MarginCsvControls', () => {
     fireEvent.click(screen.getByRole('button', { name: /Import \/ export/ }));
 
     const file = new File(
-      ['category_code,margin_percent\nCAT-GGL-1,35'],
+      ['category_code,markup_percent\nCAT-GGL-1,300'],
       'm.csv',
       {
         type: 'text/csv',
@@ -150,7 +150,7 @@ describe('MarginCsvControls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply file' }));
 
     expect(
-      await screen.findByText(/margin_percent "zzz" is not a number/),
+      await screen.findByText(/markup_percent "zzz" is not a number/),
     ).toBeInTheDocument();
     // Still open, because the file has to be corrected and re-uploaded.
     expect(screen.getByText('2. Upload the file')).toBeInTheDocument();
@@ -168,7 +168,7 @@ describe('MarginCsvControls', () => {
     fireEvent.click(screen.getByRole('button', { name: /Import \/ export/ }));
 
     const file = new File(
-      ['category_code,margin_percent\nCAT-GGL-1,35'],
+      ['category_code,markup_percent\nCAT-GGL-1,300'],
       'm.csv',
       {
         type: 'text/csv',

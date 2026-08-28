@@ -6,7 +6,7 @@ import {
   applyRounding,
   convertAmountMinor,
   formatScaledRate,
-  isValidMarginRate,
+  isValidTargetMarginRate,
   parseScaledRate,
   RATE_SCALE,
   suggestedPriceMinor as computeSuggestedPriceMinor,
@@ -192,7 +192,9 @@ export async function resolveProductPricing(
     return unavailable('INVALID_MARGIN_RATE');
   }
 
-  if (!isValidMarginRate(marginRateScaled)) {
+  // `0 <= rate < 1`: a target of exactly 0 prices at cost, which is a rule a
+  // seller can set, not a broken row. Only `>= 1` is unpriceable.
+  if (!isValidTargetMarginRate(marginRateScaled)) {
     return unavailable('INVALID_MARGIN_RATE');
   }
 

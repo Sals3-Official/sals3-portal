@@ -1,4 +1,9 @@
 import type { RoundingRule } from './money-math';
+import {
+  MAX_MARKUP_PERCENT,
+  markupPercentFromMarginRateScaled,
+  parseScaledRate,
+} from './money-math';
 import { isPricingScopeDestination } from './pricing-scope-destinations';
 
 /**
@@ -18,9 +23,21 @@ import { isPricingScopeDestination } from './pricing-scope-destinations';
  * - `category_path` is exported for a person to read and IGNORED on import.
  *   A spreadsheet that shows only `CAT-GGL-1604` is unusable, but trusting
  *   an edited path would let a renamed row point somewhere else.
- * - `margin_percent` is the human unit (`35`, not `0.35`) because that is
- *   what the screen asks for. An empty cell means "no margin here", which is
- *   how the template ships and how a margin gets cleared.
+ * - `markup_percent` is markup over COST, in the human unit (`300`, not
+ *   `4.0`), because that is the number a seller sourcing from a supplier
+ *   actually holds in their head: `300` means "sell at four times what it
+ *   costs me". The database stores a *margin* rate — a share of the selling
+ *   price — and `markupPercentToMarginRateScaled` converts between them at
+ *   the one boundary. The distinction is load-bearing: a 300% markup is a 75%
+ *   margin, and a column that let those two numbers share a name would price
+ *   a whole catalogue wrong in one upload. `0` is a real value (sell at cost);
+ *   an empty cell means "no markup here", which is how the template ships and
+ *   how a rule gets cleared.
+ *
+ *   This column REPLACED `margin_percent` on 2026-08-28, and a file still
+ *   carrying the old header is refused rather than read: the same `35` means
+ *   two different prices under the two names, so silently reinterpreting an
+ *   old export would quietly reprice every category it names.
  * - `rounding` accepts the two rule names, case-insensitively, and defaults
  *   to `NONE` when blank.
  * - `market_code` is the destination the line applies to, and **blank means
@@ -36,14 +53,14 @@ import { isPricingScopeDestination } from './pricing-scope-destinations';
  *
  * What an import does NOT do is unchanged and load-bearing: a category absent
  * from the file is left alone. Only a row that is present, with an empty
- * `margin_percent`, clears anything — and it clears only the scope its own
+ * `markup_percent`, clears anything — and it clears only the scope its own
  * `market_code` names.
  */
 
 export const MARGIN_CSV_HEADERS = [
   'category_code',
   'category_path',
-  'margin_percent',
+  'markup_percent',
   'rounding',
   'market_code',
 ] as const;
@@ -53,8 +70,11 @@ export const MAX_CSV_ROWS = 6000;
 
 export type MarginCsvRow = {
   categoryCode: string;
-  /** `null` clears any margin on this category, in this row's own scope. */
-  marginPercent: number | null;
+  /**
+   * Markup over cost, in percent — `0` to `MAX_MARKUP_PERCENT`. `null` clears
+   * any rule on this category, in this row's own scope.
+   */
+  markupPercent: number | null;
   roundingRule: RoundingRule;
   /** `null` is the Global rule, matching the column it writes. */
   marketCode: string | null;
@@ -73,7 +93,11 @@ export type MarginCsvParseResult =
 export type MarginCsvExportRow = {
   code: string;
   path: string;
-  /** The margin set ON this category, not an inherited one — an export must round-trip. */
+  /**
+   * The margin RATE set on this category — not an inherited one, because an
+   * export must round-trip — exactly as the column stores it. Converted to
+   * markup percent on the way out.
+   */
   ownMarginRate: string | null;
   ownRoundingRule: RoundingRule | null;
   /** The scope this row was read from. `null` exports as blank. */
@@ -132,16 +156,20 @@ export function buildMarginCsv(rows: MarginCsvExportRow[]): string {
   const lines = [MARGIN_CSV_HEADERS.join(',')];
 
   rows.forEach((row) => {
-    const marginPercent =
+    const markupPercent =
       row.ownMarginRate === null
         ? ''
-        : String(Math.round(Number(row.ownMarginRate) * 10000) / 100);
+        : String(
+            markupPercentFromMarginRateScaled(
+              parseScaledRate(row.ownMarginRate),
+            ),
+          );
 
     lines.push(
       [
         escapeCell(row.code),
         escapeCell(row.path),
-        marginPercent,
+        markupPercent,
         row.ownRoundingRule ?? '',
         // Blank rather than a literal 'ALL': the column holds a country code or
         // nothing, exactly as the database column does, so a round trip cannot
@@ -201,18 +229,36 @@ export function parseMarginCsv(text: string): MarginCsvParseResult {
     cell.trim().toLowerCase(),
   );
   const codeIndex = header.indexOf('category_code');
-  const marginIndex = header.indexOf('margin_percent');
+  const markupIndex = header.indexOf('markup_percent');
   const roundingIndex = header.indexOf('rounding');
   const marketIndex = header.indexOf('market_code');
 
-  if (codeIndex === -1 || marginIndex === -1) {
+  /**
+   * Refused, not reinterpreted. `35` under the old header meant a 35% margin
+   * (a 53.8% markup); reading it as a 35% markup would cut the price of every
+   * category in the file without saying so.
+   */
+  if (markupIndex === -1 && header.includes('margin_percent')) {
     return {
       ok: false,
       errors: [
         {
           line: 1,
           message:
-            'The header must contain category_code and margin_percent. Download the template again.',
+            'This file has the old margin_percent column. Download the file again — the column is now markup_percent, measured against cost (300 means sell at four times cost).',
+        },
+      ],
+    };
+  }
+
+  if (codeIndex === -1 || markupIndex === -1) {
+    return {
+      ok: false,
+      errors: [
+        {
+          line: 1,
+          message:
+            'The header must contain category_code and markup_percent. Download the template again.',
         },
       ],
     };
@@ -224,7 +270,7 @@ export function parseMarginCsv(text: string): MarginCsvParseResult {
       errors: [
         {
           line: 1,
-          message: `The file has more than ${MAX_CSV_ROWS} rows. Check that this is the margin template.`,
+          message: `The file has more than ${MAX_CSV_ROWS} rows. Check that this is the markup template.`,
         },
       ],
     };
@@ -291,12 +337,12 @@ export function parseMarginCsv(text: string): MarginCsvParseResult {
       return;
     }
 
-    const rawMargin = (cells[marginIndex] ?? '').trim();
+    const rawMarkup = (cells[markupIndex] ?? '').trim();
 
-    if (rawMargin === '') {
+    if (rawMarkup === '') {
       rows.push({
         categoryCode,
-        marginPercent: null,
+        markupPercent: null,
         roundingRule,
         marketCode,
       });
@@ -305,25 +351,26 @@ export function parseMarginCsv(text: string): MarginCsvParseResult {
 
     // `Number('')` is 0 and `Number(' ')` is 0 — both already handled above,
     // so anything non-numeric reaching here is a real mistake, not a blank.
-    const marginPercent = Number(rawMargin.replace(/%$/, ''));
+    // A typed `0`, unlike a blank, is a rule: sell at cost.
+    const markupPercent = Number(rawMarkup.replace(/%$/, ''));
 
-    if (!Number.isFinite(marginPercent)) {
+    if (!Number.isFinite(markupPercent)) {
       errors.push({
         line: lineNumber,
-        message: `margin_percent "${rawMargin}" is not a number.`,
+        message: `markup_percent "${rawMarkup}" is not a number.`,
       });
       return;
     }
 
-    if (marginPercent <= 0 || marginPercent >= 100) {
+    if (markupPercent < 0 || markupPercent > MAX_MARKUP_PERCENT) {
       errors.push({
         line: lineNumber,
-        message: `margin_percent must be above 0 and below 100. Line has ${marginPercent}.`,
+        message: `markup_percent must be from 0 to ${MAX_MARKUP_PERCENT}. Line has ${markupPercent}.`,
       });
       return;
     }
 
-    rows.push({ categoryCode, marginPercent, roundingRule, marketCode });
+    rows.push({ categoryCode, markupPercent, roundingRule, marketCode });
   });
 
   if (errors.length > 0) return { ok: false, errors };

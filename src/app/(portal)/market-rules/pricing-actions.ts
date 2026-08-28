@@ -1,11 +1,13 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, updateTag } from 'next/cache';
 import { z } from 'zod';
 import { isPricingScopeDestination } from '@/modules/pricing/pricing-scope-destinations';
 import getDb from '@/lib/db/client';
 import { requirePermission } from '@/lib/auth/session';
-import { PermissionError } from '@/lib/auth/permissions';
+import { can, PermissionError } from '@/lib/auth/permissions';
+import type { PortalPermission } from '@/lib/auth/permissions';
+import { STOREFRONT_CATALOG_TAG } from '@/lib/storefront/catalog-tag';
 import { checkRateLimit } from '@/lib/rate-limit';
 import {
   candidateBelongsToSeller,
@@ -41,8 +43,17 @@ import {
 } from '@/modules/pricing/repository';
 import { parseMarginCsv } from '@/modules/pricing/margin-csv';
 import {
+  planReprice,
+  writeReprice,
+  type RepriceLine,
+  type RepricePlan,
+} from '@/modules/pricing/reprice';
+import {
+  formatScaledRate,
   isValidFxAdjustmentRate,
   isValidMarginRate,
+  isValidTargetMarginRate,
+  markupPercentToMarginRateScaled,
   parseScaledRate,
 } from '@/modules/pricing/money-math';
 import type {
@@ -62,13 +73,35 @@ import type {
 const RATE_LIMIT = { capacity: 20, refillIntervalMs: 60_000 };
 const MIN_REASON_LENGTH = 10;
 
-const marginRateSchema = z.string().refine((value) => {
+/**
+ * A TARGET margin: `0 <= rate < 1`.
+ *
+ * Zero is allowed and means "sell at cost" — a rule a seller can mean, and one
+ * `price = cost / (1 - rate)` prices correctly. `1` and above is refused
+ * because the denominator vanishes there, which is why this is not the same
+ * schema the contribution floor uses.
+ */
+const targetMarginRateSchema = z.string().refine((value) => {
+  try {
+    return isValidTargetMarginRate(parseScaledRate(value));
+  } catch {
+    return false;
+  }
+}, 'Enter a margin rate from 0 up to but not including 1, e.g. 0.30 for 30%.');
+
+/**
+ * A minimum-margin FLOOR: `0 < rate < 1`, the strict bound
+ * `pricing_store_defaults_floor_rate_range` also enforces. A floor of zero
+ * floors nothing, so it is a typo rather than a rule, and letting it past here
+ * would only move the refusal to the database.
+ */
+const floorMarginRateSchema = z.string().refine((value) => {
   try {
     return isValidMarginRate(parseScaledRate(value));
   } catch {
     return false;
   }
-}, 'Enter a margin rate strictly between 0 and 1, e.g. 0.30 for 30%.');
+}, 'Enter a minimum margin strictly between 0 and 1, e.g. 0.30 for 30%.');
 
 const fxAdjustmentRateSchema = z.string().refine((value) => {
   try {
@@ -132,6 +165,16 @@ function toFieldErrors(error: z.ZodError): Record<string, string> {
 async function authorize(
   permission: 'pricing_policy:read' | 'pricing_policy:manage',
   rateLimitKey: string,
+  /**
+   * A second permission the caller must ALSO hold.
+   *
+   * Repricing is the one action on this screen that writes outside the pricing
+   * tables: it changes the price on a live offer, which is a publication act.
+   * Holding the margin rules is not the same authority as changing what a buyer
+   * is charged today, so that action asks for both rather than widening what
+   * `pricing_policy:manage` means for every other action in this file.
+   */
+  alsoRequire?: PortalPermission,
 ): Promise<
   | { ok: true; sellerAccountId: string; actorId: string }
   | { ok: false; reason: 'denied' | 'rate_limited' }
@@ -144,6 +187,10 @@ async function authorize(
     if (error instanceof PermissionError)
       return { ok: false, reason: 'denied' };
     throw error;
+  }
+
+  if (alsoRequire !== undefined && !can(session.role, alsoRequire)) {
+    return { ok: false, reason: 'denied' };
   }
 
   const limit = checkRateLimit(
@@ -186,7 +233,7 @@ export async function searchSals3CategoriesAction(
 
 const saveCategoryPolicyInputSchema = z.object({
   categoryCode: z.string().trim().min(1).max(64),
-  targetMarginRate: marginRateSchema,
+  targetMarginRate: targetMarginRateSchema,
   roundingRule: roundingRuleSchema,
   reason: reasonSchema,
   /**
@@ -438,7 +485,7 @@ export async function applyMarginCsvAction(input: unknown): Promise<
         // only narrows the type.
         if (category === undefined) {
           summary.unchanged += 1;
-        } else if (row.marginPercent === null) {
+        } else if (row.markupPercent === null) {
           // An empty cell means "no margin here". Deactivating is the same
           // operation the row's own Deactivate button performs.
           if (existing === null) {
@@ -467,13 +514,21 @@ export async function applyMarginCsvAction(input: unknown): Promise<
         } else if (
           // A row that already says what the table says. Writing it would add
           // a version and an audit event that record no change.
+          //
+          // Compared as scaled BigInts, not as `Number`s: the stored rate is a
+          // `numeric(8, 6)` string and the file carries a markup, so the only
+          // honest comparison is between the two at the same fixed-point scale.
           existing !== null &&
-          Number(existing.targetMarginRate) === row.marginPercent / 100 &&
+          parseScaledRate(existing.targetMarginRate) ===
+            markupPercentToMarginRateScaled(row.markupPercent) &&
           existing.roundingRule === row.roundingRule
         ) {
           summary.unchanged += 1;
         } else {
-          const targetMarginRate = (row.marginPercent / 100).toString();
+          // The file speaks markup over cost; the column stores a margin rate.
+          const targetMarginRate = formatScaledRate(
+            markupPercentToMarginRateScaled(row.markupPercent),
+          );
           const written =
             existing === null
               ? await createCategoryPolicy(tx, {
@@ -626,7 +681,7 @@ function contributionFloorToMinor(value: string): bigint {
 
 const saveStoreDefaultInputSchema = z
   .object({
-    targetMarginRate: marginRateSchema,
+    targetMarginRate: targetMarginRateSchema,
     minContribution: contributionFloorSchema,
     /**
      * The minimum-margin form of the operating-expense floor, or `null`.
@@ -638,7 +693,7 @@ const saveStoreDefaultInputSchema = z
      * database gate is the one that matters, because a CSV import or a repair
      * statement reaches neither of the other two.
      */
-    minContributionRate: marginRateSchema.nullable(),
+    minContributionRate: floorMarginRateSchema.nullable(),
     roundingRule: roundingRuleSchema,
     /**
      * The destination this rule is for, or `null` for all destinations.
@@ -1016,7 +1071,7 @@ export async function deactivateFundingBufferPolicyAction(
 
 const saveProductOverrideInputSchema = z.object({
   supplierCandidateId: z.string().uuid(),
-  targetMarginRate: marginRateSchema,
+  targetMarginRate: targetMarginRateSchema,
   reason: reasonSchema,
 });
 
@@ -1166,7 +1221,7 @@ export async function removeProductOverrideAction(
 const saveVariantOverrideInputSchema = z.object({
   supplierCandidateId: z.string().uuid(),
   supplierVariantId: z.string().trim().min(1).max(128),
-  targetMarginRate: marginRateSchema,
+  targetMarginRate: targetMarginRateSchema,
   reason: reasonSchema,
   additionalJustification: z
     .string()
@@ -1376,6 +1431,260 @@ export async function getFundingBufferHistoryAction(): Promise<
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('[portal] funding buffer history read failed', {
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+    return { ok: false, reason: 'failed' };
+  }
+}
+
+// --- Repricing live offers --------------------------------------------------
+
+const applyRepriceInputSchema = z.object({
+  /**
+   * The digest of the plan the seller actually looked at.
+   *
+   * Not the prices themselves. A client that could post prices could post any
+   * price; this posts only "the plan I approved looked like this", and the
+   * server recomputes the numbers from the rules either way.
+   */
+  fingerprint: z.string().trim().min(1).max(64),
+  reason: reasonSchema,
+});
+
+/** One row of the preview, already shaped for the screen. */
+export type RepricePreviewLine = {
+  offerId: string;
+  productTitle: string;
+  sku: string;
+  marketCode: string;
+  status: RepriceLine['status'];
+  currentPriceMinor: number | null;
+  currentPriceCurrency: string | null;
+  newPriceMinor: number | null;
+  newPriceCurrency: string | null;
+  reasonLabel: string | null;
+};
+
+export type RepricePreview = {
+  counts: RepricePlan['counts'];
+  truncated: boolean;
+  candidateCount: number;
+  fingerprint: string;
+  /** Everything except the rows where nothing happens — those are a count, not a list. */
+  lines: RepricePreviewLine[];
+};
+
+export type RepriceSummary = {
+  written: number;
+  unchanged: number;
+  unpriceable: number;
+  manual: number;
+};
+
+function toPreviewLine(line: RepriceLine): RepricePreviewLine {
+  return {
+    offerId: line.offerId,
+    productTitle: line.productTitle,
+    sku: line.sku,
+    marketCode: line.marketCode,
+    status: line.status,
+    currentPriceMinor: line.currentPriceMinor,
+    currentPriceCurrency: line.currentPriceCurrency,
+    newPriceMinor: line.newPriceMinor,
+    newPriceCurrency: line.newPriceCurrency,
+    reasonLabel: line.reasonLabel,
+  };
+}
+
+/**
+ * What repricing would do, written nowhere.
+ *
+ * A margin rule is not a price — it becomes one only when the resolver runs
+ * against a real supplier cost. Showing a seller the resulting numbers before
+ * anything is written is the difference between changing a rule and changing
+ * what thousands of buyers are charged, and this action is the half that lets
+ * them tell those apart.
+ */
+export async function previewRepriceAction(): Promise<
+  ActionResult<RepricePreview>
+> {
+  const auth = await authorize(
+    'pricing_policy:manage',
+    'pricing:preview-reprice',
+    'product:publish',
+  );
+  if (!auth.ok) return auth;
+
+  try {
+    const plan = await planReprice(getDb(), auth.sellerAccountId);
+
+    return {
+      ok: true,
+      data: {
+        counts: plan.counts,
+        truncated: plan.truncated,
+        candidateCount: plan.candidateCount,
+        fingerprint: plan.fingerprint,
+        // The unchanged rows are the majority and say nothing; every row that
+        // would move, be skipped, or refuse is listed by name.
+        lines: plan.lines
+          .filter((line) => line.status !== 'UNCHANGED')
+          .map(toPreviewLine),
+      },
+    };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] reprice preview failed', {
+      sellerAccountId: auth.sellerAccountId,
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+    return { ok: false, reason: 'failed' };
+  }
+}
+
+/**
+ * Writes the new prices onto live offers.
+ *
+ * Three guards, each answering a different way this can go wrong:
+ *
+ * - **The plan is recomputed here**, never taken from the caller. The client
+ *   sends a digest and a reason; every number written comes from the resolver
+ *   inside this request.
+ * - **The digest must still match.** A rule saved in another tab, or a supplier
+ *   cost that landed between the preview and the click, changes what would be
+ *   written — and a seller who approved one set of numbers has not approved a
+ *   different set. That refuses as `stale_preview` and asks for a fresh look.
+ * - **Every write carries the offer version it was planned from**, so a
+ *   concurrent republish aborts the whole run rather than interleaving with it.
+ *
+ * Offers the resolver refused and prices a person typed are not part of the
+ * write set at all. They keep the price they have, and the result says how
+ * many — silently leaving them out would report a clean run over a catalogue
+ * that is still half-priced by the old rule.
+ */
+export async function applyRepriceAction(input: unknown): Promise<
+  | ({ ok: true } & { data: RepriceSummary })
+  | {
+      ok: false;
+      reason:
+        | 'invalid_input'
+        | 'denied'
+        | 'rate_limited'
+        | 'stale_preview'
+        | 'version_conflict'
+        | 'failed';
+      fieldErrors?: Record<string, string>;
+    }
+> {
+  const parsedInput = applyRepriceInputSchema.safeParse(input);
+  if (!parsedInput.success) {
+    return {
+      ok: false,
+      reason: 'invalid_input',
+      fieldErrors: toFieldErrors(parsedInput.error),
+    };
+  }
+
+  const auth = await authorize(
+    'pricing_policy:manage',
+    'pricing:apply-reprice',
+    'product:publish',
+  );
+  if (!auth.ok) return auth;
+
+  try {
+    /*
+      Planned outside the transaction on purpose.
+
+      The plan is a read that runs the resolver once per live offer — several
+      queries each. Holding a write transaction open for all of that would lock
+      nothing useful and block everything else; the version check on each
+      update is what makes the short write safe, not the length of the
+      transaction.
+    */
+    const plan = await planReprice(getDb(), auth.sellerAccountId);
+
+    if (plan.fingerprint !== parsedInput.data.fingerprint) {
+      return { ok: false, reason: 'stale_preview' };
+    }
+
+    if (plan.counts.changed === 0) {
+      return {
+        ok: true,
+        data: {
+          written: 0,
+          unchanged: plan.counts.unchanged,
+          unpriceable: plan.counts.unpriceable,
+          manual: plan.counts.manual,
+        },
+      };
+    }
+
+    const written = await getDb().transaction(async (tx) => {
+      const result = await writeReprice(tx, plan.lines, {
+        actorId: auth.actorId,
+        sellerAccountId: auth.sellerAccountId,
+      });
+
+      if (!result.ok) return result;
+
+      // One audit event per offer, the same shape publication writes. A price
+      // change a buyer can see is never a bulk footnote.
+      // eslint-disable-next-line no-restricted-syntax
+      for (const line of plan.lines.filter(
+        (candidate) => candidate.status === 'CHANGED',
+      )) {
+        // eslint-disable-next-line no-await-in-loop
+        await appendAuditEvent(tx, {
+          actorId: auth.actorId,
+          action: 'catalog_product_offer.repriced',
+          entityType: 'product_offer',
+          entityId: line.offerId,
+          payload: {
+            sellerAccountId: auth.sellerAccountId,
+            productId: line.productId,
+            sku: line.sku,
+            marketCode: line.marketCode,
+            previousPriceMinor: line.currentPriceMinor,
+            priceMinor: line.newPriceMinor,
+            priceCurrency: line.newPriceCurrency,
+            reason: parsedInput.data.reason,
+            resolvedLayer:
+              line.decision !== null &&
+              line.decision.outcome === 'PRODUCT_MARGIN_ESTIMATE'
+                ? line.decision.resolvedLayer
+                : null,
+            source: 'market-rules-reprice',
+          },
+        });
+      }
+
+      return result;
+    });
+
+    if (!written.ok) return { ok: false, reason: 'version_conflict' };
+
+    /*
+      Announced only after the transaction committed. Expiring the buyer-facing
+      cache for a write that could still roll back would publish a state that
+      never existed — the same ordering `publish-actions.ts` records.
+    */
+    updateTag(STOREFRONT_CATALOG_TAG);
+    revalidatePath('/market-rules');
+
+    return {
+      ok: true,
+      data: {
+        written: written.written,
+        unchanged: plan.counts.unchanged,
+        unpriceable: plan.counts.unpriceable,
+        manual: plan.counts.manual,
+      },
+    };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] reprice apply failed', {
+      sellerAccountId: auth.sellerAccountId,
       error: error instanceof Error ? error.message : 'unknown',
     });
     return { ok: false, reason: 'failed' };
