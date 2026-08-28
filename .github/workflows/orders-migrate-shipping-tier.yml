@@ -1,0 +1,82 @@
+# One-time, idempotent write — no schedule, manual trigger only.
+#
+# Runs the DDL adding fulfillment_groups.shipping_tier and its CHECK
+# constraint (drizzle/0032_strict_shipping_tiers.sql). Same break-glass pattern
+# as products-migrate-show-supplier-photo.yml and
+# orders-migrate-line-snapshot.yml: a manual workflow_dispatch calling an
+# authenticated internal route with the shared CRON_SECRET — no Vercel access
+# or raw database credential required.
+#
+# The buyer order read model and the checkout order writer both reference this
+# column, so this must be run as soon as the deployment carrying them is live —
+# until it runs, every buyer order read fails with
+# "column fulfillment_groups.shipping_tier does not exist".
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin, e.g.
+#                                https://sals3-portal.example.com
+
+name: Orders Migrate Shipping Tier
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the shipping-tier migration endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/orders/migrate-shipping-tier"
+
+          # Read-only first, so the log records the state this run started from.
+          echo "--- schema state before ---"
+          curl -sS "$endpoint" -H "Authorization: Bearer $CRON_SECRET"
+          echo
+
+          echo "--- applying migration ---"
+          status=$(curl -sS -o /tmp/migrate-response.json -w '%{http_code}' \
+            -X POST "$endpoint" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/migrate-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "shipping-tier migration returned HTTP $status" >&2
+            echo "Nothing was changed: the DDL runs in a transaction with a" >&2
+            echo "lock_timeout, so a lock it could not acquire rolls back" >&2
+            echo "cleanly. Safe to re-run when the database is quieter." >&2
+            exit 1
+          fi
+
+          # A 200 is not proof. Assert both the column and its constraint are
+          # genuinely there, or fail the run — a migration that reports success
+          # without achieving anything is the exact failure this endpoint
+          # exists to prevent. Both are checked because a run that timed out on
+          # the lock between the two statements would leave the column present
+          # and the constraint absent.
+          echo "--- verifying column and constraint exist ---"
+          if ! grep -q '"columnExistsAfter":true' /tmp/migrate-response.json; then
+            echo "Migration returned HTTP $status but the column is still absent" >&2
+            exit 1
+          fi
+
+          if ! grep -q '"constraintExistsAfter":true' /tmp/migrate-response.json; then
+            echo "Migration returned HTTP $status but the CHECK constraint is still absent" >&2
+            exit 1
+          fi
+
+          echo "Verified: fulfillment_groups.shipping_tier and its CHECK constraint exist."

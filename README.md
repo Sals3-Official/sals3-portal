@@ -150,6 +150,22 @@ rows into at most three distinct services: cheapest Standard, midpoint-ranked
 Express, and fastest Expedited. Ecommerce always renders the three tier cards;
 tiers without a real service are disabled rather than fabricated.
 
+**The accepted tier is persisted, and its DDL ships separately.**
+`fulfillment_groups.shipping_tier` is nullable `text` under a CHECK constraint
+limited to the three names — nullable because every order accepted before this
+change has no tier and must not be given a false one, and a `DEFAULT` would hand
+all of them the same invented promise. The buyer read model SELECTs this column,
+so it must exist before the deployment carrying it serves a request; until it
+does, every buyer order read fails with `column
+fulfillment_groups.shipping_tier does not exist`. Apply it with the **Orders
+Migrate Shipping Tier** workflow (`workflow_dispatch`,
+`CRON_SECRET`-authenticated), which calls
+`POST /api/internal/orders/migrate-shipping-tier` on the deployed app and fails
+the run unless the response proves both `columnExistsAfter: true` and
+`constraintExistsAfter: true`. Both are asserted because a run that hit the
+`lock_timeout` between the two statements would leave the column present and the
+constraint absent. Idempotent; safe to run more than once.
+
 The same bearer token protects storefront order endpoints used by Stripe
 webhooks in `sals3-ecommerce`:
 
