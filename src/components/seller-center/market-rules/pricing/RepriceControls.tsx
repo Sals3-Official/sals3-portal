@@ -104,12 +104,38 @@ export default function RepriceControls({ canManage }: RepriceControlsProps) {
   const [isApplying, startApplying] = useTransition();
   const [preview, setPreview] = useState<RepricePreview | null>(null);
   const [reason, setReason] = useState('');
+  /*
+    Taking back the prices a person typed.
+
+    Its own state, and the preview is cleared whenever it changes: a plan
+    checked with this off does not describe the run this would perform, and the
+    fingerprint would refuse it anyway. Clearing says so before the click
+    rather than after.
+  */
+  const [reclaimSellerPriced, setReclaimSellerPriced] = useState(false);
+  /** Typed to confirm a reclaim: the count the preview reported. */
+  const [confirmCount, setConfirmCount] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  /*
+    A reclaim also has to be typed out.
+
+    The number is the one the preview reported, so it cannot be supplied without
+    reading the preview — which is the point. A confirmation that only asks
+    "are you sure" is answered by reflex; one that asks "how many" is answered
+    by looking. Deliberately not a password: a password proves who is pressing,
+    and what needed proving here is that they know what it will do.
+  */
+  const reclaimConfirmed =
+    !reclaimSellerPriced ||
+    (preview !== null &&
+      confirmCount.trim() === String(preview.counts.changed));
 
   const canApply =
     preview !== null &&
     preview.counts.changed > 0 &&
     reason.trim().length >= MIN_REASON_CHARS &&
+    reclaimConfirmed &&
     !isApplying;
 
   function reset() {
@@ -122,7 +148,7 @@ export default function RepriceControls({ canManage }: RepriceControlsProps) {
     setError(null);
 
     startChecking(async () => {
-      const result = await previewRepriceAction();
+      const result = await previewRepriceAction(reclaimSellerPriced);
 
       if (!result.ok) {
         setPreview(null);
@@ -147,6 +173,7 @@ export default function RepriceControls({ canManage }: RepriceControlsProps) {
       const result = await applyRepriceAction({
         fingerprint: preview.fingerprint,
         reason,
+        reclaimSellerPriced,
       });
 
       if (!result.ok) {
@@ -226,6 +253,37 @@ export default function RepriceControls({ canManage }: RepriceControlsProps) {
                 Nothing is written by this step. It runs today&apos;s rules
                 against every published product and shows you the result.
               </p>
+              {/*
+                Off by default, and clearing the preview when it changes: a plan
+                checked with this off does not describe the run this would
+                perform. The fingerprint would refuse the mismatch anyway; this
+                says so before the click rather than after.
+              */}
+              <div className="flex items-start gap-2 text-xs">
+                <input
+                  id="reprice-reclaim"
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={reclaimSellerPriced}
+                  onChange={(event) => {
+                    setReclaimSellerPriced(event.target.checked);
+                    setPreview(null);
+                    setConfirmCount('');
+                    setError(null);
+                  }}
+                />
+                <Label htmlFor="reprice-reclaim" className="font-normal">
+                  <span className="font-medium">
+                    Also take back prices I typed by hand
+                  </span>
+                  <span className="block font-normal text-ink-faint">
+                    Those prices are exempt from your rules today. This ends
+                    that and replaces each one with the rule&apos;s number. The
+                    old price is kept in this listing&apos;s history, but the
+                    listing itself will no longer carry it.
+                  </span>
+                </Label>
+              </div>
               <Button
                 type="button"
                 variant="outline"
@@ -306,6 +364,33 @@ export default function RepriceControls({ canManage }: RepriceControlsProps) {
                     placeholder="Why are you moving these prices?"
                     aria-describedby="reprice-reason-hint"
                   />
+                </div>
+
+                {reclaimSellerPriced ? (
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="reprice-confirm-count">
+                      Type {preview.counts.changed} to confirm
+                    </Label>
+                    <Input
+                      id="reprice-confirm-count"
+                      value={confirmCount}
+                      onChange={(event) => setConfirmCount(event.target.value)}
+                      placeholder={String(preview.counts.changed)}
+                      inputMode="numeric"
+                      aria-describedby="reprice-confirm-hint"
+                    />
+                    <span
+                      id="reprice-confirm-hint"
+                      className="text-xs text-ink-faint"
+                    >
+                      This run replaces prices a person decided. Typing the
+                      count is how the screen knows you have read what it will
+                      touch.
+                    </span>
+                  </div>
+                ) : null}
+
+                <div className="flex flex-col gap-1.5">
                   <span
                     id="reprice-reason-hint"
                     className="text-xs text-ink-faint"

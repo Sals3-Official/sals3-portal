@@ -165,6 +165,78 @@ describe('planReprice', () => {
     expect(resolveProductPricingMock).not.toHaveBeenCalled();
   });
 
+  /**
+   * The repair path, off by default.
+   *
+   * An earlier editor sent every price back as the seller's own on every save,
+   * so offers nobody ever decided are stamped as decisions — 335 of them on the
+   * first account to hit it. Reclaiming is the only way back, and it is
+   * destructive enough that the default must stay "leave them alone".
+   */
+  describe('reclaiming prices a person typed', () => {
+    const SELLER_ROW = {
+      pricingDecision: { source: 'SELLER_RETAIL_PRICE', amountMinor: 330 },
+      pricingResolverVersion: 'SELLER_RETAIL_PRICE_V1',
+    };
+
+    it('asks the resolver about them and marks them reclaimed', async () => {
+      const { executor } = recordingExecutor([candidate(SELLER_ROW)]);
+
+      const plan = await planReprice(executor as never, SELLER_ID, {
+        reclaimSellerPriced: true,
+      });
+
+      expect(plan.counts).toMatchObject({ manual: 0, changed: 1 });
+      expect(plan.lines[0]).toMatchObject({
+        status: 'CHANGED',
+        reclaimed: true,
+      });
+    });
+
+    /**
+     * The subtlety that would have made the repair silently partial.
+     *
+     * `writeReprice` only writes CHANGED lines, and an offer already sitting at
+     * its rule's number would otherwise be UNCHANGED — leaving it stamped
+     * `SELLER_RETAIL_PRICE_V1` and exempt from every future rule change, which
+     * is the exact state this run exists to end. What moves is ownership, not
+     * always the figure.
+     */
+    it('still writes one already sitting at the rule price', async () => {
+      const { executor } = recordingExecutor([
+        candidate({ ...SELLER_ROW, currentPriceMinor: BigInt(4400) }),
+      ]);
+
+      const plan = await planReprice(executor as never, SELLER_ID, {
+        reclaimSellerPriced: true,
+      });
+
+      expect(plan.counts).toMatchObject({ unchanged: 0, changed: 1 });
+      expect(plan.lines[0]).toMatchObject({ reclaimed: true });
+    });
+
+    it('leaves them alone by default', async () => {
+      const { executor } = recordingExecutor([candidate(SELLER_ROW)]);
+
+      const plan = await planReprice(executor as never, SELLER_ID);
+
+      expect(plan.counts).toMatchObject({ manual: 1, changed: 0 });
+      expect(resolveProductPricingMock).not.toHaveBeenCalled();
+    });
+
+    it('does not mark an ordinary reprice as reclaimed', async () => {
+      // The audit distinguishes "a rule moved a price the rules owned" from
+      // "a person's decision was taken back". They must not blur.
+      const { executor } = recordingExecutor([candidate()]);
+
+      const plan = await planReprice(executor as never, SELLER_ID, {
+        reclaimSellerPriced: true,
+      });
+
+      expect(plan.lines[0]).toMatchObject({ reclaimed: false });
+    });
+  });
+
   it('keeps the live price and names the reason when the resolver refuses', async () => {
     const { executor } = recordingExecutor([candidate()]);
     resolveProductPricingMock.mockResolvedValue({
@@ -298,6 +370,7 @@ describe('writeReprice', () => {
       productTitle: 'Corduroy jacket',
       sku: 'SALS3-1',
       marketCode: 'AU',
+      reclaimed: false,
       currentPriceMinor: 2399,
       currentPriceCurrency: 'USD',
       newPriceMinor: 2999,
