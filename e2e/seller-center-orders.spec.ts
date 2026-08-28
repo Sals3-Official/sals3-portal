@@ -35,8 +35,8 @@ import { expect, test, type Page } from '@playwright/test';
  * through.
  */
 
-const NO_DATABASE = 'No database configured in this environment';
-const NOT_MIGRATED = 'The order tables are not in this database yet';
+const NO_DATABASE = 'No order records in this environment';
+const NOT_MIGRATED = 'Order records are unavailable here';
 
 type OrdersState = 'no-database' | 'not-migrated' | 'empty' | 'parcels';
 
@@ -124,7 +124,7 @@ test.describe('Seller Center orders', () => {
 
     if (state === 'no-database') {
       await expect(
-        page.getByText(/DATABASE_URL is not set here/i),
+        page.getByText(/no order records configured/i),
       ).toBeVisible();
 
       return;
@@ -132,7 +132,7 @@ test.describe('Seller Center orders', () => {
 
     if (state === 'not-migrated') {
       await expect(
-        page.getByText(/not the same as having no orders/i),
+        page.getByText(/does not mean you have no orders/i),
       ).toBeVisible();
 
       return;
@@ -141,7 +141,9 @@ test.describe('Seller Center orders', () => {
     if (state === 'empty') {
       // Tables exist and the account genuinely has none. The only one of the
       // three that really is an empty order book.
-      await expect(page.getByText('No parcels match this view.')).toBeVisible();
+      await expect(
+        page.getByText('No parcels match these filters.'),
+      ).toBeVisible();
 
       return;
     }
@@ -185,8 +187,15 @@ test.describe('Seller Center orders', () => {
       return;
     }
 
-    await expect(page.getByText(/real accepted orders/i)).toBeVisible();
-    await expect(page.getByText(/not configured yet/i)).toBeVisible();
+    // One locator over the banner's own sentence. `/not set up for this
+    // account/i` alone matches three places on this page — the banner, the
+    // reprint panel and the handover card — and strict mode rejects it. The
+    // phrase is deliberately shared copy; the assertion has to be specific.
+    await expect(
+      page.getByText(
+        /every parcel below is a paid order\. commission, payouts and tax are not set up/i,
+      ),
+    ).toBeVisible();
   });
 
   test('reprint history offers no fabricated entries', async ({ page }) => {
@@ -244,7 +253,7 @@ test.describe('Seller Center orders', () => {
     await page
       .getByRole('article')
       .first()
-      .getByRole('button', { name: 'Check details' })
+      .getByRole('button', { name: 'View parcel' })
       .click();
 
     await expect(

@@ -22,8 +22,8 @@ export default function OrdersReprintHistoryPanel() {
       </CardHeader>
       <CardContent>
         <p className="text-sm text-muted-foreground">
-          No labels have been printed. Label printing is not configured for this
-          account yet, so there is nothing to reprint.
+          No labels have been printed. Label printing is not set up for this
+          account.
         </p>
       </CardContent>
     </Card>

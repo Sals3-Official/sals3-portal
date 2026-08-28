@@ -68,7 +68,7 @@ export default function OrdersWorkspace({ parcels }: OrdersWorkspaceProps) {
 
     // Everything else would touch a courier or a supplier wallet, and none of
     // that is built. The toast says so rather than implying it happened.
-    toast(`"${actionId}" on ${parcelId} is not wired to a backend yet.`, {
+    toast(`${actionId} is not available for this account yet.`, {
       duration: 5000,
     });
   };
@@ -78,7 +78,7 @@ export default function OrdersWorkspace({ parcels }: OrdersWorkspaceProps) {
 
     setSelected(new Set());
 
-    toast('Label printing is not configured yet. Nothing was sent.', {
+    toast('Label printing is not set up for this account. Nothing was sent.', {
       duration: 8000,
       action: {
         label: 'Undo',
@@ -90,7 +90,7 @@ export default function OrdersWorkspace({ parcels }: OrdersWorkspaceProps) {
   if (parcels.length === 0) {
     return (
       <div className="rounded-lg border border-border bg-card py-10 text-center text-sm text-muted-foreground">
-        No parcels match this view.
+        No parcels match these filters.
       </div>
     );
   }

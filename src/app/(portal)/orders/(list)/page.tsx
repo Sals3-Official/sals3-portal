@@ -112,8 +112,8 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   if (!isDatabaseConfigured()) {
     return (
       <OrdersNotice
-        title="No database configured in this environment"
-        description="DATABASE_URL is not set here, so orders cannot be read. No order was changed."
+        title="No order records in this environment"
+        description="This environment has no order records configured. No order was changed."
       />
     );
   }
@@ -133,8 +133,8 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   if (!resolved.ok) {
     return (
       <OrdersNotice
-        title="Cannot reach the database right now"
-        description="Orders could not be loaded because the database did not respond. This is not an empty order book, and nothing was changed."
+        title="Orders could not be loaded"
+        description="Orders could not be loaded. This does not mean you have no orders, and nothing was changed."
       />
     );
   }
@@ -142,8 +142,8 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   if (resolved.data === NOT_MIGRATED) {
     return (
       <OrdersNotice
-        title="The order tables are not in this database yet"
-        description="Orders reach a database through the break-glass migration run, not through the deploy. Until it has run here, this screen has nothing to read - which is not the same as having no orders."
+        title="Order records are unavailable here"
+        description="Order records are not available in this environment. This does not mean you have no orders - none can be read here."
       />
     );
   }
@@ -306,7 +306,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
       {capReached ? (
         <DisclosureBanner tone="info">
           Showing the {MAX_ORDERS} most recent order references. Older orders
-          are not listed, and search only looks at what is listed.
+          are not listed, and search covers only what is listed.
         </DisclosureBanner>
       ) : null}
 
@@ -330,10 +330,10 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
           reverse — a seller dismissing a real order as sample data. What is
           still missing is named instead, and nothing else. */}
       <DisclosureBanner tone="info">
-        Parcels below are real accepted orders. Sals3 commission, payouts, and
-        tax are not configured yet, so those figures read &ldquo;Not
-        configured&rdquo; rather than an estimate. Label printing and courier
-        handover are not wired to a backend.
+        Every parcel below is a paid order. Commission, payouts and tax are not
+        set up for this account, so those figures read &ldquo;Not
+        configured&rdquo; rather than an estimate. Label printing and carrier
+        handover are not available yet.
       </DisclosureBanner>
 
       <OrdersWorkspace parcels={parcels} />

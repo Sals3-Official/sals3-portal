@@ -241,7 +241,10 @@ describe('listOrderParcelsForSeller', () => {
 
     expect(parcel.money.commissionLabel).toBeNull();
     expect(parcel.money.supplierCostLabel).toBeNull();
-    expect(parcel.money.supplierCostNote).toContain('Not configured');
+    // Matches the meaning, not the sentence. The words were revised once
+    // already; what must not change is that this states the figure is absent
+    // rather than supplying one.
+    expect(parcel.money.supplierCostNote).toMatch(/not recorded/i);
   });
 
   it('reports what the buyer actually paid, in the order currency', async () => {

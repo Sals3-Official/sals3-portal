@@ -72,11 +72,10 @@ export default async function ParcelDetailPage({
         </nav>
         <div className="rounded-lg border border-border bg-card px-6 py-10 text-center">
           <p className="text-sm font-medium text-foreground">
-            Cannot reach the database right now
+            Orders could not be loaded
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            This parcel could not be loaded because the database did not
-            respond. Nothing was changed.
+            This parcel could not be loaded. Nothing was changed.
           </p>
         </div>
       </div>
