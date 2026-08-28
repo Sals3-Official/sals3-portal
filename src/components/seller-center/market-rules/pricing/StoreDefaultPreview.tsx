@@ -2,6 +2,7 @@
 
 import {
   applyContributionFloor,
+  MAX_MARKUP_PERCENT,
   applyRounding,
   parseScaledRate,
   suggestedPriceMinor,
@@ -17,8 +18,8 @@ import {
 const SAMPLE_COSTS_MINOR = [200, 600, 2000] as const;
 
 type StoreDefaultPreviewProps = {
-  /** Raw field value, e.g. "35". Empty or invalid renders the prompt. */
-  marginPercent: string;
+  /** Raw field value in markup over cost, e.g. "200". Invalid renders the prompt. */
+  markupPercent: string;
   /** Raw field value in whole currency, e.g. "2.50". Empty means no floor. */
   floorAmount: string;
   /**
@@ -62,20 +63,33 @@ export type PreviewRow = {
  * the card the seller edits it on.
  */
 export function buildPreviewRows(
-  marginPercent: string,
+  markupPercent: string,
   floorAmount: string,
   roundingRule: RoundingRule,
 ): PreviewRow[] | null {
-  const marginNumber = Number(marginPercent);
+  /*
+    Markup over cost, the unit the field beside this one takes.
+
+    It was a margin, and #233 renamed the dialog's field to markup without
+    renaming this — so a seller who typed `200` hit the `>= 100` guard below
+    and got no preview at all. The number was saved correctly the whole time;
+    only the worked example vanished, which reads as the setting not working.
+
+    Converted here rather than at the call site so the guard and the arithmetic
+    cannot disagree about which unit they are in again.
+  */
+  const markupNumber = Number(markupPercent);
 
   if (
-    marginPercent.trim() === '' ||
-    !Number.isFinite(marginNumber) ||
-    marginNumber <= 0 ||
-    marginNumber >= 100
+    markupPercent.trim() === '' ||
+    !Number.isFinite(markupNumber) ||
+    markupNumber <= 0 ||
+    markupNumber > MAX_MARKUP_PERCENT
   ) {
     return null;
   }
+
+  const marginNumber = (markupNumber / (100 + markupNumber)) * 100;
 
   const floorNumber = floorAmount.trim() === '' ? 0 : Number(floorAmount);
 
@@ -117,10 +131,16 @@ export function buildPreviewRows(
  * no crossover to state.
  */
 export function crossoverCostMinor(
-  marginPercent: string,
+  markupPercent: string,
   floorAmount: string,
 ): number | null {
-  const margin = Number(marginPercent) / 100;
+  // Markup in, like `buildPreviewRows` — the two must read the same field the
+  // same way or the crossover would describe a price the rows never show.
+  const markupNumber = Number(markupPercent);
+  const margin =
+    Number.isFinite(markupNumber) && markupNumber > 0
+      ? markupNumber / (100 + markupNumber)
+      : Number.NaN;
   const floorMinor = Math.round(Number(floorAmount) * 100);
 
   if (!Number.isFinite(margin) || margin <= 0 || margin >= 1) return null;
@@ -197,7 +217,7 @@ export function buildMarginFloorPreviewRows(
  * could never fire.
  */
 export default function StoreDefaultPreview({
-  marginPercent,
+  markupPercent,
   floorAmount,
   floorPercent = '',
   roundingRule,
@@ -263,13 +283,13 @@ export default function StoreDefaultPreview({
     );
   }
 
-  const rows = buildPreviewRows(marginPercent, floorAmount, roundingRule);
-  const crossover = crossoverCostMinor(marginPercent, floorAmount);
+  const rows = buildPreviewRows(markupPercent, floorAmount, roundingRule);
+  const crossover = crossoverCostMinor(markupPercent, floorAmount);
 
   if (rows === null) {
     return (
       <p className="w-full text-xs text-ink-faint">
-        Type a margin above. Then you can see the effect on real prices.
+        Type a markup above. Then you can see the effect on real prices.
       </p>
     );
   }
