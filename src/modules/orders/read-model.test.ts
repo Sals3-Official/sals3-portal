@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { describe, expect, it, vi } from 'vitest';
+import { sals3OrderLines } from '@/lib/db/schema';
 import { callsOf, fakeDb } from '../../../test/fake-db';
 
 vi.mock('server-only', () => ({}));
@@ -11,7 +12,8 @@ vi.mock('@/lib/db/client', () => ({
   default: () => dbState.db,
 }));
 
-const { listOrderParcelsForSeller } = await import('./read-model');
+const { findOrderParcelDetailForSeller, listOrderParcelsForSeller } =
+  await import('./read-model');
 
 const SELLER_ID = '99999999-9999-4999-8999-999999999999';
 const ORDER_ID = '11111111-1111-4111-8111-111111111111';
@@ -285,5 +287,59 @@ describe('listOrderParcelsForSeller', () => {
 
     await expect(listOrderParcelsForSeller(SELLER_ID)).resolves.toEqual([]);
     expect(callsOf(calls, 'from')).toHaveLength(1);
+  });
+});
+
+describe('findOrderParcelDetailForSeller', () => {
+  /**
+   * The regression this exists for.
+   *
+   * The detail read used to re-query `sals3_order_lines` by `order_id` with no
+   * seller predicate and narrow the result with a JavaScript `.filter()`. On a
+   * split order where two sellers each held ungrouped lines, the `unassigned`
+   * parcel counted the other seller's lines as its own.
+   *
+   * Counting the reads is what pins it. Asserting the rendered number would
+   * not: a fake executor returns whatever it is handed, so a reintroduced
+   * unscoped query could still produce the right count here and the wrong one
+   * in production.
+   *
+   * Two is the invariant, and both belong to the seller-scoped list: the
+   * distinct-order query that finds which orders this seller has a stake in,
+   * and the query that loads their lines. Both join `supplier_connections` and
+   * name `seller_account_id` in the `WHERE`. A third read is the defect,
+   * whatever it happens to return.
+   */
+  it('reads the order-line table only through the seller-scoped list', async () => {
+    const { db, calls } = fakeDb([
+      [{ orderId: ORDER_ID, createdAt: ORDER_ROW.createdAt }],
+      [ORDER_ROW],
+      [GROUP_ROW],
+      [LINE_ROW],
+      [INTENT_ROW],
+      [CONNECTION_ROW],
+      [GROUP_ROW], // the parcel's own group
+      [ORDER_ROW],
+      [INTENT_ROW],
+      [], // tracking events
+    ]);
+    dbState.db = db;
+
+    await findOrderParcelDetailForSeller(GROUP_ID, SELLER_ID, false);
+
+    const lineReads = callsOf(calls, 'from').filter((call) =>
+      call.args.some((arg) => arg === sals3OrderLines),
+    );
+
+    expect(lineReads).toHaveLength(2);
+  });
+
+  it('refuses a parcel belonging to another seller', async () => {
+    const { db } = fakeDb([[]]);
+    dbState.db = db;
+
+    await expect(
+      findOrderParcelDetailForSeller(GROUP_ID, SELLER_ID, false),
+    ).resolves.toBeNull();
   });
 });
