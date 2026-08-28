@@ -1,0 +1,82 @@
+# One-time, idempotent DDL — no schedule, manual trigger only.
+#
+# Makes pricing_store_defaults.target_margin_rate nullable, so a store default
+# can exist purely to carry the operating-expense floor. Same break-glass
+# pattern as pricing-migrate-opex-floor.yml — a manual workflow_dispatch calling
+# an authenticated internal route with the shared CRON_SECRET, no Vercel access
+# or raw database credential required.
+#
+# ORDER MATTERS, BUT NOT THE WAY IT USUALLY DOES. The other pricing migrations
+# ADD a column, and running them late breaks every write. This one only widens
+# what an existing column accepts, so code that still writes a value keeps
+# working: running it late is useless rather than destructive. What is unsafe is
+# the reverse — deploying the change that STOPS writing target_margin_rate before
+# this has run, which fails every store-default insert.
+#
+# NULL IS NOT ZERO. A null base markup means "this seller has no store-default
+# fallback", and a product whose category also has no markup then has no price at
+# all rather than a price at cost. That is why this is a DROP NOT NULL and not a
+# DEFAULT 0, and why nothing here backfills.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin, e.g.
+#                                https://sals3-portal.example.com
+
+name: Pricing Migrate Optional Base Markup
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the optional-base-markup migration endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/pricing/migrate-optional-base-markup"
+
+          # Read-only first, so the log records the state this run started from.
+          echo "--- schema state before ---"
+          curl -sS "$endpoint" -H "Authorization: Bearer $CRON_SECRET"
+          echo
+
+          echo "--- applying migration ---"
+          status=$(curl -sS -o /tmp/migrate-response.json -w '%{http_code}' \
+            -X POST "$endpoint" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/migrate-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "optional-base-markup migration returned HTTP $status" >&2
+            echo "Nothing was changed: the DDL runs in a transaction with a" >&2
+            echo "lock_timeout, so a lock it could not acquire rolls back" >&2
+            echo "cleanly. Safe to re-run when the database is quieter." >&2
+            exit 1
+          fi
+
+          # A 200 is not proof. Assert the column genuinely accepts nulls now, or
+          # fail the run — a migration that reports success without achieving
+          # anything is the exact failure this endpoint exists to undo.
+          echo "--- verifying the column is nullable ---"
+          if ! grep -q '"isRequiredAfter":false' /tmp/migrate-response.json; then
+            echo "Migration returned HTTP $status but target_margin_rate still" >&2
+            echo "refuses nulls. Do NOT deploy the change that omits the field:" >&2
+            echo "every store-default write would fail." >&2
+            exit 1
+          fi
+
+          echo "Verified: target_margin_rate is nullable."
