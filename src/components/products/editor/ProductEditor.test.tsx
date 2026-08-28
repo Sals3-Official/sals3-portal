@@ -172,6 +172,115 @@ describe('Product Editor - publication outcomes', () => {
   });
 
   /**
+   * Reported from production on 2026-08-28: after choosing the Category, every
+   * Retail price cell stayed `0.00` and the readiness panel kept blocking on
+   * "Retail price is required", while the line under each cell already read
+   * "From 33.33% markup on …". Only a hard reload fixed it.
+   *
+   * The category decision is what makes a product priceable at all, and it
+   * calls `router.refresh()` — which re-renders this already-mounted component
+   * with a fresh fixture. The variants state was seeded on mount and never
+   * resynced, so it threw the first real prices away. Rerendering with a new
+   * fixture is exactly what that refresh does.
+   */
+  it('takes the rule price the server sends after a category decision, with no reload', () => {
+    const resolved = fixture('attention');
+    const unpriced = {
+      ...resolved,
+      variants: resolved.variants.map((variant, index) =>
+        index === 0
+          ? {
+              ...variant,
+              id: RULE_PRICED_VARIANT_ID,
+              retailPrice: { amountMinor: 0, currency: 'USD' },
+              retailPriceIsSellerSet: false,
+              attention: 'Retail price required',
+            }
+          : variant,
+      ),
+    };
+    const label = `Retail price for ${unpriced.variants[0].optionLabel}`;
+
+    const view = render(
+      <ProductEditor
+        fixture={unpriced}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    expect(screen.getByLabelText(label)).toHaveValue('0.00');
+
+    view.rerender(
+      <ProductEditor
+        fixture={{
+          ...unpriced,
+          variants: unpriced.variants.map((variant, index) =>
+            index === 0
+              ? {
+                  ...variant,
+                  retailPrice: { amountMinor: 2344, currency: 'USD' },
+                  attention: null,
+                }
+              : variant,
+          ),
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    expect(screen.getByLabelText(label)).toHaveValue('23.44');
+  });
+
+  it('never overwrites a price the seller decided on that refresh', () => {
+    const resolved = fixture('attention');
+    const sellerSet = {
+      ...resolved,
+      variants: resolved.variants.map((variant, index) =>
+        index === 0
+          ? {
+              ...variant,
+              id: RULE_PRICED_VARIANT_ID,
+              retailPrice: { amountMinor: 999, currency: 'USD' },
+              retailPriceIsSellerSet: true,
+              attention: null,
+            }
+          : variant,
+      ),
+    };
+    const label = `Retail price for ${sellerSet.variants[0].optionLabel}`;
+
+    const view = render(
+      <ProductEditor
+        fixture={sellerSet}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    view.rerender(
+      <ProductEditor
+        fixture={{
+          ...sellerSet,
+          variants: sellerSet.variants.map((variant, index) =>
+            index === 0
+              ? {
+                  ...variant,
+                  retailPrice: { amountMinor: 2344, currency: 'USD' },
+                }
+              : variant,
+          ),
+        }}
+        initialLifecycle="IDLE"
+        dataMode="database"
+      />,
+    );
+
+    expect(screen.getByLabelText(label)).toHaveValue('9.99');
+  });
+
+  /**
    * The guarantee this whole path exists for.
    *
    * Anything sent as a `variantRetailPrice` is stored as `SELLER_RETAIL_PRICE`

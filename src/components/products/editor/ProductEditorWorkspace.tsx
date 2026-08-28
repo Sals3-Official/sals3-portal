@@ -715,6 +715,72 @@ export default function ProductEditorWorkspace({
       }),
     );
   }
+  /**
+   * The margin rules' own prices come back from the server; a price the seller
+   * decided stays theirs.
+   *
+   * The third instance of the same defect, and the one a seller actually hits:
+   * `useState(fixture.variants)` reads its argument only on mount, and
+   * `handleDecideCategory` calls `router.refresh()`. Choosing the category is
+   * what makes a product priceable at all — before it, the resolver refuses
+   * `CATEGORY_MAPPING_REQUIRES_REVIEW` and every Retail price cell is `0.00` —
+   * so the refresh after that decision carries the first real prices this
+   * product has ever had, and the frozen state threw all of them away.
+   *
+   * What made it look like a rendering bug rather than a stale-state one:
+   * `variantGuidance` is a PROP and goes straight to the table, so the line
+   * under each cell updated to "From 33.33% markup on Apparel & Accessories >
+   * Clothing" while the cell above it still read `0.00` and the readiness panel
+   * still blocked on "Retail price is required". Reported from production on
+   * 2026-08-28, where only a hard reload fixed it.
+   *
+   * Keyed on a signature of the server's own prices rather than on the category
+   * code: a supplier cost refresh or a margin-rule change moves these numbers
+   * too, and they should follow in exactly the same way.
+   *
+   * A price the seller set is never touched — not the one they typed in this
+   * session (state), and not one already stored as theirs (server). That is the
+   * same rule the publish payload applies, and breaking it here would quietly
+   * overwrite a deliberate decision on a refresh nobody asked for.
+   */
+  const rulePriceSignature = fixture.variants
+    .map(
+      (variant) =>
+        `${variant.id}:${variant.retailPriceIsSellerSet === true ? 'seller' : variant.retailPrice.amountMinor}:${variant.retailPrice.currency}`,
+    )
+    .join('|');
+  const [prevRulePriceSignature, setPrevRulePriceSignature] =
+    useState(rulePriceSignature);
+
+  if (rulePriceSignature !== prevRulePriceSignature) {
+    setPrevRulePriceSignature(rulePriceSignature);
+    setVariants((current) =>
+      current.map((variant) => {
+        const fresh = fixture.variants.find((row) => row.id === variant.id);
+
+        if (
+          fresh === undefined ||
+          variant.retailPriceIsSellerSet === true ||
+          fresh.retailPriceIsSellerSet === true
+        ) {
+          return variant;
+        }
+
+        return {
+          ...variant,
+          retailPrice: fresh.retailPrice,
+          retailPriceIsSellerSet: false,
+          // The rules answered, so the blocker they answered is no longer true.
+          attention:
+            fresh.retailPrice.amountMinor > 0 &&
+            variant.attention === 'Retail price required'
+              ? null
+              : variant.attention,
+        };
+      }),
+    );
+  }
+
   const [media, setMedia] = useState<MediaItemFixture[]>(fixture.media);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [deletingMediaId, setDeletingMediaId] = useState<string | null>(null);
