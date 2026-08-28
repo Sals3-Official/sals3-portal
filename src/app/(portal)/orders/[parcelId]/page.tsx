@@ -98,17 +98,24 @@ export default async function ParcelDetailPage({
             <Link href="/orders" className="hover:text-primary hover:underline">
               Orders
             </Link>
-            <span aria-hidden="true">/</span>
-            <span className="text-ink">{parcel.orderRef}</span>
-            {isSplit ? (
-              <span className="text-ink-faint">
-                · parcel {parcel.parcelIndex} of {parcel.parcelCount}
-              </span>
-            ) : null}
+            {/* The crumb stops at the section. The reference used to sit here
+                too, and now that the heading carries it the two would print
+                the same string twice in a row. */}
           </nav>
           <div className="flex flex-wrap items-center gap-2.5">
+            {/* The order reference, not the parcel's uuid. A seller has no
+                use for 36 characters of hexadecimal as the title of a page,
+                and the reference is the one identifier they and their buyer
+                both recognise. The uuid stays in the URL, which is where an
+                opaque key belongs. */}
             <h1 className="font-display text-2xl font-semibold tracking-tight">
-              {parcel.id}
+              {parcel.orderRef}
+              {isSplit ? (
+                <span className="text-ink-subtle">
+                  {' '}
+                  · parcel {parcel.parcelIndex} of {parcel.parcelCount}
+                </span>
+              ) : null}
             </h1>
             <span className="rounded-full bg-muted px-2 py-0.5 text-[11.5px] font-medium text-ink-muted">
               {parcel.channel}

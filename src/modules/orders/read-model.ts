@@ -12,6 +12,7 @@ import {
   supplierProviders,
 } from '@/lib/db/schema';
 import { isShippingTier } from '@/modules/checkout/shipping-tiers';
+import { listPublishedSlugsForProducts } from '@/modules/catalog/storefront/read-model';
 import formatParcelMoney from './money';
 import {
   PARCEL_LIFECYCLE_STATES,
@@ -146,6 +147,7 @@ const SELLER_LINE_COLUMNS = {
   id: sals3OrderLines.id,
   orderId: sals3OrderLines.orderId,
   fulfillmentGroupId: sals3OrderLines.fulfillmentGroupId,
+  productId: sals3OrderLines.productId,
   title: sals3OrderLines.title,
   quantity: sals3OrderLines.quantity,
   unitAmountMinor: sals3OrderLines.unitAmountMinor,
@@ -161,6 +163,7 @@ type SellerLineRow = {
   id: string;
   orderId: string;
   fulfillmentGroupId: string | null;
+  productId: string;
   title: string;
   quantity: number;
   unitAmountMinor: bigint;
@@ -551,7 +554,26 @@ function moneyOf(
 
 // --- Assembly ------------------------------------------------------------
 
-function lineOf(row: SellerLineRow, arrivalWindow: string | null): ParcelLine {
+/**
+ * The public address of a product page, or `null` when there is not one.
+ *
+ * Two independent reasons for `null`, and both are honest: this deployment has
+ * no storefront configured, or the product is not currently live. Neither is
+ * an error, and neither should render a link.
+ */
+function storefrontUrlFor(slug: string | undefined): string | null {
+  const base = process.env.SALS3_STOREFRONT_BASE_URL?.trim();
+
+  if (base === undefined || base === '' || slug === undefined) return null;
+
+  return `${base.replace(/\/+$/, '')}/p/${slug}`;
+}
+
+function lineOf(
+  row: SellerLineRow,
+  arrivalWindow: string | null,
+  publishedSlugs: Map<string, string>,
+): ParcelLine {
   return {
     id: row.id,
     title: row.title,
@@ -560,6 +582,7 @@ function lineOf(row: SellerLineRow, arrivalWindow: string | null): ParcelLine {
     imageUrl: row.imageUrl,
     acceptedOnLabel: `as ordered on ${formatDate(row.createdAt)}`,
     sku: row.sals3Sku,
+    storefrontUrl: storefrontUrlFor(publishedSlugs.get(row.productId)),
     deliveryRangeLabel: arrivalWindow,
   };
 }
@@ -613,6 +636,7 @@ type ParcelInputs = {
   parcelIndex: number;
   parcelCount: number;
   syntheticId: string;
+  publishedSlugs: Map<string, string>;
 };
 
 /**
@@ -635,6 +659,7 @@ function buildParcel(inputs: ParcelInputs): OrderParcel {
     parcelIndex,
     parcelCount,
     syntheticId,
+    publishedSlugs,
   } = inputs;
 
   const state = parcelStateOf(group, order);
@@ -660,7 +685,7 @@ function buildParcel(inputs: ParcelInputs): OrderParcel {
     // Nothing stores a buyer message today. Null rather than an empty string,
     // so the card renders no note instead of an empty one.
     buyerMessage: null,
-    lines: lines.map((row) => lineOf(row, arrivalWindow)),
+    lines: lines.map((row) => lineOf(row, arrivalWindow, publishedSlugs)),
     money: moneyOf(order, parcelCount, parcelPaidMinor),
     status: {
       label: presentation.label,
@@ -839,6 +864,12 @@ async function assembleParcelsForOrders(
     );
 
   const intentById = new Map(intents.map((intent) => [intent.id, intent]));
+  // One lookup for every product on the page, resolved through the storefront's
+  // own publication gate rather than a second copy of it here.
+  const publishedSlugs = await listPublishedSlugsForProducts(
+    [...new Set(sellerLines.map((line) => line.productId))],
+    executor,
+  );
   const connections = await loadConnections(executor, [
     ...new Set([
       ...sellerGroups.map((group) => group.supplierConnectionId),
@@ -879,6 +910,7 @@ async function assembleParcelsForOrders(
         parcelIndex: index + 1,
         parcelCount,
         syntheticId: group.id,
+        publishedSlugs,
       }),
     );
 
@@ -894,6 +926,7 @@ async function assembleParcelsForOrders(
           parcelIndex: parcelCount,
           parcelCount,
           syntheticId: `unassigned:${order.id}`,
+          publishedSlugs,
         }),
       );
     }
@@ -1324,7 +1357,13 @@ export async function findOrderParcelDetailForSeller(
 
   return {
     parcel,
-    actions: parcel.actions,
+    // Empty, not `parcel.actions`. The list's only action is "Check details",
+    // which on this page is a button to the page you are already reading — and
+    // its handler toasted "not wired to a backend yet", which was untrue of the
+    // one action that *is* wired. Nothing else exists to offer: every real next
+    // step here touches a courier or a supplier wallet, and none of that is
+    // built.
+    actions: [],
     buyer,
     riskFacts: riskFactsOf(group, parcel.lines, trackingEvents),
     // No write path exists for a seller note, and a read-only null renders

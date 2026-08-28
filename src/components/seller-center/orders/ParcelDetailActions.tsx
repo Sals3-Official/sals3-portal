@@ -20,6 +20,18 @@ export default function ParcelDetailActions({
   actions,
   parcelId,
 }: ParcelDetailActionsProps) {
+  // An empty strip under a "What you can do next" heading reads as a control
+  // that failed to load. Saying there is nothing is shorter and true, and it
+  // names why rather than leaving the seller to wonder what is missing.
+  if (actions.length === 0) {
+    return (
+      <p className="text-[12.5px] text-ink-subtle">
+        Nothing to arrange — your supplier despatches this parcel. Courier
+        handover and label printing are not configured for this account.
+      </p>
+    );
+  }
+
   return (
     <ParcelActions
       actions={actions}

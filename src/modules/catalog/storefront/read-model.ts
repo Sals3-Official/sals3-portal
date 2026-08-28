@@ -1294,6 +1294,38 @@ async function loadMetaDescription(
   return value === undefined || value === '' ? null : value;
 }
 
+/**
+ * The public slug of each product that is live *right now*, keyed by id.
+ *
+ * Exists so the Orders screens can link an ordered item to its product page
+ * without re-deriving what "live" means. `publishedScope()` is six conditions
+ * across two tables, and a second copy of it in another module is how a link
+ * ends up offered for a product the storefront will 404 — the same "one rule,
+ * two homes" failure this repository keeps finding. Callers get a slug only
+ * when this module would serve the product, or nothing.
+ *
+ * Deliberately id-keyed and not slug-keyed: an order line stores the product
+ * id, and the *frozen* slug on its snapshot is what the buyer saw rather than
+ * what resolves today. A product that has since been re-slugged should still
+ * link somewhere that works.
+ */
+export async function listPublishedSlugsForProducts(
+  productIds: readonly string[],
+  executor: DbExecutor = getDb(),
+): Promise<Map<string, string>> {
+  if (productIds.length === 0) return new Map();
+
+  const rows = await listBase(executor)
+    .where(and(publishedScope(), inArray(products.id, [...productIds])))
+    .groupBy(products.id);
+
+  return new Map(
+    rows
+      .filter((row): row is typeof row & { slug: string } => row.slug !== null)
+      .map((row) => [row.id, row.slug]),
+  );
+}
+
 export async function findPublishedProductBySlug(
   slug: string,
   executor: DbExecutor = getDb(),

@@ -54,10 +54,13 @@ const GROUP_ROW = {
   updatedAt: new Date('2026-08-28T15:00:00Z'),
 };
 
+const PRODUCT_ID = '66666666-6666-4666-8666-666666666666';
+
 const LINE_ROW = {
   id: '55555555-5555-4555-8555-555555555555',
   orderId: ORDER_ID,
   fulfillmentGroupId: GROUP_ID,
+  productId: PRODUCT_ID,
   title: 'Knitted Tam Beanie',
   quantity: 2,
   unitAmountMinor: BigInt(5748),
@@ -108,6 +111,9 @@ function results(overrides: {
     overrides.groups ?? [GROUP_ROW],
     overrides.lines ?? [LINE_ROW],
     [INTENT_ROW],
+    // Published slugs. Empty: no `SALS3_STOREFRONT_BASE_URL` is set under
+    // test, so a slug would produce no link anyway.
+    [],
     [CONNECTION_ROW],
   ];
 }
@@ -320,6 +326,7 @@ describe('findOrderParcelDetailForSeller', () => {
       [GROUP_ROW],
       [LINE_ROW],
       [INTENT_ROW],
+      [], // published slugs
       [CONNECTION_ROW],
       [GROUP_ROW], // the parcel's own group
       [ORDER_ROW],
@@ -356,6 +363,7 @@ describe('findOrderParcelDetailForSeller', () => {
       [GROUP_ROW],
       [LINE_ROW],
       [INTENT_ROW],
+      [], // published slugs
       [CONNECTION_ROW],
       [GROUP_ROW],
       [ORDER_ROW],
@@ -464,7 +472,15 @@ describe('tenant boundary', () => {
 
   it('returns the plaintext contact for a parcel the seller does own', async () => {
     const { db } = fakeDb([
-      ...results({}),
+      // The reveal resolves one owned order, assembles it, then reads the
+      // intent — it no longer walks the seller's capped list.
+      [{ orderId: ORDER_ID }],
+      [ORDER_ROW],
+      [GROUP_ROW],
+      [LINE_ROW],
+      [INTENT_ROW],
+      [], // published slugs
+      [CONNECTION_ROW],
       [{ checkoutIntentId: INTENT_ID }],
       [INTENT_ROW],
     ]);
@@ -490,5 +506,80 @@ describe('tenant boundary', () => {
     );
 
     expect(scoped).toHaveLength(3);
+  });
+});
+
+/**
+ * The link from an ordered item to its product page.
+ *
+ * Two independent reasons for no link — the product is not live, or this
+ * deployment has no storefront configured — and both must render plain text
+ * rather than an address that 404s.
+ */
+describe('the product page link', () => {
+  it('builds the public address when the product is live and a storefront is configured', async () => {
+    vi.stubEnv('SALS3_STOREFRONT_BASE_URL', 'https://storefront.test/');
+
+    const { db } = fakeDb([
+      [{ orderId: ORDER_ID, createdAt: ORDER_ROW.createdAt }],
+      [ORDER_ROW],
+      [GROUP_ROW],
+      [LINE_ROW],
+      [INTENT_ROW],
+      [{ id: PRODUCT_ID, slug: 'grey-pants' }],
+      [CONNECTION_ROW],
+    ]);
+    dbState.db = db;
+
+    const [parcel] = await listOrderParcelsForSeller(SELLER_ID);
+
+    // The trailing slash on the base is stripped rather than doubled.
+    expect(parcel.lines[0].storefrontUrl).toBe(
+      'https://storefront.test/p/grey-pants',
+    );
+
+    vi.unstubAllEnvs();
+  });
+
+  it('offers no link when the product is not live', async () => {
+    vi.stubEnv('SALS3_STOREFRONT_BASE_URL', 'https://storefront.test');
+
+    const { db } = fakeDb([
+      [{ orderId: ORDER_ID, createdAt: ORDER_ROW.createdAt }],
+      [ORDER_ROW],
+      [GROUP_ROW],
+      [LINE_ROW],
+      [INTENT_ROW],
+      [], // the publication gate returned nothing for this product
+      [CONNECTION_ROW],
+    ]);
+    dbState.db = db;
+
+    const [parcel] = await listOrderParcelsForSeller(SELLER_ID);
+
+    expect(parcel.lines[0].storefrontUrl).toBeNull();
+
+    vi.unstubAllEnvs();
+  });
+
+  it('offers no link when no storefront is configured', async () => {
+    vi.stubEnv('SALS3_STOREFRONT_BASE_URL', '');
+
+    const { db } = fakeDb([
+      [{ orderId: ORDER_ID, createdAt: ORDER_ROW.createdAt }],
+      [ORDER_ROW],
+      [GROUP_ROW],
+      [LINE_ROW],
+      [INTENT_ROW],
+      [{ id: PRODUCT_ID, slug: 'grey-pants' }],
+      [CONNECTION_ROW],
+    ]);
+    dbState.db = db;
+
+    const [parcel] = await listOrderParcelsForSeller(SELLER_ID);
+
+    expect(parcel.lines[0].storefrontUrl).toBeNull();
+
+    vi.unstubAllEnvs();
   });
 });
