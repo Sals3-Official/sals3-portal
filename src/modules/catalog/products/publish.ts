@@ -22,7 +22,7 @@ import {
   isAuthorizedSellingCurrency,
   resolveSellerMarketCapabilities,
 } from '@/modules/market-config/capabilities';
-import { findActiveProfileForSeller } from '@/modules/market-config/repository';
+import resolveOfferDestinations from '@/modules/market-config/offer-destinations';
 import { resolveProductPricing } from '@/modules/pricing/resolver';
 import { minimumRetailAmountMinorForSupplierCost } from '@/lib/pricing/retail-price-floor';
 import type { PublishGateReason } from '@/lib/products/publish-gates';
@@ -422,16 +422,27 @@ export default async function publishProduct(input: {
     (input.variantRetailPrices ?? []).map((price) => [price.variantId, price]),
   );
 
-  // Resolved before the transaction: both are pure/config reads, and refusing
-  // here means a globally unconfigured market never opens a write transaction.
-  const profile = await findActiveProfileForSeller(db, input.sellerAccountId);
-  const { capabilityVersion, destinations } = resolveSellerMarketCapabilities();
-  const destinationCountryCode =
-    profile?.destinationCountryCode ?? destinations[0]?.destinationCountryCode;
+  // Resolved before the transaction: refusing here means a globally
+  // unconfigured market never opens a write transaction.
+  //
+  // `resolveOfferDestinations` is shared with `create-draft.ts` (2026-08-28).
+  // It already encodes the fallback this line used to spell out itself -
+  // `ACTIVE` profiles when there are any, otherwise the platform capability
+  // list's first destination - and sharing it is the point: the two paths used
+  // to disagree, so a draft could be created with no offers and then publish
+  // fine, while Save Draft could write no price to it in between.
+  const offerDestinations = await resolveOfferDestinations(
+    db,
+    input.sellerAccountId,
+  );
+  const { capabilityVersion } = resolveSellerMarketCapabilities();
+  const offerDestination = offerDestinations[0];
 
-  if (destinationCountryCode === undefined) {
+  if (offerDestination === undefined) {
     return { ok: false, reason: 'NO_ACTIVE_MARKET_PROFILE' };
   }
+
+  const destinationCountryCode = offerDestination.marketCode;
 
   const destination = findAuthorizedDestination(destinationCountryCode);
 
@@ -676,7 +687,7 @@ export default async function publishProduct(input: {
           pricingState: 'RESOLVED',
           pricingResolverVersion: decision.resolverVersion,
           pricingDecision: decision,
-          marketProfileId: profile?.id ?? null,
+          marketProfileId: offerDestination.profileId,
           marketCapabilityVersion: capabilityVersion,
           createdBy: input.actorId,
           updatedBy: input.actorId,
@@ -699,7 +710,7 @@ export default async function publishProduct(input: {
             pricingUnavailableReason: null,
             pricingResolverVersion: decision.resolverVersion,
             pricingDecision: decision,
-            marketProfileId: profile?.id ?? null,
+            marketProfileId: offerDestination.profileId,
             marketCapabilityVersion: capabilityVersion,
             updatedAt: now,
             updatedBy: input.actorId,

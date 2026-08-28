@@ -563,16 +563,44 @@ describe('createProductDraftFromCandidate — variants from persisted evidence o
 });
 
 describe('createProductDraftFromCandidate — market and pricing boundaries', () => {
-  it('creates no offer when the seller has no ACTIVE market profile', async () => {
+  /**
+   * Changed 2026-08-28. This used to assert that no offer was created, and that
+   * was the defect rather than the rule: the surface that creates a seller
+   * market profile was removed on 2026-08-20, so **every** new draft was born
+   * with zero `product_offers` rows — and `updateSellerRetailPrices` is
+   * UPDATE-only, so Save Draft could then write no price to it and rolled the
+   * whole save back, taking the name, the specifications and the description
+   * with it. Twenty-five drafts were in that state.
+   *
+   * `publish.ts` had always fallen back to the platform capability list in this
+   * case, so a draft could be created offer-less and then publish perfectly
+   * well. `resolveOfferDestinations` is now the one answer both paths use.
+   */
+  it('falls back to the platform destination when the seller has chosen none', async () => {
     asMock(listProfilesForSeller).mockResolvedValue([
       { ...activeProfile('AU'), status: 'DRAFT' },
     ]);
 
     const outcome = await run();
 
-    expect(insertUnpublishedOffer).not.toHaveBeenCalled();
-    expect(outcome.ok && outcome.result.missingRequirements).toContain(
+    expect(insertUnpublishedOffer).toHaveBeenCalled();
+    expect(outcome.ok && outcome.result.missingRequirements).not.toContain(
       'NO_ACTIVE_MARKET_PROFILE',
+    );
+  });
+
+  /**
+   * The offer records that no seller profile authorized it, which is the same
+   * fact `publish.ts` has always written into this column.
+   */
+  it('records a null market profile on a fallback offer', async () => {
+    asMock(listProfilesForSeller).mockResolvedValue([]);
+
+    await run();
+
+    expect(insertUnpublishedOffer).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ marketProfileId: null }),
     );
   });
 

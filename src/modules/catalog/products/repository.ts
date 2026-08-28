@@ -669,7 +669,13 @@ export async function insertUnpublishedOffer(
     variantId: string;
     marketCode: string;
     fulfillmentMode: OfferFulfillmentMode;
-    marketProfileId: string;
+    /**
+     * `null` when the platform capability list supplied the destination
+     * rather than an `ACTIVE` seller profile. The column is nullable and
+     * `publish.ts` has always written `profile?.id ?? null`; this is the
+     * draft path recording the same fact rather than being unable to.
+     */
+    marketProfileId: string | null;
     marketCapabilityVersion: string;
     pricingUnavailableReason: string;
     actorId: string;

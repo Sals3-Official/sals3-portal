@@ -713,6 +713,55 @@ refresh, and the storefront contract's description block union gained the
 `image` block on the consumer side (`sals3-ecommerce`), so seller-placed
 description photos finally render on the product page.
 
+**One answer to "where may this seller offer" (2026-08-28).** Twenty-five drafts
+had **zero `product_offers` rows**, so Save Draft could write no price to them —
+and because `save-draft.ts` throws `PricePersistenceError` and the transaction
+rolls back, the product name, the specifications and the description went with
+it. Each draft had cost CJ points to source.
+
+The cause was one question with two implementations that disagreed:
+
+- `create-draft.ts` required an **`ACTIVE` seller market profile** before
+  creating any offer. Its `for (const destination of destinations)` loop ran
+  zero times, so the product was created with no offers at all.
+- `publish.ts` did `profile?.destinationCountryCode ?? destinations[0]` — it fell
+  back to the platform capability list and created offers regardless.
+
+So a draft could be born offer-less and then publish perfectly well, and in
+between nothing could price it. The screen that creates a profile was removed on
+2026-08-20 (owner decision; ADR-014 puts market governance in the Admin Portal),
+so every seller has been in that state since — this is not a historical accident,
+it was still happening.
+
+`modules/market-config/offer-destinations.ts` is now the one resolver both paths
+call. Two behaviours in it are deliberate and test-pinned:
+
+- **The fallback is one destination, not the whole authorized list** — exactly
+  what `publish.ts` already picks. A draft creating six offers per variant when
+  publish only ever uses one would be five rows per variant that nothing reads,
+  and a create/publish pair that disagree about what the product is.
+- **A stale profile refuses; no profile falls back.** A seller with an `ACTIVE`
+  profile for a destination the platform has since withdrawn _has chosen_ where
+  they sell, and substituting another market would publish their product
+  somewhere they never asked for. The old `publish.ts` refused that case and this
+  keeps refusing it. A seller with no profile at all has chosen nothing, so there
+  is no choice to contradict.
+
+**The 25 existing drafts do not repair themselves** — nothing re-attempts offer
+creation for a product already created. `Products Backfill Draft Offers`
+(`POST /api/internal/catalog/products/backfill-draft-offers`) writes the missing
+rows in the same `UNRESOLVED` / `PRICING_NOT_ATTEMPTED` shape `create-draft`
+writes, using the **same resolver** so it cannot invent a third answer. No DDL,
+no CJ call, bounded at 500 variants per run, idempotent, and its `remaining` is
+counted after the writes from the database rather than from the intent. Its `GET`
+reports the count without changing anything.
+
+**Also fixed:** all three `invalid_input` sites in `product-draft-actions.ts`
+discarded `parsed.error`, so a malformed request was a dead end — the seller saw
+a generic sentence and the server kept no record of which field failed. They now
+log zod's `path` and `code` server-side, never `message` and never the received
+value (rule 34; the value is the untrusted payload).
+
 **Gallery photos and variation photos are separate budgets (2026-08-28).**
 Reported as a product that could not be finished: `Knitted Tam Beanie` sells 21
 flag designs, each needing its own photo so a buyer can tell them apart, and the

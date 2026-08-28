@@ -23,7 +23,7 @@ import {
   findAuthorizedDestination,
   resolveSellerMarketCapabilities,
 } from '@/modules/market-config/capabilities';
-import { listProfilesForSeller } from '@/modules/market-config/repository';
+import resolveOfferDestinations from '@/modules/market-config/offer-destinations';
 import { resolveProductPricing } from '@/modules/pricing/resolver';
 
 import {
@@ -217,34 +217,6 @@ function parseCapturedAt(raw: string | null | undefined): Date | null {
   const parsed = new Date(raw);
 
   return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-/**
- * Destinations this seller may actually offer into right now.
- *
- * Two independent conditions, both server-side: the seller has an `ACTIVE`
- * profile for the destination, *and* the platform capability module still
- * authorizes it. Intersecting them means narrowing the global buyer-
- * destination policy silently narrows offer creation, while a stale `ACTIVE`
- * profile for a withdrawn destination stops producing offers immediately. No
- * market code is hardcoded anywhere in this module.
- */
-async function resolveOfferableDestinations(
-  executor: Executor,
-  sellerAccountId: string,
-): Promise<{ marketCode: string; profileId: string }[]> {
-  const profiles = await listProfilesForSeller(executor, sellerAccountId);
-
-  return profiles
-    .filter(
-      (profile) =>
-        profile.status === 'ACTIVE' &&
-        findAuthorizedDestination(profile.destinationCountryCode) !== null,
-    )
-    .map((profile) => ({
-      marketCode: profile.destinationCountryCode,
-      profileId: profile.id,
-    }));
 }
 
 /**
@@ -758,7 +730,12 @@ async function runDraftTransaction(
 
     // --- Offers + supplier bindings -----------------------------------------
 
-    const destinations = await resolveOfferableDestinations(
+    // One resolver, shared with `publish.ts`. It used to live here as a
+    // second implementation that required an `ACTIVE` seller profile while
+    // publish fell back to the platform list — so a draft could be created
+    // with no offers at all and then publish perfectly well, and in between
+    // Save Draft could not write a price to it.
+    const destinations = await resolveOfferDestinations(
       tx,
       input.sellerAccountId,
     );

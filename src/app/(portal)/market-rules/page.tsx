@@ -26,12 +26,21 @@ export const metadata: Metadata = { title: 'Market rules · Seller Center' };
  * than deleted — the decision is that this was the wrong *place* for them,
  * not that the work was wrong.
  *
- * **Consequence to carry forward, not solved here**: `publishProduct` still
- * refuses `NO_ACTIVE_MARKET_PROFILE` when a seller has no destination, and
- * this page was the only surface that could create one. Until the replacement
- * exists, a seller with no profile has no path to a first publication.
- * `seller_market_profiles` is untouched — the data and every backend reader
- * still work; only the way in is gone.
+ * **Consequence, and what became of it.** This page was the only surface that
+ * could create a `seller_market_profiles` row, so since 2026-08-20 no seller has
+ * had one. `seller_market_profiles` is untouched — the data and every backend
+ * reader still work; only the way in is gone.
+ *
+ * This comment used to say `publishProduct` "still refuses
+ * `NO_ACTIVE_MARKET_PROFILE` when a seller has no destination", and that was
+ * already wrong when it was written: `publish.ts` fell back to the platform
+ * capability list and published fine. What actually broke was quieter —
+ * `create-draft.ts` demanded a profile before creating **any** offer, so every
+ * draft was born with zero `product_offers` rows, and `updateSellerRetailPrices`
+ * is UPDATE-only. Save Draft matched nothing, threw, and rolled the whole save
+ * back: price, specifications and description together. Twenty-five drafts were
+ * in that state before `resolveOfferDestinations` made both paths agree
+ * (2026-08-28).
  *
  * ## Store default pricing is also unmounted (owner decision 2026-08-20)
  *
