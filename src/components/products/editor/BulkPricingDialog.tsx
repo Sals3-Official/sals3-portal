@@ -38,7 +38,7 @@ const COPY: Record<
   { title: string; description: string; label: string; hint: string }
 > = {
   SET_PRICE: {
-    title: 'Set retail price',
+    title: 'Set one price for all variants',
     description:
       'Sets the same retail price on every variant that will be listed.',
     label: 'Retail price',

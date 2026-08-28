@@ -676,17 +676,25 @@ describe('the rule behind the price', () => {
       expect(onRequestPriceUnlock).toHaveBeenCalledWith(VARIANT.id);
     });
 
-    it('leaves a price a person already owns editable', () => {
-      // Not the rules' number, so there is nothing to guard against losing.
+    /**
+     * This used to stay open once overridden, on the reading that there was no
+     * rule price left to protect. Owner report 2026-08-29: the thing being
+     * guarded is not only the rules' number -- it is that a money field should
+     * not be somewhere a click can land -- so an edited price locks too, and
+     * the pencil comes back.
+     */
+    it('locks a price a person already owns, and offers the pencil', () => {
       renderLockable([{ ...ruleGuidance, sellerOverridden: true }], {
         ...VARIANT,
         retailPriceIsSellerSet: true,
       });
 
+      const label = `Retail price for ${VARIANT.optionLabel}`;
+
+      expect(screen.getByLabelText(label).tagName).not.toBe('INPUT');
       expect(
-        screen.getByLabelText(`Retail price for ${VARIANT.optionLabel}`)
-          .tagName,
-      ).toBe('INPUT');
+        screen.getByRole('button', { name: `Override ${label}` }),
+      ).toBeInTheDocument();
     });
 
     it('leaves a variant the rules cannot price editable', () => {
@@ -836,6 +844,79 @@ describe('the rule behind the price', () => {
       expect(
         screen.queryByRole('button', { name: 'Use my rules for all' }),
       ).toBeNull();
+    });
+  });
+  /**
+   * Owner report 2026-08-29: after editing, clicking away should end the edit
+   * and bring the pencil back. Blur is the commit point on this screen —
+   * nothing here saves, the workspace already holds every keystroke — so what
+   * this closes is the control, not a transaction.
+   */
+  describe('ending an edit', () => {
+    it('reports the edit finished when the field is left with a value', () => {
+      const onPriceCommitted = vi.fn();
+
+      render(
+        <VariantPricingTable
+          variants={[{ ...VARIANT, retailPriceIsSellerSet: true }]}
+          pricingGuidance={[]}
+          unlockedVariantIds={new Set([VARIANT.id])}
+          onRequestPriceUnlock={vi.fn()}
+          onPriceCommitted={onPriceCommitted}
+          expandedVariantId={null}
+          onToggleExpanded={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          onRetailChange={vi.fn()}
+          onUseRulePrice={vi.fn()}
+          onSellerSkuChange={vi.fn()}
+          onBulkSetPrice={vi.fn()}
+        />,
+      );
+
+      const field = screen.getByLabelText(
+        `Retail price for ${VARIANT.optionLabel}`,
+      );
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: '42.00' } });
+      fireEvent.blur(field);
+
+      expect(onPriceCommitted).toHaveBeenCalledWith(VARIANT.id);
+    });
+
+    it('asks the rules for the price instead when the field was emptied', () => {
+      // The two blur outcomes are exclusive: an empty field is a request for
+      // the rule price, not a finished edit to lock.
+      const onPriceCommitted = vi.fn();
+      const onUseRulePrice = vi.fn();
+
+      render(
+        <VariantPricingTable
+          variants={[{ ...VARIANT, retailPriceIsSellerSet: true }]}
+          pricingGuidance={[]}
+          unlockedVariantIds={new Set([VARIANT.id])}
+          onRequestPriceUnlock={vi.fn()}
+          onPriceCommitted={onPriceCommitted}
+          expandedVariantId={null}
+          onToggleExpanded={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          onRetailChange={vi.fn()}
+          onUseRulePrice={onUseRulePrice}
+          onSellerSkuChange={vi.fn()}
+          onBulkSetPrice={vi.fn()}
+        />,
+      );
+
+      const field = screen.getByLabelText(
+        `Retail price for ${VARIANT.optionLabel}`,
+      );
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: '' } });
+      fireEvent.blur(field);
+
+      expect(onUseRulePrice).toHaveBeenCalledWith(VARIANT.id);
+      expect(onPriceCommitted).not.toHaveBeenCalled();
     });
   });
 });

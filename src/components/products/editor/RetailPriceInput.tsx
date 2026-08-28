@@ -37,6 +37,15 @@ type RetailPriceInputProps = {
    * hold its own draft string in the first place.
    */
   onClearedToRule: () => void;
+  /**
+   * The field was left with a value: the edit is done, lock it again.
+   *
+   * Blur is the commit point on this screen — nothing here saves, the workspace
+   * already holds every keystroke — so this is about the *control*, not the
+   * data. Leaving the field open after an edit means the next stray click lands
+   * in a money field again, which is the whole thing the lock exists to stop.
+   */
+  onCommitted: () => void;
 };
 
 /**
@@ -90,6 +99,7 @@ export default function RetailPriceInput({
   unlocked,
   onRequestUnlock,
   onClearedToRule,
+  onCommitted,
 }: RetailPriceInputProps) {
   const formatted = minorToDecimalString(value.amountMinor, value.currency);
   const [draft, setDraft] = useState(formatted);
@@ -185,6 +195,7 @@ export default function RetailPriceInput({
 
           setSyncedFrom(tidy);
           setDraft(tidy);
+          onCommitted();
         }}
         onChange={(event) => {
           const next = event.target.value;

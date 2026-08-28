@@ -339,6 +339,8 @@ type VariantPricingTableProps = {
   unlockedVariantIds?: ReadonlySet<string>;
   /** Asks to unlock one variant. The workspace collects the reason. */
   onRequestPriceUnlock?: (variantId: string) => void;
+  /** One variant's edit is finished — the workspace locks the cell again. */
+  onPriceCommitted?: (variantId: string) => void;
   /**
    * Hands every seller-set price on this product back to the margin rules.
    *
@@ -616,6 +618,7 @@ export default function VariantPricingTable({
   onPickImage,
   unlockedVariantIds,
   onRequestPriceUnlock,
+  onPriceCommitted,
   onHandAllBackToRules,
 }: VariantPricingTableProps) {
   const guidanceByVariantId = new Map(
@@ -690,7 +693,14 @@ export default function VariantPricingTable({
                 onClick={onBulkSetPrice}
               >
                 <Tag aria-hidden="true" />
-                Set retail price…
+                {/*
+                  Named for its blast radius, beside `Use my rules for all`, so
+                  the pair reads as the two directions of one decision. The
+                  ellipsis is the ordinary convention for "this opens a dialog
+                  rather than acting now" — it is kept, and the words either
+                  side of it now say what the dialog will do.
+                */}
+                Set one price for all…
               </Button>
             </div>
           </div>
@@ -919,22 +929,27 @@ export default function VariantPricingTable({
                           onRetailChange(variant.id, amountMinor)
                         }
                         /*
-                          Locked only where there is a rule price to protect.
+                          Every priced cell is locked, including one a person
+                          already owns.
 
-                          - A price a person already owns is not the rules'
-                            number, so there is nothing to guard against
-                            overwriting; `onUseRulePrice` beneath it is the way
-                            back.
-                          - A variant the rules cannot price has no number to
-                            defend either, and locking it would leave the seller
-                            unable to supply the one thing publication is
-                            blocked on.
+                          It used to stay open once overridden, on the reading
+                          that there was no rule price left to protect. But the
+                          thing being protected is not only the rules' number —
+                          it is the fact that a money field is not somewhere a
+                          click should be able to land. An edit that has been
+                          made is exactly as worth guarding as one that has not,
+                          and the owner asked for the pencil back after editing.
+
+                          Still open where there is nothing to guard:
+
+                          - A variant the rules cannot price has no number at
+                            all, and locking it would leave the seller unable to
+                            supply the one thing publication is blocked on.
                           - Fixture and design-preview mode pass no handler:
                             there is no audited write behind the ceremony there,
                             so asking for a reason would be theatre.
                         */
                         unlocked={
-                          variant.retailPriceIsSellerSet === true ||
                           unlockedVariantIds?.has(variant.id) === true ||
                           onRequestPriceUnlock === undefined ||
                           guidanceByVariantId.get(variant.id)?.suggestedPrice ==
@@ -944,6 +959,7 @@ export default function VariantPricingTable({
                           onRequestPriceUnlock?.(variant.id)
                         }
                         onClearedToRule={() => onUseRulePrice(variant.id)}
+                        onCommitted={() => onPriceCommitted?.(variant.id)}
                       />
                       <PricingRuleNote
                         guidance={guidanceByVariantId.get(variant.id)}
