@@ -1,5 +1,6 @@
 'use server';
 
+import type { ZodError } from 'zod';
 import { revalidatePath } from 'next/cache';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
@@ -156,12 +157,41 @@ async function captureEvidenceBeforeDraft(input: {
  * owns. Idempotent: the same key with the same canonical request replays the
  * stored result, and with a different request reports a conflict.
  */
+/**
+ * Refuse a malformed request, and leave something behind that says why.
+ *
+ * All three boundary schemas in this file used to discard `parsed.error`, so an
+ * `invalid_input` was a dead end: the seller saw a generic sentence and the
+ * server kept no record of which field failed. Diagnosing one meant reproducing
+ * it.
+ *
+ * The issues go to the server log and **never** into the returned message
+ * (rule 34: no internal detail in a production response). What is logged is
+ * zod's own `path` and `code` — deliberately not `message`, and never the
+ * received value, because the value is exactly the untrusted payload and a
+ * description document or a price list has no business in a log line.
+ */
+function refuseInvalidInput(error: ZodError): {
+  ok: false;
+  reason: 'invalid_input';
+} {
+  // eslint-disable-next-line no-console
+  console.warn('[portal] product draft action rejected malformed input', {
+    issues: error.issues.map((issue) => ({
+      path: issue.path.join('.'),
+      code: issue.code,
+    })),
+  });
+
+  return { ok: false, reason: 'invalid_input' };
+}
+
 export async function createProductDraftAction(
   input: unknown,
 ): Promise<ProductDraftActionResult> {
   const parsed = createProductDraftInputSchema.safeParse(input);
 
-  if (!parsed.success) return { ok: false, reason: 'invalid_input' };
+  if (!parsed.success) return refuseInvalidInput(parsed.error);
 
   const auth = await authorize('product:import', 'catalog-draft:create');
 
@@ -212,7 +242,7 @@ export async function bulkCreateProductDraftsAction(
 ): Promise<BulkProductDraftActionResult> {
   const parsed = bulkCreateProductDraftsInputSchema.safeParse(input);
 
-  if (!parsed.success) return { ok: false, reason: 'invalid_input' };
+  if (!parsed.success) return refuseInvalidInput(parsed.error);
 
   const auth = await authorize('product:import', 'catalog-draft:bulk-create');
 
@@ -337,7 +367,7 @@ export async function saveProductDraftAction(
 ): Promise<SaveProductDraftActionResult> {
   const parsed = saveProductDraftInputSchema.safeParse(input);
 
-  if (!parsed.success) return { ok: false, reason: 'invalid_input' };
+  if (!parsed.success) return refuseInvalidInput(parsed.error);
 
   const auth = await authorize('product:edit', 'catalog-draft:save');
 
