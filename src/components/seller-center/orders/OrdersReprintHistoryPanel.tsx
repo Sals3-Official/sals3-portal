@@ -1,35 +1,30 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { REPRINT_HISTORY } from '@/lib/seller-center/mock-data/orders';
 
-const DOT_TONE = {
-  warning: 'bg-amber-600',
-  success: 'bg-green-600',
-} as const;
-
+/**
+ * Label reprint history.
+ *
+ * Empty, and it has to be. This panel used to render a fixture of invented
+ * order references and reprint events, which was tolerable while every parcel
+ * beside it was labelled illustrative. The parcels are real rows now, so
+ * fabricated reprints would sit next to genuine orders with nothing telling
+ * them apart — a worse failure than the original, because a seller would have
+ * no reason to doubt them.
+ *
+ * Nothing records a reprint because nothing prints: `OrdersWorkspace` answers
+ * the print control with "Label printing is not configured yet." The empty
+ * state names that same reason, so the two surfaces cannot disagree.
+ */
 export default function OrdersReprintHistoryPanel() {
   return (
     <Card>
       <CardHeader>
         <CardTitle>Reprint history</CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {REPRINT_HISTORY.map((entry) => (
-          <div key={entry.id} className="flex items-start gap-2.5">
-            <span
-              aria-hidden="true"
-              className={`mt-1.5 size-1.5 shrink-0 rounded-full ${DOT_TONE[entry.tone]}`}
-            />
-            <div>
-              <p className="text-sm text-ink-muted">
-                <span className="font-medium text-foreground">
-                  {entry.orderId}
-                </span>{' '}
-                — {entry.text}
-              </p>
-              <p className="text-xs text-muted-foreground">{entry.meta}</p>
-            </div>
-          </div>
-        ))}
+      <CardContent>
+        <p className="text-sm text-muted-foreground">
+          No labels have been printed. Label printing is not configured for this
+          account yet, so there is nothing to reprint.
+        </p>
       </CardContent>
     </Card>
   );

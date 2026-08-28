@@ -17,6 +17,7 @@ export function fakeDb(results: unknown[][]): {
   const calls: FakeDbCall[] = [];
   const chainMethods = [
     'select',
+    'selectDistinct',
     'from',
     'where',
     'limit',

@@ -13,6 +13,8 @@ import SiblingParcelCard from '@/components/seller-center/orders/SiblingParcelCa
 import TrackingEventFeed from '@/components/seller-center/orders/TrackingEventFeed';
 import { can } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
+import { readOrUnavailable } from '@/lib/db/availability';
+import { isDatabaseConfigured } from '@/lib/db/client';
 import getOrdersRepository from '@/modules/orders/repository';
 import revealParcelContactAction from './actions';
 
@@ -32,18 +34,51 @@ type ParcelDetailPageProps = {
 export default async function ParcelDetailPage({
   params,
 }: ParcelDetailPageProps) {
-  const session = await requirePermission('order:read');
-  // Decides whether the *button* renders. The action re-checks server-side,
-  // because hiding a control is never the authorization boundary.
-  const canReveal = can(session.role, 'order:fulfill');
-
   const { parcelId } = await params;
 
-  const detail = await getOrdersRepository().findParcelDetail(
-    parcelId,
-    session.sellerId,
-    canReveal,
-  );
+  if (!isDatabaseConfigured()) notFound();
+
+  // The permission check runs inside the wrapper with the read it guards:
+  // resolving the seller account is a query, so authorizing outside it would
+  // crash before reaching the protected part. See `lib/db/availability.ts`.
+  const resolved = await readOrUnavailable('parcel detail', async () => {
+    const session = await requirePermission('order:read');
+
+    return getOrdersRepository().findParcelDetail(
+      parcelId,
+      session.sellerId,
+      // Decides whether the *button* renders. The action re-checks
+      // server-side, because hiding a control is never the authorization
+      // boundary.
+      can(session.role, 'order:fulfill'),
+    );
+  });
+
+  // A database that did not answer is not a parcel that does not exist. It
+  // renders as a named outage rather than a 404, so nobody reads a blip as a
+  // deleted order and goes looking for who removed it.
+  if (!resolved.ok) {
+    return (
+      <div className="mx-auto flex max-w-[1440px] flex-col gap-4 px-7 pt-6 pb-15">
+        <nav className="flex items-center gap-1 text-sm text-ink-muted">
+          <Link href="/orders" className="hover:text-primary hover:underline">
+            Orders
+          </Link>
+        </nav>
+        <div className="rounded-lg border border-border bg-card px-6 py-10 text-center">
+          <p className="text-sm font-medium text-foreground">
+            Cannot reach the database right now
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            This parcel could not be loaded because the database did not
+            respond. Nothing was changed.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const detail = resolved.data;
 
   if (detail === null) notFound();
 

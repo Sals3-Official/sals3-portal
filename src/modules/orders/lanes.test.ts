@@ -63,6 +63,7 @@ function parcelWith(overrides: Partial<OrderParcel>): OrderParcel {
     actions: [],
     selectable: true,
     proceedsMinor: 115560,
+    currency: 'USD',
     channel: 'Sals3 PH',
     orderedAt: '2026-08-12',
     shipBy: '2026-08-13',

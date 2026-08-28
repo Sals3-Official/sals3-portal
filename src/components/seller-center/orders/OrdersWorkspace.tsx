@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import type { OrderParcel } from '@/modules/orders/contracts';
+import formatParcelMoney from '@/modules/orders/money';
 import OrdersBulkActionBar from './OrdersBulkActionBar';
 import OrderParcelCard from './OrderParcelCard';
 import ParcelActions from './ParcelActions';
@@ -26,10 +27,19 @@ export default function OrdersWorkspace({ parcels }: OrdersWorkspaceProps) {
   const router = useRouter();
 
   const selectedParcels = parcels.filter((parcel) => selected.has(parcel.id));
-  const proceedsMinor = selectedParcels.reduce(
+  // Refuses to add two currencies together rather than producing a sum that
+  // means nothing. One selection can span orders, and orders carry their own
+  // currency; a single number over mixed currencies would be a fabrication
+  // dressed as a total.
+  const currencies = new Set(selectedParcels.map((parcel) => parcel.currency));
+  const buyerPaymentMinor = selectedParcels.reduce(
     (sum, parcel) => sum + parcel.proceedsMinor,
     0,
   );
+  const buyerPaymentLabel =
+    currencies.size === 1
+      ? formatParcelMoney(buyerPaymentMinor, [...currencies][0])
+      : 'mixed currencies';
 
   const toggleOne = (id: string) => {
     setSelected((current) => {
@@ -105,7 +115,7 @@ export default function OrdersWorkspace({ parcels }: OrdersWorkspaceProps) {
       {selected.size > 0 ? (
         <OrdersBulkActionBar
           selectedCount={selected.size}
-          proceedsLabel={`Example ${(proceedsMinor / 100).toFixed(2)}`}
+          buyerPaymentLabel={buyerPaymentLabel}
           onClear={() => setSelected(new Set())}
           onPrint={handlePrint}
         />
