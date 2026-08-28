@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import getDb, { type DbExecutor } from '@/lib/db/client';
 import {
   checkoutIntents,
@@ -765,34 +765,24 @@ function identifiesASeller(sellerAccountId: string): boolean {
   return UUID_SHAPE.test(sellerAccountId.trim());
 }
 
-export async function listOrderParcelsForSeller(
+/**
+ * Shapes parcels for an explicit set of orders, seller-scoped throughout.
+ *
+ * Split out from `listOrderParcelsForSeller` so the detail and reveal paths can
+ * assemble **one** order without inheriting the list's `MAX_ORDERS` ceiling.
+ * That ceiling is right for a list and was wrong for everything else: a parcel
+ * belonging to the 201st-most-recent order was not slow to open, it answered
+ * 404 — a real order, owned by the seller asking, reported as not existing.
+ *
+ * The seller predicate stays in every `WHERE` here regardless of how the ids
+ * were chosen, so a caller that resolves ids by some other route cannot widen
+ * the boundary by accident.
+ */
+async function assembleParcelsForOrders(
+  executor: DbExecutor,
   sellerAccountId: string,
-  options: { executor?: DbExecutor } = {},
+  orderIds: string[],
 ): Promise<OrderParcel[]> {
-  if (!identifiesASeller(sellerAccountId)) return [];
-
-  const executor = options.executor ?? getDb();
-
-  // The set of orders this seller has any stake in. Scoped through the line's
-  // own connection so an order whose group has not been created yet is still
-  // found — the exact case that would otherwise hide a brand-new sale.
-  const orderIdRows = await executor
-    .selectDistinct({
-      orderId: sals3OrderLines.orderId,
-      createdAt: sals3Orders.createdAt,
-    })
-    .from(sals3OrderLines)
-    .innerJoin(
-      supplierConnections,
-      eq(supplierConnections.id, sals3OrderLines.supplierConnectionId),
-    )
-    .innerJoin(sals3Orders, eq(sals3Orders.id, sals3OrderLines.orderId))
-    .where(eq(supplierConnections.sellerAccountId, sellerAccountId))
-    .orderBy(desc(sals3Orders.createdAt))
-    .limit(MAX_ORDERS);
-
-  const orderIds = orderIdRows.map((row) => row.orderId);
-
   if (orderIds.length === 0) return [];
 
   const [orders, groups, lines] = await Promise.all([
@@ -910,6 +900,135 @@ export async function listOrderParcelsForSeller(
 
     return parcels;
   });
+}
+
+/**
+ * Every parcel this seller's connections are fulfilling, newest order first.
+ *
+ * Capped at `MAX_ORDERS`, and the list page discloses the cap when it is
+ * reached. Only the *list* is capped: the detail and reveal paths resolve one
+ * order directly, so an old parcel stays openable.
+ */
+export async function listOrderParcelsForSeller(
+  sellerAccountId: string,
+  options: { executor?: DbExecutor } = {},
+): Promise<OrderParcel[]> {
+  if (!identifiesASeller(sellerAccountId)) return [];
+
+  const executor = options.executor ?? getDb();
+
+  // The set of orders this seller has any stake in. Scoped through the line's
+  // own connection so an order whose group has not been created yet is still
+  // found — the exact case that would otherwise hide a brand-new sale.
+  const orderIdRows = await executor
+    .selectDistinct({
+      orderId: sals3OrderLines.orderId,
+      createdAt: sals3Orders.createdAt,
+    })
+    .from(sals3OrderLines)
+    .innerJoin(
+      supplierConnections,
+      eq(supplierConnections.id, sals3OrderLines.supplierConnectionId),
+    )
+    .innerJoin(sals3Orders, eq(sals3Orders.id, sals3OrderLines.orderId))
+    .where(eq(supplierConnections.sellerAccountId, sellerAccountId))
+    .orderBy(desc(sals3Orders.createdAt))
+    .limit(MAX_ORDERS);
+
+  return assembleParcelsForOrders(
+    executor,
+    sellerAccountId,
+    orderIdRows.map((row) => row.orderId),
+  );
+}
+
+/** A parcel id names an `unassigned:` bundle when it carries this prefix. */
+const UNASSIGNED_PREFIX = 'unassigned:';
+
+/**
+ * The order a parcel belongs to, or `null` when it is not this seller's.
+ *
+ * **This is the ownership check**, and it is one query rather than a scan of
+ * the seller's recent orders. Both branches name `seller_account_id` in the
+ * `WHERE`, so "no such parcel" and "not yours" are the same answer for the
+ * same reason the list is scoped in SQL — and they stay indistinguishable to
+ * the caller, because holding a parcel id is not authorisation.
+ */
+async function resolveOwnedOrderId(
+  executor: DbExecutor,
+  parcelId: string,
+  sellerAccountId: string,
+): Promise<string | null> {
+  if (parcelId.startsWith(UNASSIGNED_PREFIX)) {
+    const orderId = parcelId.slice(UNASSIGNED_PREFIX.length);
+
+    // A synthetic id is caller-supplied text, so it reaches a `uuid` column
+    // and would raise 22P02 rather than matching nothing.
+    if (!identifiesASeller(orderId)) return null;
+
+    // Owning the *bundle* means holding an ungrouped line on that order. The
+    // predicate is the same one that put the bundle in the list.
+    const rows = await executor
+      .select({ orderId: sals3OrderLines.orderId })
+      .from(sals3OrderLines)
+      .innerJoin(
+        supplierConnections,
+        eq(supplierConnections.id, sals3OrderLines.supplierConnectionId),
+      )
+      .where(
+        and(
+          eq(sals3OrderLines.orderId, orderId),
+          isNull(sals3OrderLines.fulfillmentGroupId),
+          eq(supplierConnections.sellerAccountId, sellerAccountId),
+        ),
+      )
+      .limit(1);
+
+    return rows[0]?.orderId ?? null;
+  }
+
+  if (!identifiesASeller(parcelId)) return null;
+
+  const rows = await executor
+    .select({ orderId: fulfillmentGroups.orderId })
+    .from(fulfillmentGroups)
+    .innerJoin(
+      supplierConnections,
+      eq(supplierConnections.id, fulfillmentGroups.supplierConnectionId),
+    )
+    .where(
+      and(
+        eq(fulfillmentGroups.id, parcelId),
+        eq(supplierConnections.sellerAccountId, sellerAccountId),
+      ),
+    )
+    .limit(1);
+
+  return rows[0]?.orderId ?? null;
+}
+
+/**
+ * This parcel and its siblings, without touching the list's ceiling.
+ *
+ * `identifiesASeller` doubles as the uuid-shape guard here: both a parcel id
+ * and an order id are uuids, and both reach `uuid` columns.
+ */
+async function ownedParcelsForParcel(
+  executor: DbExecutor,
+  parcelId: string,
+  sellerAccountId: string,
+): Promise<OrderParcel[]> {
+  if (!identifiesASeller(sellerAccountId)) return [];
+
+  const orderId = await resolveOwnedOrderId(
+    executor,
+    parcelId,
+    sellerAccountId,
+  );
+
+  if (orderId === null) return [];
+
+  return assembleParcelsForOrders(executor, sellerAccountId, [orderId]);
 }
 
 // --- Detail --------------------------------------------------------------
@@ -1120,14 +1239,18 @@ export async function findOrderParcelDetailForSeller(
   options: { executor?: DbExecutor } = {},
 ): Promise<ParcelDetail | null> {
   const executor = options.executor ?? getDb();
-  const parcels = await listOrderParcelsForSeller(sellerAccountId, {
+  // One order, not the seller's recent 200. Before this, a parcel older than
+  // the list's ceiling answered 404 rather than opening.
+  const parcels = await ownedParcelsForParcel(
     executor,
-  });
+    parcelId,
+    sellerAccountId,
+  );
   const parcel = parcels.find((row) => row.id === parcelId);
 
   if (parcel === undefined) return null;
 
-  const groupRows = parcelId.startsWith('unassigned:')
+  const groupRows = parcelId.startsWith(UNASSIGNED_PREFIX)
     ? []
     : await executor
         .select(GROUP_COLUMNS)
@@ -1241,9 +1364,14 @@ export async function revealParcelContactForSeller(
   options: { executor?: DbExecutor } = {},
 ): Promise<RevealedContact | null> {
   const executor = options.executor ?? getDb();
-  const parcels = await listOrderParcelsForSeller(sellerAccountId, {
+  // Same one-order resolution as the detail read, and the same ownership
+  // check: the reveal must not become the one path with its own idea of who
+  // owns a parcel.
+  const parcels = await ownedParcelsForParcel(
     executor,
-  });
+    parcelId,
+    sellerAccountId,
+  );
   const parcel = parcels.find((row) => row.id === parcelId);
 
   if (parcel === undefined) return null;
