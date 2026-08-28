@@ -246,4 +246,57 @@ describe('Global writes the null market code, never its column key', () => {
       ),
     );
   });
+  /**
+   * The two percentage fields in this dialog have different bases, and nothing
+   * said so: `Base markup` is a share of the **cost**, the reserve is a share
+   * of the **selling price**. The owner read them as the same unit and would
+   * have entered 50 where 33.33 was meant — a floor of US$2.00 on a US$1.00
+   * cost instead of US$1.50.
+   *
+   * The hint restates the entry in the other unit, live, which is cheaper than
+   * a paragraph nobody reads.
+   */
+  describe('the reserve says what its percentage is of', () => {
+    async function openAustralia() {
+      render(
+        <StoreDefaultsTable scopes={SCOPES} storeDefaults={{}} canManage />,
+      );
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Set store default for Australia' }),
+      );
+
+      return screen.findByLabelText(/Minimum margin percent for Australia/);
+    }
+
+    it('names the base on the label', async () => {
+      await openAustralia();
+
+      expect(
+        screen.getByText('As a share of the selling price'),
+      ).toBeInTheDocument();
+    });
+
+    it('restates the entry as a share of cost', async () => {
+      const field = await openAustralia();
+
+      fireEvent.change(field, { target: { value: '33.33' } });
+
+      // 33.33% of the price is ~50% over cost; a US$1.00 cost floors at US$1.50.
+      expect(screen.getByText(/49\.99% over cost/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/never sells below US\$1\.50/),
+      ).toBeInTheDocument();
+    });
+
+    it('says nothing while the number is half typed', async () => {
+      // A hint that changes under the caret is worse than no hint.
+      const field = await openAustralia();
+
+      fireEvent.change(field, { target: { value: '' } });
+
+      // Not /over cost/ alone: the `Base markup over cost` label above it
+      // matches that too, and the assertion would pass for the wrong reason.
+      expect(screen.queryByText(/% over cost/)).toBeNull();
+    });
+  });
 });

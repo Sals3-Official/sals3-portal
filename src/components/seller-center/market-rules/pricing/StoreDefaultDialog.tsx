@@ -94,7 +94,7 @@ export default function StoreDefaultDialog({
   onSaved,
 }: StoreDefaultDialogProps) {
   const [isPending, startTransition] = useTransition();
-  const [marginPercent, setMarginPercent] = useState(
+  const [markupPercent, setMarkupPercent] = useState(
     storeDefault === null
       ? ''
       : markupPercentFromMarginRateScaled(
@@ -119,8 +119,26 @@ export default function StoreDefaultDialog({
 
   const amountInUse = floorAmount.trim() !== '';
   const percentInUse = floorPercent.trim() !== '';
+  /*
+    The reserve restated as a share of cost, for the hint under the field.
+    `null` whenever the entry is not a usable rate, so a half-typed number
+    shows nothing rather than a figure that changes under the caret.
+  */
+  const floorRate = Number(floorPercent) / 100;
+  const floorUsable =
+    floorPercent.trim() !== '' &&
+    Number.isFinite(floorRate) &&
+    floorRate > 0 &&
+    floorRate < 1;
+  const floorAsMarkup = floorUsable
+    ? Math.round((floorRate / (1 - floorRate)) * 10000) / 100
+    : null;
+  const floorOnOneDollar = floorUsable
+    ? `US$${(1 / (1 - floorRate)).toFixed(2)}`
+    : null;
+
   const ready =
-    marginPercent.trim() !== '' && reason.trim().length >= MIN_REASON_CHARS;
+    markupPercent.trim() !== '' && reason.trim().length >= MIN_REASON_CHARS;
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -131,7 +149,7 @@ export default function StoreDefaultDialog({
       // Markup in, margin rate stored — the same conversion the CSV importer
       // uses, so a rate typed here and one imported land on the same value.
       targetMarginRate: formatScaledRate(
-        markupPercentToMarginRateScaled(Number(marginPercent)),
+        markupPercentToMarginRateScaled(Number(markupPercent)),
       ),
       // Exactly one of these carries a value. The empty string maps to "0" for
       // the amount and `null` for the rate, which is what "no floor of this
@@ -203,8 +221,8 @@ export default function StoreDefaultDialog({
                 step="0.01"
                 min="0.01"
                 max="99.99"
-                value={marginPercent}
-                onChange={(event) => setMarginPercent(event.target.value)}
+                value={markupPercent}
+                onChange={(event) => setMarkupPercent(event.target.value)}
                 aria-label={`Base markup percent for ${scope.label}`}
                 className="w-24 text-right"
               />
@@ -214,16 +232,26 @@ export default function StoreDefaultDialog({
 
           <fieldset className="flex flex-col gap-2 rounded-md border border-border p-3">
             <legend className="px-1 text-sm font-medium">
-              Minimum — never price below this
+              Reserve — the price never drops below this
             </legend>
             <p className="text-xs text-muted-foreground">
-              Your operating expenses. Use a percentage or an amount, not both.
+              What every sale must leave behind for your operating expenses. If
+              a markup would price something under this, the reserve wins and
+              the price stays here. Use a percentage or an amount, not both.
             </p>
 
             <div className="flex flex-wrap items-end gap-4">
               <div className="flex flex-col gap-1.5">
+                {/*
+                  Named for its base, because the field above it has a
+                  different one. `Base markup` is a share of the COST; this is
+                  a share of the SELLING PRICE, which is what the resolver
+                  floors on. Left as a bare "As a percentage" beside a markup
+                  field, a seller reasonably reads both as the same unit — the
+                  owner did, and 50 here does not mean what 50 above means.
+                */}
                 <Label htmlFor="store-default-floor-percent">
-                  As a percentage
+                  As a share of the selling price
                 </Label>
                 <div className="flex items-center gap-1.5">
                   <Input
@@ -241,6 +269,23 @@ export default function StoreDefaultDialog({
                   />
                   <span className="text-sm text-muted-foreground">%</span>
                 </div>
+                {/*
+                  The bridge between how a seller thinks about opex and what
+                  this field stores.
+
+                  Opex is held in the head as a share of COST — "half again on
+                  top of what I paid". The floor is a share of the PRICE. The
+                  two are the same rule in different units, and nothing on
+                  screen connected them, so 50 got typed where 33.33 was meant.
+                  Restating the number the other way, live, is cheaper than
+                  another paragraph nobody reads.
+                */}
+                {floorAsMarkup === null ? null : (
+                  <span className="text-xs text-muted-foreground">
+                    Same as {floorAsMarkup}% over cost — a US$1.00 cost never
+                    sells below {floorOnOneDollar}.
+                  </span>
+                )}
               </div>
 
               <div className="flex flex-col gap-1.5">
@@ -279,7 +324,7 @@ export default function StoreDefaultDialog({
             cannot drift from the price a product will really get.
           */}
           <StoreDefaultPreview
-            marginPercent={marginPercent}
+            markupPercent={markupPercent}
             floorAmount={floorAmount}
             floorPercent={floorPercent}
             roundingRule={roundingRule}
