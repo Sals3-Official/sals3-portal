@@ -142,6 +142,8 @@ describe('RepriceControls', () => {
       expect(mocks.applyRepriceAction).toHaveBeenCalledWith({
         fingerprint: '1-abc',
         reason: REASON,
+        // An ordinary run leaves hand-typed prices alone.
+        reclaimSellerPriced: false,
       }),
     );
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
@@ -250,5 +252,88 @@ describe('RepriceControls', () => {
     expect(
       screen.queryByRole('button', { name: 'Apply new prices' }),
     ).toBeNull();
+  });
+  /**
+   * Taking back prices a person typed is the one run here that overwrites a
+   * decision rather than a computation, so it is gated on typing the count the
+   * preview reported — a number that cannot be supplied without reading it.
+   *
+   * Deliberately not a password: a password proves who is pressing, and what
+   * needed proving is that they know what it will do.
+   */
+  describe('taking back hand-typed prices', () => {
+    async function openWithReclaim() {
+      fireEvent.click(
+        screen.getByRole('button', { name: /Reprice live products/ }),
+      );
+      fireEvent.click(
+        screen.getByRole('checkbox', {
+          name: /Also take back prices I typed by hand/,
+        }),
+      );
+      fireEvent.click(
+        screen.getByRole('button', { name: /Check what would change/ }),
+      );
+      await screen.findByText(/1 price moves/);
+    }
+
+    it('asks the server for a plan that includes them', async () => {
+      render(<RepriceControls canManage />);
+      await openWithReclaim();
+
+      expect(mocks.previewRepriceAction).toHaveBeenCalledWith(true);
+    });
+
+    it('leaves them out by default', async () => {
+      render(<RepriceControls canManage />);
+      await openAndCheck();
+
+      expect(mocks.previewRepriceAction).toHaveBeenCalledWith(false);
+    });
+
+    it('refuses to apply until the count is typed back', async () => {
+      render(<RepriceControls canManage />);
+      await openWithReclaim();
+
+      fireEvent.change(screen.getByLabelText('Reason for change'), {
+        target: { value: REASON },
+      });
+
+      expect(
+        screen.getByRole('button', { name: /Apply new prices/ }),
+      ).toBeDisabled();
+
+      fireEvent.change(screen.getByLabelText(/Type 1 to confirm/), {
+        target: { value: '2' },
+      });
+
+      // A number, but the wrong one: reading is the point, not typing.
+      expect(
+        screen.getByRole('button', { name: /Apply new prices/ }),
+      ).toBeDisabled();
+
+      fireEvent.change(screen.getByLabelText(/Type 1 to confirm/), {
+        target: { value: '1' },
+      });
+
+      expect(
+        screen.getByRole('button', { name: /Apply new prices/ }),
+      ).toBeEnabled();
+    });
+
+    it('discards a preview checked under the other setting', async () => {
+      // A plan checked without the reclaim does not describe the run this would
+      // perform. The fingerprint would refuse it; this says so before the click.
+      render(<RepriceControls canManage />);
+      await openAndCheck();
+
+      fireEvent.click(
+        screen.getByRole('checkbox', {
+          name: /Also take back prices I typed by hand/,
+        }),
+      );
+
+      expect(screen.queryByText(/1 price moves/)).toBeNull();
+    });
   });
 });

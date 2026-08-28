@@ -92,6 +92,14 @@ export type RepriceLine = {
   reasonLabel: string | null;
   /** The full decision to persist. Only ever set on `CHANGED`. */
   decision: PricingDecision | null;
+  /**
+   * This offer's price was the seller's own and the run is taking it back.
+   *
+   * Recorded so the audit can say which of two very different things happened:
+   * a rule moved a price the rules already owned, or a person's decision was
+   * overwritten. Only ever true on a `reclaimSellerPriced` run.
+   */
+  reclaimed: boolean;
 };
 
 export type RepricePlan = {
@@ -247,9 +255,27 @@ function fingerprintOf(lines: RepriceLine[]): string {
  * recomputation the apply performs, so the two can never drift into disagreeing
  * about what "affected" means.
  */
+export type RepriceOptions = {
+  /**
+   * Also take back the prices a person typed.
+   *
+   * Off by default, and the default is the safe one: `writeReprice` replaces
+   * `pricing_decision` and `pricing_resolver_version` outright, so a reclaimed
+   * offer stops being the seller's for good and **the number it carried is
+   * gone** — `product_offers` has no history table and is updated in place.
+   *
+   * It exists because a repair was otherwise impossible. An earlier editor sent
+   * every price back as the seller's own on every save, so offers nobody ever
+   * decided are stamped as decisions; on the first account to hit this, 335 of
+   * them. Undoing that one product at a time is not a repair anybody finishes.
+   */
+  reclaimSellerPriced?: boolean;
+};
+
 export async function planReprice(
   executor: Executor,
   sellerAccountId: string,
+  options: RepriceOptions = {},
 ): Promise<RepricePlan> {
   const loaded = await loadCandidates(executor, sellerAccountId);
   const truncated = loaded.length > MAX_REPRICE_OFFERS;
@@ -275,6 +301,7 @@ export async function planReprice(
         reason: null,
         reasonLabel: null,
         decision: null,
+        reclaimed: false,
       };
 
       /*
@@ -282,9 +309,12 @@ export async function planReprice(
         resolved — repricing it is the point of this module, and its own
         resolver run decides whether the number moves.
       */
-      if (
-        isSellerEnteredPrice(row.pricingDecision, row.pricingResolverVersion)
-      ) {
+      const sellerEntered = isSellerEnteredPrice(
+        row.pricingDecision,
+        row.pricingResolverVersion,
+      );
+
+      if (sellerEntered && options.reclaimSellerPriced !== true) {
         return { ...base, status: 'MANUAL' };
       }
 
@@ -319,11 +349,25 @@ export async function planReprice(
       }
 
       const next = decision.roundedSuggestedItemPrice;
-      const unchanged =
+      const sameNumber =
         currentPriceMinor === next.amountMinor &&
         row.currentPriceCurrency === next.currency;
 
-      if (unchanged) return { ...base, status: 'UNCHANGED' };
+      /*
+        A reclaimed offer is written even when the number does not move.
+
+        What changes is ownership, not the figure: `writeReprice` replaces
+        `pricing_decision` and `pricing_resolver_version`, and that replacement
+        is the whole point — an offer left at the same price but still stamped
+        `SELLER_RETAIL_PRICE_V1` would stay exempt from every future rule
+        change, which is exactly the state this run exists to end.
+
+        Skipping it as UNCHANGED would have made the repair silently partial for
+        every price that already happened to match its rule.
+      */
+      if (sameNumber && !sellerEntered) {
+        return { ...base, status: 'UNCHANGED' };
+      }
 
       return {
         ...base,
@@ -331,6 +375,7 @@ export async function planReprice(
         newPriceMinor: next.amountMinor,
         newPriceCurrency: next.currency,
         decision,
+        reclaimed: sellerEntered,
       };
     },
   );

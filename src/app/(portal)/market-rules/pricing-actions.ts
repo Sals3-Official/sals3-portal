@@ -1469,6 +1469,15 @@ const applyRepriceInputSchema = z.object({
    */
   fingerprint: z.string().trim().min(1).max(64),
   reason: reasonSchema,
+  /**
+   * Whether the plan the seller approved included the prices they typed.
+   *
+   * Recomputed against, never trusted: the apply re-plans with this same flag
+   * and compares digests, so a request claiming a reclaim the preview did not
+   * show produces a different fingerprint and is refused as stale. That is the
+   * whole guard — this field cannot widen a run on its own.
+   */
+  reclaimSellerPriced: z.boolean().default(false),
 });
 
 /** One row of the preview, already shaped for the screen. */
@@ -1525,9 +1534,9 @@ function toPreviewLine(line: RepriceLine): RepricePreviewLine {
  * what thousands of buyers are charged, and this action is the half that lets
  * them tell those apart.
  */
-export async function previewRepriceAction(): Promise<
-  ActionResult<RepricePreview>
-> {
+export async function previewRepriceAction(
+  reclaimSellerPriced = false,
+): Promise<ActionResult<RepricePreview>> {
   const auth = await authorize(
     'pricing_policy:manage',
     'pricing:preview-reprice',
@@ -1536,7 +1545,9 @@ export async function previewRepriceAction(): Promise<
   if (!auth.ok) return auth;
 
   try {
-    const plan = await planReprice(getDb(), auth.sellerAccountId);
+    const plan = await planReprice(getDb(), auth.sellerAccountId, {
+      reclaimSellerPriced,
+    });
 
     return {
       ok: true,
@@ -1622,7 +1633,9 @@ export async function applyRepriceAction(input: unknown): Promise<
       update is what makes the short write safe, not the length of the
       transaction.
     */
-    const plan = await planReprice(getDb(), auth.sellerAccountId);
+    const plan = await planReprice(getDb(), auth.sellerAccountId, {
+      reclaimSellerPriced: parsedInput.data.reclaimSellerPriced,
+    });
 
     if (plan.fingerprint !== parsedInput.data.fingerprint) {
       return { ok: false, reason: 'stale_preview' };
@@ -1668,6 +1681,13 @@ export async function applyRepriceAction(input: unknown): Promise<
             previousPriceMinor: line.currentPriceMinor,
             priceMinor: line.newPriceMinor,
             priceCurrency: line.newPriceCurrency,
+            /*
+              Which of two different things happened to this offer: a rule moved
+              a price the rules already owned, or a person's own decision was
+              taken back. `previousPriceMinor` above is what makes the second
+              one recoverable at all -- product_offers has no history table.
+            */
+            reclaimedFromSeller: line.reclaimed,
             reason: parsedInput.data.reason,
             resolvedLayer:
               line.decision !== null &&
