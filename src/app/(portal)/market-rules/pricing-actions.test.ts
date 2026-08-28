@@ -400,6 +400,10 @@ describe('saveFundingBufferPolicyAction', () => {
 
     // The action hands the written row straight back now, so the card can
     // show it without waiting for a page render — see `savedPolicy`.
+    // The storefront prices its approximate local figure off this policy, so a
+    // save that does not invalidate the tag leaves shoppers on the old cushion
+    // until the cache expires -- the drift this change exists to remove.
+    expect(updateTagMock).toHaveBeenCalledWith('storefront-fx-buffer');
     expect(result).toMatchObject({ ok: true });
     expect(result).toMatchObject({
       data: { id: 'buffer-1' },
@@ -447,6 +451,7 @@ describe('saveFundingBufferPolicyAction', () => {
 
     // The action hands the written row straight back now, so the card can
     // show it without waiting for a page render — see `savedPolicy`.
+    expect(updateTagMock).toHaveBeenCalledWith('storefront-fx-buffer');
     expect(result).toMatchObject({ ok: true });
     expect(result).toMatchObject({
       data: { id: 'buffer-2' },
@@ -501,6 +506,8 @@ describe('deactivateFundingBufferPolicyAction', () => {
       SELLER_A_ID,
     );
 
+    // Deactivating must stop the storefront buffering at once, not age out.
+    expect(updateTagMock).toHaveBeenCalledWith('storefront-fx-buffer');
     expect(result).toEqual({ ok: true });
     expect(
       pricingRepositoryMocks.deactivateFundingBufferPolicy,

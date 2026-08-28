@@ -8,6 +8,7 @@ import { requirePermission } from '@/lib/auth/session';
 import { can, PermissionError } from '@/lib/auth/permissions';
 import type { PortalPermission } from '@/lib/auth/permissions';
 import { STOREFRONT_CATALOG_TAG } from '@/lib/storefront/catalog-tag';
+import { STOREFRONT_FX_BUFFER_TAG } from '@/lib/storefront/fx-buffer-tag';
 import { checkRateLimit } from '@/lib/rate-limit';
 import {
   candidateBelongsToSeller,
@@ -997,6 +998,21 @@ export async function saveFundingBufferPolicyAction(
     });
 
     revalidatePath('/market-rules');
+    /*
+      The storefront prices its approximate local figure off this policy, so a
+      buffer edit has to reach the feed and not only this screen.
+
+      `updateTag`, not `revalidateTag`: this is a Server Action, and the
+      read-your-own-writes semantic is the one `updateTag` exists for -- the
+      same reasoning `publish-actions.ts` records.
+
+      Note what this does NOT do: it does not reprice live offers. The same
+      policy also lifts the cost basis inside `resolveProductPricing`, and
+      `reprice.ts` is what carries a policy change onto already-published
+      prices. Wiring the buffer into that is its own decision, not a side
+      effect of expiring a cache tag.
+    */
+    updateTag(STOREFRONT_FX_BUFFER_TAG);
     return { ok: true, data: saved };
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -1057,6 +1073,10 @@ export async function deactivateFundingBufferPolicyAction(
     if (notFound) return { ok: false, reason: 'not_found' };
 
     revalidatePath('/market-rules');
+    // Deactivating must stop the storefront buffering at once. This is the half
+    // that makes the consumer's "a served null forgets the last good value"
+    // reachable in practice rather than only after the cache expires.
+    updateTag(STOREFRONT_FX_BUFFER_TAG);
     return { ok: true };
   } catch (error) {
     // eslint-disable-next-line no-console
