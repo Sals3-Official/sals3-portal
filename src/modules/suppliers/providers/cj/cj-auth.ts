@@ -56,6 +56,16 @@ function logCredentialFailure(message: string, error: unknown): void {
   console.error(message, error instanceof Error ? error.message : error);
 }
 
+function developmentApiKey(): string | undefined {
+  const apiKey = process.env.CJ_API_KEY?.trim();
+
+  if (process.env.NODE_ENV === 'production' || apiKey === undefined) {
+    return undefined;
+  }
+
+  return apiKey === '' ? undefined : apiKey;
+}
+
 function timeoutSignal(): AbortSignal {
   return AbortSignal.timeout(CJ_AUTH_TIMEOUT_MS);
 }
@@ -148,6 +158,24 @@ export default class CjTokenManager {
       );
     } catch (error) {
       logCredentialFailure('[portal] CJ credential read failed', error);
+
+      const apiKey = developmentApiKey();
+
+      if (apiKey !== undefined) {
+        // Local development can point at a database whose encrypted CJ
+        // credential was sealed with another machine's key. Use the explicitly
+        // configured dev key for this process only; never mutate the supplier
+        // credential row from a decrypt failure.
+        const fresh = await reauthenticate(apiKey);
+
+        cache.set(connectionId, {
+          token: fresh.accessToken,
+          expiresAtMs: fresh.expiresAtMs,
+        });
+
+        return fresh.accessToken;
+      }
+
       throw new CjApiError('missing-credentials');
     }
 
