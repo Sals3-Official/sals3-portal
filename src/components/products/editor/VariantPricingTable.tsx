@@ -344,8 +344,11 @@ type VariantPricingTableProps = {
   /**
    * Hands every seller-set price on this product back to the margin rules.
    *
-   * Absent when nothing is overridden, so the control appears only when it
-   * would do something.
+   * Absent only where no save can record it — fixture and design-preview mode.
+   * When there is simply nothing overridden the control still renders, disabled
+   * and saying so: hiding it made an owner believe the feature had been
+   * removed, which is a worse failure than a button that reports "nothing to
+   * undo".
    */
   onHandAllBackToRules?: () => void;
   onSellerSkuChange: (variantId: string, value: string) => void;
@@ -633,6 +636,10 @@ export default function VariantPricingTable({
   const columns = buildColumns(axes === null ? null : axes.names);
   /** One working for the whole Retail price column, or none. */
   const working = sharedWorking(variants, guidanceByVariantId);
+  /** Whether anything on this product is the seller's own price. */
+  const hasSellerSetPrice = variants.some(
+    (variant) => variant.retailPriceIsSellerSet === true,
+  );
   /**
    * Merging is only meaningful past one axis: with a single axis every value
    * has exactly one variant, so every group would be one row.
@@ -670,16 +677,26 @@ export default function VariantPricingTable({
             </span>
             <div className="ms-auto flex flex-wrap items-center gap-2">
               {/*
-                Only when something is actually overridden. 335 offers on this
-                account are stamped as hand-priced by an editor that used to
-                send every price back as the seller's, and undoing that one
-                pencil at a time is not a repair anybody finishes.
+                Always present, disabled when there is nothing to undo.
+
+                It used to disappear in that case, on the reading that a control
+                which would change nothing is noise. An owner pressed it, watched
+                it do its job, saw it vanish, and reported the feature as
+                deleted — so the empty state is now stated rather than implied.
+                Disabling also keeps the row from reflowing under the cursor the
+                moment it is used.
               */}
               {onHandAllBackToRules === undefined ? null : (
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
+                  disabled={!hasSellerSetPrice}
+                  title={
+                    hasSellerSetPrice
+                      ? undefined
+                      : 'Every price here already comes from your margin rules.'
+                  }
                   onClick={onHandAllBackToRules}
                 >
                   <RotateCcw aria-hidden="true" />
