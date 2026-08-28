@@ -250,9 +250,11 @@ export type ParcelLine = {
   /**
    * The public product page for this item, or `null`.
    *
-   * `null` whenever the link would not work: the product is not live, or this
-   * deployment has no `SALS3_STOREFRONT_BASE_URL`. Offering a link that 404s
-   * is the failure this screen has already removed twice.
+   * `null` whenever the link would not work — which now means exactly one
+   * thing: the product is not currently live. The storefront origin has a
+   * built-in default, so an unconfigured deployment still links correctly.
+   * Offering a link that 404s is the failure this screen has already removed
+   * twice.
    *
    * It resolves the product's *current* slug rather than the one frozen on the
    * order (ADR-007). That is not a contradiction: the frozen snapshot is the
