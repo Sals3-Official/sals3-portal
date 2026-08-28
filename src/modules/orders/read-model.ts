@@ -739,10 +739,38 @@ async function loadConnections(
  * and through its own connection while it has no group yet. Both predicates
  * name `supplier_connections.seller_account_id`; neither is a post-fetch pass.
  */
+/**
+ * Whether this value can possibly identify a seller account.
+ *
+ * `seller_account_id` is a `uuid` column, so a non-UUID cannot match a row —
+ * but Postgres does not answer "no rows", it raises `22P02
+ * invalid_text_representation` and the page 500s.
+ *
+ * That is reachable today. `resolvePortalSession` gives a signed-in user with
+ * no seller account the literal `sellerId: 'system'`, and it only redirects to
+ * `/auth/pending` for the roles in `SELLER_ROLES` — which does not include
+ * `admin`, and `admin` holds every permission including `order:read`. So an
+ * administrator with no seller account of their own could open Orders and meet
+ * a crash.
+ *
+ * Refusing here rather than in the page keeps the answer the same for all
+ * three entry points, and keeps it **fail-closed**: an unrecognisable tenant
+ * gets nothing, which is the only safe direction for a predicate whose whole
+ * job is to separate one seller's orders from another's.
+ */
+const UUID_SHAPE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function identifiesASeller(sellerAccountId: string): boolean {
+  return UUID_SHAPE.test(sellerAccountId.trim());
+}
+
 export async function listOrderParcelsForSeller(
   sellerAccountId: string,
   options: { executor?: DbExecutor } = {},
 ): Promise<OrderParcel[]> {
+  if (!identifiesASeller(sellerAccountId)) return [];
+
   const executor = options.executor ?? getDb();
 
   // The set of orders this seller has any stake in. Scoped through the line's

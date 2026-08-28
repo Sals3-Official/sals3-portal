@@ -12,8 +12,11 @@ vi.mock('@/lib/db/client', () => ({
   default: () => dbState.db,
 }));
 
-const { findOrderParcelDetailForSeller, listOrderParcelsForSeller } =
-  await import('./read-model');
+const {
+  findOrderParcelDetailForSeller,
+  listOrderParcelsForSeller,
+  revealParcelContactForSeller,
+} = await import('./read-model');
 
 const SELLER_ID = '99999999-9999-4999-8999-999999999999';
 const ORDER_ID = '11111111-1111-4111-8111-111111111111';
@@ -341,5 +344,100 @@ describe('findOrderParcelDetailForSeller', () => {
     await expect(
       findOrderParcelDetailForSeller(GROUP_ID, SELLER_ID, false),
     ).resolves.toBeNull();
+  });
+});
+
+/**
+ * The tenant boundary, asserted at every door into this module.
+ *
+ * Three functions can return another seller's data if their scope is ever
+ * loosened, and each reaches the database by a different route. Testing only
+ * the list would leave the two that matter most for privacy uncovered — the
+ * detail read, which already had a scope defect once, and the reveal, which
+ * returns a real buyer's name, phone and street address.
+ *
+ * These become load-bearing the day a second seller account exists. There is
+ * one today, so nothing here can be caught by looking at production.
+ */
+describe('tenant boundary', () => {
+  const NOT_A_SELLER = 'system';
+
+  it('answers nothing for an id that cannot be a seller account', async () => {
+    const { db, calls } = fakeDb(results({}));
+    dbState.db = db;
+
+    await expect(listOrderParcelsForSeller(NOT_A_SELLER)).resolves.toEqual([]);
+
+    // Fail-closed *before* the database, because `seller_account_id` is a uuid
+    // column: sending 'system' raises 22P02 and 500s the page rather than
+    // returning no rows. `admin` holds order:read and may have no seller
+    // account, so this is reachable.
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses a detail read for an unrecognisable seller', async () => {
+    const { db, calls } = fakeDb(results({}));
+    dbState.db = db;
+
+    await expect(
+      findOrderParcelDetailForSeller(GROUP_ID, NOT_A_SELLER, true),
+    ).resolves.toBeNull();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses to reveal buyer contact for an unrecognisable seller', async () => {
+    const { db, calls } = fakeDb(results({}));
+    dbState.db = db;
+
+    await expect(
+      revealParcelContactForSeller(GROUP_ID, NOT_A_SELLER),
+    ).resolves.toBeNull();
+    expect(calls).toHaveLength(0);
+  });
+
+  /**
+   * The reveal is the highest-consequence read in this module: it returns a
+   * real buyer's name, phone number and street address in plaintext. It had no
+   * test at all until now.
+   */
+  it('reveals buyer contact only for a parcel the seller owns', async () => {
+    const { db } = fakeDb(results({}));
+    dbState.db = db;
+
+    // A parcel id this seller's list does not contain is indistinguishable
+    // from one that does not exist. Holding an id is not authorisation.
+    await expect(
+      revealParcelContactForSeller('not-this-sellers-parcel', SELLER_ID),
+    ).resolves.toBeNull();
+  });
+
+  it('returns the plaintext contact for a parcel the seller does own', async () => {
+    const { db } = fakeDb([
+      ...results({}),
+      [{ checkoutIntentId: INTENT_ID }],
+      [INTENT_ROW],
+    ]);
+    dbState.db = db;
+
+    const contact = await revealParcelContactForSeller(GROUP_ID, SELLER_ID);
+
+    expect(contact).not.toBeNull();
+    expect(contact!.name).toBe('Rodrigo Santos');
+    expect(contact!.phone).toBe('+639171234567');
+    expect(contact!.address).toContain('12 Mabini Street');
+    expect(contact!.address).toContain('Quezon City');
+  });
+
+  it('carries the seller predicate into every entry query', async () => {
+    const { db, calls } = fakeDb(results({}));
+    dbState.db = db;
+
+    await listOrderParcelsForSeller(SELLER_ID);
+
+    const scoped = callsOf(calls, 'where').filter((clause) =>
+      containsValue(clause.args, SELLER_ID),
+    );
+
+    expect(scoped).toHaveLength(3);
   });
 });
