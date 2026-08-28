@@ -26,13 +26,14 @@ type StoreDefaultsTableProps = {
 };
 
 /**
- * The base margin, shown as markup over cost — the unit the import sheet, the
- * Product Editor and the category table all speak. See
- * `CategoryMarginNodeRow.formatPercent` for why they were unified.
+ * Markup over cost — the unit the import sheet, the Product Editor and the
+ * category table all speak. See `CategoryMarginNodeRow.formatPercent` for why
+ * they were unified.
  *
- * Only the margin converts. The contribution floor beside it is a genuine
- * percentage of the price and is formatted by `formatFloor`, which this must
- * not be reused for.
+ * The stored value is a margin rate either way; the conversion happens here so
+ * the seller reads back the number they typed. Both the reserve and (in
+ * history) the retired base markup go through this — they are the same unit,
+ * which is what #244 fixed.
  */
 function formatPercent(rate: string): string {
   const value = markupPercentFromMarginRateScaled(parseScaledRate(rate));
@@ -97,17 +98,15 @@ export default function StoreDefaultsTable({
             destination. A heading that named one would be wrong for exactly the
             row a seller is least sure about.
           */}
-          {['Scope', 'Base markup', 'Minimum', 'Rounding', ''].map(
-            (heading) => (
-              <span
-                key={heading === '' ? 'actions' : heading}
-                role="columnheader"
-                className={`text-[11px] font-bold tracking-wider text-ink-faint uppercase ${heading === '' ? 'text-right' : ''}`}
-              >
-                {heading === '' ? 'Edit' : heading}
-              </span>
-            ),
-          )}
+          {['Scope', 'Reserve', 'Rounding', ''].map((heading) => (
+            <span
+              key={heading === '' ? 'actions' : heading}
+              role="columnheader"
+              className={`text-[11px] font-bold tracking-wider text-ink-faint uppercase ${heading === '' ? 'text-right' : ''}`}
+            >
+              {heading === '' ? 'Edit' : heading}
+            </span>
+          ))}
         </div>
 
         {scopes.map((scope) => {
@@ -122,14 +121,6 @@ export default function StoreDefaultsTable({
             >
               <div role="cell" className="min-w-0">
                 <span className="truncate text-sm">{scope.label}</span>
-              </div>
-
-              <div role="cell">
-                <span className="text-sm tabular-nums">
-                  {storeDefault === null
-                    ? '—'
-                    : formatPercent(storeDefault.targetMarginRate)}
-                </span>
               </div>
 
               <div role="cell" className="min-w-0">

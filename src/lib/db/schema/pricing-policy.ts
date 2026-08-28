@@ -324,6 +324,11 @@ export const pricingFxAdjustmentPolicies = pgTable(
  * `CATEGORY_POLICY_REQUIRED` — 21 department policies plus one of these can
  * cover the whole 5,595-row taxonomy without per-category fan-out.
  *
+ * That fallback is now optional, and in practice unused: the 21 departments
+ * all carry markups, so `targetMarginRate` is null and the row's remaining job
+ * is the floor. See the column's own comment for why null and zero are not the
+ * same answer.
+ *
  * `minContributionMinor` is ADR-015 §1's named-but-previously-unbuilt
  * "minimum contribution profit": an absolute per-item floor above effective
  * cost, in minor units of `minContributionCurrency`. The resolver takes
@@ -342,10 +347,27 @@ export const pricingStoreDefaults = pgTable(
     sellerAccountId: uuid('seller_account_id')
       .notNull()
       .references(() => sellerAccounts.id, { onDelete: 'restrict' }),
+    /**
+     * The markup for a product whose category chain has no rule of its own,
+     * or `null` for "this seller has no such fallback".
+     *
+     * Nullable since 2026-08-28. This is the only column on the row the
+     * resolver reads *conditionally* — `nearestCategoryPolicy === null` in
+     * `resolveProductPricing`, and nowhere else. Every category on this
+     * account carries its own markup, so that branch never runs; the floor
+     * columns below, read for every product whichever layer priced it, are
+     * what the row now exists to hold. Requiring a number nobody wanted in
+     * order to state one they did is what made the editing screen unreadable.
+     *
+     * **Null is not zero.** Zero is a rule that prices at cost. Null is the
+     * absence of a rule, and a product whose category also has no markup then
+     * has no price at all (`PRICING_POLICY_REQUIRED`) rather than a silently
+     * free one.
+     */
     targetMarginRate: numeric('target_margin_rate', {
       precision: 8,
       scale: 6,
-    }).notNull(),
+    }),
     /** Absolute per-item contribution floor in minor units; 0 = no floor. */
     minContributionMinor: bigint('min_contribution_minor', {
       mode: 'bigint',

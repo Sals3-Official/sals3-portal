@@ -54,13 +54,19 @@ type StoreDefaultDialogProps = {
 const MIN_REASON_CHARS = 10;
 
 /**
- * The base markup and the reserve beneath it, for one pricing scope.
+ * The reserve for one pricing scope: the markup a sale may never fall below.
  *
- * Both are markups over cost. They were a markup and a margin, which read as
- * two numbers in one unit and priced as two rules in different ones -- see
- * `StoreDefaultPreview` for the same fault on the same screen.
+ * ## One number, after two
  *
- * ## The two minimum fields are one choice, not two
+ * This dialog used to carry a `Base markup over cost` beside the reserve. That
+ * field was the fallback for a category with no markup of its own -- a branch
+ * the resolver reaches only when `nearestCategoryPolicy === null`, which never
+ * happens here because every category carries a markup. Owner decision
+ * 2026-08-28: being made to set a number that never fires, in order to set the
+ * one that always does, is what made this screen unreadable. It is gone, the
+ * column is nullable, and the action writes null.
+ *
+ * ## The two reserve fields are one choice, not two
  *
  * Owner rule 2026-08-26: the minimum a margin may never fall below is either a
  * percentage or a fixed amount, never both. Typing into one disables the other
@@ -89,13 +95,6 @@ export default function StoreDefaultDialog({
   onSaved,
 }: StoreDefaultDialogProps) {
   const [isPending, startTransition] = useTransition();
-  const [markupPercent, setMarkupPercent] = useState(
-    storeDefault === null
-      ? ''
-      : markupPercentFromMarginRateScaled(
-          parseScaledRate(storeDefault.targetMarginRate),
-        ).toString(),
-  );
   const [floorPercent, setFloorPercent] = useState(
     storeDefault?.minContributionRate == null
       ? ''
@@ -117,8 +116,12 @@ export default function StoreDefaultDialog({
   const amountInUse = floorAmount.trim() !== '';
   const percentInUse = floorPercent.trim() !== '';
 
-  const ready =
-    markupPercent.trim() !== '' && reason.trim().length >= MIN_REASON_CHARS;
+  /*
+    A reserve is optional -- an unset one means prices are simply not floored,
+    which is a legitimate choice. Only the reason is required, so this dialog
+    can also be used to clear a reserve someone no longer wants.
+  */
+  const ready = reason.trim().length >= MIN_REASON_CHARS;
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -126,17 +129,12 @@ export default function StoreDefaultDialog({
 
     // Annotated, not inferred — see `SaveStoreDefaultInput`.
     const payload: SaveStoreDefaultInput = {
-      // Markup in, margin rate stored — the same conversion the CSV importer
-      // uses, so a rate typed here and one imported land on the same value.
-      targetMarginRate: formatScaledRate(
-        markupPercentToMarginRateScaled(Number(markupPercent)),
-      ),
       // Exactly one of these carries a value. The empty string maps to "0" for
       // the amount and `null` for the rate, which is what "no floor of this
       // kind" means in the two columns respectively.
       minContribution: amountInUse ? floorAmount : '0',
-      // Markup in, margin rate stored -- the same conversion the base markup
-      // above uses, so one unit reaches the seller and the other reaches the
+      // Markup in, margin rate stored -- the same conversion the CSV importer
+      // uses, so one unit reaches the seller and the other reaches the
       // resolver, and neither has to be guessed at.
       minContributionRate: percentInUse
         ? formatScaledRate(
@@ -179,8 +177,8 @@ export default function StoreDefaultDialog({
             — {scope.label}
           </DialogTitle>
           <DialogDescription>
-            Covers every category with no markup of its own and no priced
-            parent.
+            The markup on a sale never drops below this, whatever the category
+            says.
           </DialogDescription>
         </DialogHeader>
 
@@ -198,54 +196,24 @@ export default function StoreDefaultDialog({
             </p>
           )}
 
-          {/*
-            Both fields are markups now, so the only thing separating them is
-            what they are for. Said once, here, rather than left to be inferred
-            from two labels that look alike.
-          */}
-          <p className="text-xs text-muted-foreground">
-            The first is the markup to aim for. The second is the one you will
-            never go under.
-          </p>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="store-default-margin">Base markup over cost</Label>
-            <div className="flex items-center gap-1.5">
-              <Input
-                id="store-default-margin"
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                min="0.01"
-                max="99.99"
-                value={markupPercent}
-                onChange={(event) => setMarkupPercent(event.target.value)}
-                aria-label={`Base markup percent for ${scope.label}`}
-                className="w-24 text-right"
-              />
-              <span className="text-sm text-muted-foreground">%</span>
-            </div>
-          </div>
-
           <fieldset className="flex flex-col gap-2 rounded-md border border-border p-3">
             <legend className="px-1 text-sm font-medium">
-              Reserve — the price never drops below this
+              Never below this
             </legend>
             <p className="text-xs text-muted-foreground">
               What every sale must leave behind for your operating expenses. If
-              a markup would price something under this, the reserve wins and
-              the price stays here. Use a percentage or an amount, not both.
+              a category would price something under this, the reserve wins. Use
+              a percentage or an amount, not both.
             </p>
 
             <div className="flex flex-wrap items-end gap-4">
               <div className="flex flex-col gap-1.5">
                 {/*
-                  Named for its base, because the field above it has a
-                  different one. `Base markup` is a share of the COST; this is
-                  a share of the SELLING PRICE, which is what the resolver
-                  floors on. Left as a bare "As a percentage" beside a markup
-                  field, a seller reasonably reads both as the same unit — the
-                  owner did, and 50 here does not mean what 50 above means.
+                  "Markup", named rather than left as a bare "As a percentage".
+                  It is stored as a margin rate and typed as a markup over cost,
+                  the same unit the category table and the import sheet use, and
+                  the label is the only thing that says which — 50 means cost
+                  plus half, not half the selling price.
                 */}
                 <Label htmlFor="store-default-floor-percent">As a markup</Label>
                 <div className="flex items-center gap-1.5">
@@ -297,15 +265,13 @@ export default function StoreDefaultDialog({
 
           {/*
             The rule shown rather than described, and on the axis each form
-            actually varies along: supplier cost for the amount, category margin
-            for the percentage. It runs the resolver's own functions, so it
+            actually varies along: category markup for the percentage, supplier
+            cost for the amount. It runs the resolver's own functions, so it
             cannot drift from the price a product will really get.
           */}
           <StoreDefaultPreview
-            markupPercent={markupPercent}
             floorAmount={floorAmount}
             floorPercent={floorPercent}
-            roundingRule={roundingRule}
           />
 
           <div className="flex flex-col gap-1.5">

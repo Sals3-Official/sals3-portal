@@ -86,33 +86,88 @@ describe('CategoryPricingSection — read isolation', () => {
     expect(output).toContain('could not be read');
   });
 
-  it('a failed store-default read is never presented as "no default configured"', async () => {
+  /**
+   * The coverage banner used to ask "which scopes have no store default row",
+   * which was the right question while that row carried a fallback markup. It
+   * stopped carrying one on 2026-08-28, so the old test would now be true for
+   * every scope forever and the banner would be permanent furniture.
+   *
+   * It asks about DEPARTMENT coverage instead. Inheritance only ever walks up,
+   * so a category is uncovered exactly when the department above it has no
+   * markup — checking the roots decides the whole tree without walking it.
+   */
+  it('warns when a department has no markup in a scope', async () => {
+    // `ROWS` is one root category with `policies: {}` — uncovered everywhere.
+    const output = await renderToTree();
+
+    expect(output).toContain('Some departments have no markup in');
+    expect(output).toContain(TREE_MARKER);
+  });
+
+  it('stops warning once every department carries a markup', async () => {
+    mocks.listCategoryMarginOverviewByMarket.mockResolvedValue([
+      {
+        ...ROWS[0],
+        policies: {
+          AU: { targetMarginRate: '0.500000', roundingRule: 'NONE' },
+          FJ: { targetMarginRate: '0.500000', roundingRule: 'NONE' },
+          GLOBAL: { targetMarginRate: '0.500000', roundingRule: 'NONE' },
+        },
+      },
+    ]);
+
+    const output = await renderToTree();
+
+    expect(output).not.toContain('Some departments have no markup in');
+  });
+
+  it('judges coverage on departments alone, never on a child of one', async () => {
+    /*
+      A covered department with an uncovered child underneath it. The child
+      inherits and prices fine, so the banner must stay silent — a check that
+      looked at every row rather than the roots would fire here and would fire
+      on essentially every account, since most categories carry no rule of
+      their own.
+    */
+    mocks.listCategoryMarginOverviewByMarket.mockResolvedValue([
+      {
+        ...ROWS[0],
+        policies: {
+          AU: { targetMarginRate: '0.500000', roundingRule: 'NONE' },
+          FJ: { targetMarginRate: '0.500000', roundingRule: 'NONE' },
+          GLOBAL: { targetMarginRate: '0.500000', roundingRule: 'NONE' },
+        },
+      },
+      {
+        categoryId: 'id-2',
+        code: 'CAT-GGL-2',
+        path: 'Animals & Pet Supplies > Pet Supplies',
+        l1: 'Animals & Pet Supplies',
+        l2: 'Pet Supplies',
+        l3: null,
+        policies: {},
+      },
+    ]);
+
+    const output = await renderToTree();
+
+    expect(output).not.toContain('Some departments have no markup in');
+  });
+
+  it('a failed store-default read no longer changes the coverage warning', async () => {
+    /*
+      These were one banner's two inputs and are now unrelated: the reserve says
+      nothing about whether a category can price. The read failure still gets
+      its own honest notice, and the coverage answer comes from the taxonomy
+      rows, which loaded fine.
+    */
     mocks.findStoreDefaultForScope.mockRejectedValue(new Error('boom'));
 
     const output = await renderToTree();
 
-    expect(output).not.toContain('No store default exists yet');
-  });
-
-  it('a successful read with no default still shows the first-run notice', async () => {
-    mocks.findStoreDefaultForScope.mockResolvedValue(null);
-
-    const output = await renderToTree();
-
-    expect(output).toContain('No store default exists yet');
+    expect(output).toContain('could not be read');
+    expect(output).toContain('Some departments have no markup in');
     expect(output).toContain(TREE_MARKER);
-  });
-
-  it('a real default shows neither banner', async () => {
-    mocks.findStoreDefaultForScope.mockResolvedValue({
-      targetMarginRate: '0.350000',
-      roundingRule: 'NONE',
-    });
-
-    const output = await renderToTree();
-
-    expect(output).not.toContain('No store default exists yet');
-    expect(output).not.toContain('could not be read');
   });
 
   it('only a failed taxonomy read hides the tree — that one genuinely has nothing to show', async () => {

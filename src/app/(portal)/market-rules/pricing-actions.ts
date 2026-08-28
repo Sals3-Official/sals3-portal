@@ -680,9 +680,24 @@ function contributionFloorToMinor(value: string): bigint {
   return BigInt(whole) * BigInt(100) + BigInt(frac.padEnd(2, '0'));
 }
 
+/*
+  No `targetMarginRate` here, deliberately.
+
+  The store default row carried two unrelated numbers: a fallback markup for
+  categories with no rule of their own, and the operating-expense floor. Owner
+  decision 2026-08-28 — every category carries its own markup, so the fallback
+  never fires, and being made to set it in order to set the floor is what made
+  this dialog unreadable. The column is nullable as of the DDL that preceded
+  this change; the action writes `null` and the screen no longer asks.
+
+  Simply absent rather than explicitly refused. Zod strips unknown keys, so a
+  stale client still sending one writes `null` like every other caller — which
+  is the new behaviour, not a silent misprice. A rule that used to have a
+  fallback loses it on its next save; that is the point of the change, and the
+  superseded row keeps the old value in history either way.
+*/
 const saveStoreDefaultInputSchema = z
   .object({
-    targetMarginRate: targetMarginRateSchema,
     minContribution: contributionFloorSchema,
     /**
      * The minimum-margin form of the operating-expense floor, or `null`.
@@ -776,7 +791,10 @@ export async function saveStoreDefaultAction(
               // the destination's row and then created an unscoped one, writing
               // the all-destinations rule under a heading that said otherwise.
               marketCode: parsed.data.marketCode,
-              targetMarginRate: parsed.data.targetMarginRate,
+              // Never set from this screen — see the schema comment above.
+              // Written explicitly rather than omitted so the absence is a
+              // decision in the code rather than a field someone forgot.
+              targetMarginRate: null,
               minContributionMinor,
               minContributionCurrency: 'USD',
               minContributionRate: parsed.data.minContributionRate,
@@ -785,7 +803,9 @@ export async function saveStoreDefaultAction(
               actorId: auth.actorId,
             })
           : await reviseStoreDefault(tx, existing, {
-              targetMarginRate: parsed.data.targetMarginRate,
+              // Cleared rather than carried from `existing`: a value the screen
+              // cannot show is a value nobody can correct.
+              targetMarginRate: null,
               minContributionMinor,
               minContributionCurrency: 'USD',
               minContributionRate: parsed.data.minContributionRate,
@@ -804,9 +824,24 @@ export async function saveStoreDefaultAction(
         entityId: row.id,
         payload: {
           sellerAccountId: auth.sellerAccountId,
-          targetMarginRate: parsed.data.targetMarginRate,
           minContributionMinor: minContributionMinor.toString(),
           minContributionCurrency: 'USD',
+          /*
+            Recorded from here on. The percentage form of the floor has existed
+            since 2026-08-26 and was the one field this event never carried, so
+            a rule saved as a percentage left an audit row that looked like a
+            rule with no floor at all. It is now the main thing this screen
+            sets, which makes the omission the whole record.
+          */
+          minContributionRate: parsed.data.minContributionRate,
+          /*
+            What the save cleared, not what it set — the screen no longer offers
+            a base markup and always writes null. Kept in the trail so a rule
+            that silently loses its fallback on an unrelated edit is
+            reconstructable afterwards, which is the one way this change can
+            surprise someone.
+          */
+          clearedTargetMarginRate: existing?.targetMarginRate ?? null,
           roundingRule: parsed.data.roundingRule,
           reason: parsed.data.reason,
           version: row.version,

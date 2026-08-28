@@ -19,11 +19,10 @@ import type { RoundingRule } from '@/modules/pricing/money-math';
  * the row is read.
  */
 export const STORE_DEFAULT_ROW_GRID =
-  'grid grid-cols-[minmax(7rem,1fr)_6rem_7rem_6rem_5rem] items-center gap-x-3';
+  'grid grid-cols-[minmax(7rem,1fr)_7rem_6rem_5rem] items-center gap-x-3';
 
 export type StoreDefaultViewModel = {
   id: string;
-  targetMarginRate: string;
   /** Minor units of `minContributionCurrency`; `0` means no amount floor. */
   minContributionMinor: number;
   minContributionCurrency: string;

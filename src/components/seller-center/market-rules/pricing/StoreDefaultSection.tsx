@@ -44,7 +44,6 @@ async function readStoreDefaults(
             ? null
             : {
                 id: row.id,
-                targetMarginRate: row.targetMarginRate,
                 // `bigint` cannot cross the server/client boundary, and a
                 // per-item floor in cents is nowhere near the safe-integer
                 // ceiling. Converted here, once, where the row is read.
@@ -89,10 +88,6 @@ export default async function StoreDefaultSection({
   scopes,
 }: StoreDefaultSectionProps) {
   const storeDefaults = await readStoreDefaults(sellerAccountId, scopes);
-  const missing =
-    storeDefaults === null
-      ? []
-      : scopes.filter((scope) => (storeDefaults[scope.key] ?? null) === null);
 
   return (
     <section
@@ -106,13 +101,13 @@ export default async function StoreDefaultSection({
         />
         <div className="flex flex-col gap-1">
           <h2 id="store-default-heading" className="text-base font-semibold">
-            Store default pricing
+            Reserve
           </h2>
           <p className="max-w-[78ch] text-sm text-muted-foreground">
-            The system starts with the supplier cost and adds your markup. Every
-            category with no markup of its own uses the base markup here. The
-            minimum is what you will never price below — your operating expenses
-            — as a percentage or a fixed amount, one or the other.
+            The markup on a sale must never drop below this, because this is
+            what pays your operating expenses. Set it as a percentage or as a
+            fixed amount — one or the other. Categories set the markup; this
+            only ever lifts a price, never lowers one.
           </p>
         </div>
       </div>
@@ -125,15 +120,14 @@ export default async function StoreDefaultSection({
         </DisclosureBanner>
       ) : (
         <>
-          {missing.length > 0 ? (
-            <DisclosureBanner tone="warning">
-              No base markup yet for{' '}
-              {missing.map((scope) => scope.label).join(', ')}. A category with
-              no markup of its own cannot price at all in those scopes — its
-              products need a manual retail price until a default or a parent
-              markup covers them.
-            </DisclosureBanner>
-          ) : null}
+          {/*
+            No "nothing set yet" warning any more. It used to say a scope with
+            no row could not price at all, which was true while this row also
+            carried the base markup. It no longer does: an absent reserve means
+            prices are simply not floored, which is a choice rather than a
+            fault, and warning about every unset scope trained the eye to skip
+            the banner.
+          */}
           <StoreDefaultsTable
             scopes={scopes}
             storeDefaults={storeDefaults}
