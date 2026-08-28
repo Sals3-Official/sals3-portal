@@ -1,0 +1,79 @@
+# One-time, idempotent DDL — no schedule, manual trigger only.
+#
+# Gives an offer row to every draft variant that has none.
+#
+# NO DDL. This writes product_offers rows, not schema. Drafts created while
+# create-draft demanded a seller market profile that no surface could create were
+# born with zero offers, and Save Draft is UPDATE-only -- so it matched no row,
+# threw, and rolled the whole save back, taking the product name, the
+# specifications and the description with it.
+#
+# ORDER: run this AFTER the deployment carrying resolveOfferDestinations. That
+# change fixes new drafts; this repairs the ones already created. Running it
+# before simply repairs fewer of them, and it is safe to run again.
+#
+# Bounded at 500 variants per run and idempotent: the scan selects variants with
+# no offer, so a second run finds none and reports 0.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin, e.g.
+#                                https://sals3-portal.example.com
+
+name: Products Backfill Draft Offers
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the draft-offer backfill endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/catalog/products/backfill-draft-offers"
+
+          # Read-only first, so the log records the state this run started from.
+          echo "--- offerless draft variants before ---"
+          curl -sS "$endpoint" -H "Authorization: Bearer $CRON_SECRET"
+          echo
+
+          echo "--- running the backfill ---"
+          status=$(curl -sS -o /tmp/migrate-response.json -w '%{http_code}' \
+            -X POST "$endpoint" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/migrate-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "draft-offer backfill returned HTTP $status" >&2
+            echo "Safe to re-run: the scan only selects variants that still" >&2
+            echo "have no offer, so a repeat completes what this run did not." >&2
+            exit 1
+          fi
+
+          # A 200 is not proof, but neither is a non-zero count: a run that
+          # legitimately repairs nothing (because nothing is broken) is a
+          # success. What must not pass is a 200 that is not valid JSON.
+          echo "--- result ---"
+          if ! grep -q '"ok":true' /tmp/migrate-response.json; then
+            echo "Backfill returned HTTP $status without ok:true" >&2
+            exit 1
+          fi
+
+          echo "Read 'remaining' above: it is counted after the writes, from the"
+          echo "database. A non-zero value means sellers whose every chosen"
+          echo "destination has been withdrawn -- those drafts are skipped on"
+          echo "purpose, not missed."

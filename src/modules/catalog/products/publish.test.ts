@@ -12,7 +12,7 @@ import {
 } from '@/lib/db/schema';
 
 const mocks = vi.hoisted(() => ({
-  findActiveProfileForSeller: vi.fn(),
+  listProfilesForSeller: vi.fn(),
   findAuthorizedDestination: vi.fn(),
   isAuthorizedSellingCurrency: vi.fn(),
   resolveSellerMarketCapabilities: vi.fn(),
@@ -21,8 +21,11 @@ const mocks = vi.hoisted(() => ({
   appendAuditEvent: vi.fn(),
 }));
 
+// `publish.ts` reads destinations through the shared `resolveOfferDestinations`
+// now (2026-08-28), which asks for the whole profile list and filters `ACTIVE`
+// itself — so the seam moved from `findActiveProfileForSeller` to this.
 vi.mock('@/modules/market-config/repository', () => ({
-  findActiveProfileForSeller: mocks.findActiveProfileForSeller,
+  listProfilesForSeller: mocks.listProfilesForSeller,
 }));
 
 vi.mock('@/modules/market-config/capabilities', () => ({
@@ -55,6 +58,9 @@ const SELLER_ID = '843af4aa-725d-4728-bc46-334582566033';
 const PROFILE = {
   id: 'profile-1',
   destinationCountryCode: 'AU',
+  // The shared resolver filters on this rather than trusting the reader to
+  // have done it, so the fixture has to carry it.
+  status: 'ACTIVE' as const,
 };
 
 const DESTINATION = {
@@ -265,7 +271,7 @@ function publishWithRetailPrice(db: unknown, expectedProductVersion = 1) {
 describe('publishProduct', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.findActiveProfileForSeller.mockResolvedValue(PROFILE);
+    mocks.listProfilesForSeller.mockResolvedValue([PROFILE]);
     mocks.findAuthorizedDestination.mockReturnValue(DESTINATION);
     mocks.isAuthorizedSellingCurrency.mockReturnValue(true);
     mocks.resolveSellerMarketCapabilities.mockReturnValue({
@@ -776,7 +782,7 @@ describe('publishProduct', () => {
   });
 
   it('uses the first approved pilot destination when the seller has no active market profile', async () => {
-    mocks.findActiveProfileForSeller.mockResolvedValue(null);
+    mocks.listProfilesForSeller.mockResolvedValue([]);
 
     const { db, writes } = transactionalDb();
 
@@ -796,7 +802,7 @@ describe('publishProduct', () => {
   });
 
   it('refuses when no active profile or approved pilot destination exists', async () => {
-    mocks.findActiveProfileForSeller.mockResolvedValue(null);
+    mocks.listProfilesForSeller.mockResolvedValue([]);
     mocks.resolveSellerMarketCapabilities.mockReturnValue({
       capabilityVersion: 'seller-market-capability-v2-au-ph-usd-publishable',
       destinations: [],
@@ -904,7 +910,7 @@ describe('publishProduct', () => {
 describe('publishProduct — category attribute specifications never gate publish', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.findActiveProfileForSeller.mockResolvedValue(PROFILE);
+    mocks.listProfilesForSeller.mockResolvedValue([PROFILE]);
     mocks.findAuthorizedDestination.mockReturnValue(DESTINATION);
     mocks.isAuthorizedSellingCurrency.mockReturnValue(true);
     mocks.resolveSellerMarketCapabilities.mockReturnValue({
