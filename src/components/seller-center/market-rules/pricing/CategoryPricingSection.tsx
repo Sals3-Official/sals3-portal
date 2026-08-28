@@ -196,8 +196,25 @@ export default async function CategoryPricingSection({
 
   const storeDefaults =
     storeDefaultResult.state === 'ok' ? storeDefaultResult.storeDefaults : {};
-  const scopesWithoutDefault = scopes.filter(
-    (scope) => (storeDefaults[scope.key] ?? null) === null,
+  /*
+    Scopes where some category genuinely cannot price.
+
+    This used to ask "which scopes have no store default row", which was the
+    right question while that row carried a fallback markup. It no longer does
+    (2026-08-28), so that test would now be true for every scope forever and the
+    banner would be permanent furniture.
+
+    The real question is coverage, and it has a cheap exact answer: inheritance
+    only ever walks UP, so a category is uncovered exactly when the department
+    it sits under has no markup. Checking the roots therefore decides the whole
+    tree without walking it.
+  */
+  const roots =
+    categoryData === null
+      ? []
+      : categoryData.rows.filter((row) => !row.path.includes(PATH_SEPARATOR));
+  const scopesWithUncoveredCategories = scopes.filter((scope) =>
+    roots.some((row) => (row.policies[scope.key] ?? null) === null),
   );
 
   return (
@@ -285,14 +302,15 @@ export default async function CategoryPricingSection({
               Markups set on a category are unaffected.
             </DisclosureBanner>
           ) : null}
-          {storeDefaultResult.state === 'ok' &&
-          scopesWithoutDefault.length > 0 ? (
+          {scopesWithUncoveredCategories.length > 0 ? (
             <DisclosureBanner tone="warning">
-              No store default exists yet for{' '}
-              {scopesWithoutDefault.map((scope) => scope.label).join(', ')}, so
-              a category shown as &quot;—&quot; in those columns cannot price at
-              all — its products need a manual retail price until a default or a
-              parent markup covers them.
+              Some departments have no markup in{' '}
+              {scopesWithUncoveredCategories
+                .map((scope) => scope.label)
+                .join(', ')}
+              , so every category under them shows &quot;—&quot; and cannot
+              price at all — those products need a manual retail price until a
+              markup covers them.
             </DisclosureBanner>
           ) : null}
           <CategoryMarginTree

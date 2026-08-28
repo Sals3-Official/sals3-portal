@@ -130,7 +130,20 @@ export async function resolveProductPricing(
     input.marketCode,
   );
 
-  if (nearestCategoryPolicy === null && storeDefault === null) {
+  /*
+    The store default's markup is optional as of 2026-08-28, so a row can exist
+    carrying only the floor. A missing rate and a missing row therefore mean the
+    same thing *for the fallback* — there is no base layer to price from — while
+    still differing for the floor and the rounding below, which the row carries
+    either way.
+
+    Deliberately not defaulted to 0: that would price at cost and look like a
+    working rule. `PRICING_POLICY_REQUIRED` is the honest answer, and it is the
+    one the screen already knows how to explain.
+  */
+  const storeDefaultMarginRate = storeDefault?.targetMarginRate ?? null;
+
+  if (nearestCategoryPolicy === null && storeDefaultMarginRate === null) {
     return unavailable('PRICING_POLICY_REQUIRED');
   }
 
@@ -138,8 +151,8 @@ export async function resolveProductPricing(
     nearestCategoryPolicy === null ? 'STORE_DEFAULT' : 'CATEGORY';
   let targetMarginRate =
     nearestCategoryPolicy === null
-      ? // `storeDefault` cannot be null here — the guard above returned.
-        (storeDefault as NonNullable<typeof storeDefault>).targetMarginRate
+      ? // Cannot be null here — the guard above returned on that case.
+        (storeDefaultMarginRate as string)
       : nearestCategoryPolicy.policy.targetMarginRate;
 
   // Rounding belongs to the nearest category policy when one exists, else

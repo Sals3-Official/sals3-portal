@@ -48,6 +48,17 @@ import type { Database } from '@/lib/db/client';
  * values on every write path. A range check here would be a separate, separately
  * reversible change.
  *
+ * ## Why nothing marks the migration ledger
+ *
+ * `migrate-opex-floor.ts` writes a `drizzle.__drizzle_migrations` row, because
+ * its DDL is an `ADD COLUMN` that reached production before the migration file
+ * existed — a later `db:migrate` would have tried to add a column that was
+ * already there. This one is a `DROP NOT NULL`, which is idempotent: re-running
+ * it against an already-nullable column is a no-op. `0034_worried_kree.sql`
+ * contains exactly the statement below and can be replayed harmlessly, so a
+ * ledger that lags reality here costs nothing, and pinning a hash constant that
+ * has to be re-derived by hand would cost more than it saves.
+ *
  * ## No backfill, and nothing to undo
  *
  * Existing rows keep the value they have. Re-adding the constraint later is a

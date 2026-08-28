@@ -1139,7 +1139,20 @@ export async function createStoreDefault(
   executor: Executor,
   input: {
     sellerAccountId: string;
-    targetMarginRate: string;
+    /**
+     * The fallback markup for a category with no rule of its own, or `null`
+     * for "this seller has no fallback".
+     *
+     * Nullable since 2026-08-28: the editing screen no longer offers the field,
+     * so every write from `saveStoreDefaultAction` passes `null`. Kept in the
+     * signature rather than deleted because superseded rows still carry values,
+     * and the resolver still honours one if any future writer sets it.
+     *
+     * Required rather than optional-with-a-default, for the same reason
+     * `marketCode` below is: an omitted field compiles everywhere and writes
+     * something nobody chose.
+     */
+    targetMarginRate: string | null;
     minContributionMinor: bigint;
     minContributionCurrency: string;
     /** The minimum-margin form of the floor, or `null`. Never set alongside an amount. */
@@ -1172,7 +1185,14 @@ export async function reviseStoreDefault(
   executor: Executor,
   previous: PricingStoreDefaultRow,
   input: {
-    targetMarginRate: string;
+    /**
+     * Passed explicitly rather than carried from `previous`, and the difference
+     * matters. `marketCode` below is carried, because a revision must not move
+     * a rule to another destination. This is the opposite case: the field is no
+     * longer on the screen, so carrying it forward would keep a markup alive
+     * that the seller can no longer see or clear. The action sends `null`.
+     */
+    targetMarginRate: string | null;
     minContributionMinor: bigint;
     minContributionCurrency: string;
     /** The minimum-margin form of the floor, or `null`. Never set alongside an amount. */

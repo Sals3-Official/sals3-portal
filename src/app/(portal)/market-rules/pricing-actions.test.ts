@@ -869,7 +869,9 @@ describe('policy history read actions', () => {
 
 describe('saveStoreDefaultAction', () => {
   const VALID_INPUT = {
-    targetMarginRate: '0.35',
+    // No `targetMarginRate`. The store default stopped carrying a base markup
+    // on 2026-08-28 — it exists for the operating-expense reserve now, and the
+    // action writes `null` for the retired column.
     minContribution: '2.50',
     // Exactly one floor form per rule. This fixture uses the amount, so the
     // rate is null — sending both is refused by the schema and by
@@ -889,14 +891,51 @@ describe('saveStoreDefaultAction', () => {
     expect(pricingRepositoryMocks.createStoreDefault).not.toHaveBeenCalled();
   });
 
-  it('rejects an out-of-range margin rate before touching the database', async () => {
-    const result = await saveStoreDefaultAction({
+  it('rejects an out-of-range reserve rate before touching the database', async () => {
+    // A floor of 1 divides by zero and a floor of 0 floors nothing; both are
+    // typos rather than rules, and `pricing_store_defaults_floor_rate_range`
+    // would refuse the row anyway.
+    const tooHigh = await saveStoreDefaultAction({
       ...VALID_INPUT,
-      targetMarginRate: '1.2',
+      minContribution: '0',
+      minContributionRate: '1.2',
+    });
+    const zero = await saveStoreDefaultAction({
+      ...VALID_INPUT,
+      minContribution: '0',
+      minContributionRate: '0',
     });
 
-    expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+    expect(tooHigh).toMatchObject({ ok: false, reason: 'invalid_input' });
+    expect(zero).toMatchObject({ ok: false, reason: 'invalid_input' });
     expect(getDbMock).not.toHaveBeenCalled();
+  });
+
+  it('ignores a base markup a stale client still sends, rather than storing it', async () => {
+    /*
+      The field is gone from the schema, so Zod strips it. Asserted explicitly
+      because the alternative failure is silent: a deployed-but-cached client
+      would keep posting a markup, and a schema that passed it through would
+      write a fallback nobody can see or clear on a screen that no longer shows
+      the field.
+    */
+    pricingRepositoryMocks.findStoreDefaultForScope.mockResolvedValue(null);
+    pricingRepositoryMocks.createStoreDefault.mockResolvedValue({
+      id: POLICY_ID,
+      version: 1,
+      supersedesId: null,
+    });
+
+    const result = await saveStoreDefaultAction({
+      ...VALID_INPUT,
+      targetMarginRate: '0.35',
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(pricingRepositoryMocks.createStoreDefault).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({ targetMarginRate: null }),
+    );
   });
 
   it('rejects a negative or malformed contribution floor before touching the database', async () => {
@@ -940,7 +979,7 @@ describe('saveStoreDefaultAction', () => {
       TX,
       expect.objectContaining({
         sellerAccountId: SELLER_A_ID,
-        targetMarginRate: '0.35',
+        targetMarginRate: null,
         minContributionMinor: BigInt(250),
         minContributionCurrency: 'USD',
         roundingRule: 'NEAREST_0_99',
@@ -1058,24 +1097,24 @@ describe('field-level validation messages', () => {
     expect(result.fieldErrors?.reason).toMatch(/10 characters or more/);
   });
 
-  it('reports a bad margin against the margin field', async () => {
+  it('reports a bad reserve rate against the reserve field', async () => {
     const result = await saveStoreDefaultAction({
-      targetMarginRate: '1.5',
       minContribution: '0',
+      minContributionRate: '1.5',
       roundingRule: 'NONE',
       reason: 'A perfectly valid reason here.',
       marketCode: null,
     });
 
     if (result.ok) throw new Error('expected a refusal');
-    expect(result.fieldErrors?.targetMarginRate).toBeDefined();
+    expect(result.fieldErrors?.minContributionRate).toBeDefined();
     expect(result.fieldErrors?.reason).toBeUndefined();
   });
 
   it('reports a bad contribution floor against the floor field', async () => {
     const result = await saveStoreDefaultAction({
-      targetMarginRate: '0.35',
       minContribution: '2.505',
+      minContributionRate: null,
       roundingRule: 'NONE',
       reason: 'A perfectly valid reason here.',
       marketCode: null,

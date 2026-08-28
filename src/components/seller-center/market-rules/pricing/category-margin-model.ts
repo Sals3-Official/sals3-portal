@@ -91,7 +91,15 @@ export type CategoryMarginNodeViewModel = {
 };
 
 export type StoreDefaultSummary = {
-  targetMarginRate: string;
+  /**
+   * The fallback markup, or `null` for "this seller has no fallback".
+   *
+   * Nullable since 2026-08-28 — the store-default row exists to carry the
+   * operating-expense reserve now, and the editing screen no longer offers a
+   * markup. A row with no rate covers nothing, which is why `effectiveMarginFor`
+   * checks the rate rather than the row.
+   */
+  targetMarginRate: string | null;
   roundingRule: RoundingRule;
 };
 
@@ -161,7 +169,13 @@ export function effectiveMarginFor(
     }
   }
 
-  if (storeDefault !== null) {
+  /*
+    The RATE, not the row. A store default with a reserve but no markup is the
+    normal shape now, and it covers nothing — `resolveProductPricing` returns
+    `PRICING_POLICY_REQUIRED` for exactly that case. Checking the row alone
+    would paint a rate into every "—" cell that the resolver would never use.
+  */
+  if (storeDefault !== null && storeDefault.targetMarginRate !== null) {
     return { source: 'STORE_DEFAULT', rate: storeDefault.targetMarginRate };
   }
 

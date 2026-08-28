@@ -180,6 +180,76 @@ describe('resolveProductPricing', () => {
     });
   });
 
+  /**
+   * The store default's markup became optional on 2026-08-28, so a row can
+   * exist carrying only the operating-expense reserve. These three fix what
+   * that row does and does not do — the failure mode being a `null` rate read
+   * as `0` somewhere and quietly pricing at cost.
+   */
+  it('refuses to price when the store default carries a reserve but no markup', async () => {
+    mocks.findNearestActiveCategoryPolicy.mockResolvedValue(null);
+    mocks.findActiveStoreDefault.mockResolvedValue(
+      storeDefault({ targetMarginRate: null, minContributionRate: '0.400000' }),
+    );
+
+    const result = await resolveProductPricing(EXECUTOR, BASE_INPUT);
+
+    // Not a price at cost, and not a price floored up from cost either. A
+    // reserve says what a price may not fall below; it cannot originate one.
+    expect(result.outcome).toBe('PRICING_UNAVAILABLE');
+    if (result.outcome === 'PRICING_UNAVAILABLE') {
+      expect(result.reason).toBe('PRICING_POLICY_REQUIRED');
+    }
+  });
+
+  it('still applies that reserve to a category that does have a markup', async () => {
+    /*
+      The whole point of the change: the row exists for the floor. Category 20%
+      on a cost of 1000 prices at 1250; a 40% reserve lifts it to 1667. If the
+      null markup had made this row unusable, the floor would have vanished with
+      it and every category would price unfloored.
+    */
+    mocks.findActiveStoreDefault.mockResolvedValue(
+      storeDefault({ targetMarginRate: null, minContributionRate: '0.400000' }),
+    );
+
+    const result = await resolveProductPricing(EXECUTOR, BASE_INPUT);
+
+    expect(result.outcome).toBe('PRODUCT_MARGIN_ESTIMATE');
+    if (result.outcome === 'PRODUCT_MARGIN_ESTIMATE') {
+      expect(result.resolvedLayer).toBe('CATEGORY');
+      expect(result.contributionFloorApplied).toBe(true);
+      expect(result.suggestedItemPrice.amountMinor).toBe(1667);
+    }
+  });
+
+  it('takes rounding from a store default that has no markup of its own', async () => {
+    /*
+      Rounding is the row's third job, read the same way the floor is —
+      independently of whether the row can price anything itself.
+
+      It needs a category policy whose own rounding is null to be observable at
+      all: `nearestCategoryPolicy?.policy.roundingRule ?? storeDefault.roundingRule`
+      only reaches the second operand when the first is absent, and the branch
+      where there is no category policy at all now returns
+      `PRICING_POLICY_REQUIRED` before rounding is read.
+    */
+    mocks.findActiveStoreDefault.mockResolvedValue(
+      storeDefault({ targetMarginRate: null, roundingRule: 'NEAREST_0_99' }),
+    );
+    mocks.findNearestActiveCategoryPolicy.mockResolvedValue({
+      policy: categoryPolicy({ roundingRule: null }),
+      sourceCategory: CATEGORY,
+    });
+
+    const result = await resolveProductPricing(EXECUTOR, BASE_INPUT);
+
+    expect(result.outcome).toBe('PRODUCT_MARGIN_ESTIMATE');
+    if (result.outcome === 'PRODUCT_MARGIN_ESTIMATE') {
+      expect(result.roundingRule).toBe('NEAREST_0_99');
+    }
+  });
+
   it('applies exact precedence: product override beats category', async () => {
     mocks.findActiveProductOverride.mockResolvedValue({
       id: 'override-product-1',

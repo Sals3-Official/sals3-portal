@@ -1,0 +1,1 @@
+ALTER TABLE "pricing_store_defaults" ALTER COLUMN "target_margin_rate" DROP NOT NULL;

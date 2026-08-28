@@ -35,7 +35,6 @@ function storeDefault(
 ): StoreDefaultViewModel {
   return {
     id: 'default-1',
-    targetMarginRate: '0.250000',
     minContributionMinor: 0,
     minContributionCurrency: 'USD',
     minContributionRate: null,
@@ -50,7 +49,7 @@ beforeEach(() => {
 });
 
 describe('StoreDefaultsTable', () => {
-  it('shows each destination its own base margin and minimum', () => {
+  it('shows each destination its own reserve, in the form it was set', () => {
     render(
       <StoreDefaultsTable
         scopes={SCOPES}
@@ -130,7 +129,7 @@ describe('StoreDefaultsTable', () => {
 
     expect(screen.queryByRole('button', { name: /store default/ })).toBeNull();
     // The values stay readable — read-only is not blank.
-    expect(screen.getByText('33.33%')).toBeInTheDocument();
+    expect(screen.getAllByText('None').length).toBeGreaterThan(0);
   });
 });
 
@@ -181,9 +180,6 @@ describe('the minimum is one choice, not two fields', () => {
 
     openFiji();
 
-    fireEvent.change(screen.getByLabelText('Base markup percent for Fiji'), {
-      target: { value: '25' },
-    });
     fireEvent.change(screen.getByLabelText('Minimum markup percent for Fiji'), {
       target: { value: '18' },
     });
@@ -194,14 +190,15 @@ describe('the minimum is one choice, not two fields', () => {
 
     await waitFor(() =>
       expect(mocks.saveStoreDefaultAction).toHaveBeenCalledWith({
-        // 25 is now markup over cost, so the stored margin rate is 25/125.
-        targetMarginRate: '0.200000',
-        // The unused form goes out as its own "absent" value, not as a second
-        // floor — `0` for the amount column, `null` for the rate column. Sending
-        // both would be refused by the database constraint.
+        // No `targetMarginRate`. The dialog no longer carries a base markup and
+        // the action writes null — asserted as an exact payload rather than
+        // `objectContaining`, so a field creeping back in fails here.
+        //
+        // The unused floor form goes out as its own "absent" value, not as a
+        // second floor — `0` for the amount column, `null` for the rate column.
+        // Sending both would be refused by the database constraint.
         minContribution: '0',
-        // 18 is a markup now, like the field above it, so the stored
-        // margin rate is 18/118.
+        // 18 is a markup, so the stored margin rate is 18/118.
         minContributionRate: '0.152542',
         roundingRule: 'NONE',
         marketCode: 'FJ',
@@ -234,9 +231,10 @@ describe('Global writes the null market code, never its column key', () => {
       screen.getByRole('button', { name: 'Set store default for Global' }),
     );
 
-    fireEvent.change(screen.getByLabelText('Base markup percent for Global'), {
-      target: { value: '30' },
-    });
+    fireEvent.change(
+      screen.getByLabelText('Minimum markup percent for Global'),
+      { target: { value: '30' } },
+    );
     fireEvent.change(screen.getByLabelText('Reason for change to Global'), {
       target: { value: 'Everywhere we have not measured freight for yet.' },
     });
