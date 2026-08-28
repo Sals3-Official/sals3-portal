@@ -1100,7 +1100,9 @@ describe('Product Editor - structure', () => {
   it('names how many variants a bulk retail-price action will skip before it runs', () => {
     renderEditor('blocked');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Set retail price…' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Set one price for all…' }),
+    );
 
     expect(screen.getByText(/Changes 0 variants/)).toBeInTheDocument();
     expect(screen.getByText(/Skips 6/)).toBeInTheDocument();
@@ -1149,7 +1151,9 @@ describe('Product Editor - structure', () => {
 
     render(<ProductEditor fixture={resolved} initialLifecycle="IDLE" />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Set retail price…' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Set one price for all…' }),
+    );
     const bulkPriceInput = screen.getByLabelText(`Retail price (${currency})`);
 
     expect(bulkPriceInput).toHaveAttribute(

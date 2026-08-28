@@ -2325,9 +2325,47 @@ export default function ProductEditorWorkspace({
                   saveDraftAction === undefined
                     ? undefined
                     : (variantId) => {
+                        /*
+                          A price the seller already owns opens straight away.
+                          The reason exists to record leaving the rules, and
+                          this one left them already — asking again would be
+                          charging a toll twice for the same road.
+                        */
+                        const target = variants.find(
+                          (variant) => variant.id === variantId,
+                        );
+
+                        if (target?.retailPriceIsSellerSet === true) {
+                          setUnlockedVariantIds((current) => {
+                            const next = new Set(current);
+
+                            next.add(variantId);
+
+                            return next;
+                          });
+
+                          return;
+                        }
+
                         setUnlockDraftReason(priceOverrideReason);
                         setUnlockTargetVariantId(variantId);
                       }
+                }
+                /*
+                  Blur ends the edit, so the cell goes back to being a number
+                  with a pencil. Nothing is saved here — the workspace already
+                  holds every keystroke — this only closes the control.
+                */
+                onPriceCommitted={(variantId) =>
+                  setUnlockedVariantIds((current) => {
+                    if (!current.has(variantId)) return current;
+
+                    const next = new Set(current);
+
+                    next.delete(variantId);
+
+                    return next;
+                  })
                 }
                 /*
                   Offered only when at least one variant is actually overridden
