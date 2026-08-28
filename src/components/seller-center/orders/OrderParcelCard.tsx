@@ -10,6 +10,7 @@ import type {
   ParcelStatusTone,
 } from '@/modules/orders/contracts';
 import ParcelLineThumbnail from './ParcelLineThumbnail';
+import ParcelLineTitle from './ParcelLineTitle';
 
 type OrderParcelCardProps = {
   parcel: OrderParcel;
@@ -152,9 +153,10 @@ export default function OrderParcelCard({
                 size={44}
               />
               <div className="flex min-w-0 flex-col gap-0.5">
-                <span className="text-[13px] font-medium text-ink">
-                  {item.title}
-                </span>
+                <ParcelLineTitle
+                  line={item}
+                  className="text-[13px] font-medium text-ink"
+                />
                 <span className="text-[12px] text-ink-subtle">
                   {[item.variation, `×${item.quantity}`]
                     .filter((part) => part !== null)
