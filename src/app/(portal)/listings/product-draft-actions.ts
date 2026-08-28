@@ -419,7 +419,7 @@ export async function discardProductDraftAction(
 ): Promise<DiscardProductDraftActionResult> {
   const parsed = discardProductDraftInputSchema.safeParse(input);
 
-  if (!parsed.success) return { ok: false, reason: 'invalid_input' };
+  if (!parsed.success) return refuseInvalidInput(parsed.error);
 
   const auth = await authorize('product:edit', 'catalog-draft:save');
 
