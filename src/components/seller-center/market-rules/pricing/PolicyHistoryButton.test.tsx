@@ -97,7 +97,7 @@ describe('PolicyHistoryButton', () => {
     open('History for Prepaid Airtime');
 
     expect(await screen.findByText('Revised')).toBeInTheDocument();
-    expect(screen.getByText('25.00% → 30.00%')).toBeInTheDocument();
+    expect(screen.getByText('33.33% → 42.86%')).toBeInTheDocument();
     expect(screen.getByText('Rosa Villamor')).toBeInTheDocument();
     expect(
       screen.getByText('Aligning to the new supplier cost band.'),

@@ -64,7 +64,7 @@ describe('StoreDefaultsTable', () => {
 
     // The two forms render as what they are — a percentage and an amount — so
     // the row says which kind of minimum is in force without a legend.
-    expect(screen.getByText('18%')).toBeInTheDocument();
+    expect(screen.getByText('21.95%')).toBeInTheDocument();
     expect(screen.getByText('US$4.00')).toBeInTheDocument();
   });
 
@@ -130,7 +130,7 @@ describe('StoreDefaultsTable', () => {
 
     expect(screen.queryByRole('button', { name: /store default/ })).toBeNull();
     // The values stay readable — read-only is not blank.
-    expect(screen.getByText('25%')).toBeInTheDocument();
+    expect(screen.getByText('33.33%')).toBeInTheDocument();
   });
 });
 
@@ -181,7 +181,7 @@ describe('the minimum is one choice, not two fields', () => {
 
     openFiji();
 
-    fireEvent.change(screen.getByLabelText('Base margin percent for Fiji'), {
+    fireEvent.change(screen.getByLabelText('Base markup percent for Fiji'), {
       target: { value: '25' },
     });
     fireEvent.change(screen.getByLabelText('Minimum margin percent for Fiji'), {
@@ -194,7 +194,8 @@ describe('the minimum is one choice, not two fields', () => {
 
     await waitFor(() =>
       expect(mocks.saveStoreDefaultAction).toHaveBeenCalledWith({
-        targetMarginRate: '0.25',
+        // 25 is now markup over cost, so the stored margin rate is 25/125.
+        targetMarginRate: '0.200000',
         // The unused form goes out as its own "absent" value, not as a second
         // floor — `0` for the amount column, `null` for the rate column. Sending
         // both would be refused by the database constraint.
@@ -231,7 +232,7 @@ describe('Global writes the null market code, never its column key', () => {
       screen.getByRole('button', { name: 'Set store default for Global' }),
     );
 
-    fireEvent.change(screen.getByLabelText('Base margin percent for Global'), {
+    fireEvent.change(screen.getByLabelText('Base markup percent for Global'), {
       target: { value: '30' },
     });
     fireEvent.change(screen.getByLabelText('Reason for change to Global'), {

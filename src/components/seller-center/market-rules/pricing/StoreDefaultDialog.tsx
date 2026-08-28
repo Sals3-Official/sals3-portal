@@ -26,6 +26,12 @@ import {
 } from '@/components/ui/select';
 import type { RoundingRule } from '@/modules/pricing/money-math';
 import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations';
+import {
+  formatScaledRate,
+  markupPercentFromMarginRateScaled,
+  markupPercentToMarginRateScaled,
+  parseScaledRate,
+} from '@/modules/pricing/money-math';
 import StoreDefaultPreview from './StoreDefaultPreview';
 import type { StoreDefaultViewModel } from './store-default-model';
 
@@ -89,7 +95,11 @@ export default function StoreDefaultDialog({
 }: StoreDefaultDialogProps) {
   const [isPending, startTransition] = useTransition();
   const [marginPercent, setMarginPercent] = useState(
-    storeDefault === null ? '' : rateToPercent(storeDefault.targetMarginRate),
+    storeDefault === null
+      ? ''
+      : markupPercentFromMarginRateScaled(
+          parseScaledRate(storeDefault.targetMarginRate),
+        ).toString(),
   );
   const [floorPercent, setFloorPercent] = useState(
     storeDefault?.minContributionRate == null
@@ -118,7 +128,11 @@ export default function StoreDefaultDialog({
 
     // Annotated, not inferred — see `SaveStoreDefaultInput`.
     const payload: SaveStoreDefaultInput = {
-      targetMarginRate: percentToRate(marginPercent),
+      // Markup in, margin rate stored — the same conversion the CSV importer
+      // uses, so a rate typed here and one imported land on the same value.
+      targetMarginRate: formatScaledRate(
+        markupPercentToMarginRateScaled(Number(marginPercent)),
+      ),
       // Exactly one of these carries a value. The empty string maps to "0" for
       // the amount and `null` for the rate, which is what "no floor of this
       // kind" means in the two columns respectively.
@@ -180,7 +194,7 @@ export default function StoreDefaultDialog({
           )}
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="store-default-margin">Base margin</Label>
+            <Label htmlFor="store-default-margin">Base markup over cost</Label>
             <div className="flex items-center gap-1.5">
               <Input
                 id="store-default-margin"
@@ -191,7 +205,7 @@ export default function StoreDefaultDialog({
                 max="99.99"
                 value={marginPercent}
                 onChange={(event) => setMarginPercent(event.target.value)}
-                aria-label={`Base margin percent for ${scope.label}`}
+                aria-label={`Base markup percent for ${scope.label}`}
                 className="w-24 text-right"
               />
               <span className="text-sm text-muted-foreground">%</span>
