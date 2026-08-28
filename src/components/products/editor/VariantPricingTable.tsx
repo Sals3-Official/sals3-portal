@@ -71,9 +71,6 @@ export function PricingWorkingLines({
 }) {
   if (guidance.suggestedPrice === null) return null;
 
-  const costShare =
-    guidance.marginPercent === null ? null : 100 - guidance.marginPercent;
-
   return (
     <span className="flex flex-col gap-1.5">
       <span className="font-medium">How this price is worked out</span>
@@ -90,9 +87,9 @@ export function PricingWorkingLines({
             <span>{formatMoney(guidance.effectiveCost)}</span>
           </span>
         )}
-        {guidance.marginPercent === null ? null : (
+        {guidance.markupPercent === null ? null : (
           <span className="flex justify-between gap-4">
-            <span>{`\u00f7 ${((100 - guidance.marginPercent) / 100).toFixed(2)} (${guidance.marginPercent}% margin)`}</span>
+            <span>{`× ${(1 + guidance.markupPercent / 100).toFixed(2)} (${guidance.markupPercent}% markup)`}</span>
             <span>
               {formatMoney(
                 guidance.priceBeforeRounding ?? guidance.suggestedPrice,
@@ -110,18 +107,10 @@ export function PricingWorkingLines({
 
       {guidance.contributionFloorApplied ? (
         <span>
-          Your minimum contribution floor set this price, not the margin — the
-          margin on its own would have priced it lower.
+          Your minimum contribution floor set this price, not your markup — the
+          markup on its own would have priced it lower.
         </span>
       ) : null}
-
-      {guidance.marginPercent === null ||
-      guidance.markupPercent === null ||
-      costShare === null ? null : (
-        <span>
-          {`A ${guidance.marginPercent}% margin is the same as ${guidance.markupPercent}% markup: the margin is ${guidance.marginPercent}% of the selling price, so the cost is the other ${costShare}% — and ${guidance.marginPercent} \u00f7 ${costShare} = ${guidance.markupPercent}%.`}
-        </span>
-      )}
     </span>
   );
 }

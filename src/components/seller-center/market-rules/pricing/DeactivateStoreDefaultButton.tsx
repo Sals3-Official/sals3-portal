@@ -61,9 +61,9 @@ export default function DeactivateStoreDefaultButton({
         <AlertDialogHeader>
           <AlertDialogTitle>Deactivate the store default?</AlertDialogTitle>
           <AlertDialogDescription>
-            Every category without its own margin — or a priced parent — will
+            Every category without its own markup — or a priced parent — will
             stop pricing, and the contribution floor disappears with it. Price
-            guidance will show &quot;No margin policy&quot; for those products
+            guidance will show &quot;No markup policy&quot; for those products
             until a new default is set.
           </AlertDialogDescription>
         </AlertDialogHeader>

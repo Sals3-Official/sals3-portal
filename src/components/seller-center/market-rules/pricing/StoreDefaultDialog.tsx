@@ -174,7 +174,7 @@ export default function StoreDefaultDialog({
             — {scope.label}
           </DialogTitle>
           <DialogDescription>
-            Covers every category with no margin of its own and no priced
+            Covers every category with no markup of its own and no priced
             parent.
           </DialogDescription>
         </DialogHeader>

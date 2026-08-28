@@ -208,12 +208,12 @@ export default async function CategoryPricingSection({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 id="category-pricing-heading" className="text-base font-semibold">
-            Category margins
+            Category markups
           </h2>
           <p className="max-w-[78ch] text-sm text-muted-foreground">
             One column per destination, plus Global for every country without a
-            column of its own. A category without its own margin in a column
-            uses the nearest parent above it. Set a margin only where a
+            column of its own. A category without its own markup in a column
+            uses the nearest parent above it. Set a markup only where a
             department genuinely differs; a product can still override it in the
             Product Editor.
           </p>
@@ -250,7 +250,7 @@ export default async function CategoryPricingSection({
                 </span>
                 <span>
                   It covers every rule on this page — store defaults, these
-                  category margins, and the funding buffer — not just the
+                  category markups, and the funding buffer — not just the
                   category you last edited. You see exactly what would change
                   before anything is written, and prices you typed by hand are
                   never touched unless you ask for them.
@@ -280,9 +280,9 @@ export default async function CategoryPricingSection({
           {storeDefaultResult.state === 'unavailable' ? (
             <DisclosureBanner tone="warning">
               Your store defaults could not be read, so the inherited rates
-              below are incomplete — a category with no margin of its own may
+              below are incomplete — a category with no markup of its own may
               still be covered by a default this page cannot see right now.
-              Margins set on a category are unaffected.
+              Markups set on a category are unaffected.
             </DisclosureBanner>
           ) : null}
           {storeDefaultResult.state === 'ok' &&
@@ -292,7 +292,7 @@ export default async function CategoryPricingSection({
               {scopesWithoutDefault.map((scope) => scope.label).join(', ')}, so
               a category shown as &quot;—&quot; in those columns cannot price at
               all — its products need a manual retail price until a default or a
-              parent margin covers them.
+              parent markup covers them.
             </DisclosureBanner>
           ) : null}
           <CategoryMarginTree
