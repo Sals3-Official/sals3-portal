@@ -164,10 +164,15 @@ export default async function ParcelDetailPage({
           <ParcelMoneyRow
             settlement={detail.settlement}
             supplierSpend={detail.supplierSpend}
+            // Missed in the copy pass, and visible on the card the owner
+            // pointed at: the rest of the money copy settled on "payout",
+            // while this alone still read "not money paid to you". One
+            // vocabulary, or a seller reasonably wonders whether two
+            // different things are meant.
             buyerPaymentNote={
               isSplit
-                ? `Covers the whole order ${parcel.orderRef}, both parcels. It is not money paid to you.`
-                : 'What the buyer was charged. It is not money paid to you.'
+                ? `What the buyer was charged for this parcel. Order ${parcel.orderRef} covers ${parcel.parcelCount} parcels in total. This is not your payout.`
+                : 'What the buyer was charged for this parcel. This is not your payout.'
             }
           />
 
