@@ -1,0 +1,121 @@
+name: Orders E2E
+
+# A second, narrow end-to-end run: the only one with a database.
+#
+# ## Why this is its own job and not part of `verify`
+#
+# Not because a database breaks the other specs. That was the first reading and
+# it was wrong: the database under test was empty, so no seller account
+# existed, `resolveBypassSellerId` could not resolve one, and every page fell
+# back to the `'system'` sentinel. With this job's seed in place the whole
+# suite passes with a database, and *more* of it runs than without — 69 passed
+# and 6 skipped, against 56 and 19.
+#
+# It is separate because `verify` is shared by every feature in this
+# repository, and two clean local runs are not the evidence needed to make
+# every future pull request depend on a database service. This job proves the
+# shape works and costs nobody anything if it turns out to be wrong. Folding it
+# into `verify` is worth doing and is a decision for whoever owns the pipeline.
+#
+# Until then the database is added beside `verify`, never inside it: one spec,
+# one seeded order, and nothing that changes what the main suite sees.
+#
+# ## What this is not
+#
+# It is not evidence about production's schema. The migrations here run against
+# an ephemeral container that exists for the length of this job; production DDL
+# still arrives only through the `CRON_SECRET` break-glass workflow, and a
+# green run here says nothing about whether a column exists there. That
+# distinction is why `orderTablesExist` and `order-line-columns.test.ts` stay.
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+  pull_request:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+
+jobs:
+  orders-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sals3_e2e
+        ports:
+          - 5432:5432
+        # Without this the first migration can race the server's own startup.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sals3_e2e
+      PORTAL_TEST_AUTH_BYPASS: '1'
+      # The bypass session resolves its seller id from the database by this
+      # identity, so the seeded account is the one the suite signs in as.
+      PLAYWRIGHT_PORT: '3101'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve Playwright version
+        id: playwright-version
+        run: |
+          version=$(node -p "require('@playwright/test/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Shares the key with `verify.yml` on purpose: same runner, same browser
+      # build, so the second job is usually a cache hit rather than a second
+      # ~150 MB download.
+      - name: Cache Playwright browser
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+
+      - name: Install Playwright browser and system dependencies
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 8
+        run: npx playwright install --with-deps chromium
+
+      - name: Apply migrations to the ephemeral database
+        run: npx drizzle-kit migrate
+
+      - name: Seed one accepted order
+        run: npm run seed:e2e-order
+
+      # One spec. Widening this to the whole suite is what the header warns
+      # against: the other specs are written for the DB-less job.
+      - name: Run the orders end-to-end suite
+        run: npx playwright test e2e/seller-center-orders.spec.ts
+
+      - name: Upload the report when it fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orders-e2e-report
+          path: playwright-report/
+          retention-days: 7
