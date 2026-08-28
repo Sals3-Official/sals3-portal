@@ -66,14 +66,24 @@ test.describe('Seller Center market rules', () => {
 
     await page.getByRole('button', { name: /Reprice live products/ }).click();
 
+    const dialog = page.getByRole('dialog', {
+      name: 'Reprice published products',
+    });
+
     await expect(
-      page.getByRole('heading', { name: 'Reprice published products' }),
+      dialog.getByRole('heading', { name: 'Reprice published products' }),
     ).toBeVisible();
-    await expect(page.getByText('1. Check what would change')).toBeVisible();
+    await expect(dialog.getByText('1. Check what would change')).toBeVisible();
     await expect(
-      page.getByRole('button', { name: 'Apply new prices' }),
+      dialog.getByRole('button', { name: 'Apply new prices' }),
     ).toBeDisabled();
     // The reason field only appears once there is something to explain.
-    await expect(page.getByLabel('Reason for change')).toHaveCount(0);
+    //
+    // Scoped to the dialog, and it has to be: `/market-rules` also renders the
+    // Funding Buffer card, which carries a "Reason for change" field of its
+    // own. A page-wide locator found that one and read a legitimately present
+    // field as this dialog's, so the assertion failed while both the dialog
+    // and the test's intent were correct.
+    await expect(dialog.getByLabel('Reason for change')).toHaveCount(0);
   });
 });

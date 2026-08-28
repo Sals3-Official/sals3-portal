@@ -11,6 +11,8 @@ import OrdersSortSelect from '@/components/seller-center/orders/OrdersSortSelect
 import OrdersViewToggle from '@/components/seller-center/orders/OrdersViewToggle';
 import OrdersWorkspace from '@/components/seller-center/orders/OrdersWorkspace';
 import { requirePermission } from '@/lib/auth/session';
+import { readOrUnavailable } from '@/lib/db/availability';
+import { isDatabaseConfigured } from '@/lib/db/client';
 import { buildHref } from '@/lib/portal/search-params';
 import getOrdersRepository from '@/modules/orders/repository';
 import {
@@ -57,21 +59,96 @@ const DROPSHIPPER_STAGE_CHIPS = [
 ];
 
 /**
+ * Returned by the read when the tables themselves are absent.
+ *
+ * A sentinel rather than an exception, because it is not an error: it is a
+ * legible state that has its own copy. Same shape `reviews/page.tsx` uses.
+ */
+const NOT_MIGRATED = 'NOT_MIGRATED' as const;
+
+/**
+ * A page-level notice. Two different reasons, one shape, so neither can be
+ * mistaken for an empty order book: "no database here" and "the database did
+ * not answer" both mean *we do not know*, which is not the same as *no orders*.
+ */
+function OrdersNotice({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="mx-auto flex max-w-[1440px] flex-col gap-[18px] px-7 pt-6 pb-15">
+      <PageHeader title="Orders" description="One row is one parcel." />
+      <div className="rounded-lg border border-border bg-card px-6 py-10 text-center">
+        <p className="text-sm font-medium text-foreground">{title}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+      </div>
+    </div>
+  );
+}
+
+/**
  * The orders list. A Server Component: it parses the view out of the URL,
  * shapes the parcels, and hands selection to the client workspace.
  *
- * This temporary interface preview is deliberately independent from market
- * setup. It preserves the real permission gate but makes no claim that its
- * illustrative parcels, money labels, or handoff controls are configured for
- * the account.
+ * Parcels are real rows now — every accepted checkout writes them, so this
+ * screen is the seller's record of what has actually sold. Money that has no
+ * backing ledger still reads "Not configured" rather than a figure; see
+ * `modules/orders/read-model.ts` for which numbers are real and which are
+ * named gaps.
+ *
+ * The permission check sits *inside* `readOrUnavailable` with the read it
+ * guards, because resolving the seller account is itself a query: authorizing
+ * outside the wrapper would crash the page before reaching the part that was
+ * carefully protected. `lib/db/availability.ts` documents that failure, and
+ * `listings/page.tsx` already uses this shape.
  */
 export default async function OrdersPage({ searchParams }: OrdersPageProps) {
-  const session = await requirePermission('order:read');
-
   const rawParams = await searchParams;
   const query = ordersQuerySchema.parse(rawParams);
 
-  const allParcels = await getOrdersRepository().listParcels(session.sellerId);
+  if (!isDatabaseConfigured()) {
+    return (
+      <OrdersNotice
+        title="No database configured in this environment"
+        description="DATABASE_URL is not set here, so orders cannot be read. No order was changed."
+      />
+    );
+  }
+
+  const resolved = await readOrUnavailable('orders', async () => {
+    const session = await requirePermission('order:read');
+    const repository = getOrdersRepository();
+
+    if (!(await repository.tablesExist())) return NOT_MIGRATED;
+
+    return {
+      session,
+      parcels: await repository.listParcels(session.sellerId),
+    };
+  });
+
+  if (!resolved.ok) {
+    return (
+      <OrdersNotice
+        title="Cannot reach the database right now"
+        description="Orders could not be loaded because the database did not respond. This is not an empty order book, and nothing was changed."
+      />
+    );
+  }
+
+  if (resolved.data === NOT_MIGRATED) {
+    return (
+      <OrdersNotice
+        title="The order tables are not in this database yet"
+        description="Orders reach a database through the break-glass migration run, not through the deploy. Until it has run here, this screen has nothing to read - which is not the same as having no orders."
+      />
+    );
+  }
+
+  const { session, parcels: allParcels } = resolved.data;
   const counts = new Map(
     countByLane(allParcels).map((entry) => [entry.key, entry.count]),
   );
@@ -242,10 +319,15 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
         }
       />
 
+      {/* The old copy here called every row illustrative. That is no longer
+          true and leaving it would be worse than the original overclaim in
+          reverse — a seller dismissing a real order as sample data. What is
+          still missing is named instead, and nothing else. */}
       <DisclosureBanner tone="info">
-        Temporary interface preview: the parcel rows below are illustrative
-        until the orders backend exists. Currency, carrier, tax, payout, and
-        cutoff details are not configured here.
+        Parcels below are real accepted orders. Sals3 commission, payouts, and
+        tax are not configured yet, so those figures read &ldquo;Not
+        configured&rdquo; rather than an estimate. Label printing and courier
+        handover are not wired to a backend.
       </DisclosureBanner>
 
       <OrdersWorkspace parcels={parcels} />

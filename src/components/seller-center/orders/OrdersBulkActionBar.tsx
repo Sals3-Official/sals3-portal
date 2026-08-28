@@ -1,6 +1,13 @@
 type OrdersBulkActionBarProps = {
   selectedCount: number;
-  proceedsLabel: string;
+  /**
+   * What the buyer paid for the selected parcels, already formatted.
+   *
+   * Named for what it is. It used to read "est. proceeds", which is a
+   * different number: proceeds are what the seller earns after Sals3
+   * commission, and no commission ledger exists to compute that.
+   */
+  buyerPaymentLabel: string;
   onClear: () => void;
   onPrint: () => void;
 };
@@ -11,7 +18,7 @@ type OrdersBulkActionBarProps = {
  */
 export default function OrdersBulkActionBar({
   selectedCount,
-  proceedsLabel,
+  buyerPaymentLabel,
   onClear,
   onPrint,
 }: OrdersBulkActionBarProps) {
@@ -20,7 +27,7 @@ export default function OrdersBulkActionBar({
       <div className="flex flex-wrap items-center gap-3">
         <p className="text-sm font-semibold">{selectedCount} selected</p>
         <p className="text-xs text-sidebar-foreground/70">
-          est. proceeds {proceedsLabel}
+          buyer payment {buyerPaymentLabel}
         </p>
         <button
           type="button"

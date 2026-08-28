@@ -325,16 +325,32 @@ export type OrderParcel = {
   /** ISO date the parcel must leave by, or `null` when nothing is promised. */
   shipBy: string | null;
   /**
-   * This parcel's own allocated Rail A proceeds, in minor units.
+   * This parcel's own allocated share of what the buyer paid, in minor units.
    *
    * The one number on this type, and it is Rail A only. Selecting parcels has
    * to produce a running total, which strings cannot do - but supplier spend
    * stays string-only, so no component can subtract one rail from the other
-   * even by accident. ADR-008 requires commission recorded per line precisely
-   * so a split checkout can be allocated this way; a parcel of a split order
-   * carries its own share, never the whole order's payment.
+   * even by accident. A parcel of a split order carries its own share, never
+   * the whole order's payment.
+   *
+   * **It is buyer payment, not seller proceeds, and the two are not the same
+   * number.** ADR-008 wants commission recorded per line so that proceeds can
+   * be allocated this way, and no commission ledger exists yet - so nothing
+   * can compute what the seller actually earns. Deriving it from a percentage
+   * nobody approved would put a fabricated figure on a money screen. Anything
+   * rendering this value must therefore label it as the buyer's payment; the
+   * name is kept only because it is the allocation slot ADR-008 describes.
    */
   proceedsMinor: number;
+  /**
+   * ISO currency of `proceedsMinor`, taken from the order row.
+   *
+   * On the type because a bare minor-unit integer cannot be rendered without
+   * it, and a component that guessed would format a Fijian order as Australian
+   * dollars. It also lets a running total refuse to add two currencies
+   * together rather than producing a meaningless sum.
+   */
+  currency: string;
 };
 
 // --- Detail view ---------------------------------------------------------
