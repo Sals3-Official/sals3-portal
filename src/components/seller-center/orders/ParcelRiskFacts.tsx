@@ -45,8 +45,8 @@ export default function ParcelRiskFacts({ facts }: ParcelRiskFactsProps) {
       </div>
 
       <p className="max-w-[72ch] text-[12px] leading-normal text-ink-faint">
-        Counts, not scores. A single parcel is too small a sample for a rate,
-        and a percentage would imply a target you have not agreed to.
+        These are counts, not performance scores. A single parcel is too small a
+        sample to express as a rate.
       </p>
     </section>
   );

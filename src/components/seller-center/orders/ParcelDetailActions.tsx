@@ -26,8 +26,8 @@ export default function ParcelDetailActions({
   if (actions.length === 0) {
     return (
       <p className="text-[12.5px] text-ink-subtle">
-        Nothing to arrange — your supplier despatches this parcel. Courier
-        handover and label printing are not configured for this account.
+        No action required. Your supplier despatches this parcel. Carrier
+        handover and label printing are not set up for this account.
       </p>
     );
   }
@@ -37,7 +37,7 @@ export default function ParcelDetailActions({
       actions={actions}
       layout="inline"
       onAction={(actionId) =>
-        toast(`"${actionId}" on ${parcelId} is not wired to a backend yet.`, {
+        toast(`${actionId} is not available for this account yet.`, {
           duration: 5000,
         })
       }

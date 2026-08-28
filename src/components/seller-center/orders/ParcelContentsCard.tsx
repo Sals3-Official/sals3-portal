@@ -49,7 +49,7 @@ export default function ParcelContentsCard({
             <div className="flex flex-wrap items-baseline justify-between gap-4">
               <ParcelLineTitle
                 line={line}
-                className="text-[14px] font-semibold text-ink"
+                typographyClassName="text-[14px] font-semibold"
               />
               <span className="text-[13px] font-medium text-ink-muted">
                 ×{line.quantity}
@@ -93,8 +93,8 @@ export default function ParcelContentsCard({
         */}
         {sellerNote === null ? (
           <p className="rounded-md border border-dashed border-border px-3 py-2.5 text-[12.5px] text-ink-faint">
-            No note yet. Notes are private to your team and stay on this parcel
-            — saving them needs the orders backend, which is not built yet.
+            No note on this parcel. Notes are visible to your team only. Saving
+            notes is not available yet.
           </p>
         ) : (
           <p className="rounded-md border border-border bg-surface px-3 py-2.5 text-[13px] leading-normal text-ink">

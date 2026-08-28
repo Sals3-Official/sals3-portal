@@ -108,7 +108,8 @@ export default function ParcelMoneyRow({
           Money on this parcel
         </h2>
         <span className="text-[12px] text-ink-faint">
-          Three separate totals. Nothing adds or subtracts across these cards.
+          Three separate totals. They are not added or subtracted against each
+          other.
         </span>
       </div>
 

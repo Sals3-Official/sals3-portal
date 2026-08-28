@@ -2,8 +2,22 @@ import type { ParcelLine } from '@/modules/orders/contracts';
 
 type ParcelLineTitleProps = {
   line: ParcelLine;
-  /** Typography for the surface. The list sets 13px, the detail 14px. */
-  className: string;
+  /**
+   * Size and weight only — never a colour.
+   *
+   * The two surfaces differ in typography (13px medium on the list, 14px
+   * semibold on the detail) and agree on everything else, so the caller owns
+   * the part that differs and this component owns the part that must not.
+   *
+   * Colour is excluded deliberately rather than by convention. Passing
+   * `text-ink` alongside this component's `text-primary` puts two `color`
+   * utilities of equal specificity on one element, and Tailwind resolves that
+   * by stylesheet order, not by the order they appear in the class attribute —
+   * so the link colour would apply or not depending on which utility Tailwind
+   * happened to emit last. Keeping colour out of the caller removes the race
+   * instead of betting on it.
+   */
+  typographyClassName: string;
 };
 
 /**
@@ -13,9 +27,18 @@ type ParcelLineTitleProps = {
  * shipped on the detail card alone, on the reasoning that "the list card's
  * whole row is already a link to the parcel" — which was simply wrong. The
  * list card is an `<article>`; its only link is the order reference in the
- * header, beside a Check details button. There was never a row-wide target for
+ * header, beside a View parcel button. There was never a row-wide target for
  * this to compete with, so the list quietly kept plain text while the detail
  * linked, for no reason a seller could see.
+ *
+ * ## Why it looks like a link rather than revealing itself on hover
+ *
+ * The house style for an in-card link here is dark text that underlines when
+ * pointed at. Applied to an item name it read as a plain label — the owner
+ * could not tell it was clickable, which is the one thing an affordance has to
+ * do. A seller scanning a parcel should see the way through to the listing
+ * without hunting for it, so the link carries the primary colour and a
+ * standing underline.
  *
  * ## Why it opens a new tab
  *
@@ -31,10 +54,12 @@ type ParcelLineTitleProps = {
  */
 export default function ParcelLineTitle({
   line,
-  className,
+  typographyClassName,
 }: ParcelLineTitleProps) {
   if (line.storefrontUrl === null) {
-    return <span className={className}>{line.title}</span>;
+    return (
+      <span className={`${typographyClassName} text-ink`}>{line.title}</span>
+    );
   }
 
   return (
@@ -42,7 +67,7 @@ export default function ParcelLineTitle({
       href={line.storefrontUrl}
       target="_blank"
       rel="noopener noreferrer"
-      className={`${className} hover:text-primary hover:underline`}
+      className={`${typographyClassName} text-primary underline underline-offset-2 hover:no-underline`}
     >
       {line.title}
     </a>

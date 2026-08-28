@@ -155,7 +155,7 @@ export default function OrderParcelCard({
               <div className="flex min-w-0 flex-col gap-0.5">
                 <ParcelLineTitle
                   line={item}
-                  className="text-[13px] font-medium text-ink"
+                  typographyClassName="text-[13px] font-medium"
                 />
                 <span className="text-[12px] text-ink-subtle">
                   {[item.variation, `×${item.quantity}`]

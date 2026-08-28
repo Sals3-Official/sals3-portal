@@ -375,37 +375,38 @@ const STATUS_PRESENTATION: Record<
 > = {
   DRAFT: {
     label: 'Draft',
-    detail: 'The buyer has not reached checkout yet.',
+    detail: 'The buyer has not reached checkout.',
     tone: 'neutral',
   },
   CHECKOUT_PENDING: {
     label: 'Checkout pending',
-    detail: 'The buyer is at checkout. Nothing is owed to a supplier yet.',
+    detail:
+      'The buyer is completing checkout. No supplier cost has been incurred.',
     tone: 'neutral',
   },
   PAYMENT_PENDING: {
     label: 'Payment pending',
-    detail: 'Waiting for the payment to confirm.',
+    detail: 'Awaiting payment confirmation.',
     tone: 'neutral',
   },
   PAID: {
     label: 'Paid',
-    detail: 'Payment captured. The supplier order has not been placed yet.',
+    detail: 'Payment received. The supplier order has not been placed.',
     tone: 'info',
   },
   FULFILLMENT_QUEUED: {
     label: 'To process',
-    detail: 'Queued for the supplier. No action is needed from you.',
+    detail: 'Queued for the supplier. No action required.',
     tone: 'info',
   },
   CJ_ORDER_CREATED: {
     label: 'Supplier order created',
-    detail: 'The supplier has the order and is awaiting payment.',
+    detail: 'The supplier has received the order and is awaiting payment.',
     tone: 'info',
   },
   CJ_PAYMENT_PENDING: {
     label: 'Supplier payment pending',
-    detail: 'Paying the supplier from the connected wallet.',
+    detail: 'Payment to the supplier is in progress.',
     tone: 'info',
   },
   FULFILLING: {
@@ -415,60 +416,60 @@ const STATUS_PRESENTATION: Record<
   },
   SHIPPED: {
     label: 'Shipped',
-    detail: 'Handed to the carrier. Tracking is below.',
+    detail: 'Handed to the carrier.',
     tone: 'info',
   },
   DELIVERED: {
     label: 'Delivered',
-    detail: 'The carrier reported this parcel delivered.',
+    detail: 'The carrier has confirmed delivery.',
     tone: 'success',
   },
   PAYMENT_FAILED: {
     label: 'Payment failed',
-    detail: 'The payment did not complete. Nothing was ordered.',
+    detail: 'Payment did not complete. No order was placed with the supplier.',
     tone: 'danger',
   },
   FULFILLMENT_FAILED: {
     label: 'Supplier order failed',
     detail:
-      'The supplier order could not be placed. The fulfilment worker retries automatically.',
+      'The supplier order could not be placed. It will be retried automatically.',
     tone: 'danger',
   },
   AWAITING_SUPPLIER_FUNDS: {
     label: 'Awaiting supplier funds',
     detail:
-      'The connected supplier wallet does not have enough balance to pay for this parcel.',
+      'Your supplier account has insufficient funds for this parcel. Top it up to release the order.',
     tone: 'warning',
   },
   CANCEL_REQUESTED: {
     label: 'Cancellation requested',
-    detail: 'A cancellation was requested and is not resolved yet.',
+    detail: 'A cancellation has been requested and is not yet resolved.',
     tone: 'warning',
   },
   CANCELLED: {
     label: 'Cancelled',
-    detail: 'This parcel was cancelled.',
+    detail: 'This parcel has been cancelled.',
     tone: 'neutral',
   },
   DELIVERY_EXCEPTION: {
     label: 'Delivery exception',
-    detail: 'The carrier reported a problem delivering this parcel.',
+    detail: 'The carrier has reported a delivery problem.',
     tone: 'danger',
   },
   TRACKING_CONFLICT: {
     label: 'Tracking conflict',
     detail:
-      'The carrier and the supplier disagree about this parcel. Neither source is being treated as correct.',
+      'The carrier and the supplier report different statuses. Neither is being treated as confirmed.',
     tone: 'danger',
   },
   REFUND_PENDING: {
     label: 'Refund pending',
-    detail: 'A refund is being processed for this order.',
+    detail: 'A refund is being processed.',
     tone: 'warning',
   },
   REFUNDED: {
     label: 'Refunded',
-    detail: 'This order was refunded to the buyer.',
+    detail: 'This order has been refunded to the buyer.',
     tone: 'neutral',
   },
   RETURN_IN_PROGRESS: {
@@ -523,11 +524,11 @@ function stageOf(state: ParcelLifecycleState): ProcessStage | null {
  * two surfaces cannot drift into telling a seller different things about the
  * same missing system.
  */
-const NO_COMMISSION_LEDGER =
-  'Not configured. Sals3 commission and payouts are not set up for this account yet.';
+const NO_COMMISSION_SET =
+  'Commission and payouts are not set up for this account yet.';
 
-const NO_SUPPLIER_SPEND_LEDGER =
-  'Not configured. What this parcel cost you at the supplier is not recorded yet.';
+const NO_SUPPLIER_SPEND_RECORD =
+  'What this parcel cost you at your supplier is not recorded yet.';
 
 function moneyOf(
   order: SellerOrderRow,
@@ -545,7 +546,7 @@ function moneyOf(
     // Rail B. Deliberately not the freight the buyer paid: that is Rail A
     // money the buyer was charged, not money the seller owes their supplier.
     supplierCostLabel: null,
-    supplierCostNote: NO_SUPPLIER_SPEND_LEDGER,
+    supplierCostNote: NO_SUPPLIER_SPEND_RECORD,
     wholeOrderNote:
       parcelCount > 1
         ? `Covers the whole order, all ${parcelCount} parcels. This parcel's share is ${formatParcelMoney(parcelPaidMinor, order.currency)}.`
@@ -619,7 +620,7 @@ function actionsOf(): ParcelAction[] {
   return [
     {
       id: 'details',
-      label: 'Check details',
+      label: 'View parcel',
       variant: 'secondary',
       blockedReason: null,
     },
@@ -702,7 +703,7 @@ function buildParcel(inputs: ParcelInputs): OrderParcel {
       group === null
         ? {
             kind: 'SUPPLIER_DROPSHIP',
-            serviceLevel: 'Chosen at checkout',
+            serviceLevel: 'Selected at checkout',
             carrier: null,
             connection: {
               connectionId: lines[0]?.supplierConnectionId ?? 'unknown',
@@ -1066,6 +1067,58 @@ async function ownedParcelsForParcel(
 
 // --- Detail --------------------------------------------------------------
 
+/**
+ * What the buyer paid for this parcel, itemised.
+ *
+ * The card used to carry one line reading "This parcel" against the whole
+ * order's total — a breakdown of nothing, beside a figure that belonged to a
+ * different unit. It now shows the three components a seller reconciles
+ * against: goods, shipping, and any voucher.
+ *
+ * The headline is this parcel's own total, so the lines beneath it add up to
+ * the number above them. On a split order the order total is stated separately
+ * rather than shown as this parcel's, which is the mismatch that made the
+ * original card unreadable.
+ */
+function buyerPaymentLinesOf(
+  currency: string,
+  itemsMinor: number,
+  shippingMinor: number,
+): MoneyLine[] {
+  return [
+    {
+      label: 'Goods',
+      valueLabel: formatParcelMoney(itemsMinor, currency),
+      hint: 'The items on this parcel, at the price charged when the order was placed.',
+      emphasis: 'sub',
+    },
+    {
+      label: 'Shipping',
+      valueLabel: formatParcelMoney(shippingMinor, currency),
+      hint: 'The delivery charge quoted to the buyer for this parcel. Zero when the order qualified for free shipping.',
+      emphasis: 'sub',
+    },
+    {
+      /**
+       * A standing line, not a live one.
+       *
+       * Sals3 issues no vouchers today and no order carries one, so this reads
+       * "None" rather than a currency figure — the honest answer, and the one
+       * the owner asked to keep visible so the breakdown a seller reconciles
+       * against does not change shape the day vouchers arrive.
+       *
+       * **When vouchers ship, this stops being a constant.** It has to read
+       * from whatever records the discount, or it will state "None" over an
+       * order that had one — which is worse than the row being absent today.
+       */
+      label: 'Vouchers',
+      valueLabel: 'None',
+      hint: 'Sals3 does not issue vouchers yet, so no order carries one.',
+      emphasis: 'sub',
+    },
+  ];
+}
+
 function settlementOf(
   order: SellerOrderRow,
   parcelPaidMinor: number,
@@ -1078,32 +1131,26 @@ function settlementOf(
     emphasis: 'sub',
   });
 
+  const parcelTotalMinor = parcelPaidMinor + shippingMinor;
+  const orderTotalMinor = Number(order.amountMinor);
+
   return {
     groups: [
       {
-        heading: 'What the buyer paid',
-        lines: [
-          {
-            label: 'Items',
-            valueLabel: formatParcelMoney(parcelPaidMinor, order.currency),
-            hint: 'The ordered lines on this parcel, at the price frozen when the order was accepted.',
-            emphasis: 'sub',
-          },
-          {
-            label: 'Delivery',
-            valueLabel: formatParcelMoney(shippingMinor, order.currency),
-            hint: 'The freight the buyer was quoted and charged for this parcel.',
-            emphasis: 'sub',
-          },
-        ],
+        heading: 'Buyer paid',
+        lines: buyerPaymentLinesOf(
+          order.currency,
+          parcelPaidMinor,
+          shippingMinor,
+        ),
       },
       {
         heading: 'Deductions',
         lines: [
-          notConfigured('Sals3 commission', NO_COMMISSION_LEDGER),
+          notConfigured('Sals3 commission', NO_COMMISSION_SET),
           notConfigured(
             'Payment processing',
-            'Not configured. Payment costs are not attributed per order yet.',
+            'Payment costs are not yet allocated to individual orders.',
           ),
         ],
       },
@@ -1111,32 +1158,29 @@ function settlementOf(
     estimatedIncome: {
       label: 'Estimated income',
       valueLabel: 'Not configured',
-      hint: NO_COMMISSION_LEDGER,
+      hint: NO_COMMISSION_SET,
       emphasis: 'accent',
     },
     finalAmount: {
       label: 'Final amount',
       valueLabel: 'Not configured',
-      hint: 'A final payout amount needs a commission ledger and a payout run. Neither exists yet.',
+      hint: 'A final figure is available once commission and payouts are set up for this account.',
       emphasis: 'total',
     },
     buyerPayment: {
       label: 'Buyer payment',
-      valueLabel: formatParcelMoney(Number(order.amountMinor), order.currency),
-      hint: 'The whole order, as charged by Stripe. It is not money paid to you.',
+      valueLabel: formatParcelMoney(parcelTotalMinor, order.currency),
+      hint:
+        parcelTotalMinor === orderTotalMinor
+          ? 'What the buyer was charged for this parcel. This is not your payout.'
+          : `What the buyer was charged for this parcel. The full order came to ${formatParcelMoney(orderTotalMinor, order.currency)}. This is not your payout.`,
       emphasis: 'total',
     },
-    buyerPaymentLines: [
-      {
-        label: 'This parcel',
-        valueLabel: formatParcelMoney(
-          parcelPaidMinor + shippingMinor,
-          order.currency,
-        ),
-        hint: null,
-        emphasis: 'sub',
-      },
-    ],
+    buyerPaymentLines: buyerPaymentLinesOf(
+      order.currency,
+      parcelPaidMinor,
+      shippingMinor,
+    ),
     adjustments: [],
   };
 }
@@ -1147,7 +1191,7 @@ function supplierSpendOf(connectionLabel: string): SupplierSpend {
       {
         label: 'Supplier order total',
         valueLabel: 'Not configured',
-        hint: NO_SUPPLIER_SPEND_LEDGER,
+        hint: NO_SUPPLIER_SPEND_RECORD,
         emphasis: 'sub',
       },
     ],
@@ -1191,20 +1235,20 @@ function riskFactsOf(
   return [
     {
       id: 'lines',
-      label: 'Ordered lines',
+      label: 'Items on this parcel',
       value: `${lines.length}`,
       tone: 'neutral',
     },
     {
       id: 'supplier-order',
       label: 'Supplier order',
-      value: group?.cjOrderId ? 'Placed' : 'Not placed yet',
+      value: group?.cjOrderId ? 'Placed' : 'Not yet placed',
       tone: group?.cjOrderId ? 'neutral' : 'warning',
     },
     {
       id: 'tracking',
       label: 'Tracking number',
-      value: group?.trackingNumber ?? 'Not issued yet',
+      value: group?.trackingNumber ?? 'Not yet issued',
       // Neutral either way: a parcel with no waybill yet is the normal state
       // for most of its life, not a warning. The branch that used to be here
       // returned 'neutral' from both arms.
@@ -1226,7 +1270,7 @@ function lifecycleEventsOf(
   const events: LifecycleEvent[] = [
     {
       id: 'accepted',
-      label: 'Order accepted, payment captured',
+      label: 'Order accepted, payment received',
       occurredAtLabel: formatDateTime(order.createdAt),
     },
   ];
@@ -1352,7 +1396,7 @@ export async function findOrderParcelDetailForSeller(
     .map((row) => ({
       id: row.id,
       indexLabel: `Parcel ${row.parcelIndex} of ${row.parcelCount}`,
-      routeLabel: row.route.carrier ?? 'Delivery option chosen at checkout',
+      routeLabel: row.route.carrier ?? 'Carrier assigned at despatch',
     }));
 
   return {

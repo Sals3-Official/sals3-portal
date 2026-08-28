@@ -15,24 +15,22 @@ export default function OrdersHandoffPanel() {
       <CardHeader>
         <CardTitle>Handoff</CardTitle>
         <CardDescription>
-          Carrier and cutoff details are not configured for this account yet.
-          Pickup cannot be suggested or booked.
+          Carrier and cut-off times are not set up for this account, so pickup
+          cannot be scheduled.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 px-3 py-2.5">
           <div>
-            <p className="text-sm font-semibold">
-              Handoff setup is outstanding
-            </p>
+            <p className="text-sm font-semibold">Handover setup incomplete</p>
             <p className="text-xs text-muted-foreground">
-              Configure a carrier and cutoff before arranging pickup.
+              Add a carrier and cut-off time to schedule pickup.
             </p>
           </div>
           <button
             type="button"
             disabled
-            title="Pickup review is not built yet"
+            title="Pickup scheduling is not available yet"
             className="h-8 shrink-0 cursor-not-allowed rounded-md border border-border px-3 text-sm font-medium text-muted-foreground"
           >
             Review
