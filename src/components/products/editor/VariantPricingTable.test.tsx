@@ -2,7 +2,9 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { VariantFixture } from '@/lib/seller-center/product-editor/types';
-import VariantPricingTable from './VariantPricingTable';
+import VariantPricingTable, {
+  PricingWorkingLines,
+} from './VariantPricingTable';
 
 const VARIANT: VariantFixture = {
   id: 'variant-1',
@@ -214,6 +216,11 @@ describe('the rule behind the price', () => {
         sourceCategoryPath: 'Apparel & Accessories > Clothing Accessories',
         markupPercent: 300,
         sellerOverridden: false,
+        effectiveCost: { amountMinor: 1100, currency: 'USD' },
+        fundingBufferPercent: 1.5,
+        marginPercent: 75,
+        priceBeforeRounding: null,
+        contributionFloorApplied: false,
       },
     ]);
 
@@ -243,6 +250,11 @@ describe('the rule behind the price', () => {
             sourceCategoryPath: 'Apparel & Accessories',
             markupPercent: 300,
             sellerOverridden: true,
+            effectiveCost: { amountMinor: 1100, currency: 'USD' },
+            fundingBufferPercent: 1.5,
+            marginPercent: 75,
+            priceBeforeRounding: null,
+            contributionFloorApplied: false,
           },
         ]}
         expandedVariantId={null}
@@ -272,6 +284,11 @@ describe('the rule behind the price', () => {
           sourceCategoryPath: 'Apparel & Accessories',
           markupPercent: 300,
           sellerOverridden: true,
+          effectiveCost: { amountMinor: 1100, currency: 'USD' },
+          fundingBufferPercent: 1.5,
+          marginPercent: 75,
+          priceBeforeRounding: null,
+          contributionFloorApplied: false,
         },
       ],
       { ...VARIANT, retailPriceIsSellerSet: true },
@@ -292,10 +309,183 @@ describe('the rule behind the price', () => {
         sourceCategoryPath: null,
         markupPercent: null,
         sellerOverridden: false,
+        effectiveCost: null,
+        fundingBufferPercent: null,
+        marginPercent: null,
+        priceBeforeRounding: null,
+        contributionFloorApplied: false,
       },
     ]);
 
     expect(screen.getByText(/No margin policy/)).toBeInTheDocument();
+  });
+
+  /**
+   * The owner asked "saan galing yung 75?" of a 33.33% markup, which is the
+   * right question of a figure that will not reconcile: cost x 1.3333 does not
+   * reproduce the price, because the funding buffer is added first.
+   */
+  it('shows the working, step by step, in the resolver’s own order', () => {
+    render(
+      <PricingWorkingLines
+        supplierCost={{ amountMinor: 580, currency: 'USD' }}
+        guidance={{
+          variantId: 'variant-1',
+          suggestedPrice: { amountMinor: 785, currency: 'USD' },
+          unavailableLabel: null,
+          sourceCategoryPath: 'Apparel & Accessories > Clothing',
+          markupPercent: 33.33,
+          sellerOverridden: false,
+          effectiveCost: { amountMinor: 589, currency: 'USD' },
+          fundingBufferPercent: 1.5,
+          marginPercent: 25,
+          priceBeforeRounding: null,
+          contributionFloorApplied: false,
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Supplier cost')).toBeInTheDocument();
+    expect(screen.getByText('$5.80')).toBeInTheDocument();
+    expect(screen.getByText('+ 1.5% funding buffer')).toBeInTheDocument();
+    expect(screen.getByText('$5.89')).toBeInTheDocument();
+    expect(screen.getByText('÷ 0.75 (25% margin)')).toBeInTheDocument();
+    expect(screen.getByText('$7.85')).toBeInTheDocument();
+    // The answer to the question that prompted the whole control.
+    expect(
+      screen.getByText(/the cost is the other 75% — and 25 ÷ 75 = 33.33%/),
+    ).toBeInTheDocument();
+  });
+
+  it('names the rounding step only when rounding moved the number', () => {
+    const base = {
+      variantId: 'variant-1',
+      suggestedPrice: { amountMinor: 799, currency: 'USD' },
+      unavailableLabel: null,
+      sourceCategoryPath: 'Apparel & Accessories',
+      markupPercent: 33.33,
+      sellerOverridden: false,
+      effectiveCost: { amountMinor: 589, currency: 'USD' },
+      fundingBufferPercent: 1.5,
+      marginPercent: 25,
+      contributionFloorApplied: false,
+    };
+
+    const view = render(
+      <PricingWorkingLines
+        supplierCost={{ amountMinor: 580, currency: 'USD' }}
+        guidance={{
+          ...base,
+          priceBeforeRounding: { amountMinor: 785, currency: 'USD' },
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Rounded')).toBeInTheDocument();
+    expect(screen.getByText('$7.99')).toBeInTheDocument();
+
+    view.rerender(
+      <PricingWorkingLines
+        supplierCost={{ amountMinor: 580, currency: 'USD' }}
+        guidance={{ ...base, priceBeforeRounding: null }}
+      />,
+    );
+
+    expect(screen.queryByText('Rounded')).toBeNull();
+  });
+
+  /** Saying "from 33.33% markup" would be a lie when the floor set the price. */
+  it('says when the contribution floor set the price instead of the margin', () => {
+    render(
+      <PricingWorkingLines
+        supplierCost={{ amountMinor: 580, currency: 'USD' }}
+        guidance={{
+          variantId: 'variant-1',
+          suggestedPrice: { amountMinor: 900, currency: 'USD' },
+          unavailableLabel: null,
+          sourceCategoryPath: 'Apparel & Accessories',
+          markupPercent: 33.33,
+          sellerOverridden: false,
+          effectiveCost: { amountMinor: 589, currency: 'USD' },
+          fundingBufferPercent: 1.5,
+          marginPercent: 25,
+          priceBeforeRounding: null,
+          contributionFloorApplied: true,
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByText(/minimum contribution floor set this price/),
+    ).toBeInTheDocument();
+  });
+
+  it('offers the explainer on a control a keyboard can reach', () => {
+    render(
+      <VariantPricingTable
+        variants={[VARIANT]}
+        pricingGuidance={[
+          {
+            variantId: 'variant-1',
+            suggestedPrice: { amountMinor: 785, currency: 'USD' },
+            unavailableLabel: null,
+            sourceCategoryPath: 'Apparel & Accessories > Clothing',
+            markupPercent: 33.33,
+            sellerOverridden: false,
+            effectiveCost: { amountMinor: 589, currency: 'USD' },
+            fundingBufferPercent: 1.5,
+            marginPercent: 25,
+            priceBeforeRounding: null,
+            contributionFloorApplied: false,
+          },
+        ]}
+        expandedVariantId={null}
+        onToggleExpanded={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onRetailChange={vi.fn()}
+        onUseRulePrice={vi.fn()}
+        onSellerSkuChange={vi.fn()}
+        onBulkSetPrice={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'How this price is worked out' }),
+    ).toBeInTheDocument();
+  });
+
+  it('offers no explainer when the rules could not price the variant', () => {
+    render(
+      <VariantPricingTable
+        variants={[VARIANT]}
+        pricingGuidance={[
+          {
+            variantId: 'variant-1',
+            suggestedPrice: null,
+            unavailableLabel: 'Supplier cost unavailable',
+            sourceCategoryPath: null,
+            markupPercent: null,
+            sellerOverridden: false,
+            effectiveCost: null,
+            fundingBufferPercent: null,
+            marginPercent: null,
+            priceBeforeRounding: null,
+            contributionFloorApplied: false,
+          },
+        ]}
+        expandedVariantId={null}
+        onToggleExpanded={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onRetailChange={vi.fn()}
+        onUseRulePrice={vi.fn()}
+        onSellerSkuChange={vi.fn()}
+        onBulkSetPrice={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByRole('button', { name: 'How this price is worked out' }),
+    ).toBeNull();
   });
 
   it('says nothing at all when no rule was resolved for this variant', () => {

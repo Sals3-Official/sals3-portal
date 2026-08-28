@@ -75,6 +75,11 @@ function resolved(amountMinor: number, marginRate = '0.750000') {
     targetMarginRate: marginRate,
     policySourceCategoryPath: 'Apparel & Accessories > Clothing Accessories',
     roundedSuggestedItemPrice: { amountMinor, currency: 'USD' },
+    // The working the editor shows, carried on the same decision.
+    suggestedItemPrice: { amountMinor, currency: 'USD' },
+    effectiveProductCost: { amountMinor: 112, currency: 'USD' },
+    fundingBufferRate: '0.015000',
+    contributionFloorApplied: false,
   };
 }
 
@@ -192,6 +197,46 @@ describe('resolveEditorPricingGuidance', () => {
     });
 
     expect(guidance.sellerOverridden).toBe(true);
+  });
+
+  /** The screen shows the arithmetic, so the arithmetic has to travel with the price. */
+  it('carries the working, not just the answer', async () => {
+    const executor = executorReturning(PRODUCT, [variantRow()]);
+    resolveProductPricingMock.mockResolvedValue({
+      ...resolved(440),
+      suggestedItemPrice: { amountMinor: 435, currency: 'USD' },
+      effectiveProductCost: { amountMinor: 112, currency: 'USD' },
+      fundingBufferRate: '0.015000',
+      targetMarginRate: '0.250000',
+      contributionFloorApplied: true,
+    });
+
+    const [guidance] = await resolveEditorPricingGuidance(executor as never, {
+      sellerAccountId: SELLER_ID,
+      productId: PRODUCT_ID,
+    });
+
+    expect(guidance).toMatchObject({
+      effectiveCostMinor: 112,
+      effectiveCostCurrency: 'USD',
+      fundingBufferPercent: 1.5,
+      marginPercent: 25,
+      contributionFloorApplied: true,
+    });
+    // Only reported when rounding actually moved the number.
+    expect(guidance.priceBeforeRoundingMinor).toBe(435);
+  });
+
+  it('reports no rounding step when rounding changed nothing', async () => {
+    const executor = executorReturning(PRODUCT, [variantRow()]);
+    resolveProductPricingMock.mockResolvedValue(resolved(440));
+
+    const [guidance] = await resolveEditorPricingGuidance(executor as never, {
+      sellerAccountId: SELLER_ID,
+      productId: PRODUCT_ID,
+    });
+
+    expect(guidance.priceBeforeRoundingMinor).toBeNull();
   });
 
   it('carries the resolver’s own refusal rather than inventing a price', async () => {
