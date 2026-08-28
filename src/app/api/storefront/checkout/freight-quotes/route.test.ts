@@ -102,6 +102,7 @@ describe('storefront checkout freight quotes API', () => {
           channelId: 'channel-1',
           arrivalTime: '12-20',
           amountMinor: 409,
+          regularAmountMinor: 409,
           currency: 'USD',
           originCountry: 'CN',
           destinationCountry: 'PH',
@@ -111,6 +112,13 @@ describe('storefront checkout freight quotes API', () => {
       ],
       packages: [{ packageId: 'pkg_1', originCountry: 'CN', itemCount: 1 }],
       quotedAt: '2026-08-17T14:00:00.000Z',
+      freeShipping: {
+        thresholdAmountMinor: 1200,
+        subtotalAmountMinor: 1000,
+        amountRemainingMinor: 200,
+        eligible: false,
+        currency: 'USD',
+      },
     });
 
     const response = await POST(request('secret'));
@@ -121,6 +129,11 @@ describe('storefront checkout freight quotes API', () => {
       cjLogisticName: 'CJPacket Postal',
       optionId: 'option-1',
       amountMinor: 409,
+    });
+    expect(payload.freeShipping).toMatchObject({
+      thresholdAmountMinor: 1200,
+      amountRemainingMinor: 200,
+      eligible: false,
     });
     expect(mocks.quoteCheckoutFreight).toHaveBeenCalledWith(validBody);
   });

@@ -26,6 +26,10 @@ import createGovernedFetch from '@/modules/catalog/discovery/governed-fetch';
 import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
 import { CJ_BASE_URL, CjApiError } from '@/services/cj/config';
 import { classifyShippingTiers, type ShippingTier } from './shipping-tiers';
+import {
+  freeShippingProgress,
+  type FreeShippingProgress,
+} from './free-shipping';
 
 const QUOTE_TTL_MS = 15 * 60 * 1000;
 const CJ_REQUEST_TIMEOUT_MS = 8_000;
@@ -73,6 +77,12 @@ export const checkoutFreightQuoteRequestSchema = z.object({
     items: z.array(checkoutFreightCartLineSchema).min(1).max(50),
   }),
   address: checkoutFreightAddressSchema,
+  /**
+   * Cross-repository rollout guard. An older storefront omits this and keeps
+   * receiving paid Standard rows; only a storefront that can validate and send
+   * zero freight opts in.
+   */
+  capabilities: z.object({ freeStandardShipping: z.literal(true) }).optional(),
 });
 
 export type CheckoutFreightQuoteRequest = z.infer<
@@ -88,6 +98,8 @@ export type CheckoutFreightQuote = {
   channelId: string;
   arrivalTime: string;
   amountMinor: number;
+  /** CJ freight before Sals3 funds the Standard-delivery promotion. */
+  regularAmountMinor: number;
   currency: 'USD';
   originCountry: string;
   destinationCountry: string;
@@ -99,6 +111,7 @@ export type CheckoutFreightQuoteResult = {
   quotes: CheckoutFreightQuote[];
   packages: { packageId: string; originCountry: string; itemCount: number }[];
   quotedAt: string;
+  freeShipping?: FreeShippingProgress;
 };
 
 export type QuoteLine = {
@@ -915,7 +928,27 @@ export async function quoteCheckoutFreight(
       return classifyShippingTiers(usableQuotes);
     }),
   );
-  const quotes = quotesByPackage.flat();
+  const supportsFreeStandardShipping =
+    input.capabilities?.freeStandardShipping === true;
+  const subtotalAmountMinorBigInt = lines.reduce(
+    (total, line) => total + line.priceMinor * BigInt(line.quantity),
+    BigInt(0),
+  );
+  const subtotalAmountMinor =
+    subtotalAmountMinorBigInt > BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number.MAX_SAFE_INTEGER
+      : Number(subtotalAmountMinorBigInt);
+  const freeShipping = supportsFreeStandardShipping
+    ? freeShippingProgress(input.address.country, subtotalAmountMinor)
+    : undefined;
+  const quotes = quotesByPackage.flat().map((quote) => ({
+    ...quote,
+    regularAmountMinor: quote.amountMinor,
+    amountMinor:
+      quote.shippingTier === 'Standard' && freeShipping?.eligible === true
+        ? 0
+        : quote.amountMinor,
+  }));
 
   if (
     packages.some(
@@ -946,5 +979,6 @@ export async function quoteCheckoutFreight(
       itemCount: pkg.lines.reduce((total, line) => total + line.quantity, 0),
     })),
     quotedAt: quotedAt.toISOString(),
+    ...(freeShipping === undefined ? {} : { freeShipping }),
   };
 }

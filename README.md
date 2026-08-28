@@ -150,6 +150,28 @@ rows into at most three distinct services: cheapest Standard, midpoint-ranked
 Express, and fastest Expedited. Ecommerce always renders the three tier cards;
 tiers without a real service are disabled rather than fabricated.
 
+Portal also owns free-Standard eligibility from the same authoritative cart
+read: PH at US$12, AU at US$25, and FJ at US$55 of product subtotal. It applies
+the benefit only after tier classification, so Express and Expedited keep their
+full CJ quote. Every returned row carries `regularAmountMinor`; an eligible
+Standard row alone carries `amountMinor: 0`. The intent route re-quotes and
+matches that zero before payment, and the immutable freight snapshot keeps the
+regular supplier freight for cost audit. No extra CJ request is added.
+
+Set the thresholds only in Portal server environment (major USD amounts):
+
+```text
+SALS3_FREE_STANDARD_SHIPPING_PH_USD=12
+SALS3_FREE_STANDARD_SHIPPING_AU_USD=25
+SALS3_FREE_STANDARD_SHIPPING_FJ_USD=55
+```
+
+There is no code fallback. A missing, zero, negative, or malformed value fails
+the quote closed instead of silently granting the wrong benefit. New ecommerce
+requests opt in with `capabilities.freeStandardShipping: true`; older deployed
+storefront code omits the capability and keeps receiving paid Standard rows,
+so either repository can deploy first safely.
+
 **The accepted tier is persisted, and its DDL ships separately.**
 `fulfillment_groups.shipping_tier` is nullable `text` under a CHECK constraint
 limited to the three names — nullable because every order accepted before this
@@ -347,7 +369,7 @@ Redis, KV, or paid cache service is used for this path.
 | `/api/storefront/categories`                               | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `/api/storefront/categories/[slug]/products`               | Protected per-department browse for `sals3-ecommerce`'s `/c/[slug]` page: published products of one L1 department, with a card-price window, sort and pagination. `404` for a slug outside the 21-department allow-list.                                                                                                                                                                                                                                                                       |
 | `/api/storefront/search`                                   | Protected catalogue search for `sals3-ecommerce`'s `/search` page: substring match on published product titles, optionally narrowed to one department, with the same price window, sort and pagination as the browse route. A blank term is an empty result, not a `400`.                                                                                                                                                                                                                      |
-| `/api/storefront/checkout/freight-quotes`                  | Protected checkout freight quote endpoint for `sals3-ecommerce`: validates live published cart lines, resolves CJ origin/stock evidence through the governed supplier path, calls CJ `freightCalculateTip` per package, and returns available Standard/Express/Expedited assignments only                                                                                                                                                                                                      |
+| `/api/storefront/checkout/freight-quotes`                  | Protected checkout freight quote endpoint for `sals3-ecommerce`: validates live published cart lines, resolves CJ origin/stock evidence through the governed supplier path, calls CJ `freightCalculateTip` per package, returns available Standard/Express/Expedited assignments, and applies the PH/AU/FJ product-subtotal benefit to Standard only                                                                                                                                           |
 | `/api/storefront/checkout/intents`                         | Protected checkout intent endpoint for `sals3-ecommerce`: re-quotes and reclassifies freight, requires an exact package/tier/option/channel/amount/currency match, and persists the immutable tier plus exact CJ row before Stripe payment                                                                                                                                                                                                                                                     |
 | `/api/storefront/checkout/orders/accept`                   | Protected Stripe-webhook handoff endpoint for `sals3-ecommerce`: idempotently creates one paid Sals3 order per Stripe Checkout Session and enqueues `FULFILL_ORDER` supplier fulfillment work                                                                                                                                                                                                                                                                                                  |
 
