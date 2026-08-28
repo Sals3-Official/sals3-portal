@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
 import {
   CheckoutFreightQuoteError,
@@ -34,7 +34,7 @@ function offerRow(overrides: Partial<OfferRow> = {}): OfferRow {
     title: 'Jacket',
     productId: 'product-1',
     variantId: 'variant-1',
-    priceMinor: BigInt(1206),
+    priceMinor: BigInt(1000),
     connectionId: 'connection-1',
     externalProductId: 'cj-product-1',
     externalVariantId: 'cj-variant-1',
@@ -225,6 +225,7 @@ async function quoteForCountry(
   country: QuoteCountry,
   rowSets: OfferRow[][],
   freightResponse: unknown = successFreightResponse(country),
+  supportsFreeStandardShipping = false,
 ) {
   const freightBodies: unknown[] = [];
   const fetcher = vi.fn(
@@ -262,6 +263,9 @@ async function quoteForCountry(
         postalCode: fixture.postalCode,
         country,
       },
+      ...(supportsFreeStandardShipping
+        ? { capabilities: { freeStandardShipping: true as const } }
+        : {}),
     },
     {
       executor: executor as never,
@@ -276,6 +280,16 @@ async function quoteForCountry(
 }
 
 describe('quoteCheckoutFreight', () => {
+  beforeEach(() => {
+    vi.stubEnv('SALS3_FREE_STANDARD_SHIPPING_PH_USD', '12');
+    vi.stubEnv('SALS3_FREE_STANDARD_SHIPPING_AU_USD', '25');
+    vi.stubEnv('SALS3_FREE_STANDARD_SHIPPING_FJ_USD', '55');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('accepts Fiji freight quote requests without a postal code', () => {
     const parsed = checkoutFreightQuoteRequestSchema.safeParse({
       cart: { items: [{ productId: 'jacket', quantity: 1 }] },
@@ -386,6 +400,102 @@ describe('quoteCheckoutFreight', () => {
           province: 'Western Division',
         }),
       ],
+    });
+  });
+
+  it.each([
+    ['PH', 1200, 409],
+    ['AU', 2500, 1234],
+    ['FJ', 5500, 1601],
+  ] as const)(
+    'makes only Standard free when a %s cart reaches its threshold',
+    async (country, thresholdAmountMinor, regularAmountMinor) => {
+      const { result } = await quoteForCountry(
+        country,
+        [
+          [
+            offerRow({
+              marketCode: country,
+              priceMinor: BigInt(thresholdAmountMinor),
+            }),
+          ],
+        ],
+        undefined,
+        true,
+      );
+
+      expect(result.freeShipping).toEqual({
+        thresholdAmountMinor,
+        subtotalAmountMinor: thresholdAmountMinor,
+        amountRemainingMinor: 0,
+        eligible: true,
+        currency: 'USD',
+      });
+      expect(result.quotes[0]).toMatchObject({
+        shippingTier: 'Standard',
+        amountMinor: 0,
+        regularAmountMinor,
+      });
+    },
+  );
+
+  it('keeps faster tiers paid after Standard becomes free', async () => {
+    const { result } = await quoteForCountry(
+      'PH',
+      [[offerRow({ marketCode: 'PH', priceMinor: BigInt(1200) })]],
+      {
+        code: 200,
+        result: true,
+        data: [
+          {
+            arrivalTime: '12-20',
+            optionId: 'standard-option',
+            channelId: 'standard-channel',
+            totalPostageFee: 4.09,
+            ruleTips: [],
+            allRuleTips: [],
+            recommendLogisticsTypeList: [],
+          },
+          {
+            arrivalTime: '3-7',
+            optionId: 'expedited-option',
+            channelId: 'expedited-channel',
+            totalPostageFee: 10,
+            ruleTips: [],
+            allRuleTips: [],
+            recommendLogisticsTypeList: [],
+          },
+        ],
+      },
+      true,
+    );
+
+    expect(result.quotes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          shippingTier: 'Standard',
+          amountMinor: 0,
+          regularAmountMinor: 409,
+        }),
+        expect.objectContaining({
+          shippingTier: 'Expedited',
+          amountMinor: 1000,
+          regularAmountMinor: 1000,
+        }),
+      ]),
+    );
+  });
+
+  it('keeps Standard paid for a storefront that has not opted into zero freight', async () => {
+    const { result } = await quoteForCountry('PH', [
+      [offerRow({ marketCode: 'PH', priceMinor: BigInt(1200) })],
+    ]);
+
+    expect(result.freeShipping).toBeUndefined();
+    expect(result.quotes[0]).toMatchObject({
+      shippingTier: 'Standard',
+      amountMinor: 409,
+      regularAmountMinor: 409,
     });
   });
 

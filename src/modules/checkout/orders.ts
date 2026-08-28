@@ -131,10 +131,6 @@ export function validateSelection(
     throw new CheckoutOrderError('Choose a delivery option for every package.');
   }
 
-  if (selectionTotal(input) <= 0) {
-    throw new CheckoutOrderError('Choose a delivery option.');
-  }
-
   return selected;
 }
 

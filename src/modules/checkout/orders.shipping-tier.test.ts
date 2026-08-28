@@ -23,6 +23,7 @@ const quote: CheckoutFreightQuoteResult = {
       channelId: 'channel-1',
       arrivalTime: '12-20',
       amountMinor: 409,
+      regularAmountMinor: 409,
       currency: 'USD',
       originCountry: 'CN',
       destinationCountry: 'PH',
@@ -30,6 +31,13 @@ const quote: CheckoutFreightQuoteResult = {
       expiresAt: '2026-08-28T04:15:00.000Z',
     },
   ],
+  freeShipping: {
+    thresholdAmountMinor: 1200,
+    subtotalAmountMinor: 1000,
+    amountRemainingMinor: 200,
+    eligible: false,
+    currency: 'USD',
+  },
 };
 
 function input(
@@ -89,5 +97,24 @@ describe('validateSelection shipping tier', () => {
     expect(() => validateSelection(quote, duplicate)).toThrow(
       new CheckoutOrderError('Choose a delivery option for every package.'),
     );
+  });
+
+  it('accepts a zero-priced Standard selection earned by the cart', () => {
+    const freeQuote: CheckoutFreightQuoteResult = {
+      ...quote,
+      quotes: [{ ...quote.quotes[0]!, amountMinor: 0 }],
+      freeShipping: {
+        ...quote.freeShipping!,
+        subtotalAmountMinor: 1200,
+        amountRemainingMinor: 0,
+        eligible: true,
+      },
+    };
+    const freeInput = input('Standard');
+    freeInput.shippingSelection.packageSelections[0]!.amountMinor = 0;
+
+    expect(validateSelection(freeQuote, freeInput)).toMatchObject([
+      { shippingTier: 'Standard', amountMinor: 0 },
+    ]);
   });
 });
