@@ -63,6 +63,12 @@ export default async function FundingBufferSection({
           when you publish, and the approximate local price buyers see on the
           storefront. One buffer is active at a time.
         </p>
+        <p className="max-w-[78ch] text-sm text-muted-foreground">
+          Saving a new buffer updates the approximate local price straight away,
+          but not what anyone is charged: published prices keep the buffer they
+          were worked out with until you run{' '}
+          <span className="font-medium">Apply rules to live prices</span> below.
+        </p>
       </div>
       {result.ok ? (
         <FundingBufferCard

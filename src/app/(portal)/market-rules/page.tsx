@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import PageHeader from '@/components/portal/PageHeader';
 import MarketRolesExplainerPanel from '@/components/seller-center/market-rules/MarketRolesExplainerPanel';
 import CategoryPricingSection from '@/components/seller-center/market-rules/pricing/CategoryPricingSection';
+import RepriceSection from '@/components/seller-center/market-rules/pricing/RepriceSection';
 import FundingBufferSection from '@/components/seller-center/market-rules/pricing/FundingBufferSection';
 import PricingSectionFallback from '@/components/seller-center/market-rules/pricing/PricingSectionFallback';
 import StoreDefaultSection from '@/components/seller-center/market-rules/pricing/StoreDefaultSection';
@@ -141,6 +142,11 @@ export default async function MarketRulesPage() {
               canManage={canManagePricing}
             />
           </Suspense>
+          {/*
+            Last, because it applies every rule above it rather than belonging
+            to any one of them. No Suspense: it reads nothing.
+          */}
+          <RepriceSection canManage={canManagePricing} />
         </>
       ) : null}
     </div>

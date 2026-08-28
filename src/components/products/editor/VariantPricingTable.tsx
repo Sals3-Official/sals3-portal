@@ -120,7 +120,7 @@ export function PricingWorkingLines({
 }
 
 /**
- * The working behind one price, on hover and on keyboard focus.
+ * The working behind the column's prices, on hover and on keyboard focus.
  *
  * "From 33.33% markup" is a claim a seller cannot check: multiplying their
  * supplier cost by 1.3333 does not reproduce the price, because the funding
@@ -129,9 +129,20 @@ export function PricingWorkingLines({
  * of a figure that will not reconcile — so the screen shows the arithmetic
  * instead of asserting the result.
  *
- * Every line is a real value from the resolver's own decision, never recomputed
- * here. A second implementation of this sum is how an explainer starts
- * disagreeing with the price above it.
+ * ## Once, in the header — not once per row
+ *
+ * It shipped on every row. On a product whose variants differ only by colour and
+ * size the sum is identical in all of them, so a ten-variant table carried ten
+ * copies of one explanation and the column read as noisier than it is. The
+ * owner asked for it beside the words `Retail price`, which is also where a
+ * reader looks when they doubt a *column* rather than a cell.
+ *
+ * `variants` is the listed set, so the tooltip describes what is actually on
+ * screen: when they share one working it shows the amounts, and when they do
+ * not it shows the rule without pretending one variant's numbers speak for the
+ * rest. Never recomputed here — every line is a real value from the resolver's
+ * own decision, because a second implementation of this sum is how an explainer
+ * starts disagreeing with the price above it.
  */
 function PricingWorking({
   guidance,
@@ -160,6 +171,68 @@ function PricingWorking({
       </TooltipContent>
     </Tooltip>
   );
+}
+
+/**
+ * The one working the whole column shares, or nothing.
+ *
+ * Renders only when every listed variant resolves to the *same* sum. That is
+ * the ordinary case — variants of one product differ by colour and size, not by
+ * supplier cost — and it is the only case where a single set of amounts is true
+ * of every row beneath it. When costs genuinely differ, showing one variant's
+ * arithmetic in the header would state a number that is wrong for most of the
+ * table, so this renders nothing and each row's `From … markup` line carries
+ * the rule on its own.
+ *
+ * Keyed on the amounts rather than the variant id: two variants with the same
+ * cost produce the same working, and that is what the reader is being shown.
+ */
+function sharedWorking(
+  variants: readonly VariantFixture[],
+  guidanceByVariantId: ReadonlyMap<string, VariantPricingGuidance>,
+): { guidance: VariantPricingGuidance; supplierCost: MoneyValue } | null {
+  const listed = variants.filter((variant) => variant.enabled);
+
+  if (listed.length === 0) return null;
+
+  const first = listed[0];
+
+  if (first === undefined) return null;
+
+  const firstGuidance = guidanceByVariantId.get(first.id);
+
+  if (
+    firstGuidance === undefined ||
+    firstGuidance.suggestedPrice === null ||
+    first.retailPriceIsSellerSet === true
+  ) {
+    return null;
+  }
+
+  const signature = (variant: VariantFixture) => {
+    const guidance = guidanceByVariantId.get(variant.id);
+
+    return guidance === undefined || variant.retailPriceIsSellerSet === true
+      ? null
+      : JSON.stringify([
+          variant.supplierCost.amountMinor,
+          variant.supplierCost.currency,
+          guidance.effectiveCost?.amountMinor ?? null,
+          guidance.suggestedPrice?.amountMinor ?? null,
+          guidance.marginPercent,
+          guidance.markupPercent,
+          guidance.fundingBufferPercent,
+          guidance.contributionFloorApplied,
+        ]);
+  };
+
+  const expected = signature(first);
+
+  if (expected === null) return null;
+
+  return listed.every((variant) => signature(variant) === expected)
+    ? { guidance: firstGuidance, supplierCost: first.supplierCost }
+    : null;
 }
 
 /**
@@ -227,15 +300,16 @@ function PricingRuleNote({
       ? 'your margin rules'
       : `${guidance.markupPercent}% markup`;
 
+  /*
+    No explainer here any more: it is one per column, in the header. Ten rows
+    of one product carried ten copies of the same sum.
+  */
   return (
-    <span className="flex items-center gap-1 text-xs text-muted-foreground">
-      <span>
-        From {rule}
-        {guidance.sourceCategoryPath === null
-          ? ''
-          : ` on ${guidance.sourceCategoryPath}`}
-      </span>
-      <PricingWorking guidance={guidance} supplierCost={supplierCost} />
+    <span className="text-xs text-muted-foreground">
+      From {rule}
+      {guidance.sourceCategoryPath === null
+        ? ''
+        : ` on ${guidance.sourceCategoryPath}`}
     </span>
   );
 }
@@ -532,6 +606,8 @@ export default function VariantPricingTable({
    */
   const axes = resolveVariantAxisColumns(variants);
   const columns = buildColumns(axes === null ? null : axes.names);
+  /** One working for the whole Retail price column, or none. */
+  const working = sharedWorking(variants, guidanceByVariantId);
   /**
    * Merging is only meaningful past one axis: with a single axis every value
    * has exactly one variant, so every group would be one row.
@@ -612,6 +688,20 @@ export default function VariantPricingTable({
                     </span>
                   ) : null}
                   {column.label}
+                  {/*
+                    The working sits beside the column it explains, once. It
+                    renders only when every listed variant shares one sum -- see
+                    `sharedWorking` for why one variant's arithmetic must not
+                    stand in for a table whose costs differ.
+                  */}
+                  {column.label === 'Retail price' && working !== null ? (
+                    <span className="ml-1.5 inline-flex align-middle">
+                      <PricingWorking
+                        guidance={working.guidance}
+                        supplierCost={working.supplierCost}
+                      />
+                    </span>
+                  ) : null}
                 </TableHead>
               ))}
               <TableHead scope="col">
