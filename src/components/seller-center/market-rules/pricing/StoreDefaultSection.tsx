@@ -109,8 +109,8 @@ export default async function StoreDefaultSection({
             Store default pricing
           </h2>
           <p className="max-w-[78ch] text-sm text-muted-foreground">
-            The system starts with the supplier cost and adds your margin. Every
-            category with no margin of its own uses the base margin here. The
+            The system starts with the supplier cost and adds your markup. Every
+            category with no markup of its own uses the base markup here. The
             minimum is what you will never price below — your operating expenses
             — as a percentage or a fixed amount, one or the other.
           </p>
@@ -127,11 +127,11 @@ export default async function StoreDefaultSection({
         <>
           {missing.length > 0 ? (
             <DisclosureBanner tone="warning">
-              No base margin yet for{' '}
+              No base markup yet for{' '}
               {missing.map((scope) => scope.label).join(', ')}. A category with
-              no margin of its own cannot price at all in those scopes — its
+              no markup of its own cannot price at all in those scopes — its
               products need a manual retail price until a default or a parent
-              margin covers them.
+              markup covers them.
             </DisclosureBanner>
           ) : null}
           <StoreDefaultsTable

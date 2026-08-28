@@ -7,12 +7,19 @@ import {
 } from '@/modules/pricing/repository';
 import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations';
 import DisclosureBanner from '@/components/seller-center/shared/DisclosureBanner';
+import { Info } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import CategoryMarginTree from './CategoryMarginTree';
 import MarginCsvControls from './MarginCsvControls';
 import type {
   CategoryMarginNodeViewModel,
   StoreDefaultSummary,
 } from './category-margin-model';
+import RepriceControls from './RepriceControls';
 
 type CategoryPricingSectionProps = {
   sellerAccountId: string;
@@ -201,24 +208,56 @@ export default async function CategoryPricingSection({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 id="category-pricing-heading" className="text-base font-semibold">
-            Category margins
+            Category markups
           </h2>
           <p className="max-w-[78ch] text-sm text-muted-foreground">
             One column per destination, plus Global for every country without a
-            column of its own. A category without its own margin in a column
-            uses the nearest parent above it. Set a margin only where a
+            column of its own. A category without its own markup in a column
+            uses the nearest parent above it. Set a markup only where a
             department genuinely differs; a product can still override it in the
             Product Editor.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {/*
-            Repricing used to sit here, on the reading that it and the sheet are
-            two halves of one job. It is not category-scoped: `planReprice`
-            takes a seller and reads every pricing rule, the funding buffer
-            included, so it now has its own section after all of them. See
-            `RepriceSection`.
+            Back beside the margins, at the owner's ask, but never without the
+            tooltip: `planReprice` takes a **seller**, not a category, and reads
+            every pricing rule on this page — the store default, these margins,
+            product and variant overrides, and the funding buffer. Sitting in
+            this header implies a scope it does not have, so the icon is what
+            keeps the placement honest. Do not ship one without the other.
           */}
+          <RepriceControls canManage={canManage} />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="What repricing covers"
+                  className="inline-flex text-muted-foreground hover:text-foreground"
+                >
+                  <Info aria-hidden="true" className="size-3.5" />
+                </button>
+              }
+            />
+            <TooltipContent className="max-w-xs">
+              <span className="flex flex-col gap-1.5">
+                <span className="font-medium">Apply rules to live prices</span>
+                <span>
+                  A published price is worked out once, when the product goes
+                  live, so a rule saved here changes nothing a buyer is charged
+                  until you reprice.
+                </span>
+                <span>
+                  It covers every rule on this page — store defaults, these
+                  category markups, and the funding buffer — not just the
+                  category you last edited. You see exactly what would change
+                  before anything is written, and prices you typed by hand are
+                  never touched unless you ask for them.
+                </span>
+              </span>
+            </TooltipContent>
+          </Tooltip>
           {categoryData === null ? null : (
             <MarginCsvControls
               nodes={toNodeViewModels(
@@ -241,9 +280,9 @@ export default async function CategoryPricingSection({
           {storeDefaultResult.state === 'unavailable' ? (
             <DisclosureBanner tone="warning">
               Your store defaults could not be read, so the inherited rates
-              below are incomplete — a category with no margin of its own may
+              below are incomplete — a category with no markup of its own may
               still be covered by a default this page cannot see right now.
-              Margins set on a category are unaffected.
+              Markups set on a category are unaffected.
             </DisclosureBanner>
           ) : null}
           {storeDefaultResult.state === 'ok' &&
@@ -253,7 +292,7 @@ export default async function CategoryPricingSection({
               {scopesWithoutDefault.map((scope) => scope.label).join(', ')}, so
               a category shown as &quot;—&quot; in those columns cannot price at
               all — its products need a manual retail price until a default or a
-              parent margin covers them.
+              parent markup covers them.
             </DisclosureBanner>
           ) : null}
           <CategoryMarginTree

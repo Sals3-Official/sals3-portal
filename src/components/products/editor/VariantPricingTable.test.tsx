@@ -356,12 +356,17 @@ describe('the rule behind the price', () => {
     expect(screen.getByText('$5.80')).toBeInTheDocument();
     expect(screen.getByText('+ 1.5% funding buffer')).toBeInTheDocument();
     expect(screen.getByText('$5.89')).toBeInTheDocument();
-    expect(screen.getByText('÷ 0.75 (25% margin)')).toBeInTheDocument();
+    /*
+      Markup, in the same unit the seller typed into Market Rules and the import
+      sheet. It read `÷ 0.75 (25% margin)` with a paragraph underneath deriving
+      one unit from the other — an explanation that only existed because the
+      screens disagreed. They no longer do, so it is noise: owner report
+      2026-08-29, on a tooltip explaining 66.67% to somebody who had entered 200.
+    */
+    expect(screen.getByText('× 1.33 (33.33% markup)')).toBeInTheDocument();
     expect(screen.getByText('$7.85')).toBeInTheDocument();
-    // The answer to the question that prompted the whole control.
-    expect(
-      screen.getByText(/the cost is the other 75% — and 25 ÷ 75 = 33.33%/),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/is the same as/)).toBeNull();
+    expect(screen.queryByText(/% margin/)).toBeNull();
   });
 
   it('names the rounding step only when rounding moved the number', () => {
