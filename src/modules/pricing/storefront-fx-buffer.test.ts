@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { QueryBuilder } from 'drizzle-orm/pg-core';
+import { pricingFxAdjustmentPolicies } from '@/lib/db/schema';
 import type { Executor } from '@/modules/catalog/candidates/repository';
-import resolveStorefrontFxBuffer from './storefront-fx-buffer';
+import resolveStorefrontFxBuffer, {
+  stillInEffect,
+} from './storefront-fx-buffer';
 
 /**
  * The query is built with `selectDistinct(...).from(...).innerJoin(...).where(...)`,
@@ -95,5 +99,30 @@ describe('resolveStorefrontFxBuffer', () => {
 
     expect(where).toHaveBeenCalledOnce();
     expect(result).toEqual({ outcome: 'NONE' });
+  });
+});
+
+describe('stillInEffect', () => {
+  it('binds the instant through the column mapper, not as a raw Date', () => {
+    const now = new Date('2026-08-28T13:21:28.000Z');
+
+    const built = new QueryBuilder()
+      .select({ id: pricingFxAdjustmentPolicies.id })
+      .from(pricingFxAdjustmentPolicies)
+      .where(stillInEffect(now))
+      .toSQL();
+
+    /*
+      The first version wrapped `now` in a `sql` template, which has no column
+      context -- so the value skipped `PgTimestamp.mapToDriverValue` and reached
+      the driver as a raw Date, and the query failed outright. The endpoint
+      answered 503 on every call in production with the whole unit suite green,
+      because a stubbed executor never reaches a driver and CI has no Postgres.
+
+      Asserting the bound *type* is what makes that catchable without a
+      database: mapped is a string, unmapped is a Date.
+    */
+    expect(typeof built.params[0]).toBe('string');
+    expect(built.params[0]).toBe('2026-08-28T13:21:28.000Z');
   });
 });

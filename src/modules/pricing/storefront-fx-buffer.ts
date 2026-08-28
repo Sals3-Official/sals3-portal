@@ -1,4 +1,4 @@
-import { and, eq, isNull, or, gt, sql } from 'drizzle-orm';
+import { and, eq, isNull, or, gt } from 'drizzle-orm';
 import type { Executor } from '@/modules/catalog/candidates/repository';
 import { pricingFxAdjustmentPolicies, productOffers } from '@/lib/db/schema';
 
@@ -92,6 +92,32 @@ function toBufferPercent(adjustmentRate: string): number | null {
 }
 
 /**
+ * The "not expired yet" half of the WHERE clause.
+ *
+ * Its own exported function so a test can inspect what this binds without a
+ * database, which is the only way the defect below is catchable here: CI has
+ * no Postgres, and a stubbed executor never reaches a driver.
+ *
+ * `now` goes straight to `gt`, never through a `sql` template. Measured
+ * difference, from the two forms' own `toSQL()`:
+ *
+ * - `gt(column, now)`        binds `"2026-08-28T13:21:28.000Z"` — a **string**
+ * - `gt(column, sql`${now}`)` binds a raw **Date**
+ *
+ * A `sql` template has no column context, so the value never passes through
+ * `PgTimestamp.mapToDriverValue` and reaches the driver unmapped. The query
+ * then fails outright. This shipped, and the endpoint answered 503 on every
+ * call in production while the whole unit suite stayed green — a stubbed
+ * executor never reaches a driver, and CI has no Postgres to catch it.
+ */
+export function stillInEffect(now: Date) {
+  return or(
+    isNull(pricingFxAdjustmentPolicies.effectiveTo),
+    gt(pricingFxAdjustmentPolicies.effectiveTo, now),
+  );
+}
+
+/**
  * The active funding buffer behind every published offer, or a reason there
  * isn't one.
  *
@@ -121,10 +147,7 @@ export default async function resolveStorefrontFxBuffer(
       and(
         eq(pricingFxAdjustmentPolicies.status, 'ACTIVE'),
         eq(productOffers.publishState, 'PUBLISHED'),
-        or(
-          isNull(pricingFxAdjustmentPolicies.effectiveTo),
-          gt(pricingFxAdjustmentPolicies.effectiveTo, sql`${now}`),
-        ),
+        stillInEffect(now),
       ),
     );
 
