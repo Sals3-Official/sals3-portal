@@ -29,18 +29,38 @@ import { classifyShippingTiers, type ShippingTier } from './shipping-tiers';
 
 const QUOTE_TTL_MS = 15 * 60 * 1000;
 const CJ_REQUEST_TIMEOUT_MS = 8_000;
+const CHECKOUT_FREIGHT_COUNTRIES = ['AU', 'PH', 'FJ'] as const;
+const OPTIONAL_POSTAL_CODE_COUNTRIES = ['FJ'] as const;
 
-export const checkoutFreightAddressSchema = z.object({
-  email: z.string().trim().email().max(254),
-  fullName: z.string().trim().min(2).max(120),
-  phone: z.string().trim().max(40).optional(),
-  addressLine1: z.string().trim().min(4).max(120),
-  addressLine2: z.string().trim().max(120).optional(),
-  city: z.string().trim().min(2).max(80),
-  region: z.string().trim().min(2).max(80),
-  postalCode: z.string().trim().min(3).max(20),
-  country: z.enum(['AU', 'PH']),
-});
+type CheckoutFreightCountry = (typeof CHECKOUT_FREIGHT_COUNTRIES)[number];
+
+function requiresPostalCode(country: CheckoutFreightCountry): boolean {
+  return !(
+    OPTIONAL_POSTAL_CODE_COUNTRIES as readonly CheckoutFreightCountry[]
+  ).includes(country);
+}
+
+export const checkoutFreightAddressSchema = z
+  .object({
+    email: z.string().trim().email().max(254),
+    fullName: z.string().trim().min(2).max(120),
+    phone: z.string().trim().max(40).optional(),
+    addressLine1: z.string().trim().min(4).max(120),
+    addressLine2: z.string().trim().max(120).optional(),
+    city: z.string().trim().min(2).max(80),
+    region: z.string().trim().min(2).max(80),
+    postalCode: z.string().trim().max(20),
+    country: z.enum(CHECKOUT_FREIGHT_COUNTRIES),
+  })
+  .superRefine((address, context) => {
+    if (requiresPostalCode(address.country) && address.postalCode.length < 3) {
+      context.addIssue({
+        code: 'custom',
+        path: ['postalCode'],
+        message: 'Enter a postal code.',
+      });
+    }
+  });
 
 export const checkoutFreightCartLineSchema = z.object({
   productId: z.string().min(1).max(160),

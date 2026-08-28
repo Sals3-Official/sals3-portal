@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
 import {
   CheckoutFreightQuoteError,
+  checkoutFreightQuoteRequestSchema,
   quoteCheckoutFreight,
 } from './freight-quotes';
 
@@ -149,16 +150,61 @@ function cjInventory() {
   };
 }
 
-function successFreightResponse(destination: 'AU' | 'PH') {
+type QuoteCountry = 'AU' | 'PH' | 'FJ';
+
+const FREIGHT_FIXTURES: Record<
+  QuoteCountry,
+  {
+    arrivalTime: string;
+    totalPostageFee: number;
+    phone: string;
+    addressLine1: string;
+    city: string;
+    region: string;
+    postalCode: string;
+  }
+> = {
+  AU: {
+    arrivalTime: '8-15',
+    totalPostageFee: 12.34,
+    phone: '+61 412 345 678',
+    addressLine1: '1 Martin Place',
+    city: 'Sydney',
+    region: 'NSW',
+    postalCode: '2000',
+  },
+  PH: {
+    arrivalTime: '12-20',
+    totalPostageFee: 4.09,
+    phone: '09171234567',
+    addressLine1: '123 Main Street',
+    city: 'Manila',
+    region: 'Metro Manila',
+    postalCode: '1000',
+  },
+  FJ: {
+    arrivalTime: '12-20',
+    totalPostageFee: 16.01,
+    phone: '+6793212345',
+    addressLine1: '14 Queens Road',
+    city: 'Nadi',
+    region: 'Western Division',
+    postalCode: '',
+  },
+};
+
+function successFreightResponse(destination: QuoteCountry) {
+  const fixture = FREIGHT_FIXTURES[destination];
+
   return {
     code: 200,
     result: true,
     data: [
       {
-        arrivalTime: destination === 'AU' ? '8-15' : '12-20',
+        arrivalTime: fixture.arrivalTime,
         optionId: `option-${destination.toLowerCase()}`,
         channelId: `channel-${destination.toLowerCase()}`,
-        totalPostageFee: destination === 'AU' ? 12.34 : 4.09,
+        totalPostageFee: fixture.totalPostageFee,
         option: {
           enName: `CJPacket ${destination}`,
           id: `option-${destination.toLowerCase()}`,
@@ -176,7 +222,7 @@ function successFreightResponse(destination: 'AU' | 'PH') {
 }
 
 async function quoteForCountry(
-  country: 'AU' | 'PH',
+  country: QuoteCountry,
   rowSets: OfferRow[][],
   freightResponse: unknown = successFreightResponse(country),
 ) {
@@ -201,18 +247,19 @@ async function quoteForCountry(
     },
   );
   const { executor } = executorReturningSequence(rowSets);
+  const fixture = FREIGHT_FIXTURES[country];
   const result = await quoteCheckoutFreight(
     {
       cart: { items: [{ productId: 'jacket', quantity: 1 }] },
       address: {
         email: 'buyer@example.com',
         fullName: 'Buyer Example',
-        phone: country === 'AU' ? '+61 412 345 678' : '09171234567',
-        addressLine1: country === 'AU' ? '1 Martin Place' : '123 Main Street',
+        phone: fixture.phone,
+        addressLine1: fixture.addressLine1,
         addressLine2: '',
-        city: country === 'AU' ? 'Sydney' : 'Manila',
-        region: country === 'AU' ? 'NSW' : 'Metro Manila',
-        postalCode: country === 'AU' ? '2000' : '1000',
+        city: fixture.city,
+        region: fixture.region,
+        postalCode: fixture.postalCode,
         country,
       },
     },
@@ -229,6 +276,52 @@ async function quoteForCountry(
 }
 
 describe('quoteCheckoutFreight', () => {
+  it('accepts Fiji freight quote requests without a postal code', () => {
+    const parsed = checkoutFreightQuoteRequestSchema.safeParse({
+      cart: { items: [{ productId: 'jacket', quantity: 1 }] },
+      address: {
+        email: 'buyer@example.com',
+        fullName: 'Buyer Example',
+        phone: '+6793212345',
+        addressLine1: '14 Queens Road',
+        addressLine2: '',
+        city: 'Nadi',
+        region: 'Western Division',
+        postalCode: '',
+        country: 'FJ',
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('keeps postal codes required for Australia and the Philippines', () => {
+    ['AU', 'PH'].forEach((country) => {
+      const parsed = checkoutFreightQuoteRequestSchema.safeParse({
+        cart: { items: [{ productId: 'jacket', quantity: 1 }] },
+        address: {
+          email: 'buyer@example.com',
+          fullName: 'Buyer Example',
+          phone: '',
+          addressLine1: '1 Main Street',
+          addressLine2: '',
+          city: 'Sydney',
+          region: 'NSW',
+          postalCode: '',
+          country,
+        },
+      });
+
+      expect(parsed.success).toBe(false);
+      expect(parsed.error?.issues).toContainEqual(
+        expect.objectContaining({
+          path: ['address', 'postalCode'],
+          message: 'Enter a postal code.',
+        }),
+      );
+    });
+  });
+
   it('quotes an Australia address through the legacy provider-reference fallback', async () => {
     const { result, freightBodies } = await quoteForCountry('AU', [
       [],
@@ -268,6 +361,29 @@ describe('quoteCheckoutFreight', () => {
         expect.objectContaining({
           destAreaCode: 'PH',
           zip: '1000',
+        }),
+      ],
+    });
+  });
+
+  it('quotes a Fiji address through the same CJ freightCalculateTip path', async () => {
+    const { result, freightBodies } = await quoteForCountry('FJ', [
+      [],
+      [offerRow({ marketCode: 'AU' })],
+    ]);
+
+    expect(result.quotes[0]).toMatchObject({
+      destinationCountry: 'FJ',
+      cjLogisticName: 'CJPacket FJ',
+      amountMinor: 1601,
+    });
+    expect(freightBodies[0]).toMatchObject({
+      reqDTOS: [
+        expect.objectContaining({
+          destAreaCode: 'FJ',
+          zip: '',
+          city: 'Nadi',
+          province: 'Western Division',
         }),
       ],
     });
