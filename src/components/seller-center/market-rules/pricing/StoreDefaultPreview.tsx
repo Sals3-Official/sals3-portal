@@ -182,18 +182,27 @@ export function buildMarginFloorPreviewRows(
     floorPercent.trim() === '' ||
     !Number.isFinite(floor) ||
     floor <= 0 ||
-    floor >= 100
+    floor > MAX_MARKUP_PERCENT
   ) {
     return null;
   }
 
-  // Three category margins spanning the floor: clearly under, at it, clearly
-  // over. Round numbers derived from the floor itself, so the table stays
-  // meaningful whatever the seller types.
+  /*
+    Markup, like every other number on this screen.
+
+    Comparing markups gives the same answer as comparing the margins they
+    convert to — `k / (100 + k)` is strictly increasing — so the table decides
+    exactly what the resolver decides, while showing the seller the unit they
+    typed. Two units on one dialog is what made this unreadable.
+
+    Three sample markups spanning the floor: clearly under, at it, clearly over.
+    Derived from the floor itself, so the table stays meaningful whatever is
+    typed.
+  */
   const samples = [
     Math.max(1, Math.round(floor / 2)),
     Math.round(floor),
-    Math.min(99, Math.round(floor * 2)),
+    Math.min(MAX_MARKUP_PERCENT, Math.round(floor * 2)),
   ];
 
   return samples.map((categoryPercent) => ({

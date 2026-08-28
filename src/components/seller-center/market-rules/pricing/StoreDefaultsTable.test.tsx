@@ -152,7 +152,7 @@ describe('the minimum is one choice, not two fields', () => {
   it('disables the amount once a percentage is typed', () => {
     openFiji();
 
-    fireEvent.change(screen.getByLabelText('Minimum margin percent for Fiji'), {
+    fireEvent.change(screen.getByLabelText('Minimum markup percent for Fiji'), {
       target: { value: '18' },
     });
 
@@ -172,7 +172,7 @@ describe('the minimum is one choice, not two fields', () => {
     );
 
     expect(
-      screen.getByLabelText('Minimum margin percent for Fiji'),
+      screen.getByLabelText('Minimum markup percent for Fiji'),
     ).toBeDisabled();
   });
 
@@ -184,7 +184,7 @@ describe('the minimum is one choice, not two fields', () => {
     fireEvent.change(screen.getByLabelText('Base markup percent for Fiji'), {
       target: { value: '25' },
     });
-    fireEvent.change(screen.getByLabelText('Minimum margin percent for Fiji'), {
+    fireEvent.change(screen.getByLabelText('Minimum markup percent for Fiji'), {
       target: { value: '18' },
     });
     fireEvent.change(screen.getByLabelText('Reason for change to Fiji'), {
@@ -200,7 +200,9 @@ describe('the minimum is one choice, not two fields', () => {
         // floor — `0` for the amount column, `null` for the rate column. Sending
         // both would be refused by the database constraint.
         minContribution: '0',
-        minContributionRate: '0.18',
+        // 18 is a markup now, like the field above it, so the stored
+        // margin rate is 18/118.
+        minContributionRate: '0.152542',
         roundingRule: 'NONE',
         marketCode: 'FJ',
         reason: 'Fiji freight is four times the PH lane.',
@@ -256,7 +258,16 @@ describe('Global writes the null market code, never its column key', () => {
    * The hint restates the entry in the other unit, live, which is cheaper than
    * a paragraph nobody reads.
    */
-  describe('the reserve says what its percentage is of', () => {
+  /**
+   * The reserve used to be a share of the selling price while the field above
+   * it was a share of the cost. Two bases on one dialog, nothing saying which
+   * was which — so `50` got typed where `33.33` was meant, and the owner read
+   * the whole screen as unintelligible.
+   *
+   * Both are markups now. The bridge hint that translated between them is gone
+   * with the gap it was bridging.
+   */
+  describe('one unit on the whole dialog', () => {
     async function openAustralia() {
       render(
         <StoreDefaultsTable scopes={SCOPES} storeDefaults={{}} canManage />,
@@ -265,38 +276,32 @@ describe('Global writes the null market code, never its column key', () => {
         screen.getByRole('button', { name: 'Set store default for Australia' }),
       );
 
-      return screen.findByLabelText(/Minimum margin percent for Australia/);
+      return screen.findByLabelText(/Minimum markup percent for Australia/);
     }
 
-    it('names the base on the label', async () => {
+    it('labels the reserve as a markup, like the field above it', async () => {
       await openAustralia();
 
-      expect(
-        screen.getByText('As a share of the selling price'),
-      ).toBeInTheDocument();
+      expect(screen.getByText('As a markup')).toBeInTheDocument();
+      expect(screen.queryByText(/share of the selling price/)).toBeNull();
     });
 
-    it('restates the entry as a share of cost', async () => {
+    it('no longer translates between units, because there is one', async () => {
       const field = await openAustralia();
 
-      fireEvent.change(field, { target: { value: '33.33' } });
+      fireEvent.change(field, { target: { value: '50' } });
 
-      // 33.33% of the price is ~50% over cost; a US$1.00 cost floors at US$1.50.
-      expect(screen.getByText(/49\.99% over cost/)).toBeInTheDocument();
-      expect(
-        screen.getByText(/never sells below US\$1\.50/),
-      ).toBeInTheDocument();
+      // The hint read "Same as N% over cost — …". It has no job now.
+      expect(screen.queryByText(/Same as .* over cost/)).toBeNull();
     });
 
-    it('says nothing while the number is half typed', async () => {
-      // A hint that changes under the caret is worse than no hint.
+    it('accepts a markup past 100, which the old margin field refused', async () => {
+      // 150% is an ordinary markup and was previously impossible to enter here.
       const field = await openAustralia();
 
-      fireEvent.change(field, { target: { value: '' } });
+      fireEvent.change(field, { target: { value: '150' } });
 
-      // Not /over cost/ alone: the `Base markup over cost` label above it
-      // matches that too, and the assertion would pass for the wrong reason.
-      expect(screen.queryByText(/% over cost/)).toBeNull();
+      expect(field).toHaveValue(150);
     });
   });
 });
