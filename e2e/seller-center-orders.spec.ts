@@ -11,10 +11,12 @@ import { expect, test, type Page } from '@playwright/test';
  * `lib/seller-center/mock-data/orders.ts`, which is gone — the screen now
  * reads `sals3_orders` / `sals3_order_lines` / `fulfillment_groups`.
  *
- * **The Playwright database has no order tables.** They arrive through a
- * break-glass migration run rather than a deploy, and the standing rule is
- * never to migrate a local database, so `/orders` here renders its
- * not-migrated notice. Tests that need parcels therefore cannot run, and the
+ * **No environment this suite runs in can show a parcel.** On a developer's
+ * machine the database has no order tables — they arrive through a break-glass
+ * migration run rather than a deploy, and the standing rule is never to migrate
+ * a local database. In CI it is starker still: the Verify workflow sets no
+ * `DATABASE_URL` at all, so the page renders its "no database configured"
+ * notice. Tests that need parcels therefore cannot run anywhere today, and the
  * coverage they gave — lane counts, chip filters, the two money rails, the
  * blocked-action reasons — is genuinely lost until this suite has a database
  * with those tables and a seeded order.
@@ -31,12 +33,27 @@ import { expect, test, type Page } from '@playwright/test';
  * bypass session's seller account.
  */
 
+const NO_DATABASE = 'No database configured in this environment';
 const NOT_MIGRATED = 'The order tables are not in this database yet';
 
-type OrdersState = 'not-migrated' | 'empty' | 'parcels';
+type OrdersState = 'no-database' | 'not-migrated' | 'empty' | 'parcels';
 
 /**
- * Which of the three legible states this environment is showing.
+ * Which of the four legible states this environment is showing.
+ *
+ * **Four, not three.** The first version of this helper modelled only
+ * `not-migrated`, `empty` and `parcels`, and CI has none of them: the Verify
+ * workflow runs with no `DATABASE_URL` at all — no postgres service, no env
+ * block — so the page renders its "no database configured" notice, which the
+ * helper silently classified as `empty`. Two tests then asserted copy that
+ * state never shows. Green here, red in CI, and the spec's own header warned
+ * against exactly this.
+ *
+ * The lesson is narrower than "add a state": a helper that classifies by
+ * elimination will misfile every state it has not been told about, and the
+ * misfiling is silent. Each state is now matched by its own marker, and
+ * `empty` is the only fallthrough because it is the only one defined by the
+ * absence of everything else.
  *
  * Waits for the heading before reading anything. `isVisible()` does not
  * auto-wait, so probing straight after `goto` is a race — and it lost exactly
@@ -46,9 +63,21 @@ type OrdersState = 'not-migrated' | 'empty' | 'parcels';
 async function readOrdersState(page: Page): Promise<OrdersState> {
   await expect(page.getByRole('heading', { name: 'Orders' })).toBeVisible();
 
+  if ((await page.getByText(NO_DATABASE).count()) > 0) return 'no-database';
   if ((await page.getByText(NOT_MIGRATED).count()) > 0) return 'not-migrated';
 
   return (await page.getByRole('article').count()) > 0 ? 'parcels' : 'empty';
+}
+
+/**
+ * Whether the workspace and its side panels rendered at all.
+ *
+ * `no-database` and `not-migrated` both replace the whole page with a notice,
+ * so anything asserting a control, a chip or a panel has to gate on this
+ * rather than on one of the two states by name.
+ */
+function rendersList(state: OrdersState): boolean {
+  return state === 'parcels' || state === 'empty';
 }
 
 test.describe('Seller Center orders', () => {
@@ -72,21 +101,29 @@ test.describe('Seller Center orders', () => {
   });
 
   /**
-   * A migration gap must not read as "you have made no sales".
+   * Whatever state this is, the page must say which one, and none of the three
+   * "no rows" states may read as "you have made no sales".
    *
-   * Those two states look identical on a screen that only knows how to render
-   * emptiness, and only one of them should send somebody looking for lost
-   * orders. The copy is asserted because it is the whole point of the check.
+   * They render almost identically on a screen that only knows how to show
+   * emptiness, and only one of them means the seller genuinely has no orders.
+   * The other two mean *we cannot tell you* — a missing database, or tables the
+   * break-glass run has not created — and reading either as an empty order book
+   * is what sends somebody hunting for sales that were never lost.
+   *
+   * Every branch asserts real copy, so this test proves something in all four
+   * environments rather than passing vacuously in three of them.
    */
-  test('an absent order table says so instead of showing an empty order book', async ({
+  test('every state says which one it is, and none reads as an empty order book', async ({
     page,
   }) => {
     await page.goto('/orders');
 
     const state = await readOrdersState(page);
 
-    if (state === 'parcels') {
-      test.skip(true, 'This environment has order tables and parcels.');
+    if (state === 'no-database') {
+      await expect(
+        page.getByText(/DATABASE_URL is not set here/i),
+      ).toBeVisible();
 
       return;
     }
@@ -99,9 +136,15 @@ test.describe('Seller Center orders', () => {
       return;
     }
 
-    // Tables exist and the account genuinely has none. Also a legible state,
-    // and distinct from the one above.
-    await expect(page.getByText('No parcels match this view.')).toBeVisible();
+    if (state === 'empty') {
+      // Tables exist and the account genuinely has none. The only one of the
+      // three that really is an empty order book.
+      await expect(page.getByText('No parcels match this view.')).toBeVisible();
+
+      return;
+    }
+
+    await expect(page.getByRole('article').first()).toBeVisible();
   });
 
   test('an unrecognised lane falls back rather than erroring', async ({
@@ -147,8 +190,11 @@ test.describe('Seller Center orders', () => {
   test('reprint history offers no fabricated entries', async ({ page }) => {
     await page.goto('/orders');
 
-    if ((await readOrdersState(page)) === 'not-migrated') {
-      test.skip(true, 'No order tables in this database.');
+    // The panel ships with the list, so both "cannot read" states replace it
+    // with a notice rather than rendering it empty. Skipping on `not-migrated`
+    // alone is what broke this test in CI, where the state is `no-database`.
+    if (!rendersList(await readOrdersState(page))) {
+      test.skip(true, 'This environment cannot render the orders list.');
 
       return;
     }
