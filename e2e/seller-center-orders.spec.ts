@@ -11,26 +11,28 @@ import { expect, test, type Page } from '@playwright/test';
  * `lib/seller-center/mock-data/orders.ts`, which is gone — the screen now
  * reads `sals3_orders` / `sals3_order_lines` / `fulfillment_groups`.
  *
- * **No environment this suite runs in can show a parcel.** On a developer's
- * machine the database has no order tables — they arrive through a break-glass
- * migration run rather than a deploy, and the standing rule is never to migrate
- * a local database. In CI it is starker still: the Verify workflow sets no
- * `DATABASE_URL` at all, so the page renders its "no database configured"
- * notice. Tests that need parcels therefore cannot run anywhere today, and the
- * coverage they gave — lane counts, chip filters, the two money rails, the
- * blocked-action reasons — is genuinely lost until this suite has a database
- * with those tables and a seeded order.
+ * ## This spec runs in two very different environments
  *
- * That is written down rather than papered over. The trap this file avoids is
- * the one part 72 fell into: a test that passes by asserting its own
- * environment. A spec reading "if there are no parcels, pass" would be green
- * forever while proving nothing, so parcel-dependent tests **skip with a named
- * reason** instead, and the state the environment *does* reach is asserted
- * properly below.
+ * **`Orders E2E`** (`.github/workflows/orders-e2e.yml`) gives it an ephemeral
+ * Postgres, applies the migrations and seeds one accepted order, so every test
+ * below runs for real — lane chips, the disclosure banner, the reprint panel,
+ * the two money rails.
  *
- * Restoring the lost coverage needs two things, in this order: the order
- * tables in the Playwright database, and a seeded accepted order owned by the
- * bypass session's seller account.
+ * **`Verify`** runs the same file with no `DATABASE_URL` at all, because the
+ * rest of that suite is written against the DB-less state and giving it a
+ * database breaks it. There the page reaches its "no database configured"
+ * notice and the parcel-dependent tests **skip with a named reason**.
+ *
+ * A developer's own machine is a third case: the database has no order tables,
+ * because they arrive through a break-glass run rather than a deploy and the
+ * standing rule is never to migrate a local database. That reaches the
+ * "not migrated" notice.
+ *
+ * The trap this file avoids is the one part 72 fell into: a test that passes
+ * by asserting its own environment. A spec reading "if there are no parcels,
+ * pass" would be green forever while proving nothing — so the skips are named,
+ * and whichever state *is* reached is asserted properly rather than waved
+ * through.
  */
 
 const NO_DATABASE = 'No database configured in this environment';
@@ -215,8 +217,15 @@ test.describe('Seller Center orders', () => {
       return;
     }
 
-    await expect(page.getByRole('link', { name: /^All/ })).toBeVisible();
-    await expect(page.getByText('Route', { exact: true })).toBeVisible();
+    // Scoped to the lane strip. A bare `/^All/` also matches the sidebar's
+    // "All Supplier Products" link, which strict mode rejects — a looseness
+    // that survived only because this test had never run against a parcel.
+    const lanes = page.getByLabel('Order lanes');
+
+    await expect(lanes.getByRole('link', { name: 'All' })).toBeVisible();
+    await expect(
+      lanes.getByRole('link', { name: /^To process/ }),
+    ).toBeVisible();
   });
 
   /**
