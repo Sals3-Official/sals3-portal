@@ -494,4 +494,114 @@ describe('the rule behind the price', () => {
     expect(screen.queryByText(/From /)).toBeNull();
     expect(screen.queryByText(/Your price/)).toBeNull();
   });
+  /**
+   * The explainer shipped on every row, so a ten-variant product carried ten
+   * copies of one identical sum. Owner report 2026-08-28: it belongs beside the
+   * column heading, once.
+   */
+  describe('where the working is explained', () => {
+    const guidanceFor = (variantId: string, costMinor: number) => ({
+      variantId,
+      suggestedPrice: { amountMinor: 1235, currency: 'USD' as const },
+      unavailableLabel: null,
+      sourceCategoryPath: 'Apparel & Accessories > Clothing',
+      markupPercent: 33.33,
+      sellerOverridden: false,
+      effectiveCost: { amountMinor: costMinor, currency: 'USD' as const },
+      fundingBufferPercent: 1.5,
+      marginPercent: 25,
+      priceBeforeRounding: null,
+      contributionFloorApplied: false,
+    });
+
+    const second: VariantFixture = {
+      ...VARIANT,
+      id: 'variant-2',
+      optionLabel: 'Color: Blue, Size: M',
+      sellerSku: 'S3-BLU-M',
+    };
+
+    it('explains once for the whole column, not once per variant', () => {
+      render(
+        <VariantPricingTable
+          variants={[VARIANT, second]}
+          pricingGuidance={[
+            guidanceFor('variant-1', 926),
+            guidanceFor('variant-2', 926),
+          ]}
+          expandedVariantId={null}
+          onToggleExpanded={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          onRetailChange={vi.fn()}
+          onUseRulePrice={vi.fn()}
+          onSellerSkuChange={vi.fn()}
+          onBulkSetPrice={vi.fn()}
+        />,
+      );
+
+      // Two variants, two rule lines, one explainer.
+      expect(screen.getAllByText(/From 33.33% markup/)).toHaveLength(2);
+      expect(
+        screen.getAllByRole('button', {
+          name: 'How this price is worked out',
+        }),
+      ).toHaveLength(1);
+    });
+
+    it('puts it in the Retail price column header', () => {
+      render(
+        <VariantPricingTable
+          variants={[VARIANT]}
+          pricingGuidance={[guidanceFor('variant-1', 926)]}
+          expandedVariantId={null}
+          onToggleExpanded={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          onRetailChange={vi.fn()}
+          onUseRulePrice={vi.fn()}
+          onSellerSkuChange={vi.fn()}
+          onBulkSetPrice={vi.fn()}
+        />,
+      );
+
+      const header = screen
+        .getAllByRole('columnheader')
+        .find((cell) => cell.textContent?.includes('Retail price'));
+
+      expect(header).toBeDefined();
+      expect(
+        header?.querySelector('[aria-label="How this price is worked out"]'),
+      ).not.toBeNull();
+    });
+
+    /**
+     * One variant's arithmetic must not stand in for a column whose costs
+     * differ: the header would state a number that is wrong for most rows.
+     */
+    it('says nothing in the header when the variants do not share one sum', () => {
+      render(
+        <VariantPricingTable
+          variants={[VARIANT, second]}
+          pricingGuidance={[
+            guidanceFor('variant-1', 926),
+            guidanceFor('variant-2', 1400),
+          ]}
+          expandedVariantId={null}
+          onToggleExpanded={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          onRetailChange={vi.fn()}
+          onUseRulePrice={vi.fn()}
+          onSellerSkuChange={vi.fn()}
+          onBulkSetPrice={vi.fn()}
+        />,
+      );
+
+      expect(
+        screen.queryByRole('button', {
+          name: 'How this price is worked out',
+        }),
+      ).toBeNull();
+      // The rule itself still reaches every row.
+      expect(screen.getAllByText(/From 33.33% markup/)).toHaveLength(2);
+    });
+  });
 });

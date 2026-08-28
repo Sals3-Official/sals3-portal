@@ -9,7 +9,6 @@ import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations'
 import DisclosureBanner from '@/components/seller-center/shared/DisclosureBanner';
 import CategoryMarginTree from './CategoryMarginTree';
 import MarginCsvControls from './MarginCsvControls';
-import RepriceControls from './RepriceControls';
 import type {
   CategoryMarginNodeViewModel,
   StoreDefaultSummary,
@@ -214,12 +213,12 @@ export default async function CategoryPricingSection({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {/*
-            Beside the spreadsheet, because they are the two halves of one job:
-            that one changes the rules, this one applies them to prices that are
-            already live. A margin saved without this reaching the offer rows is
-            a rule nobody is charged by.
+            Repricing used to sit here, on the reading that it and the sheet are
+            two halves of one job. It is not category-scoped: `planReprice`
+            takes a seller and reads every pricing rule, the funding buffer
+            included, so it now has its own section after all of them. See
+            `RepriceSection`.
           */}
-          <RepriceControls canManage={canManage} />
           {categoryData === null ? null : (
             <MarginCsvControls
               nodes={toNodeViewModels(
