@@ -61,11 +61,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     // Imported lazily so an unconfigured or unreachable database cannot turn
     // this route into a build-time or cold-start failure.
-    const { hasMediaPositionColumn } =
-      await import('@/modules/catalog/products/migrate-media-position');
-    const columnExists = await hasMediaPositionColumn(getDb());
+    const { countOfferlessDraftVariants } =
+      await import('@/modules/catalog/products/backfill-draft-offers');
+    const offerlessDraftVariants = await countOfferlessDraftVariants(getDb());
 
-    return NextResponse.json({ ok: true, columnExists }, { headers: NO_STORE });
+    return NextResponse.json(
+      { ok: true, offerlessDraftVariants },
+      { headers: NO_STORE },
+    );
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('[portal] draft-offer backfill status check failed', {
@@ -95,9 +98,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const { migrateMediaPosition } =
-      await import('@/modules/catalog/products/migrate-media-position');
-    const result = await migrateMediaPosition(getDb());
+    const { default: backfillDraftOffers } =
+      await import('@/modules/catalog/products/backfill-draft-offers');
+    const result = await backfillDraftOffers({ db: getDb() });
 
     return NextResponse.json({ ...result, ok: true }, { headers: NO_STORE });
   } catch (error) {
