@@ -6,6 +6,10 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations';
+import {
+  markupPercentFromMarginRateScaled,
+  parseScaledRate,
+} from '@/modules/pricing/money-math';
 import StoreDefaultDialog from './StoreDefaultDialog';
 import {
   floorOf,
@@ -21,8 +25,17 @@ type StoreDefaultsTableProps = {
   canManage: boolean;
 };
 
+/**
+ * The base margin, shown as markup over cost — the unit the import sheet, the
+ * Product Editor and the category table all speak. See
+ * `CategoryMarginNodeRow.formatPercent` for why they were unified.
+ *
+ * Only the margin converts. The contribution floor beside it is a genuine
+ * percentage of the price and is formatted by `formatFloor`, which this must
+ * not be reused for.
+ */
 function formatPercent(rate: string): string {
-  const value = Number(rate) * 100;
+  const value = markupPercentFromMarginRateScaled(parseScaledRate(rate));
   const rounded = Math.round(value * 100) / 100;
   return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(2)}%`;
 }
@@ -84,7 +97,7 @@ export default function StoreDefaultsTable({
             destination. A heading that named one would be wrong for exactly the
             row a seller is least sure about.
           */}
-          {['Scope', 'Base margin', 'Minimum', 'Rounding', ''].map(
+          {['Scope', 'Base markup', 'Minimum', 'Rounding', ''].map(
             (heading) => (
               <span
                 key={heading === '' ? 'actions' : heading}

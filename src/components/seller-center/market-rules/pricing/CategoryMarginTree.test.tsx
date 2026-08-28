@@ -250,8 +250,8 @@ describe('CategoryMarginTree', () => {
   it('shows one category two different rates on the same row', () => {
     renderTree();
 
-    expect(screen.getByText('40%')).toBeInTheDocument();
-    expect(screen.getByText('60%')).toBeInTheDocument();
+    expect(screen.getByText('66.67%')).toBeInTheDocument();
+    expect(screen.getByText('150%')).toBeInTheDocument();
   });
 
   it('names the scope in each cell, so the column is not the only clue', () => {
@@ -300,7 +300,7 @@ describe('CategoryMarginTree', () => {
     // Nothing is editable until the pop-out is opened — the table itself
     // carries no inputs any more.
     expect(
-      screen.queryByLabelText('Margin percent for Apparel & Accessories'),
+      screen.queryByLabelText('Markup percent for Apparel & Accessories'),
     ).toBeNull();
 
     fireEvent.click(
@@ -310,7 +310,7 @@ describe('CategoryMarginTree', () => {
     );
 
     const marginInput = await screen.findByLabelText(
-      'Margin percent for Apparel & Accessories',
+      'Markup percent for Apparel & Accessories',
     );
     fireEvent.change(marginInput, { target: { value: '40' } });
     fireEvent.change(
@@ -322,7 +322,8 @@ describe('CategoryMarginTree', () => {
     await waitFor(() =>
       expect(mocks.saveCategoryPolicyAction).toHaveBeenCalledWith({
         categoryCode: 'CODE-Apparel & Accessories',
-        targetMarginRate: '0.4',
+        // 40 is now markup over cost, so the stored margin rate is 40/140.
+        targetMarginRate: '0.285714',
         roundingRule: 'NONE',
         reason: 'Freight to Fiji is four times the PH lane.',
         // The clicked column. If this ever came from anywhere but the cell,
@@ -388,7 +389,7 @@ describe('CategoryMarginTree', () => {
     );
 
     fireEvent.change(
-      await screen.findByLabelText('Margin percent for Apparel & Accessories'),
+      await screen.findByLabelText('Markup percent for Apparel & Accessories'),
       { target: { value: '25' } },
     );
     fireEvent.change(
@@ -412,6 +413,49 @@ describe('CategoryMarginTree', () => {
 
     expect(screen.queryByRole('button', { name: /Edit\.$/ })).toBeNull();
     // The rates are still readable — read-only is not blank.
-    expect(screen.getByText('40%')).toBeInTheDocument();
+    expect(screen.getByText('66.67%')).toBeInTheDocument();
+  });
+  /**
+   * The unit this screen states, pinned against the one the import sheet
+   * writes.
+   *
+   * A seller entered `300` in the sheet's `markup_percent` column and read
+   * `75%` here, which is the same rule in the other unit — and reasonably took
+   * it as the import having been ignored. Worse, `300` was entered believing it
+   * meant 3x cost; it is 4x, and a whole catalogue went out at the wrong
+   * multiple before anybody noticed.
+   *
+   * These cases exist so the two surfaces can never drift apart again in
+   * silence.
+   */
+  describe('the unit on the screen', () => {
+    function renderRate(rate: string) {
+      return render(
+        <CategoryMarginTree
+          nodes={[node('Electronics', { policies: scoped(rate, 'AU') })]}
+          scopes={SCOPES}
+          storeDefaults={STORE_DEFAULTS}
+          sellerAccountId="seller-1"
+          canManage
+        />,
+      );
+    }
+
+    it.each([
+      ['3x cost', '0.666667', '200%'],
+      ['4x cost', '0.750000', '300%'],
+      ['half again', '0.333333', '50%'],
+    ])('renders a %s rule as markup over cost', (_label, rate, shown) => {
+      renderRate(rate);
+
+      expect(screen.getAllByText(shown).length).toBeGreaterThan(0);
+    });
+
+    it('never shows the stored margin, which is the number that confused a seller', () => {
+      renderRate('0.750000');
+
+      expect(screen.getAllByText('300%').length).toBeGreaterThan(0);
+      expect(screen.queryByText('75%')).toBeNull();
+    });
   });
 });

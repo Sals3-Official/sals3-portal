@@ -12,6 +12,10 @@ import {
 } from '@/components/ui/popover';
 import type { AuditHistoryEntry } from '@/modules/catalog/candidates/repository';
 import type { ActionResult } from '@/app/(portal)/market-rules/pricing-actions';
+import {
+  markupPercentFromMarginRateScaled,
+  parseScaledRate,
+} from '@/modules/pricing/money-math';
 
 type PolicyHistoryButtonProps = {
   title: string;
@@ -34,10 +38,23 @@ function actionLabel(entry: AuditHistoryEntry): string {
   return ACTION_LABELS[entry.action] ?? entry.action;
 }
 
+/**
+ * `signed` distinguishes the two rates that reach this list, and they are not
+ * the same kind of number.
+ *
+ * A **funding buffer** (`adjustmentRate`) is a genuine signed percentage and is
+ * shown as stored. A **margin** (`targetMarginRate`) is a share of the selling
+ * price, and every other pricing surface states it as markup over cost — so it
+ * is converted here too, or the history would contradict the table it explains.
+ */
 function formatRate(rate: string, signed: boolean): string {
-  const percent = Number(rate) * 100;
-  const sign = signed && percent > 0 ? '+' : '';
-  return `${sign}${percent.toFixed(2)}%`;
+  if (signed) {
+    const percent = Number(rate) * 100;
+
+    return `${percent > 0 ? '+' : ''}${percent.toFixed(2)}%`;
+  }
+
+  return `${markupPercentFromMarginRateScaled(parseScaledRate(rate)).toFixed(2)}%`;
 }
 
 /** `from → to` when the immediately-older entry in this same list also carries a rate; otherwise just the value this entry set. */

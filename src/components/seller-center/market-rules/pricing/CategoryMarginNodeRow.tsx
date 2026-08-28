@@ -8,6 +8,10 @@ import { ChevronRight } from 'lucide-react';
 import { getCategoryPolicyHistoryAction } from '@/app/(portal)/market-rules/pricing-actions';
 import { Button } from '@/components/ui/button';
 import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations';
+import {
+  markupPercentFromMarginRateScaled,
+  parseScaledRate,
+} from '@/modules/pricing/money-math';
 import CategoryMarginDialog from './CategoryMarginDialog';
 import {
   effectiveMarginFor,
@@ -35,11 +39,28 @@ type CategoryMarginNodeRowProps = {
 };
 
 /**
- * `25.00%` reads as false precision on a number a person typed as `25`.
- * Whole rates render whole; only a genuinely fractional rate shows decimals.
+ * Markup over cost, which is the unit every other pricing surface speaks.
+ *
+ * The stored rate is a **margin** — a share of the selling price — and this
+ * screen used to render it raw. So a seller who typed `300` into the import
+ * sheet's `markup_percent` column saw `75%` here and reasonably read it as the
+ * sheet having been ignored. Nothing was wrong: a 300% markup *is* a 75%
+ * margin. But three of the four places a rate appears — the import sheet, the
+ * Product Editor's `From … markup` line, and its working tooltip — already
+ * spoke markup, and this table was the one that did not.
+ *
+ * Owner decision 2026-08-29, after the mismatch put a whole catalogue on 4×
+ * cost: one unit everywhere, and it is the one the sheet writes.
+ *
+ * Storage is unchanged. `targetMarginRate` stays a margin rate on the row and
+ * in the resolver; only what a person reads and types is converted, at this
+ * boundary and in the dialog.
+ *
+ * `200%` reads better than `200.00%` on a number somebody typed as `200`, so
+ * whole rates render whole and only a genuinely fractional one shows decimals.
  */
 function formatPercent(rate: string): string {
-  const value = Number(rate) * 100;
+  const value = markupPercentFromMarginRateScaled(parseScaledRate(rate));
   const rounded = Math.round(value * 100) / 100;
   return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(2)}%`;
 }

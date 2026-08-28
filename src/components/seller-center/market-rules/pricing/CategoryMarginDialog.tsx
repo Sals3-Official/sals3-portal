@@ -24,7 +24,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { RoundingRule } from '@/modules/pricing/money-math';
+import {
+  formatScaledRate,
+  markupPercentFromMarginRateScaled,
+  markupPercentToMarginRateScaled,
+  MAX_MARKUP_PERCENT,
+  parseScaledRate,
+  type RoundingRule,
+} from '@/modules/pricing/money-math';
 import type { PricingScope } from '@/modules/pricing/pricing-scope-destinations';
 import DeactivateCategoryPolicyButton from './DeactivateCategoryPolicyButton';
 import type {
@@ -95,10 +102,17 @@ export default function CategoryMarginDialog({
   // the rate belongs to an ancestor.
   const ownPolicy = node.policies[scope.key] ?? null;
   const [isPending, startTransition] = useTransition();
-  const [marginPercent, setMarginPercent] = useState(
+  /*
+    Markup, not the stored margin rate — the unit the import sheet and the
+    Product Editor already speak. Storage is untouched: this converts on the
+    way in and `handleSubmit` converts back on the way out.
+  */
+  const [markupPercent, setMarkupPercent] = useState(
     ownPolicy === null
       ? ''
-      : (Number(ownPolicy.targetMarginRate) * 100).toString(),
+      : markupPercentFromMarginRateScaled(
+          parseScaledRate(ownPolicy.targetMarginRate),
+        ).toString(),
   );
   const [roundingRule, setRoundingRule] = useState<RoundingRule>(
     ownPolicy?.roundingRule ?? 'NONE',
@@ -106,14 +120,21 @@ export default function CategoryMarginDialog({
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const ready = marginPercent.trim() !== '' && reason.trim().length >= 10;
+  const ready = markupPercent.trim() !== '' && reason.trim().length >= 10;
   const context = inheritedFrom(effective);
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
 
-    const targetMarginRate = (Number(marginPercent) / 100).toString();
+    /*
+      Back to the stored unit. `markupPercentToMarginRateScaled` is the same
+      conversion the CSV importer uses, so a rate typed here and a rate imported
+      from the sheet land on the identical stored value.
+    */
+    const targetMarginRate = formatScaledRate(
+      markupPercentToMarginRateScaled(Number(markupPercent)),
+    );
 
     // Annotated, not inferred. This is the type that turns a missing field
     // into a build error — see `SaveCategoryPolicyInput`.
@@ -185,7 +206,7 @@ export default function CategoryMarginDialog({
 
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="category-margin-rate">Margin</Label>
+              <Label htmlFor="category-margin-rate">Markup over cost</Label>
               <div className="flex items-center gap-1.5">
                 <Input
                   id="category-margin-rate"
@@ -193,10 +214,10 @@ export default function CategoryMarginDialog({
                   inputMode="decimal"
                   step="0.01"
                   min="0.01"
-                  max="99.99"
-                  value={marginPercent}
-                  onChange={(event) => setMarginPercent(event.target.value)}
-                  aria-label={`Margin percent for ${node.path}`}
+                  max={MAX_MARKUP_PERCENT}
+                  value={markupPercent}
+                  onChange={(event) => setMarkupPercent(event.target.value)}
+                  aria-label={`Markup percent for ${node.path}`}
                   className="w-24 text-right"
                 />
                 <span className="text-sm text-muted-foreground">%</span>
