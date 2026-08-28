@@ -1,11 +1,16 @@
 import Image from 'next/image';
-import { ChevronDown, ChevronUp, ImageOff, Tag } from 'lucide-react';
+import { ChevronDown, ChevronUp, ImageOff, Info, Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import RetailPriceInput from '@/components/products/editor/RetailPriceInput';
 import { cn } from '@/lib/utils';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import {
   Table,
   TableBody,
@@ -20,12 +25,142 @@ import {
   formatMoney,
 } from '@/lib/seller-center/product-editor/format';
 import type {
+  MoneyValue,
   VariantFixture,
   VariantPricingGuidance,
 } from '@/lib/seller-center/product-editor/types';
 import resolveVariantAxisColumns, {
   resolveFirstAxisGroups,
 } from '@/lib/seller-center/product-editor/variant-axis-columns';
+
+/**
+ * The working behind one price, on hover and on keyboard focus.
+ *
+ * "From 33.33% markup" is a claim a seller cannot check: multiplying their
+ * supplier cost by 1.3333 does not reproduce the price, because the funding
+ * buffer is added to the cost first and the margin divides what comes out. The
+ * owner asked where the numbers come from, which is the right question to ask
+ * of a figure that will not reconcile — so the screen now shows the arithmetic
+ * rather than asserting the result.
+ *
+ * Every line is a real value from the resolver's own decision, never recomputed
+ * here. A second implementation of this sum is how a tooltip starts disagreeing
+ * with the price above it.
+ */
+/**
+ * The arithmetic itself, as lines a person can read down.
+ *
+ * Its own component, and exported, because this is the part worth testing: the
+ * tooltip around it is a Base UI primitive that only mounts its popup once
+ * open, and a test that drives the open animation proves the library works
+ * rather than that the sum does.
+ */
+export function PricingWorkingLines({
+  guidance,
+  supplierCost,
+}: {
+  guidance: VariantPricingGuidance;
+  supplierCost: MoneyValue;
+}) {
+  if (guidance.suggestedPrice === null) return null;
+
+  const costShare =
+    guidance.marginPercent === null ? null : 100 - guidance.marginPercent;
+
+  return (
+    <span className="flex flex-col gap-1.5">
+      <span className="font-medium">How this price is worked out</span>
+
+      <span className="flex flex-col gap-0.5 tabular-nums">
+        <span className="flex justify-between gap-4">
+          <span>Supplier cost</span>
+          <span>{formatMoney(supplierCost)}</span>
+        </span>
+        {guidance.fundingBufferPercent === null ||
+        guidance.effectiveCost === null ? null : (
+          <span className="flex justify-between gap-4">
+            <span>{`+ ${guidance.fundingBufferPercent}% funding buffer`}</span>
+            <span>{formatMoney(guidance.effectiveCost)}</span>
+          </span>
+        )}
+        {guidance.marginPercent === null ? null : (
+          <span className="flex justify-between gap-4">
+            <span>{`\u00f7 ${((100 - guidance.marginPercent) / 100).toFixed(2)} (${guidance.marginPercent}% margin)`}</span>
+            <span>
+              {formatMoney(
+                guidance.priceBeforeRounding ?? guidance.suggestedPrice,
+              )}
+            </span>
+          </span>
+        )}
+        {guidance.priceBeforeRounding === null ? null : (
+          <span className="flex justify-between gap-4">
+            <span>Rounded</span>
+            <span>{formatMoney(guidance.suggestedPrice)}</span>
+          </span>
+        )}
+      </span>
+
+      {guidance.contributionFloorApplied ? (
+        <span>
+          Your minimum contribution floor set this price, not the margin — the
+          margin on its own would have priced it lower.
+        </span>
+      ) : null}
+
+      {guidance.marginPercent === null ||
+      guidance.markupPercent === null ||
+      costShare === null ? null : (
+        <span>
+          {`A ${guidance.marginPercent}% margin is the same as ${guidance.markupPercent}% markup: the margin is ${guidance.marginPercent}% of the selling price, so the cost is the other ${costShare}% — and ${guidance.marginPercent} \u00f7 ${costShare} = ${guidance.markupPercent}%.`}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * The working behind one price, on hover and on keyboard focus.
+ *
+ * "From 33.33% markup" is a claim a seller cannot check: multiplying their
+ * supplier cost by 1.3333 does not reproduce the price, because the funding
+ * buffer is added to the cost first and the margin divides what comes out. The
+ * owner asked where those numbers come from, which is the right question to ask
+ * of a figure that will not reconcile — so the screen shows the arithmetic
+ * instead of asserting the result.
+ *
+ * Every line is a real value from the resolver's own decision, never recomputed
+ * here. A second implementation of this sum is how an explainer starts
+ * disagreeing with the price above it.
+ */
+function PricingWorking({
+  guidance,
+  supplierCost,
+}: {
+  guidance: VariantPricingGuidance;
+  supplierCost: MoneyValue;
+}) {
+  if (guidance.suggestedPrice === null) return null;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label="How this price is worked out"
+            className="inline-flex text-muted-foreground hover:text-foreground"
+          >
+            <Info aria-hidden="true" className="size-3.5" />
+          </button>
+        }
+      />
+      <TooltipContent className="max-w-xs">
+        <PricingWorkingLines guidance={guidance} supplierCost={supplierCost} />
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 /**
  * Which rule produced the number in the cell beside it.
@@ -42,10 +177,12 @@ import resolveVariantAxisColumns, {
 function PricingRuleNote({
   guidance,
   isSellerSet,
+  supplierCost,
   onUseRulePrice,
 }: {
   guidance: VariantPricingGuidance | undefined;
   isSellerSet: boolean;
+  supplierCost: MoneyValue;
   onUseRulePrice: () => void;
 }) {
   if (isSellerSet) {
@@ -91,11 +228,14 @@ function PricingRuleNote({
       : `${guidance.markupPercent}% markup`;
 
   return (
-    <span className="text-xs text-muted-foreground">
-      From {rule}
-      {guidance.sourceCategoryPath === null
-        ? ''
-        : ` on ${guidance.sourceCategoryPath}`}
+    <span className="flex items-center gap-1 text-xs text-muted-foreground">
+      <span>
+        From {rule}
+        {guidance.sourceCategoryPath === null
+          ? ''
+          : ` on ${guidance.sourceCategoryPath}`}
+      </span>
+      <PricingWorking guidance={guidance} supplierCost={supplierCost} />
     </span>
   );
 }
@@ -652,6 +792,7 @@ export default function VariantPricingTable({
                       <PricingRuleNote
                         guidance={guidanceByVariantId.get(variant.id)}
                         isSellerSet={variant.retailPriceIsSellerSet === true}
+                        supplierCost={variant.supplierCost}
                         onUseRulePrice={() => onUseRulePrice(variant.id)}
                       />
                     </div>

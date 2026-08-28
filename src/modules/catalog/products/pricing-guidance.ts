@@ -74,6 +74,25 @@ export type EditorVariantPricing = {
   markupPercent: number | null;
   /** True when this variant's live price was typed by a person, not resolved. */
   sellerOverridden: boolean;
+  /**
+   * The working the price came from, so a screen can show it rather than assert
+   * it. Every field is `null` when the rules could not price this variant.
+   *
+   * `effectiveCost` is the supplier cost after the funding buffer, and it is the
+   * number the margin actually divides — which is why `cost × (1 + markup)` does
+   * not reproduce the price on its own, and why an explainer that omits this
+   * step reads as arithmetic that does not add up.
+   */
+  effectiveCostMinor: number | null;
+  effectiveCostCurrency: string | null;
+  /** The seller's funding buffer, in percent, e.g. `1.5`. */
+  fundingBufferPercent: number | null;
+  /** The stored rule as a margin, in percent, e.g. `25`. */
+  marginPercent: number | null;
+  /** The price before the rounding rule, when one moved it. `null` when rounding changed nothing. */
+  priceBeforeRoundingMinor: number | null;
+  /** True when the contribution floor, not the margin, set this price. */
+  contributionFloorApplied: boolean;
 };
 
 type VariantRow = {
@@ -102,7 +121,22 @@ function unavailable(
     targetMarginRate: null,
     markupPercent: null,
     sellerOverridden,
+    effectiveCostMinor: null,
+    effectiveCostCurrency: null,
+    fundingBufferPercent: null,
+    marginPercent: null,
+    priceBeforeRoundingMinor: null,
+    contributionFloorApplied: false,
   };
+}
+
+/** A stored rate as a percentage a person reads, to two decimals. `null` if it cannot be parsed. */
+function ratePercentOf(rate: string): number | null {
+  try {
+    return Math.round(Number(parseScaledRate(rate)) / 100) / 100;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -240,16 +274,30 @@ export default async function resolveEditorPricingGuidance(
         );
       }
 
+      const rounded = decision.roundedSuggestedItemPrice;
+      const beforeRounding = decision.suggestedItemPrice;
+
       return {
         variantId: row.variantId,
-        suggestedPriceMinor: decision.roundedSuggestedItemPrice.amountMinor,
-        suggestedPriceCurrency: decision.roundedSuggestedItemPrice.currency,
+        suggestedPriceMinor: rounded.amountMinor,
+        suggestedPriceCurrency: rounded.currency,
         unavailableLabel: null,
         sourceCategoryPath: decision.policySourceCategoryPath,
         resolvedLayer: decision.resolvedLayer,
         targetMarginRate: decision.targetMarginRate,
         markupPercent: markupPercentOf(decision.targetMarginRate),
         sellerOverridden,
+        effectiveCostMinor: decision.effectiveProductCost.amountMinor,
+        effectiveCostCurrency: decision.effectiveProductCost.currency,
+        fundingBufferPercent: ratePercentOf(decision.fundingBufferRate),
+        marginPercent: ratePercentOf(decision.targetMarginRate),
+        // Only when it actually moved the number — a rounding line that says
+        // nothing changed is a line that makes the working harder to follow.
+        priceBeforeRoundingMinor:
+          beforeRounding.amountMinor === rounded.amountMinor
+            ? null
+            : beforeRounding.amountMinor,
+        contributionFloorApplied: decision.contributionFloorApplied,
       };
     }),
   );

@@ -579,6 +579,24 @@ export type VariantPricingGuidance = {
   markupPercent: number | null;
   /** True when this variant's live price was typed by a person. */
   sellerOverridden: boolean;
+  /**
+   * The working behind `suggestedPrice`, so the screen can show how the number
+   * was reached instead of asserting it.
+   *
+   * `effectiveCost` is the supplier cost after the funding buffer, and it is
+   * what the margin actually divides. Without it, `cost × (1 + markup)` does not
+   * reproduce the price and the explainer reads as arithmetic that does not add
+   * up — the reason this is carried at all.
+   */
+  effectiveCost: MoneyValue | null;
+  /** The funding buffer, in percent, e.g. `1.5`. */
+  fundingBufferPercent: number | null;
+  /** The same rule as a margin, in percent, e.g. `25`. */
+  marginPercent: number | null;
+  /** The price before the rounding rule moved it. `null` when rounding changed nothing. */
+  priceBeforeRounding: MoneyValue | null;
+  /** True when the contribution floor, not the margin, set this price. */
+  contributionFloorApplied: boolean;
 };
 
 export const EDITOR_SECTIONS: ReadonlyArray<{

@@ -2102,6 +2102,24 @@ function toVariantGuidance(
       sourceCategoryPath: row.sourceCategoryPath,
       markupPercent: row.markupPercent,
       sellerOverridden: row.sellerOverridden,
+      effectiveCost:
+        row.effectiveCostMinor === null || row.effectiveCostCurrency === null
+          ? null
+          : {
+              amountMinor: row.effectiveCostMinor,
+              currency: row.effectiveCostCurrency,
+            },
+      fundingBufferPercent: row.fundingBufferPercent,
+      marginPercent: row.marginPercent,
+      priceBeforeRounding:
+        row.priceBeforeRoundingMinor === null ||
+        row.suggestedPriceCurrency === null
+          ? null
+          : {
+              amountMinor: row.priceBeforeRoundingMinor,
+              currency: row.suggestedPriceCurrency,
+            },
+      contributionFloorApplied: row.contributionFloorApplied,
     }));
 }
 
