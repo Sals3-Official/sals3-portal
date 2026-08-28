@@ -9,6 +9,7 @@ import type {
   ParcelRoute,
   ParcelStatusTone,
 } from '@/modules/orders/contracts';
+import ParcelLineThumbnail from './ParcelLineThumbnail';
 
 type OrderParcelCardProps = {
   parcel: OrderParcel;
@@ -135,9 +136,10 @@ export default function OrderParcelCard({
         <div className="flex flex-col gap-2.5 px-4 py-3.5">
           {parcel.lines.map((item) => (
             <div key={item.id} className="flex gap-2.5">
-              <div
-                aria-hidden="true"
-                className="size-11 flex-none rounded-md border border-border bg-muted"
+              <ParcelLineThumbnail
+                imageUrl={item.imageUrl}
+                title={item.title}
+                size={44}
               />
               <div className="flex min-w-0 flex-col gap-0.5">
                 <span className="text-[13px] font-medium text-ink">

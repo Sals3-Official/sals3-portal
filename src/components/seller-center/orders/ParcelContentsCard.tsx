@@ -1,4 +1,5 @@
 import type { ParcelLine } from '@/modules/orders/contracts';
+import ParcelLineThumbnail from './ParcelLineThumbnail';
 
 type ParcelContentsCardProps = {
   lines: ParcelLine[];
@@ -38,9 +39,10 @@ export default function ParcelContentsCard({
 
       {lines.map((line) => (
         <div key={line.id} className="flex gap-3.5 px-4 py-4">
-          <div
-            aria-hidden="true"
-            className="size-14 flex-none rounded-md border border-border bg-muted"
+          <ParcelLineThumbnail
+            imageUrl={line.imageUrl}
+            title={line.title}
+            size={56}
           />
           <div className="flex min-w-0 flex-1 flex-col gap-[5px]">
             <div className="flex flex-wrap items-baseline justify-between gap-4">
