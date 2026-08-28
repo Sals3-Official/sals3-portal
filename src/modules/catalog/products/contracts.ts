@@ -81,6 +81,58 @@ export const saveProductDraftInputSchema = z.object({
 export type SaveProductDraftInput = z.infer<typeof saveProductDraftInputSchema>;
 
 /**
+ * Abandoning the open draft a published product was forked into.
+ *
+ * Carries only the three tokens the editor already rendered. There is no
+ * `sellerAccountId` and no `actorId`: the action resolves both server-side, so
+ * the only resource reference a caller controls is a product-and-revision pair
+ * whose stewardship is re-derived before anything is written.
+ */
+export const discardProductDraftInputSchema = z.object({
+  productId: z.string().uuid(),
+  revisionId: z.string().uuid(),
+  /** Optimistic concurrency: the revision version the editor actually rendered. */
+  expectedRevisionVersion: z.number().int().positive(),
+});
+
+export type DiscardProductDraftInput = z.infer<
+  typeof discardProductDraftInputSchema
+>;
+
+/**
+ * Deliberately its own union rather than a widened `ProductDraftFailureReason`.
+ *
+ * That type is consumed by the create, bulk-create and save paths, and adding
+ * `no_published_revision` to it would put a reason none of them can ever return
+ * into all three of their exhaustive handlers — the shared-schema widening that
+ * cost two hours of refused saves in production on 2026-08-27. A discard's
+ * failures are its own.
+ */
+export type DiscardProductDraftFailureReason =
+  | 'invalid_input'
+  | 'denied'
+  | 'rate_limited'
+  | 'not_configured'
+  | 'not_found'
+  | 'version_conflict'
+  | 'no_published_revision'
+  | 'failed';
+
+export type DiscardProductDraftActionResult =
+  | {
+      ok: true;
+      /** The published revision the product points at again. */
+      restoredRevisionId: string;
+      /**
+       * Its version, so the editor can retarget its revision-scoped saves
+       * without a remount. See `discard-draft-revision.ts` for why this is
+       * returned rather than re-read from a refreshed fixture.
+       */
+      restoredRevisionVersion: number;
+    }
+  | { ok: false; reason: DiscardProductDraftFailureReason };
+
+/**
  * Why a draft is not yet a complete, listable product.
  *
  * These are deliberately *requirements*, not errors: the draft is a real,
@@ -255,6 +307,16 @@ export const PRODUCT_AUDIT_ACTIONS = {
   revisionForked: 'catalog_product_revision.forked',
   revisionSaved: 'catalog_product_revision.saved',
   revisionSaveRejected: 'catalog_product_revision.save_rejected_stale',
+  /**
+   * An open draft was abandoned and the product put back on its published
+   * revision.
+   *
+   * Distinct from `revisionForked`'s mirror image on purpose: a fork and a
+   * discard are both ordinary editing, but a discard is the only action that
+   * retires editorial work a seller had already saved, so it needs to be
+   * findable on its own when someone asks where a paragraph went.
+   */
+  revisionDiscarded: 'catalog_product_revision.discarded',
   variantCreated: 'catalog_product_variant.created',
   offerCreated: 'catalog_product_offer.created',
   bindingCreated: 'catalog_offer_supplier_binding.created',

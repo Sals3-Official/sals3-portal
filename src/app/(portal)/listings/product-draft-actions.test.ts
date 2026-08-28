@@ -52,6 +52,10 @@ vi.mock('@/modules/catalog/products/save-draft', () => ({
   default: vi.fn(),
 }));
 
+vi.mock('@/modules/catalog/products/discard-draft', () => ({
+  default: vi.fn(),
+}));
+
 /* eslint-disable import/first */
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
@@ -59,12 +63,14 @@ import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
 import captureCandidateEvidence from '@/modules/catalog/candidates/capture-evidence';
 import createProductDraftFromCandidate from '@/modules/catalog/products/create-draft';
+import discardProductDraft from '@/modules/catalog/products/discard-draft';
 import saveProductDraft from '@/modules/catalog/products/save-draft';
 import { revalidatePath } from 'next/cache';
 
 import {
   bulkCreateProductDraftsAction,
   createProductDraftAction,
+  discardProductDraftAction,
   saveProductDraftAction,
 } from './product-draft-actions';
 /* eslint-enable import/first */
@@ -116,6 +122,11 @@ beforeEach(() => {
     ok: true,
     revisionVersion: 4,
     contentChecksum: 'checksum',
+  });
+  asMock(discardProductDraft).mockResolvedValue({
+    ok: true,
+    restoredRevisionId: '77777777-7777-4777-8777-777777777777',
+    restoredRevisionVersion: 9,
   });
 });
 
@@ -465,5 +476,98 @@ describe('saveProductDraftAction', () => {
       ok: false,
       reason: 'not_found',
     });
+  });
+});
+
+describe('discardProductDraftAction', () => {
+  const RESTORED = '77777777-7777-4777-8777-777777777777';
+
+  const VALID_DISCARD = {
+    productId: '44444444-4444-4444-8444-444444444444',
+    revisionId: '55555555-5555-4555-8555-555555555555',
+    expectedRevisionVersion: 3,
+  };
+
+  it('requires the edit permission, not the publish permission', async () => {
+    await discardProductDraftAction(VALID_DISCARD);
+
+    // A seller allowed to make an edit must be allowed to take it back; the
+    // discard changes nothing a buyer can see.
+    expect(requirePermission).toHaveBeenCalledWith('product:edit');
+  });
+
+  it('resolves the tenant and actor server-side', async () => {
+    await discardProductDraftAction(VALID_DISCARD);
+
+    expect(discardProductDraft).toHaveBeenCalledWith({
+      request: VALID_DISCARD,
+      sellerAccountId: SELLER,
+      actorId: 'actor-1',
+    });
+  });
+
+  it('hands back the restored revision so the editor can keep saving', async () => {
+    expect(await discardProductDraftAction(VALID_DISCARD)).toEqual({
+      ok: true,
+      restoredRevisionId: RESTORED,
+      restoredRevisionVersion: 9,
+    });
+  });
+
+  it('revalidates the listing subtree, not one hard-coded route', async () => {
+    await discardProductDraftAction(VALID_DISCARD);
+
+    // The editor lives at `/listings/new?productId=…`; naming `/listings`
+    // alone is the defect part 71 recorded, so the argument is pinned.
+    expect(revalidatePath).toHaveBeenCalledWith('/listings', 'layout');
+  });
+
+  it('refuses a payload that is not a product-and-revision pair', async () => {
+    expect(
+      await discardProductDraftAction({ productId: 'not-a-uuid' }),
+    ).toEqual({ ok: false, reason: 'invalid_input' });
+
+    expect(discardProductDraft).not.toHaveBeenCalled();
+  });
+
+  it('refuses a caller without the permission and writes nothing', async () => {
+    asMock(requirePermission).mockRejectedValue(new PermissionError());
+
+    expect(await discardProductDraftAction(VALID_DISCARD)).toEqual({
+      ok: false,
+      reason: 'denied',
+    });
+
+    expect(discardProductDraft).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the shared draft rate limit is spent', async () => {
+    asMock(checkRateLimit).mockReturnValue({
+      allowed: false,
+      retryAfterMs: 1_000,
+    });
+
+    expect(await discardProductDraftAction(VALID_DISCARD)).toEqual({
+      ok: false,
+      reason: 'rate_limited',
+    });
+
+    expect(discardProductDraft).not.toHaveBeenCalled();
+  });
+
+  it('passes a domain refusal through without inventing a success', async () => {
+    asMock(discardProductDraft).mockResolvedValue({
+      ok: false,
+      reason: 'no_published_revision',
+    });
+
+    expect(await discardProductDraftAction(VALID_DISCARD)).toEqual({
+      ok: false,
+      reason: 'no_published_revision',
+    });
+
+    // Nothing changed, so nothing may be revalidated — a refreshed screen
+    // would suggest the discard had happened.
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });
