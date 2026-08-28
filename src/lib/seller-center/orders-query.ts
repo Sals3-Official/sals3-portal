@@ -11,14 +11,32 @@ import { LANE_KEYS } from '@/modules/orders/contracts';
  * land the seller on a sane view, not an error page for a read-only list.
  */
 
-export const ORDER_SEARCH_FIELDS = [
-  'order',
-  'tracking',
-  'buyer',
-  'product',
-] as const;
+/**
+ * No `buyer` field, deliberately.
+ *
+ * The list masks the buyer to `M****a · Quezon City`, so a name search over
+ * what the list holds could never match a name — it silently returned nothing
+ * for every real query. The obvious repair is to search the unmasked snapshot
+ * in SQL, and that is the wrong repair: `viewer` holds `order:read` but not
+ * `order:fulfill`, so a name search would become an oracle. Type a name, get a
+ * hit or no hit, and the mask that exists to keep buyer identity away from that
+ * role is defeated without ever rendering a name.
+ *
+ * Searching what is actually on the row is what remains: the order reference,
+ * the tracking number, and the product titles.
+ */
+export const ORDER_SEARCH_FIELDS = ['order', 'tracking', 'product'] as const;
 
-export const ORDER_SORTS = ['order-date-desc', 'ship-by-asc'] as const;
+/**
+ * One sort, because there is only one real key.
+ *
+ * `ship-by-asc` was offered and did nothing: no dropship parcel carries a
+ * despatch promise — the supplier sets its own pace and Sals3 has made the
+ * buyer no cutoff commitment — so `shipBy` is null on every parcel and the
+ * comparator sorted them all equal. A control that reorders nothing is worse
+ * than an absent one, because the seller believes the list answered them.
+ */
+export const ORDER_SORTS = ['order-date-desc'] as const;
 
 export const ORDER_SEARCH_FIELD_LABELS: Record<
   (typeof ORDER_SEARCH_FIELDS)[number],
@@ -26,13 +44,11 @@ export const ORDER_SEARCH_FIELD_LABELS: Record<
 > = {
   order: 'Order reference',
   tracking: 'Tracking number',
-  buyer: 'Buyer',
   product: 'Product',
 };
 
 export const ORDER_SORT_LABELS: Record<(typeof ORDER_SORTS)[number], string> = {
   'order-date-desc': 'Order date, newest',
-  'ship-by-asc': 'Ship-by, soonest',
 };
 
 export const ordersQuerySchema = z.object({

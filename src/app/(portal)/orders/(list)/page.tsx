@@ -8,12 +8,12 @@ import OrdersReprintHistoryPanel from '@/components/seller-center/orders/OrdersR
 import OrdersResultBar from '@/components/seller-center/orders/OrdersResultBar';
 import OrdersSearchBar from '@/components/seller-center/orders/OrdersSearchBar';
 import OrdersSortSelect from '@/components/seller-center/orders/OrdersSortSelect';
-import OrdersViewToggle from '@/components/seller-center/orders/OrdersViewToggle';
 import OrdersWorkspace from '@/components/seller-center/orders/OrdersWorkspace';
 import { requirePermission } from '@/lib/auth/session';
 import { readOrUnavailable } from '@/lib/db/availability';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { buildHref } from '@/lib/portal/search-params';
+import { MAX_ORDERS } from '@/modules/orders/read-model';
 import getOrdersRepository from '@/modules/orders/repository';
 import {
   ORDER_SEARCH_FIELDS,
@@ -160,6 +160,16 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
       (channel) => ({ key: channel, label: channel }),
     ),
   ];
+  // The read is capped, and a cap nobody is told about is a list that quietly
+  // stops being complete. Inferred from the reference count rather than
+  // reported by the query, which is honest at the boundary: exactly `MAX_ORDERS`
+  // references means the cap was almost certainly reached, and one fewer means
+  // it certainly was not.
+  const orderReferenceCount = new Set(
+    allParcels.map((parcel) => parcel.orderRef),
+  ).size;
+  const capReached = orderReferenceCount >= MAX_ORDERS;
+
   const currentParams = currentOrdersParams(query);
 
   // A route chip row only earns its place once the account actually has more
@@ -206,17 +216,6 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
       <PageHeader
         title="Orders"
         description="One row is one parcel. Prepaid orders only."
-        actions={
-          <OrdersViewToggle
-            active="list"
-            listHref={buildHref('/orders', currentParams, {})}
-            // Opens the first parcel in the list the seller is actually
-            // looking at, so the switch respects their filters.
-            detailHref={
-              parcels.length === 0 ? null : `/orders/${parcels[0].id}`
-            }
-          />
-        }
       />
 
       <OrdersLaneTabs
@@ -303,6 +302,13 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
         )}
         resetHref="/orders"
       />
+
+      {capReached ? (
+        <DisclosureBanner tone="info">
+          Showing the {MAX_ORDERS} most recent order references. Older orders
+          are not listed, and search only looks at what is listed.
+        </DisclosureBanner>
+      ) : null}
 
       <OrdersResultBar
         countLabel={countLabel}

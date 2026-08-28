@@ -81,7 +81,7 @@ import { arrivalWindowsByPackage, readAddressSnapshot } from './snapshots';
  * number of *parcels* returned can exceed this. It was called `MAX_PARCELS`,
  * which described a ceiling the code does not enforce.
  */
-const MAX_ORDERS = 200;
+export const MAX_ORDERS = 200;
 
 /** The tables this screen cannot render without. */
 const REQUIRED_TABLES = [
