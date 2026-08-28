@@ -76,34 +76,24 @@ export type ParcelFilter = {
 };
 
 /**
- * Sorts a filtered list.
+ * Newest order first.
  *
- * Both keys are ISO strings, compared as strings on purpose - ISO-8601 sorts
- * lexicographically in date order, so this needs no `Date` parsing and cannot
- * drift with the server's timezone.
+ * `orderedAt` is an ISO string, compared as a string on purpose - ISO-8601
+ * sorts lexicographically in date order, so this needs no `Date` parsing and
+ * cannot drift with the server's timezone.
  *
- * A parcel with no ship-by promise sorts last under `ship-by-asc` rather than
- * first. An absent deadline is not an urgent one, and `null` coercing to the
- * top is exactly the sort of quiet wrongness that puts the wrong parcel in
- * front of someone packing against a cutoff.
+ * The `sort` argument is kept, and kept ignored, because the URL may still
+ * carry a `?sort=ship-by-asc` from a bookmark made while that option existed.
+ * It sorted nothing even then: no dropship parcel carries a despatch promise,
+ * so every `shipBy` was null and the comparator returned 0 for every pair.
+ * Answering such a link with the one real order is better than an error, and
+ * better than pretending the parameter did something.
  */
 export function sortParcels(
   parcels: readonly OrderParcel[],
-  sort: string,
+  _sort: string,
 ): OrderParcel[] {
-  const sorted = [...parcels];
-
-  if (sort === 'ship-by-asc') {
-    return sorted.sort((a, b) => {
-      if (a.shipBy === null && b.shipBy === null) return 0;
-      if (a.shipBy === null) return 1;
-      if (b.shipBy === null) return -1;
-
-      return a.shipBy.localeCompare(b.shipBy);
-    });
-  }
-
-  return sorted.sort((a, b) => b.orderedAt.localeCompare(a.orderedAt));
+  return [...parcels].sort((a, b) => b.orderedAt.localeCompare(a.orderedAt));
 }
 
 /**
@@ -123,12 +113,17 @@ function matchesRoute(parcel: OrderParcel, route: string): boolean {
   );
 }
 
+/**
+ * No `buyer` case: the list only holds a masked label, so a name could never
+ * match, and resolving it against the unmasked snapshot would hand `viewer` an
+ * oracle around the mask. `ORDER_SEARCH_FIELDS` no longer offers the field;
+ * this switch would answer `orderRef` for a stale `?field=buyer` URL, which is
+ * the same fallback an unrecognised field gets.
+ */
 function searchableValue(parcel: OrderParcel, field: string): string {
   switch (field) {
     case 'tracking':
       return parcel.route.trackingNumber ?? '';
-    case 'buyer':
-      return parcel.buyerLabel;
     case 'product':
       return parcel.lines.map((line) => line.title).join(' ');
     case 'order':

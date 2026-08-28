@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import OrderHistoryTimeline from '@/components/seller-center/orders/OrderHistoryTimeline';
-import OrdersViewToggle from '@/components/seller-center/orders/OrdersViewToggle';
 import ParcelBuyerCard from '@/components/seller-center/orders/ParcelBuyerCard';
 import ParcelContentsCard from '@/components/seller-center/orders/ParcelContentsCard';
 import ParcelDetailActions from '@/components/seller-center/orders/ParcelDetailActions';
@@ -127,11 +126,6 @@ export default async function ParcelDetailPage({
               : ''}
           </p>
         </div>
-        <OrdersViewToggle
-          active="detail"
-          listHref="/orders"
-          detailHref={`/orders/${parcel.id}`}
-        />
       </div>
 
       <div className="flex flex-wrap items-start gap-[18px]">

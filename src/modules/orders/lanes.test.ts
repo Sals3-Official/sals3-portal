@@ -250,7 +250,18 @@ describe('filterParcels', () => {
       parcelWith({
         id: 'b',
         orderRef: 'A-99001',
-        buyerLabel: 'K****s · Pasig',
+        route: {
+          kind: 'SUPPLIER_DROPSHIP',
+          serviceLevel: 'Standard',
+          carrier: 'CJPacket',
+          connection: {
+            connectionId: 'conn-1',
+            providerCode: 'CJ_DROPSHIPPING',
+            label: 'CJ · Main',
+          },
+          supplierOrderRef: null,
+          trackingNumber: 'CJP7742119055',
+        },
       }),
     ];
 
@@ -264,17 +275,41 @@ describe('filterParcels', () => {
     expect(
       filterParcels(searchable, {
         ...EMPTY_FILTER,
-        field: 'buyer',
-        q: 'pasig',
+        field: 'tracking',
+        q: '7742119',
       }).map((parcel) => parcel.id),
     ).toEqual(['b']);
     expect(
       filterParcels(searchable, {
         ...EMPTY_FILTER,
-        field: 'buyer',
+        field: 'tracking',
         q: '88214',
       }),
     ).toEqual([]);
+  });
+
+  /**
+   * `buyer` was offered as a search field and could never match a name: the
+   * list holds `M****a · Quezon City`. It is gone from `ORDER_SEARCH_FIELDS`,
+   * but a bookmark can still carry `?field=buyer`, and that must not silently
+   * search something else and present the result as a buyer match.
+   *
+   * It falls back to the order reference, which is what any unrecognised field
+   * does. Asserted so the fallback is a decision rather than an accident.
+   */
+  it('treats a stale buyer field as an order-reference search', () => {
+    const searchable = [
+      parcelWith({ id: 'a', orderRef: 'A-88214' }),
+      parcelWith({ id: 'b', orderRef: 'A-99001' }),
+    ];
+
+    expect(
+      filterParcels(searchable, {
+        ...EMPTY_FILTER,
+        field: 'buyer',
+        q: '88214',
+      }).map((parcel) => parcel.id),
+    ).toEqual(['a']);
   });
 });
 
@@ -308,31 +343,23 @@ describe('sortParcels', () => {
     expect(result.map((parcel) => parcel.id)).toEqual(['new', 'mid', 'old']);
   });
 
-  it('orders by soonest ship-by', () => {
+  /**
+   * `ship-by-asc` was an offered sort that reordered nothing: no dropship
+   * parcel carries a despatch promise, so every `shipBy` was null and the
+   * comparator returned 0 for every pair. The option is gone, but a bookmark
+   * can still carry it, and the honest answer to such a link is the one real
+   * order rather than an error or an unchanged-looking list.
+   */
+  it('answers a stale ship-by sort with newest order first', () => {
     const result = sortParcels(
       [
-        parcelWith({ id: 'later', shipBy: '2026-08-15' }),
-        parcelWith({ id: 'sooner', shipBy: '2026-08-13' }),
+        parcelWith({ id: 'older', orderedAt: '2026-08-13' }),
+        parcelWith({ id: 'newer', orderedAt: '2026-08-15' }),
       ],
       'ship-by-asc',
     );
 
-    expect(result.map((parcel) => parcel.id)).toEqual(['sooner', 'later']);
-  });
-
-  it('sorts a parcel with no ship-by promise last, not first', () => {
-    // A missing deadline is not an urgent one. Letting null float to the top
-    // would put the least time-critical parcel in front of someone packing
-    // against a cutoff.
-    const result = sortParcels(
-      [
-        parcelWith({ id: 'none', shipBy: null }),
-        parcelWith({ id: 'dated', shipBy: '2026-08-15' }),
-      ],
-      'ship-by-asc',
-    );
-
-    expect(result.map((parcel) => parcel.id)).toEqual(['dated', 'none']);
+    expect(result.map((parcel) => parcel.id)).toEqual(['newer', 'older']);
   });
 
   it('does not mutate the input', () => {

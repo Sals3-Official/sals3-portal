@@ -109,14 +109,24 @@ export default function OrderParcelCard({
           selected ? 'bg-accent' : HEADER_TONE_STYLES[parcel.status.tone],
         )}
       >
-        <input
-          type="checkbox"
-          checked={selected}
-          disabled={!parcel.selectable}
-          onChange={() => onToggle(parcel.id)}
-          aria-label={`Select parcel ${parcel.id}`}
-          className="size-[15px] cursor-pointer accent-primary disabled:cursor-not-allowed"
-        />
+        {/* Absent, not disabled, when this parcel can never be selected.
+            Selection exists to batch label printing, and a dropship parcel has
+            no label for this seller to print - so today every row rendered a
+            permanently dead checkbox. An inert control still reads as "this
+            should work and does not". The mechanism stays for the day an
+            own-stock route exists; only the dead affordance goes. */}
+        {parcel.selectable ? (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggle(parcel.id)}
+            // The order reference, not the parcel's uuid: a screen reader
+            // otherwise announces 36 characters of hexadecimal, and the seller
+            // has no way to tell which row that is.
+            aria-label={`Select parcel ${parcel.parcelIndex} of ${parcel.parcelCount} on order ${parcel.orderRef}`}
+            className="size-[15px] cursor-pointer accent-primary"
+          />
+        ) : null}
         <Link
           href={`/orders/${parcel.id}`}
           className="font-semibold text-ink hover:text-primary hover:underline"
