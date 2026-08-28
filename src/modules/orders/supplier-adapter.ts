@@ -123,14 +123,20 @@ export function supplierActionsFor(
     }
   }
 
-  if (state === 'FULFILLMENT_FAILED' && supports(adapter, 'CREATE_ORDER')) {
-    actions.push({
-      id: 'retry-supplier-order',
-      label: 'Retry supplier order',
-      variant: 'primary',
-      blockedReason: null,
-    });
-  }
+  /*
+   * `FULFILLMENT_FAILED` deliberately offers no action.
+   *
+   * It used to advertise "Retry supplier order", but nothing executed it —
+   * `OrdersWorkspace`'s `handleAction` raises a "not wired to a backend" toast
+   * for every id except `details`. On 2026-08-28 that button was the first
+   * thing reached for on a genuinely stuck order and it did nothing, which is
+   * worse than no button: it costs an operator the time to discover that the
+   * obvious remedy is a prop.
+   *
+   * Retrying is also no longer the operator's job. The fulfillment worker now
+   * reconciles by `orderNumber` before creating, so a replay of the queue
+   * message recovers an orphaned CJ order on its own.
+   */
 
   const cancellable =
     state === 'CJ_ORDER_CREATED' ||

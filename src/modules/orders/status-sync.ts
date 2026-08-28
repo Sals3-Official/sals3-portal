@@ -6,9 +6,8 @@ import { z } from 'zod';
 import getDb, { type DbExecutor } from '@/lib/db/client';
 import { fulfillmentGroups, parcelTrackingEvents } from '@/lib/db/schema';
 import PostgresSupplierSecretStore from '@/lib/secrets/postgres-supplier-secret-store';
-import createGovernedFetch from '@/modules/catalog/discovery/governed-fetch';
 import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
-import { CJ_BASE_URL, CjApiError } from '@/services/cj/config';
+import { getCjJson } from './cj-http';
 import { PARCEL_LIFECYCLE_STATES } from './contracts';
 import {
   parseCjOrderStatus,
@@ -45,20 +44,11 @@ import {
  * poison the batch.
  */
 
-const CJ_SYNC_TIMEOUT_MS = 10_000;
-
 /** Groups per run. Bounded so the route stays inside its maxDuration. */
 const SYNC_BATCH_SIZE = 25;
 
 /** A group is due when it has never synced or its last sync is older than this. */
 const SYNC_STALE_MINUTES = 20;
-
-const cjEnvelopeSchema = z.object({
-  code: z.number(),
-  result: z.boolean().optional(),
-  success: z.boolean().optional(),
-  data: z.unknown().optional(),
-});
 
 /**
  * `/shopping/order/getOrderDetail`. Only the fields the sync reads — CJ's
@@ -94,38 +84,6 @@ function dedupeKeyOf(source: string, occurredAt: string, label: string) {
     .update(`${source}\n${occurredAt}\n${label}`)
     .digest('hex')
     .slice(0, 32);
-}
-
-async function getCjJson(
-  connectionId: string,
-  path: string,
-  tokenManager: CjTokenManager,
-): Promise<unknown> {
-  const token = await tokenManager.getAccessToken(connectionId);
-  const fetcher = createGovernedFetch(connectionId);
-  let response: Response;
-
-  try {
-    response = await fetcher(`${CJ_BASE_URL}${path}`, {
-      method: 'GET',
-      headers: { 'CJ-Access-Token': token },
-      cache: 'no-store',
-      signal: AbortSignal.timeout(CJ_SYNC_TIMEOUT_MS),
-    });
-  } catch {
-    throw new CjApiError('upstream-unavailable');
-  }
-
-  if (response.status === 429) throw new CjApiError('rate-limited');
-  if (!response.ok) throw new CjApiError('upstream-unavailable');
-
-  const parsed = cjEnvelopeSchema.safeParse(await response.json());
-
-  if (!parsed.success || parsed.data.code !== 200) {
-    throw new CjApiError('unexpected-response');
-  }
-
-  return parsed.data.data;
 }
 
 /**

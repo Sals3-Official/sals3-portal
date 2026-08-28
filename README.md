@@ -196,7 +196,27 @@ enabled for the current testing phase; keep it set to `1` in every environment
 so Portal sends `isSandbox: 1` to `createOrderV3`. CJ then treats
 `payBalanceV2` as simulated sandbox payment and does not deduct real balance or
 generate real fulfillment. Set `CJ_ORDER_SANDBOX=0` only when production order
-payment is owner-approved. `CJ_ORDER_SHOP_LOGISTICS_TYPE` optionally overrides
+payment is owner-approved.
+
+**A create that times out is reconciled, not repeated.** CJ writes can outlive
+any timeout worth setting on a queue route — on 2026-08-28 a `createOrderV3` was
+abandoned at ten seconds and CJ finished it thirteen seconds later, leaving an
+order that genuinely existed at the supplier and a fulfillment group with a null
+`cj_order_id`. Because `orderNumber` is `${order_number}-${package_id}` and
+stable across attempts, it is an idempotency key on CJ's side: before re-sending
+a create whose step already failed, the worker asks
+`getOrderDetail?orderId=<orderNumber>` and adopts the existing order if CJ has
+one. Only a `FAILED` step triggers the lookup, so a first attempt spends no
+extra CJ call, and only CJ's own "not found" is read as "no such order" —
+anything else rethrows, because a stuck retry is recoverable and a duplicate
+supplier order is not. Without this, every replay re-sent a duplicate CJ
+refused, and `status-sync` could never help: `dueGroups` skips groups whose
+`cj_order_id` is null.
+
+Timeouts are split by direction in `src/modules/orders/cj-http.ts`: reads get
+`CJ_READ_TIMEOUT_MS` (10s, since the next sync run retries a skipped group),
+writes get `CJ_WRITE_TIMEOUT_MS` (30s). Raising the write timeout narrows that
+race; only the reconciliation above closes it. `CJ_ORDER_SHOP_LOGISTICS_TYPE` optionally overrides
 the CJ logistics type; otherwise Portal uses the merchant logistics default
 from the current implementation. `CJ_ORDER_STORE_NAME` and `CJ_PLATFORM_TOKEN`
 are optional account-specific CJ fields.
