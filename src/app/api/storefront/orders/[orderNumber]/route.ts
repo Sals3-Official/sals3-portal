@@ -44,8 +44,14 @@ export async function GET(
     return notFoundResponse();
   }
 
+  // Session-verified by the storefront, like `X-Buyer-Email`. Optional during
+  // the rollout; an order carrying a uid is unreadable without it.
+  const buyerUid = request.headers.get('x-buyer-uid')?.trim() ?? '';
+
   try {
-    const order = await readBuyerOrder(buyerEmail, orderNumber);
+    const order = await readBuyerOrder(buyerEmail, orderNumber, {
+      ...(buyerUid === '' || buyerUid.length > 128 ? {} : { buyerUid }),
+    });
 
     return order === null
       ? notFoundResponse()

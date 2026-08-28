@@ -38,9 +38,19 @@ export async function GET(request: Request) {
     );
   }
 
+  // Same trust model as `X-Buyer-Email`: the storefront resolves this from its
+  // verified session cookie and never from anything the browser supplied. It is
+  // optional so a storefront deployed before this header still reads its
+  // pre-uid orders by email.
+  const buyerUid = request.headers.get('x-buyer-uid')?.trim() ?? '';
+
   try {
     return Response.json(
-      { orders: await listBuyerOrders(buyerEmail) },
+      {
+        orders: await listBuyerOrders(buyerEmail, {
+          ...(buyerUid === '' || buyerUid.length > 128 ? {} : { buyerUid }),
+        }),
+      },
       { headers: STOREFRONT_HEADERS },
     );
   } catch (error) {

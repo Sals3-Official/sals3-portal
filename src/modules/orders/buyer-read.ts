@@ -475,21 +475,63 @@ async function assembleOrders(
   });
 }
 
+/**
+ * Whether this order belongs to the caller.
+ *
+ * Two rules, and which one applies is decided by the order, not the caller.
+ *
+ * **A row with a `buyer_uid` is authorized by uid alone.** The uid comes from
+ * the storefront's verified session cookie, so it identifies the person who was
+ * signed in when they paid. Email is not consulted for these rows even as a
+ * fallback: allowing it back in would mean anyone who could get an order's
+ * contact address into their own account could read it.
+ *
+ * **A row without one is authorized by email**, exactly as before. Every order
+ * accepted before 2026-08-28 has no uid, and refusing them would lock buyers
+ * out of their own order history to fix a narrower problem.
+ *
+ * The narrower problem: `buyer_email` is the contact address typed into the
+ * checkout form. It identifies a mailbox, so a buyer who typed anything other
+ * than their account address paid for an order they could not then see.
+ */
+function belongsToBuyer(
+  order: { buyerEmail: string; buyerUid?: string | null },
+  identity: { email: string; uid: string | undefined },
+): boolean {
+  // `== null` catches undefined as well as null, deliberately. A row read by a
+  // deployment that is live before the migration lands has no `buyer_uid` key
+  // at all, and treating that as "has a uid I cannot match" would refuse every
+  // buyer their own orders for the length of that window.
+  if (order.buyerUid == null) {
+    return order.buyerEmail.toLowerCase() === identity.email;
+  }
+
+  return identity.uid !== undefined && order.buyerUid === identity.uid;
+}
+
 export async function listBuyerOrders(
   buyerEmail: string,
-  options: { executor?: DbExecutor } = {},
+  options: { executor?: DbExecutor; buyerUid?: string } = {},
 ): Promise<BuyerOrderPayload[]> {
   const executor = options.executor ?? getDb();
   const normalized = buyerEmail.trim().toLowerCase();
+  const uid = options.buyerUid?.trim();
 
   if (normalized === '') return [];
 
   const orders = await executor
     .select()
     .from(sals3Orders)
-    // `lower(...)` on both sides: the stored email is whatever the buyer
-    // typed at checkout, and the session email may differ only in case.
-    .where(sql`lower(${sals3Orders.buyerEmail}) = ${normalized}`)
+    .where(
+      // The two rules of `belongsToBuyer`, expressed as one predicate so the
+      // database does the filtering rather than a post-fetch pass over rows
+      // this caller may not read. `lower(...)` on both sides of the email
+      // branch: the stored address is whatever the buyer typed at checkout,
+      // and the session address may differ only in case.
+      uid === undefined || uid === ''
+        ? sql`${sals3Orders.buyerUid} is null and lower(${sals3Orders.buyerEmail}) = ${normalized}`
+        : sql`(${sals3Orders.buyerUid} = ${uid}) or (${sals3Orders.buyerUid} is null and lower(${sals3Orders.buyerEmail}) = ${normalized})`,
+    )
     .orderBy(desc(sals3Orders.createdAt))
     .limit(MAX_ORDERS);
 
@@ -499,7 +541,7 @@ export async function listBuyerOrders(
 export async function readBuyerOrder(
   buyerEmail: string,
   orderNumber: string,
-  options: { executor?: DbExecutor } = {},
+  options: { executor?: DbExecutor; buyerUid?: string } = {},
 ): Promise<BuyerOrderPayload | null> {
   const executor = options.executor ?? getDb();
   const normalized = buyerEmail.trim().toLowerCase();
@@ -514,9 +556,15 @@ export async function readBuyerOrder(
 
   const order = orders[0];
 
-  // The email comparison happens here, after the fetch, so the two misses
+  // The ownership comparison happens here, after the fetch, so the two misses
   // (unknown number, someone else's number) are one code path and one timing.
-  if (order === undefined || order.buyerEmail.toLowerCase() !== normalized) {
+  if (
+    order === undefined ||
+    !belongsToBuyer(order, {
+      email: normalized,
+      uid: options.buyerUid?.trim() || undefined,
+    })
+  ) {
     return null;
   }
 

@@ -51,6 +51,13 @@ const shippingSelectionSchema = z.object({
 export const createCheckoutIntentSchema =
   checkoutFreightQuoteRequestSchema.extend({
     shippingSelection: shippingSelectionSchema,
+    /**
+     * The storefront's verified account id for the signed-in buyer. Optional
+     * only so a storefront deployed before this field still works during the
+     * rollout; once both sides are live it is always sent, and an intent
+     * without one authorizes by email like every pre-2026-08-28 order.
+     */
+    buyerUid: z.string().trim().min(1).max(128).optional(),
   });
 
 export const acceptCheckoutOrderSchema = z.object({
@@ -205,6 +212,7 @@ export async function createCheckoutIntent(
     .insert(checkoutIntents)
     .values({
       buyerEmail: input.address.email,
+      ...(input.buyerUid === undefined ? {} : { buyerUid: input.buyerUid }),
       amountMinor: BigInt(total),
       currency: 'USD',
       cartSnapshot: { lines: lineSnapshots },
@@ -356,6 +364,9 @@ export async function acceptCheckoutOrder(
         stripeCheckoutSessionId: input.stripeCheckoutSessionId,
         stripePaymentIntentId: input.stripePaymentIntentId,
         buyerEmail: input.customerEmail ?? addressEmail(intent),
+        // Carried from the intent, never from the Stripe payload: the uid is
+        // the one identity on this order that the buyer could not have typed.
+        buyerUid: intent.buyerUid,
         amountMinor: intent.amountMinor,
         currency: intent.currency,
       })
