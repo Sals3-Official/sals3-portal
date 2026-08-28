@@ -117,6 +117,30 @@ type ProductEditorWorkspaceProps = {
       }
   >;
   /**
+   * Abandons the forked draft and puts the product back on its published
+   * revision. Omitted for fixture/design-preview mode, where there is no
+   * persisted revision to discard.
+   */
+  discardDraftAction?: (input: unknown) => Promise<
+    | {
+        ok: true;
+        restoredRevisionId: string;
+        restoredRevisionVersion: number;
+      }
+    | {
+        ok: false;
+        reason:
+          | 'invalid_input'
+          | 'denied'
+          | 'rate_limited'
+          | 'not_configured'
+          | 'not_found'
+          | 'version_conflict'
+          | 'no_published_revision'
+          | 'failed';
+      }
+  >;
+  /**
    * The narrow description save, so its own section can save without committing
    * a retail price the seller was still deciding on.
    */
@@ -273,6 +297,38 @@ type ProductEditorWorkspaceProps = {
 };
 
 const EXIT_HREF = '/products/pipeline?tab=ready';
+
+/**
+ * Seller-facing copy for every way a discard can be refused.
+ *
+ * A `Record` over the reason union rather than a chain of comparisons, so a
+ * reason added to the action without copy here is a compile error — the same
+ * discipline `publish-gates.ts` uses for publish refusals, and for the same
+ * reason: the failure a seller sees must never fall through to a generic
+ * sentence someone forgot to write.
+ */
+const DISCARD_FAILURE_COPY: Record<
+  | 'invalid_input'
+  | 'denied'
+  | 'rate_limited'
+  | 'not_configured'
+  | 'not_found'
+  | 'version_conflict'
+  | 'no_published_revision'
+  | 'failed',
+  string
+> = {
+  invalid_input: 'Nothing was changed. Please reload and try again.',
+  denied: 'Your account cannot edit this listing.',
+  rate_limited: 'Too many changes at once. Wait a moment and try again.',
+  not_configured: 'The catalogue database is not available right now.',
+  not_found: 'This listing could not be found on your account.',
+  version_conflict:
+    'This listing changed in another tab. Reload and try again.',
+  no_published_revision:
+    'This listing has never been published, so there is no earlier version to return to.',
+  failed: 'Nothing was changed. Please try again.',
+};
 /** Titles the local gate predictor owns, so a server copy of one is dropped. */
 const PREDICTED_GATE_TITLES = new Set([
   ...Object.values(PUBLISH_GATES).map((gate) => gate.title),
@@ -460,6 +516,7 @@ export default function ProductEditorWorkspace({
   marketsSection,
   initialLifecycle,
   saveDraftAction,
+  discardDraftAction,
   saveDescriptionAction,
   publishAction,
   optionMappingAction,
@@ -726,6 +783,73 @@ export default function ProductEditorWorkspace({
   const [hasUnpublishedChanges, setHasUnpublishedChanges] = useState(
     fixture.publishedRevision !== null && !fixture.publishedRevision.isCurrent,
   );
+  const [discardDialogOpen, setDiscardDialogOpen] = useState(false);
+  const [isDiscarding, setIsDiscarding] = useState(false);
+
+  /**
+   * Offered only where it can actually be honoured: a real action, a persisted
+   * revision to discard, and a published copy to fall back to. On a fixture
+   * screen or an unpublished draft the control is absent rather than disabled,
+   * because there is nothing the seller could do to make it work.
+   */
+  const canDiscardDraft =
+    discardDraftAction !== undefined &&
+    draftRevisionId !== null &&
+    draftRevisionVersion !== null &&
+    fixture.draftSaveTarget !== null &&
+    fixture.publishedRevision !== null;
+
+  const discardProductId = fixture.draftSaveTarget?.productId ?? null;
+
+  const handleDiscardDraft = useCallback(async () => {
+    if (
+      discardDraftAction === undefined ||
+      discardProductId === null ||
+      draftRevisionId === null ||
+      draftRevisionVersion === null
+    ) {
+      return;
+    }
+
+    setIsDiscarding(true);
+
+    try {
+      const result = await discardDraftAction({
+        productId: discardProductId,
+        revisionId: draftRevisionId,
+        expectedRevisionVersion: draftRevisionVersion,
+      });
+
+      if (!result.ok) {
+        toast('Discard failed.', {
+          description: DISCARD_FAILURE_COPY[result.reason],
+        });
+
+        return;
+      }
+
+      // Retarget onto the published revision this discard restored. Doing it
+      // from the result rather than from a refreshed fixture is deliberate:
+      // these two are `useState`, so `router.refresh()` alone would leave them
+      // naming the revision that was just retired.
+      setDraftRevisionId(result.restoredRevisionId);
+      setDraftRevisionVersion(result.restoredRevisionVersion);
+      setHasUnpublishedChanges(false);
+      setDiscardDialogOpen(false);
+      toast('Draft discarded.', {
+        description: 'This listing is back to the published version.',
+      });
+      router.refresh();
+    } finally {
+      setIsDiscarding(false);
+    }
+  }, [
+    discardDraftAction,
+    discardProductId,
+    draftRevisionId,
+    draftRevisionVersion,
+    router,
+  ]);
 
   /**
    * `products.version`, as this tab last observed it.
@@ -1862,6 +1986,10 @@ export default function ProductEditorWorkspace({
       <UnpublishedChangesNotice
         isPublished={fixture.publishedRevision !== null}
         hasUnpublishedChanges={hasUnpublishedChanges}
+        onDiscard={
+          canDiscardDraft ? () => setDiscardDialogOpen(true) : undefined
+        }
+        isDiscarding={isDiscarding}
       />
 
       {/* 86.5rem (1384px) is 272px Readiness + 760px main + 320px Preview +
@@ -2261,6 +2389,49 @@ export default function ProductEditorWorkspace({
         onCancel={() => setBulkPricingMode(null)}
         onApply={applyBulkPricing}
       />
+
+      <AlertDialog
+        open={discardDialogOpen}
+        onOpenChange={(open) => {
+          // A discard in flight must not be dismissed out from under itself:
+          // the write would still land while the screen stopped waiting for it.
+          if (!open && !isDiscarding) setDiscardDialogOpen(false);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard this draft?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This listing goes back to the version your storefront is already
+              showing, and the edits saved to this draft stop being part of the
+              next Publish Update. Buyers see no change — they are on the
+              published version now.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDiscarding}>
+              Keep the draft
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={isDiscarding}
+              onClick={(event) => {
+                // The dialog must stay open until the write answers, so the
+                // seller is not shown a closed dialog over an unfinished
+                // action — closing is `handleDiscardDraft`'s job on success.
+                event.preventDefault();
+                handleDiscardDraft().catch(() => {
+                  // `handleDiscardDraft` already reports every failure it can
+                  // describe and always clears its pending flag; this is the
+                  // unhandled-rejection guard, not a second error path.
+                });
+              }}
+            >
+              {isDiscarding ? 'Discarding…' : 'Discard draft'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={exitDialogOpen} onOpenChange={setExitDialogOpen}>
         <AlertDialogContent>

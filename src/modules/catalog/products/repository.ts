@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm';
 
 import {
   offerSupplierBindings,
@@ -426,6 +426,61 @@ export async function markApprovedRevisionsSuperseded(
     .returning({ id: productRevisions.id });
 
   return rows.map((row) => row.id);
+}
+
+/**
+ * Retires an open draft the seller has abandoned, freezing what it held.
+ *
+ * The freeze is not optional bookkeeping: `product_revisions_frozen_when_settled`
+ * admits `SUPERSEDED` only for a row with both `content_snapshot` and
+ * `frozen_at`, and a `DRAFT` carries neither. Writing the draft's own
+ * `content_document` across is also the only way the trail can later answer
+ * *what* was discarded — the alternative, deleting the row, satisfies the
+ * constraint by removing the evidence.
+ *
+ * `content_snapshot` is set from the column rather than from a caller-supplied
+ * document on purpose. The bytes that are retired must be the bytes the
+ * database actually held; letting the caller name them would allow a discard to
+ * record a document that was never in the draft.
+ *
+ * The same four conditions as `saveDraftRevisionContent` travel together in the
+ * `WHERE`: the revision id, the product that owns it, `DRAFT` (so a settled
+ * revision can never be retired through this path — that would leave a
+ * published product pointing at a superseded row), and the expected version (so
+ * a stale tab cannot discard an edit made in a newer one). `null` means at
+ * least one failed.
+ */
+export async function freezeDraftRevisionAsSuperseded(
+  executor: Executor,
+  input: {
+    revisionId: string;
+    productId: string;
+    expectedVersion: number;
+    actorId: string;
+    now: Date;
+  },
+): Promise<ProductRevisionRow | null> {
+  const [row] = await executor
+    .update(productRevisions)
+    .set({
+      workflowState: 'SUPERSEDED',
+      contentSnapshot: sql`${productRevisions.contentDocument}`,
+      frozenAt: input.now,
+      version: input.expectedVersion + 1,
+      updatedAt: input.now,
+      updatedBy: input.actorId,
+    })
+    .where(
+      and(
+        eq(productRevisions.id, input.revisionId),
+        eq(productRevisions.productId, input.productId),
+        eq(productRevisions.workflowState, 'DRAFT'),
+        eq(productRevisions.version, input.expectedVersion),
+      ),
+    )
+    .returning();
+
+  return row ?? null;
 }
 
 /**

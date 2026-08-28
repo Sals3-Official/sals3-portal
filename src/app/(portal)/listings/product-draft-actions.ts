@@ -11,12 +11,15 @@ import captureCandidateEvidence, {
 import {
   bulkCreateProductDraftsInputSchema,
   createProductDraftInputSchema,
+  discardProductDraftInputSchema,
   saveProductDraftInputSchema,
   type BulkProductDraftActionResult,
+  type DiscardProductDraftActionResult,
   type ProductDraftActionResult,
   type ProductDraftFailureReason,
 } from '@/modules/catalog/products/contracts';
 import createProductDraftFromCandidate from '@/modules/catalog/products/create-draft';
+import discardProductDraft from '@/modules/catalog/products/discard-draft';
 import saveProductDraft from '@/modules/catalog/products/save-draft';
 import type { PortalPermission } from '@/lib/auth/permissions';
 import revalidateListingViews from './revalidate-listing-views';
@@ -361,6 +364,61 @@ export async function saveProductDraftAction(
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('[portal] save product draft failed', {
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+
+    return { ok: false, reason: 'failed' };
+  }
+}
+
+/**
+ * Abandons the open draft a published product was forked into.
+ *
+ * Gated on `product:edit`, not `product:publish`. A discard changes nothing a
+ * buyer can see — `published_revision_id` is what the storefront reads and this
+ * never touches it — so requiring publish rights would mean a seller permitted
+ * to make an edit was not permitted to take it back, which is the wrong way
+ * round: the narrower permission should be able to undo its own work.
+ *
+ * Shares `catalog-draft:save`'s rate-limit bucket deliberately. Discarding is
+ * the same seller pressing controls in the same editor, and a separate bucket
+ * would hand an abusive caller a second allowance against the same tables.
+ */
+export async function discardProductDraftAction(
+  input: unknown,
+): Promise<DiscardProductDraftActionResult> {
+  const parsed = discardProductDraftInputSchema.safeParse(input);
+
+  if (!parsed.success) return { ok: false, reason: 'invalid_input' };
+
+  const auth = await authorize('product:edit', 'catalog-draft:save');
+
+  if (!auth.ok) return auth;
+
+  try {
+    const outcome = await discardProductDraft({
+      request: parsed.data,
+      sellerAccountId: auth.sellerAccountId,
+      actorId: auth.actorId,
+    });
+
+    if (!outcome.ok) return { ok: false, reason: outcome.reason };
+
+    // The editor lives at `/listings/new?productId=…` and the description
+    // studio at `/listings/[productId]/description`; both must re-read, or the
+    // discard commits and the screen keeps showing the abandoned copy — part
+    // 71's defect exactly. The shared helper invalidates the subtree rather
+    // than naming routes that go stale when one moves.
+    revalidateListingViews();
+
+    return {
+      ok: true,
+      restoredRevisionId: outcome.restoredRevisionId,
+      restoredRevisionVersion: outcome.restoredRevisionVersion,
+    };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] discard product draft failed', {
       error: error instanceof Error ? error.message : 'unknown',
     });
 

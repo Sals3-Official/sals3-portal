@@ -15,7 +15,10 @@ import saveOptionMappingAction, {
   renameOptionMappingAction,
 } from '@/app/(portal)/listings/option-mapping-actions';
 import uploadDescriptionImageAction from '@/app/(portal)/listings/description-image-actions';
-import { saveProductDraftAction } from '@/app/(portal)/listings/product-draft-actions';
+import {
+  discardProductDraftAction,
+  saveProductDraftAction,
+} from '@/app/(portal)/listings/product-draft-actions';
 import { publishProductAction } from '@/app/(portal)/listings/publish-actions';
 import { sectionSeverity } from '@/lib/seller-center/product-editor/derive';
 import type {
@@ -91,6 +94,9 @@ export default function ProductEditor({
           </EditorSectionCard>
         }
         saveDraftAction={isDatabaseBacked ? saveProductDraftAction : undefined}
+        discardDraftAction={
+          isDatabaseBacked ? discardProductDraftAction : undefined
+        }
         saveDescriptionAction={
           isDatabaseBacked ? saveDescriptionAction : undefined
         }

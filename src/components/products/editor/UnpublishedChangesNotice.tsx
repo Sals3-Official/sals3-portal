@@ -5,6 +5,16 @@ type UnpublishedChangesNoticeProps = {
   isPublished: boolean;
   /** The open draft has moved ahead of what the storefront serves. */
   hasUnpublishedChanges: boolean;
+  /**
+   * Opens the confirmation for abandoning the draft.
+   *
+   * Optional because the offer must not appear where it cannot be honoured: a
+   * fixture screen and a product with no persisted draft target have no
+   * revision to discard, and a button that always fails is worse than no
+   * button.
+   */
+  onDiscard?: () => void;
+  isDiscarding?: boolean;
 };
 
 /**
@@ -25,6 +35,8 @@ type UnpublishedChangesNoticeProps = {
 export default function UnpublishedChangesNotice({
   isPublished,
   hasUnpublishedChanges,
+  onDiscard,
+  isDiscarding = false,
 }: UnpublishedChangesNoticeProps) {
   if (!isPublished || !hasUnpublishedChanges) return null;
 
@@ -46,6 +58,16 @@ export default function UnpublishedChangesNotice({
           the published version until you press Publish Update.
         </p>
       </div>
+      {onDiscard === undefined ? null : (
+        <button
+          type="button"
+          disabled={isDiscarding}
+          onClick={onDiscard}
+          className="shrink-0 rounded-md border border-amber-600/40 px-2.5 py-1.5 text-[13px] font-medium text-amber-700 transition-colors hover:bg-amber-600/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700 active:bg-amber-600/20 disabled:pointer-events-none disabled:opacity-60"
+        >
+          {isDiscarding ? 'Discarding…' : 'Discard draft'}
+        </button>
+      )}
     </div>
   );
 }

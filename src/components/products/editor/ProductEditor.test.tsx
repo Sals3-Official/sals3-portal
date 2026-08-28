@@ -27,6 +27,7 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('@/app/(portal)/listings/product-draft-actions', () => ({
   saveProductDraftAction: vi.fn(),
+  discardProductDraftAction: vi.fn(),
 }));
 
 vi.mock('@/app/(portal)/listings/publish-actions', () => ({

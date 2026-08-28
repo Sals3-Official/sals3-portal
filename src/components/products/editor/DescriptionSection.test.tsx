@@ -14,6 +14,7 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('@/app/(portal)/listings/product-draft-actions', () => ({
   saveProductDraftAction: vi.fn(),
+  discardProductDraftAction: vi.fn(),
 }));
 
 // The remaining mocks all exist for one reason: each action module reaches

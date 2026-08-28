@@ -1841,6 +1841,45 @@ Publishing also retires what it replaces — the previous `APPROVED` revision
 becomes `SUPERSEDED` in the same transaction, so `APPROVED` names exactly one
 revision per product.
 
+### A forked draft can be discarded (2026-08-28)
+
+The fork above had no way back. An edit a seller thought better of stayed the
+product's `current_revision_id`, and the next **Publish Update** — pressed later
+for some unrelated change — shipped it; the only escape was retyping the
+published wording from memory. `Discard draft` sits in the "Saved, but not live
+yet" notice and undoes the fork
+(`src/modules/catalog/products/discard-draft-revision.ts`).
+
+- **The abandoned draft is frozen, never deleted.**
+  `product_revisions_frozen_when_settled` admits `SUPERSEDED` only for a row
+  carrying `content_snapshot` and `frozen_at`, and a `DRAFT` has neither — so
+  the discard copies the draft's own `content_document` into its snapshot and
+  freezes it. That also preserves what was thrown away, which is the point: the
+  audit event (`catalog_product_revision.discarded`) can answer _what_ was
+  discarded rather than only that something was. Moving the row out of `DRAFT`
+  releases `product_revisions_open_draft_key`, so the next edit forks again.
+- **Buyers see nothing.** `published_revision_id` is untouched, exactly as in
+  the fork; the discard only moves `current_revision_id` back to it.
+- **Gated on `product:edit`, not `product:publish`.** A seller permitted to make
+  an edit must be permitted to take it back, and the discard changes nothing
+  live. It shares the `catalog-draft:save` rate-limit bucket.
+- **Refusals**: a settled or missing revision, a version mismatch, a draft that
+  is not the product's current revision, and a lost fork race all answer
+  `version_conflict`; a product that has **never been published** answers
+  `no_published_revision`, because there its open draft is the only copy and
+  discarding it would leave no revision to point at.
+- **The action returns the restored revision's id _and_ version.** The editor
+  holds both in `useState`, which reads its argument only on mount, so a
+  `router.refresh()` alone would leave it naming the revision just retired and
+  every later save refused — the stale-`useState` defect PR #105 fixed once on
+  this screen already.
+
+**Limitation:** the control appears only where the listing is live and a
+persisted revision exists. On the fixture/design-preview editor it is absent
+rather than disabled, because nothing the seller does there could make it work.
+Discarding is not itself undoable from the UI — the bytes survive on the
+superseded revision, but reinstating them is a database operation.
+
 It lives in an `(studio)` route group with its own pass-through layout. Layouts
 nest, so a child of `(portal)` could only add chrome to the rail and topbar,
 never remove them; here the rail is genuinely absent, which is what gives the
