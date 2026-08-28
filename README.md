@@ -105,9 +105,11 @@ npm run approve:portal-user -- --email seller@example.com --role seller_manager
 Use the approval script only for existing accounts that need a role change,
 email-verification override, or manual repair.
 
-Then fill in `CJ_API_KEY` in `.env.local` — used only by the one-time
-bootstrap below; nothing reads it at request time anymore. `.env.local`
-is ignored by git and must never be committed.
+Then fill in `CJ_API_KEY` in `.env.local`. It seeds the one-time bootstrap
+below and, in non-production only, lets a local dev server quote freight when
+the connected database's encrypted supplier credential was created with a
+different machine key. That fallback never rewrites the supplier credential
+row. `.env.local` is ignored by git and must never be committed.
 
 For Vercel-backed keys, use the linked project instead of copying secrets by
 hand:
@@ -143,7 +145,26 @@ this portal. Use the same value in `sals3-ecommerce/.env.local`. The checkout
 quote route keeps CJ credentials server-side: ecommerce sends cart lines and a
 completed delivery address, then Portal resolves the published product,
 supplier connection, encrypted CJ credentials, governed CJ limiter, and current
-stock/origin evidence before calling CJ.
+stock/origin evidence before calling CJ. Portal classifies each package's valid
+rows into at most three distinct services: cheapest Standard, midpoint-ranked
+Express, and fastest Expedited. Ecommerce always renders the three tier cards;
+tiers without a real service are disabled rather than fabricated.
+
+**The accepted tier is persisted, and its DDL ships separately.**
+`fulfillment_groups.shipping_tier` is nullable `text` under a CHECK constraint
+limited to the three names — nullable because every order accepted before this
+change has no tier and must not be given a false one, and a `DEFAULT` would hand
+all of them the same invented promise. The buyer read model SELECTs this column,
+so it must exist before the deployment carrying it serves a request; until it
+does, every buyer order read fails with `column
+fulfillment_groups.shipping_tier does not exist`. Apply it with the **Orders
+Migrate Shipping Tier** workflow (`workflow_dispatch`,
+`CRON_SECRET`-authenticated), which calls
+`POST /api/internal/orders/migrate-shipping-tier` on the deployed app and fails
+the run unless the response proves both `columnExistsAfter: true` and
+`constraintExistsAfter: true`. Both are asserted because a run that hit the
+`lock_timeout` between the two statements would leave the column present and the
+constraint absent. Idempotent; safe to run more than once.
 
 The same bearer token protects storefront order endpoints used by Stripe
 webhooks in `sals3-ecommerce`:
@@ -287,8 +308,8 @@ Redis, KV, or paid cache service is used for this path.
 | `/api/storefront/categories`                               | Protected category feed for `sals3-ecommerce`                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `/api/storefront/categories/[slug]/products`               | Protected per-department browse for `sals3-ecommerce`'s `/c/[slug]` page: published products of one L1 department, with a card-price window, sort and pagination. `404` for a slug outside the 21-department allow-list.                                                                                                                                                                                                                                                                       |
 | `/api/storefront/search`                                   | Protected catalogue search for `sals3-ecommerce`'s `/search` page: substring match on published product titles, optionally narrowed to one department, with the same price window, sort and pagination as the browse route. A blank term is an empty result, not a `400`.                                                                                                                                                                                                                      |
-| `/api/storefront/checkout/freight-quotes`                  | Protected checkout freight quote endpoint for `sals3-ecommerce`: validates live published cart lines, resolves CJ origin/stock evidence through the governed supplier path, calls CJ `freightCalculateTip` per package, and returns buyer-safe shipping options only                                                                                                                                                                                                                           |
-| `/api/storefront/checkout/intents`                         | Protected checkout intent endpoint for `sals3-ecommerce`: validates the selected freight against the current quote path and persists an immutable pending checkout snapshot before Stripe payment                                                                                                                                                                                                                                                                                              |
+| `/api/storefront/checkout/freight-quotes`                  | Protected checkout freight quote endpoint for `sals3-ecommerce`: validates live published cart lines, resolves CJ origin/stock evidence through the governed supplier path, calls CJ `freightCalculateTip` per package, and returns available Standard/Express/Expedited assignments only                                                                                                                                                                                                      |
+| `/api/storefront/checkout/intents`                         | Protected checkout intent endpoint for `sals3-ecommerce`: re-quotes and reclassifies freight, requires an exact package/tier/option/channel/amount/currency match, and persists the immutable tier plus exact CJ row before Stripe payment                                                                                                                                                                                                                                                     |
 | `/api/storefront/checkout/orders/accept`                   | Protected Stripe-webhook handoff endpoint for `sals3-ecommerce`: idempotently creates one paid Sals3 order per Stripe Checkout Session and enqueues `FULFILL_ORDER` supplier fulfillment work                                                                                                                                                                                                                                                                                                  |
 
 ## Candidate detail drawer

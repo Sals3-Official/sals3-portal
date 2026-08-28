@@ -61,6 +61,7 @@ describe('CjTokenManager', () => {
   beforeEach(() => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     CjTokenManager.resetCache();
+    delete process.env.CJ_API_KEY;
     getDbMock.mockClear();
     writeWebhookSecretMock.mockReset().mockResolvedValue(undefined);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(accessTokenResponse()));
@@ -77,6 +78,26 @@ describe('CjTokenManager', () => {
       reason: 'missing-credentials',
     });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('uses the configured CJ_API_KEY only as a non-production fallback when local decryption fails', async () => {
+    process.env.CJ_API_KEY = 'dev-cj-api-key';
+    const store = secretStore({
+      read: vi.fn().mockRejectedValue(new Error('bad decrypt')),
+      write: vi.fn().mockResolvedValue(undefined),
+    });
+    const manager = new CjTokenManager(store);
+
+    await expect(manager.getAccessToken('connection-1')).resolves.toBe(
+      'fresh-access-token',
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/authentication/getAccessToken'),
+      expect.objectContaining({
+        body: JSON.stringify({ apiKey: 'dev-cj-api-key' }),
+      }),
+    );
+    expect(store.write).not.toHaveBeenCalled();
   });
 
   it('maps malformed stored credentials to missing credentials', async () => {

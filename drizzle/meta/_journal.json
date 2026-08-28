@@ -225,6 +225,13 @@
       "when": 1787862669015,
       "tag": "0031_unusual_gargoyle",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1787892991698,
+      "tag": "0032_strict_shipping_tiers",
+      "breakpoints": true
     }
   ]
 }

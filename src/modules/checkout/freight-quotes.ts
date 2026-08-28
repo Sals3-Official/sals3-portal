@@ -25,6 +25,7 @@ import PostgresSupplierSecretStore from '@/lib/secrets/postgres-supplier-secret-
 import createGovernedFetch from '@/modules/catalog/discovery/governed-fetch';
 import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
 import { CJ_BASE_URL, CjApiError } from '@/services/cj/config';
+import { classifyShippingTiers, type ShippingTier } from './shipping-tiers';
 
 const QUOTE_TTL_MS = 15 * 60 * 1000;
 const CJ_REQUEST_TIMEOUT_MS = 8_000;
@@ -61,7 +62,7 @@ export type CheckoutFreightQuoteRequest = z.infer<
 export type CheckoutFreightQuote = {
   quoteId: string;
   packageId: string;
-  label: 'Economy' | 'Standard' | 'Express' | 'Other';
+  shippingTier: ShippingTier;
   cjLogisticName: string;
   optionId: string;
   channelId: string;
@@ -206,20 +207,6 @@ function sumPositive(values: Array<number | null | undefined>): number {
 
     return total + Math.max(0, value);
   }, 0);
-}
-
-function labelFor(
-  arrivalTime: string,
-  priceSort?: number[],
-): CheckoutFreightQuote['label'] {
-  if (priceSort?.includes(1)) return 'Economy';
-
-  const firstDays = Number.parseInt(arrivalTime.split('-')[0] ?? '', 10);
-
-  if (Number.isFinite(firstDays) && firstDays <= 7) return 'Express';
-  if (Number.isFinite(firstDays) && firstDays <= 20) return 'Standard';
-
-  return 'Other';
 }
 
 function variantVolumeCm3(line: QuoteLine): number | null {
@@ -865,7 +852,7 @@ export async function quoteCheckoutFreight(
         });
       }
 
-      return rows
+      const usableQuotes = rows
         .filter((row) => row.error === '' && row.errorEn === '')
         .map((row) => {
           const name =
@@ -886,10 +873,6 @@ export async function quoteCheckoutFreight(
           return {
             quoteId: crypto.randomUUID(),
             packageId: pkg.packageId,
-            label: labelFor(
-              row.arrivalTime || row.option?.arrivalTime || '',
-              row.recommendLogisticsTypeList,
-            ),
             cjLogisticName: name,
             optionId,
             channelId,
@@ -904,12 +887,26 @@ export async function quoteCheckoutFreight(
             expiresAt,
           };
         })
-        .filter((quote): quote is CheckoutFreightQuote => quote !== null);
+        .filter(
+          (quote): quote is Omit<CheckoutFreightQuote, 'shippingTier'> =>
+            quote !== null,
+        );
+
+      return classifyShippingTiers(usableQuotes);
     }),
   );
   const quotes = quotesByPackage.flat();
 
-  if (quotes.length === 0) {
+  if (
+    packages.some(
+      (pkg) =>
+        !quotes.some(
+          (quote) =>
+            quote.packageId === pkg.packageId &&
+            quote.shippingTier === 'Standard',
+        ),
+    )
+  ) {
     // eslint-disable-next-line no-console
     console.warn('[portal] CJ freight returned no usable options', {
       destinationCountry: input.address.country,
