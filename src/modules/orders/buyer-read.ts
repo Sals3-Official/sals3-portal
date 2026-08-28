@@ -21,6 +21,10 @@ import {
   type Sals3OrderRow,
 } from '@/lib/db/schema';
 import {
+  isShippingTier,
+  type ShippingTier,
+} from '@/modules/checkout/shipping-tiers';
+import {
   PARCEL_LIFECYCLE_STATES,
   type ParcelLifecycleState,
 } from './contracts';
@@ -136,6 +140,7 @@ export type BuyerTrackingEventPayload = {
 
 export type BuyerPackagePayload = {
   packageId: string;
+  shippingTier: ShippingTier | null;
   carrier: string;
   trackingNumber: string | null;
   /** ADR-004 §2 state; null when the sync has never reached this group. */
@@ -380,6 +385,9 @@ async function assembleOrders(
     const packages: BuyerPackagePayload[] = orderGroups.map(
       (group: FulfillmentGroupRow) => ({
         packageId: group.packageId,
+        shippingTier: isShippingTier(group.shippingTier)
+          ? group.shippingTier
+          : null,
         carrier: group.logisticName,
         trackingNumber: group.trackingNumber,
         parcelState:
@@ -426,6 +434,7 @@ async function assembleOrders(
     if (orphanLines.length > 0) {
       packages.push({
         packageId: 'unassigned',
+        shippingTier: null,
         carrier: 'Delivery option chosen at checkout',
         trackingNumber: null,
         parcelState: null,

@@ -1,0 +1,2 @@
+ALTER TABLE "fulfillment_groups" ADD COLUMN "shipping_tier" text;--> statement-breakpoint
+ALTER TABLE "fulfillment_groups" ADD CONSTRAINT "fulfillment_groups_shipping_tier_check" CHECK ("fulfillment_groups"."shipping_tier" is null or "fulfillment_groups"."shipping_tier" in ('Standard', 'Express', 'Expedited'));

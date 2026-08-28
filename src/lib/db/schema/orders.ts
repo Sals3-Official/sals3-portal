@@ -217,6 +217,7 @@ export const fulfillmentGroups = pgTable(
       .notNull()
       .references(() => sals3Orders.id, { onDelete: 'restrict' }),
     packageId: text('package_id').notNull(),
+    shippingTier: text('shipping_tier'),
     supplierConnectionId: uuid('supplier_connection_id')
       .notNull()
       .references(() => supplierConnections.id, { onDelete: 'restrict' }),
@@ -265,6 +266,10 @@ export const fulfillmentGroups = pgTable(
       .defaultNow(),
   },
   (table) => [
+    check(
+      'fulfillment_groups_shipping_tier_check',
+      sql`${table.shippingTier} is null or ${table.shippingTier} in ('Standard', 'Express', 'Expedited')`,
+    ),
     uniqueIndex('fulfillment_groups_order_package_key').on(
       table.orderId,
       table.packageId,

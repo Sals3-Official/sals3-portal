@@ -27,12 +27,14 @@ import {
   type PackageInput,
   type QuoteLine,
 } from './freight-quotes';
+import { SHIPPING_TIERS } from './shipping-tiers';
 
 const shippingSelectionSchema = z.object({
   packageSelections: z
     .array(
       z.object({
         packageId: z.string().min(1).max(80),
+        shippingTier: z.enum(SHIPPING_TIERS),
         quoteId: z.string().min(1).max(120),
         optionId: z.string().min(1).max(120),
         channelId: z.string().min(1).max(120),
@@ -89,7 +91,7 @@ function selectionTotal(input: CreateCheckoutIntentInput): number {
   );
 }
 
-function validateSelection(
+export function validateSelection(
   quote: CheckoutFreightQuoteResult,
   input: CreateCheckoutIntentInput,
 ) {
@@ -98,9 +100,11 @@ function validateSelection(
       const match = quote.quotes.find(
         (candidate) =>
           candidate.packageId === selection.packageId &&
+          candidate.shippingTier === selection.shippingTier &&
           candidate.optionId === selection.optionId &&
           candidate.channelId === selection.channelId &&
-          candidate.amountMinor === selection.amountMinor,
+          candidate.amountMinor === selection.amountMinor &&
+          candidate.currency === selection.currency,
       );
 
       if (match === undefined) {
@@ -114,6 +118,7 @@ function validateSelection(
   );
 
   if (
+    selected.length !== quote.packages.length ||
     new Set(selected.map((row) => row.packageId)).size !== quote.packages.length
   ) {
     throw new CheckoutOrderError('Choose a delivery option for every package.');
@@ -280,6 +285,7 @@ function selectedFreight(intent: CheckoutIntentRow) {
       selected: z.array(
         z.object({
           packageId: z.string(),
+          shippingTier: z.enum(SHIPPING_TIERS),
           cjLogisticName: z.string(),
           optionId: z.string(),
           channelId: z.string(),
@@ -385,6 +391,7 @@ export async function acceptCheckoutOrder(
           return {
             orderId: order.id,
             packageId: row.packageId,
+            shippingTier: row.shippingTier,
             supplierConnectionId: line.connectionId,
             originCountry: row.originCountry,
             destinationCountry: row.destinationCountry,

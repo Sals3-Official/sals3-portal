@@ -96,7 +96,7 @@ describe('storefront checkout freight quotes API', () => {
         {
           quoteId: 'quote-1',
           packageId: 'pkg_1',
-          label: 'Standard',
+          shippingTier: 'Standard',
           cjLogisticName: 'CJPacket Postal',
           optionId: 'option-1',
           channelId: 'channel-1',
