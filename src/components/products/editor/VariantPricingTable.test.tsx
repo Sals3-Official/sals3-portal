@@ -837,13 +837,51 @@ describe('the rule behind the price', () => {
       expect(onHandAllBackToRules).toHaveBeenCalled();
     });
 
-    it('hides it when nothing is overridden', () => {
-      // A control that would change nothing reads as "already done".
-      renderSellerSet();
+    /**
+     * It used to disappear when there was nothing to undo. An owner pressed it,
+     * watched it work, saw it vanish and reported the feature as deleted --
+     * which is a worse failure than a button that says "nothing to undo".
+     */
+    it('stays visible but disabled when nothing is overridden', () => {
+      render(
+        <VariantPricingTable
+          variants={[VARIANT]}
+          pricingGuidance={guidance}
+          onHandAllBackToRules={vi.fn()}
+          expandedVariantId={null}
+          onToggleExpanded={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          onRetailChange={vi.fn()}
+          onUseRulePrice={vi.fn()}
+          onSellerSkuChange={vi.fn()}
+          onBulkSetPrice={vi.fn()}
+        />,
+      );
 
       expect(
-        screen.queryByRole('button', { name: 'Use my rules for all' }),
-      ).toBeNull();
+        screen.getByRole('button', { name: 'Use my rules for all' }),
+      ).toBeDisabled();
+    });
+
+    it('enables it as soon as one price is the seller own', () => {
+      render(
+        <VariantPricingTable
+          variants={[sellerSet]}
+          pricingGuidance={guidance}
+          onHandAllBackToRules={vi.fn()}
+          expandedVariantId={null}
+          onToggleExpanded={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          onRetailChange={vi.fn()}
+          onUseRulePrice={vi.fn()}
+          onSellerSkuChange={vi.fn()}
+          onBulkSetPrice={vi.fn()}
+        />,
+      );
+
+      expect(
+        screen.getByRole('button', { name: 'Use my rules for all' }),
+      ).toBeEnabled();
     });
   });
   /**

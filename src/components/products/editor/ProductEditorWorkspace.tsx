@@ -2372,15 +2372,16 @@ export default function ProductEditorWorkspace({
                   AND the rules can price it. A control that would change
                   nothing is worse than no control: it reads as "already done".
                 */
+                /*
+                  Always wired where a save can record it. Whether there is
+                  anything to undo is the table's to render — disabled and
+                  saying so — rather than this deciding the control should not
+                  exist. See `VariantPricingTable`.
+                */
                 onHandAllBackToRules={
-                  variants.some(
-                    (variant) =>
-                      variant.retailPriceIsSellerSet === true &&
-                      variantGuidance.find(
-                        (row) => row.variantId === variant.id,
-                      )?.suggestedPrice != null,
-                  )
-                    ? () => {
+                  saveDraftAction === undefined
+                    ? undefined
+                    : () => {
                         variants.forEach((variant) => {
                           if (variant.retailPriceIsSellerSet !== true) return;
 
@@ -2401,7 +2402,6 @@ export default function ProductEditorWorkspace({
                         });
                         setUnlockedVariantIds(new Set());
                       }
-                    : undefined
                 }
                 expandedVariantId={expandedVariantId}
                 onToggleExpanded={(variantId) =>
