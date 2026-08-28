@@ -13,6 +13,7 @@ import {
 } from '@/lib/db/schema';
 import { isShippingTier } from '@/modules/checkout/shipping-tiers';
 import { listPublishedSlugsForProducts } from '@/modules/catalog/storefront/read-model';
+import storefrontOrigin from '@/lib/storefront/origin';
 import formatParcelMoney from './money';
 import {
   PARCEL_LIFECYCLE_STATES,
@@ -555,18 +556,17 @@ function moneyOf(
 // --- Assembly ------------------------------------------------------------
 
 /**
- * The public address of a product page, or `null` when there is not one.
+ * The public address of a product page, or `null` when the product is not live.
  *
- * Two independent reasons for `null`, and both are honest: this deployment has
- * no storefront configured, or the product is not currently live. Neither is
- * an error, and neither should render a link.
+ * One reason for `null` now, not two: the storefront origin has a built-in
+ * default (`lib/storefront/origin.ts`), so a deployment nobody has configured
+ * still links correctly. What remains is the honest case — a product the
+ * storefront would not serve gets no link rather than one that 404s.
  */
 function storefrontUrlFor(slug: string | undefined): string | null {
-  const base = process.env.SALS3_STOREFRONT_BASE_URL?.trim();
+  if (slug === undefined) return null;
 
-  if (base === undefined || base === '' || slug === undefined) return null;
-
-  return `${base.replace(/\/+$/, '')}/p/${slug}`;
+  return `${storefrontOrigin()}/p/${slug}`;
 }
 
 function lineOf(

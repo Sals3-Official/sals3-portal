@@ -562,7 +562,13 @@ describe('the product page link', () => {
     vi.unstubAllEnvs();
   });
 
-  it('offers no link when no storefront is configured', async () => {
+  /**
+   * An unconfigured deployment must still link. This is the case that used to
+   * silently render no link at all until somebody edited the Vercel project -
+   * a missing step nobody would notice, because the fallback is a missing link
+   * rather than an error.
+   */
+  it('falls back to the built-in origin when none is configured', async () => {
     vi.stubEnv('SALS3_STOREFRONT_BASE_URL', '');
 
     const { db } = fakeDb([
@@ -578,7 +584,9 @@ describe('the product page link', () => {
 
     const [parcel] = await listOrderParcelsForSeller(SELLER_ID);
 
-    expect(parcel.lines[0].storefrontUrl).toBeNull();
+    expect(parcel.lines[0].storefrontUrl).toBe(
+      'https://sals3-ecommerce.vercel.app/p/grey-pants',
+    );
 
     vi.unstubAllEnvs();
   });
