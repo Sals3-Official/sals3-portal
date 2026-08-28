@@ -1,5 +1,12 @@
 import Image from 'next/image';
-import { ChevronDown, ChevronUp, ImageOff, Info, Tag } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronUp,
+  ImageOff,
+  Info,
+  RotateCcw,
+  Tag,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -295,23 +302,21 @@ function PricingRuleNote({
     );
   }
 
-  const rule =
-    guidance.markupPercent === null
-      ? 'your margin rules'
-      : `${guidance.markupPercent}% markup`;
-
   /*
-    No explainer here any more: it is one per column, in the header. Ten rows
-    of one product carried ten copies of the same sum.
+    Nothing under a rule-priced cell.
+
+    It used to read `From 33.33% markup on Apparel & Accessories > Clothing`,
+    repeated on every row. Two things made it worth removing rather than
+    shortening: the column header now carries the whole working, including the
+    category and the margin-to-markup bridge, so the line restated what sits one
+    row above it; and a locked cell already says the rules own this number, so
+    the sentence was answering a question the cell no longer raises.
+
+    The seller-set branch above keeps its line, because that one says something
+    the cell cannot: that this price is exempt from the rules, and how to hand
+    it back.
   */
-  return (
-    <span className="text-xs text-muted-foreground">
-      From {rule}
-      {guidance.sourceCategoryPath === null
-        ? ''
-        : ` on ${guidance.sourceCategoryPath}`}
-    </span>
-  );
+  return null;
 }
 
 type VariantPricingTableProps = {
@@ -327,6 +332,20 @@ type VariantPricingTableProps = {
   onRetailChange: (variantId: string, amountMinor: number) => void;
   /** Hands a seller-set price back to the margin rules. */
   onUseRulePrice: (variantId: string) => void;
+  /**
+   * Variants whose retail cell is open for typing. Empty by default: a price
+   * comes from the margin rules until somebody deliberately overrides one.
+   */
+  unlockedVariantIds?: ReadonlySet<string>;
+  /** Asks to unlock one variant. The workspace collects the reason. */
+  onRequestPriceUnlock?: (variantId: string) => void;
+  /**
+   * Hands every seller-set price on this product back to the margin rules.
+   *
+   * Absent when nothing is overridden, so the control appears only when it
+   * would do something.
+   */
+  onHandAllBackToRules?: () => void;
   onSellerSkuChange: (variantId: string, value: string) => void;
   onBulkSetPrice: () => void;
   /**
@@ -595,6 +614,9 @@ export default function VariantPricingTable({
   onSellerSkuChange,
   onBulkSetPrice,
   onPickImage,
+  unlockedVariantIds,
+  onRequestPriceUnlock,
+  onHandAllBackToRules,
 }: VariantPricingTableProps) {
   const guidanceByVariantId = new Map(
     pricingGuidance.map((row) => [row.variantId, row]),
@@ -643,16 +665,34 @@ export default function VariantPricingTable({
             <span className="text-xs text-muted-foreground">
               {variants.length} {variants.length === 1 ? 'variant' : 'variants'}
             </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="ms-auto"
-              onClick={onBulkSetPrice}
-            >
-              <Tag aria-hidden="true" />
-              Set retail price…
-            </Button>
+            <div className="ms-auto flex flex-wrap items-center gap-2">
+              {/*
+                Only when something is actually overridden. 335 offers on this
+                account are stamped as hand-priced by an editor that used to
+                send every price back as the seller's, and undoing that one
+                pencil at a time is not a repair anybody finishes.
+              */}
+              {onHandAllBackToRules === undefined ? null : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onHandAllBackToRules}
+                >
+                  <RotateCcw aria-hidden="true" />
+                  Use my rules for all
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onBulkSetPrice}
+              >
+                <Tag aria-hidden="true" />
+                Set retail price…
+              </Button>
+            </div>
           </div>
           <p className="mt-1.5 text-xs text-muted-foreground">
             Variants with stock are listed automatically. Blocked and paused
@@ -878,6 +918,32 @@ export default function VariantPricingTable({
                         onChange={(amountMinor) =>
                           onRetailChange(variant.id, amountMinor)
                         }
+                        /*
+                          Locked only where there is a rule price to protect.
+
+                          - A price a person already owns is not the rules'
+                            number, so there is nothing to guard against
+                            overwriting; `onUseRulePrice` beneath it is the way
+                            back.
+                          - A variant the rules cannot price has no number to
+                            defend either, and locking it would leave the seller
+                            unable to supply the one thing publication is
+                            blocked on.
+                          - Fixture and design-preview mode pass no handler:
+                            there is no audited write behind the ceremony there,
+                            so asking for a reason would be theatre.
+                        */
+                        unlocked={
+                          variant.retailPriceIsSellerSet === true ||
+                          unlockedVariantIds?.has(variant.id) === true ||
+                          onRequestPriceUnlock === undefined ||
+                          guidanceByVariantId.get(variant.id)?.suggestedPrice ==
+                            null
+                        }
+                        onRequestUnlock={() =>
+                          onRequestPriceUnlock?.(variant.id)
+                        }
+                        onClearedToRule={() => onUseRulePrice(variant.id)}
                       />
                       <PricingRuleNote
                         guidance={guidanceByVariantId.get(variant.id)}

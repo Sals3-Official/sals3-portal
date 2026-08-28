@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { Pencil } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   decimalStringToMinor,
@@ -16,6 +18,25 @@ type RetailPriceInputProps = {
   /** The supplier's cost, for the floor the server enforces at publish. */
   supplierCost: MoneyValue;
   onChange: (amountMinor: number) => void;
+  /**
+   * Whether this cell is open for typing.
+   *
+   * `false` renders the number as text beside a pencil. The margin rules are
+   * the source of a price; typing over one is a deliberate act, and a field a
+   * cursor lands in by accident is not deliberate.
+   */
+  unlocked: boolean;
+  /** Asks the workspace to unlock this variant — it collects the reason. */
+  onRequestUnlock: () => void;
+  /**
+   * The field was left empty: hand this variant back to the margin rules.
+   *
+   * Fired on blur, never per keystroke. Clearing a field to retype it passes
+   * through empty, and reverting there would snap the rules' number in under
+   * the caret — the same fight with the person typing that made this component
+   * hold its own draft string in the first place.
+   */
+  onClearedToRule: () => void;
 };
 
 /**
@@ -40,6 +61,19 @@ type RetailPriceInputProps = {
  * input silently discards intermediate states like `4.` and `.5`, which is the
  * other half of why the field felt stuck.
  *
+ * ## Locked until somebody says why
+ *
+ * The cell renders as text with a pencil until the seller unlocks it. Owner
+ * decision 2026-08-28: the margin rules are where a price comes from, and
+ * overriding one is a business decision that should be recorded — so the
+ * workspace collects a reason on unlock and `save-draft.ts` writes a
+ * `product_offer.retail_price_overridden` audit event naming the actor, the old
+ * price and the new one.
+ *
+ * This is a guard against the accidental edit, not an authorization check. A
+ * disabled control never is one: the value still reaches the server through a
+ * Server Action, which re-derives what it stores either way.
+ *
  * ## The floor is advisory here and authoritative on the server
  *
  * This shows the seller the problem while they are still in the field. The
@@ -53,6 +87,9 @@ export default function RetailPriceInput({
   value,
   supplierCost,
   onChange,
+  unlocked,
+  onRequestUnlock,
+  onClearedToRule,
 }: RetailPriceInputProps) {
   const formatted = minorToDecimalString(value.amountMinor, value.currency);
   const [draft, setDraft] = useState(formatted);
@@ -87,6 +124,31 @@ export default function RetailPriceInput({
       (draftAmountMinor > 0 && draftAmountMinor < minimumAmountMinor));
   const errorId = belowFloor ? `${label}-below-floor` : undefined;
 
+  /*
+    Locked is the default, and it is a presentation state only: `publish.ts` and
+    the draft save both re-derive what they will store, so a disabled control is
+    never what stops an unwanted price. It stops an *accidental* one, which is
+    the actual failure the owner reported.
+  */
+  if (!unlocked) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="tabular-nums" aria-label={label}>
+          {formatMoney(value)}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`Override ${label}`}
+          onClick={onRequestUnlock}
+        >
+          <Pencil aria-hidden="true" className="size-3.5" />
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-1">
       <Input
@@ -103,6 +165,21 @@ export default function RetailPriceInput({
         onFocus={() => setFocused(true)}
         onBlur={() => {
           setFocused(false);
+
+          /*
+            An empty field is a request, not a zero.
+
+            Leaving it blank used to mean "send nothing", which the draft save
+            read as no change at all and publication read as "resolve it from
+            the rules" — so the same gesture did nothing or everything
+            depending on which button came next. It now means one thing.
+          */
+          if (draft.trim().length === 0) {
+            onClearedToRule();
+
+            return;
+          }
+
           // Tidy the string only once the person has left the field.
           const tidy = minorToDecimalString(value.amountMinor, value.currency);
 

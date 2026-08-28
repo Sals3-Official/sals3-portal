@@ -172,6 +172,39 @@ export default async function saveProductDraft(input: {
         throw new PricePersistenceError(priceWrite.missedVariantIds);
       }
 
+      /*
+        One event per price that actually moved, inside the same transaction as
+        the write — an audit that can be committed without the change it
+        describes, or the other way round, is not an audit.
+
+        `reason` is what the editor collected when the seller unlocked the
+        field. It is optional on the wire because older clients and the bulk
+        `Set retail price` path do not collect one, and refusing the save would
+        turn a missing note into a lost edit; the event records its absence
+        rather than inventing a justification.
+      */
+      await priceWrite.changes.reduce(async (previous, change) => {
+        await previous;
+
+        return appendAuditEvent(tx, {
+          actorId: input.actorId,
+          action: PRODUCT_AUDIT_ACTIONS.retailPriceOverridden,
+          entityType: 'ProductOffer',
+          entityId: change.offerId,
+          payload: {
+            productId: request.productId,
+            variantId: change.variantId,
+            previousAmountMinor: change.previousAmountMinor,
+            previousCurrency: change.previousCurrency,
+            /** `SELLER_RETAIL_PRICE_V1` means this was already an override. */
+            previousResolverVersion: change.previousResolverVersion,
+            amountMinor: change.amountMinor,
+            currency: change.currency,
+            reason: request.retailPriceOverrideReason ?? null,
+          },
+        });
+      }, Promise.resolve());
+
       await appendAuditEvent(tx, {
         actorId: input.actorId,
         action: PRODUCT_AUDIT_ACTIONS.revisionSaved,

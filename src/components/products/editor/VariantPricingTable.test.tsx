@@ -207,7 +207,13 @@ describe('the rule behind the price', () => {
    * no way to tell whether it had reached a given product: the rate lived only
    * on Market rules and the price lived only here.
    */
-  it('names the markup and the category the rule sits on', () => {
+  /**
+   * The line under each rule-priced cell is gone (owner report 2026-08-28): it
+   * repeated on every row what the column header now says once, and a locked
+   * cell already announces that the rules own the number. The category and the
+   * markup still reach the seller — through the header working, asserted below.
+   */
+  it('says nothing under a rule-priced cell', () => {
     renderWith([
       {
         variantId: 'variant-1',
@@ -225,10 +231,11 @@ describe('the rule behind the price', () => {
     ]);
 
     expect(
-      screen.getByText(
+      screen.queryByText(
         'From 300% markup on Apparel & Accessories > Clothing Accessories',
       ),
-    ).toBeInTheDocument();
+    ).toBeNull();
+    expect(screen.queryByText(/From .* markup/)).toBeNull();
   });
 
   /**
@@ -539,8 +546,7 @@ describe('the rule behind the price', () => {
         />,
       );
 
-      // Two variants, two rule lines, one explainer.
-      expect(screen.getAllByText(/From 33.33% markup/)).toHaveLength(2);
+      // Two variants, one explainer.
       expect(
         screen.getAllByRole('button', {
           name: 'How this price is worked out',
@@ -600,8 +606,236 @@ describe('the rule behind the price', () => {
           name: 'How this price is worked out',
         }),
       ).toBeNull();
-      // The rule itself still reaches every row.
-      expect(screen.getAllByText(/From 33.33% markup/)).toHaveLength(2);
+    });
+  });
+  /**
+   * Owner decision 2026-08-28: the margin rules are where a price comes from,
+   * so typing over one has to be deliberate. The cell reads as text until
+   * somebody asks for the pencil.
+   */
+  describe('locking a rule-derived price', () => {
+    const ruleGuidance = {
+      variantId: 'variant-1',
+      suggestedPrice: { amountMinor: 1235, currency: 'USD' as const },
+      unavailableLabel: null,
+      sourceCategoryPath: 'Apparel & Accessories > Clothing',
+      markupPercent: 33.33,
+      sellerOverridden: false,
+      effectiveCost: { amountMinor: 926, currency: 'USD' as const },
+      fundingBufferPercent: 1.5,
+      marginPercent: 25,
+      priceBeforeRounding: null,
+      contributionFloorApplied: false,
+    };
+
+    function renderLockable(
+      guidance: Parameters<typeof VariantPricingTable>[0]['pricingGuidance'],
+      variant: VariantFixture = VARIANT,
+      onRequestPriceUnlock = vi.fn(),
+    ) {
+      render(
+        <VariantPricingTable
+          variants={[variant]}
+          pricingGuidance={guidance}
+          onRequestPriceUnlock={onRequestPriceUnlock}
+          expandedVariantId={null}
+          onToggleExpanded={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          onRetailChange={vi.fn()}
+          onUseRulePrice={vi.fn()}
+          onSellerSkuChange={vi.fn()}
+          onBulkSetPrice={vi.fn()}
+        />,
+      );
+
+      return onRequestPriceUnlock;
+    }
+
+    it('shows the number as text, not a field, when the rules priced it', () => {
+      renderLockable([ruleGuidance]);
+
+      const label = `Retail price for ${VARIANT.optionLabel}`;
+
+      expect(screen.getByLabelText(label).tagName).not.toBe('INPUT');
+      expect(
+        screen.getByRole('button', { name: `Override ${label}` }),
+      ).toBeInTheDocument();
+    });
+
+    it('asks to unlock rather than unlocking itself', () => {
+      // The table never decides: the workspace owns the reason, so the pencil
+      // reports intent and nothing about the cell changes until it says so.
+      const onRequestPriceUnlock = renderLockable([ruleGuidance]);
+
+      screen
+        .getByRole('button', {
+          name: `Override Retail price for ${VARIANT.optionLabel}`,
+        })
+        .click();
+
+      expect(onRequestPriceUnlock).toHaveBeenCalledWith(VARIANT.id);
+    });
+
+    it('leaves a price a person already owns editable', () => {
+      // Not the rules' number, so there is nothing to guard against losing.
+      renderLockable([{ ...ruleGuidance, sellerOverridden: true }], {
+        ...VARIANT,
+        retailPriceIsSellerSet: true,
+      });
+
+      expect(
+        screen.getByLabelText(`Retail price for ${VARIANT.optionLabel}`)
+          .tagName,
+      ).toBe('INPUT');
+    });
+
+    it('leaves a variant the rules cannot price editable', () => {
+      /*
+        Locking this one would block publication on the very field it is asking
+        the seller to fill in.
+      */
+      renderLockable([
+        {
+          ...ruleGuidance,
+          suggestedPrice: null,
+          unavailableLabel: 'Supplier cost unavailable',
+          markupPercent: null,
+          marginPercent: null,
+          effectiveCost: null,
+        },
+      ]);
+
+      expect(
+        screen.getByLabelText(`Retail price for ${VARIANT.optionLabel}`)
+          .tagName,
+      ).toBe('INPUT');
+    });
+
+    it('stays editable where no save can record the override', () => {
+      // Fixture and design-preview mode: ceremony with nothing behind it.
+      render(
+        <VariantPricingTable
+          variants={[VARIANT]}
+          pricingGuidance={[ruleGuidance]}
+          expandedVariantId={null}
+          onToggleExpanded={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          onRetailChange={vi.fn()}
+          onUseRulePrice={vi.fn()}
+          onSellerSkuChange={vi.fn()}
+          onBulkSetPrice={vi.fn()}
+        />,
+      );
+
+      expect(
+        screen.getByLabelText(`Retail price for ${VARIANT.optionLabel}`)
+          .tagName,
+      ).toBe('INPUT');
+    });
+  });
+  /**
+   * Owner report 2026-08-28: clearing the cell looked like it did something and
+   * did not. It sent nothing, which a draft save read as no change and
+   * publication read as "resolve from the rules" — the same gesture doing
+   * nothing or everything depending on which button came next.
+   */
+  describe('handing a price back to the rules', () => {
+    const sellerSet: VariantFixture = {
+      ...VARIANT,
+      retailPriceIsSellerSet: true,
+    };
+
+    const guidance = [
+      {
+        variantId: 'variant-1',
+        suggestedPrice: { amountMinor: 1527, currency: 'USD' as const },
+        unavailableLabel: null,
+        sourceCategoryPath: 'Apparel & Accessories > Clothing',
+        markupPercent: 33.33,
+        sellerOverridden: true,
+        effectiveCost: { amountMinor: 1145, currency: 'USD' as const },
+        fundingBufferPercent: 1.5,
+        marginPercent: 25,
+        priceBeforeRounding: null,
+        contributionFloorApplied: false,
+      },
+    ];
+
+    function renderSellerSet(onUseRulePrice = vi.fn()) {
+      render(
+        <VariantPricingTable
+          variants={[sellerSet]}
+          pricingGuidance={guidance}
+          expandedVariantId={null}
+          onToggleExpanded={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          onRetailChange={vi.fn()}
+          onUseRulePrice={onUseRulePrice}
+          onSellerSkuChange={vi.fn()}
+          onBulkSetPrice={vi.fn()}
+        />,
+      );
+
+      return onUseRulePrice;
+    }
+
+    it('treats an emptied field as a request for the rule price', () => {
+      const onUseRulePrice = renderSellerSet();
+      const field = screen.getByLabelText(
+        `Retail price for ${VARIANT.optionLabel}`,
+      );
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: '' } });
+      fireEvent.blur(field);
+
+      expect(onUseRulePrice).toHaveBeenCalledWith(VARIANT.id);
+    });
+
+    it('does not revert while the field is still being typed in', () => {
+      // Clearing to retype passes through empty. Reverting there would snap the
+      // rules' number in under the caret.
+      const onUseRulePrice = renderSellerSet();
+      const field = screen.getByLabelText(
+        `Retail price for ${VARIANT.optionLabel}`,
+      );
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: '' } });
+
+      expect(onUseRulePrice).not.toHaveBeenCalled();
+    });
+
+    it('offers a product-level hand-back only when one is wired', () => {
+      const onHandAllBackToRules = vi.fn();
+
+      render(
+        <VariantPricingTable
+          variants={[sellerSet]}
+          pricingGuidance={guidance}
+          onHandAllBackToRules={onHandAllBackToRules}
+          expandedVariantId={null}
+          onToggleExpanded={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          onRetailChange={vi.fn()}
+          onUseRulePrice={vi.fn()}
+          onSellerSkuChange={vi.fn()}
+          onBulkSetPrice={vi.fn()}
+        />,
+      );
+
+      screen.getByRole('button', { name: 'Use my rules for all' }).click();
+
+      expect(onHandAllBackToRules).toHaveBeenCalled();
+    });
+
+    it('hides it when nothing is overridden', () => {
+      // A control that would change nothing reads as "already done".
+      renderSellerSet();
+
+      expect(
+        screen.queryByRole('button', { name: 'Use my rules for all' }),
+      ).toBeNull();
     });
   });
 });

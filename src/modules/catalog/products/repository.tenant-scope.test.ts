@@ -66,7 +66,17 @@ function updateExecutor(rows: unknown[]) {
   return builder;
 }
 
-function priceUpdateExecutor(variantRows: unknown[], offerRows: unknown[]) {
+/**
+ * Three `where` calls per priced variant, in order: the variant-ownership
+ * check, the read of the price as it stands, then the update itself. The middle
+ * one exists because `UPDATE ... RETURNING` reports the row *after* the write,
+ * so the previous price the audit records has to be read first.
+ */
+function priceUpdateExecutor(
+  variantRows: unknown[],
+  offerRows: unknown[],
+  beforeRows: unknown[] = [],
+) {
   const builder = {
     select: vi.fn().mockReturnThis(),
     from: vi.fn().mockReturnThis(),
@@ -75,6 +85,7 @@ function priceUpdateExecutor(variantRows: unknown[], offerRows: unknown[]) {
     where: vi
       .fn()
       .mockReturnValueOnce(Promise.resolve(variantRows))
+      .mockReturnValueOnce(Promise.resolve(beforeRows))
       .mockReturnThis(),
     returning: vi.fn().mockResolvedValue(offerRows),
   };
@@ -157,7 +168,7 @@ describe('updateSellerRetailPrices', () => {
       actorId: 'actor-a',
     });
 
-    const actual = renderSql(executor.where.mock.calls[1][0] as SQL);
+    const actual = renderSql(executor.where.mock.calls[2][0] as SQL);
     const expected = renderSql(
       and(
         eq(productOffers.sellerAccountId, 'seller-a'),
@@ -190,6 +201,8 @@ describe('updateSellerRetailPrices', () => {
     ).resolves.toEqual({
       updatedOfferCount: 0,
       missedVariantIds: ['variant-a'],
+      // Nothing was written, so there is nothing to audit.
+      changes: [],
     });
   });
 
@@ -208,6 +221,8 @@ describe('updateSellerRetailPrices', () => {
     ).resolves.toEqual({
       updatedOfferCount: 0,
       missedVariantIds: ['variant-b'],
+      // Nothing was written, so there is nothing to audit.
+      changes: [],
     });
     expect(executor.update).not.toHaveBeenCalled();
   });
