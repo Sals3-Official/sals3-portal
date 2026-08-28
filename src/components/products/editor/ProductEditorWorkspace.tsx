@@ -2329,6 +2329,42 @@ export default function ProductEditorWorkspace({
                         setUnlockTargetVariantId(variantId);
                       }
                 }
+                /*
+                  Offered only when at least one variant is actually overridden
+                  AND the rules can price it. A control that would change
+                  nothing is worse than no control: it reads as "already done".
+                */
+                onHandAllBackToRules={
+                  variants.some(
+                    (variant) =>
+                      variant.retailPriceIsSellerSet === true &&
+                      variantGuidance.find(
+                        (row) => row.variantId === variant.id,
+                      )?.suggestedPrice != null,
+                  )
+                    ? () => {
+                        variants.forEach((variant) => {
+                          if (variant.retailPriceIsSellerSet !== true) return;
+
+                          const rule = variantGuidance.find(
+                            (row) => row.variantId === variant.id,
+                          );
+
+                          // Leave the ones the rules cannot price: handing one
+                          // back to a rule that produces nothing would blank a
+                          // price and block publication on it.
+                          if (rule?.suggestedPrice == null) return;
+
+                          updateVariant(variant.id, {
+                            retailPrice: rule.suggestedPrice,
+                            retailPriceIsSellerSet: false,
+                            attention: null,
+                          });
+                        });
+                        setUnlockedVariantIds(new Set());
+                      }
+                    : undefined
+                }
                 expandedVariantId={expandedVariantId}
                 onToggleExpanded={(variantId) =>
                   setExpandedVariantId((current) =>

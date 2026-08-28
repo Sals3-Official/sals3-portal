@@ -1,5 +1,12 @@
 import Image from 'next/image';
-import { ChevronDown, ChevronUp, ImageOff, Info, Tag } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronUp,
+  ImageOff,
+  Info,
+  RotateCcw,
+  Tag,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -332,6 +339,13 @@ type VariantPricingTableProps = {
   unlockedVariantIds?: ReadonlySet<string>;
   /** Asks to unlock one variant. The workspace collects the reason. */
   onRequestPriceUnlock?: (variantId: string) => void;
+  /**
+   * Hands every seller-set price on this product back to the margin rules.
+   *
+   * Absent when nothing is overridden, so the control appears only when it
+   * would do something.
+   */
+  onHandAllBackToRules?: () => void;
   onSellerSkuChange: (variantId: string, value: string) => void;
   onBulkSetPrice: () => void;
   /**
@@ -602,6 +616,7 @@ export default function VariantPricingTable({
   onPickImage,
   unlockedVariantIds,
   onRequestPriceUnlock,
+  onHandAllBackToRules,
 }: VariantPricingTableProps) {
   const guidanceByVariantId = new Map(
     pricingGuidance.map((row) => [row.variantId, row]),
@@ -650,16 +665,34 @@ export default function VariantPricingTable({
             <span className="text-xs text-muted-foreground">
               {variants.length} {variants.length === 1 ? 'variant' : 'variants'}
             </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="ms-auto"
-              onClick={onBulkSetPrice}
-            >
-              <Tag aria-hidden="true" />
-              Set retail price…
-            </Button>
+            <div className="ms-auto flex flex-wrap items-center gap-2">
+              {/*
+                Only when something is actually overridden. 335 offers on this
+                account are stamped as hand-priced by an editor that used to
+                send every price back as the seller's, and undoing that one
+                pencil at a time is not a repair anybody finishes.
+              */}
+              {onHandAllBackToRules === undefined ? null : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onHandAllBackToRules}
+                >
+                  <RotateCcw aria-hidden="true" />
+                  Use my rules for all
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onBulkSetPrice}
+              >
+                <Tag aria-hidden="true" />
+                Set retail price…
+              </Button>
+            </div>
           </div>
           <p className="mt-1.5 text-xs text-muted-foreground">
             Variants with stock are listed automatically. Blocked and paused
@@ -910,6 +943,7 @@ export default function VariantPricingTable({
                         onRequestUnlock={() =>
                           onRequestPriceUnlock?.(variant.id)
                         }
+                        onClearedToRule={() => onUseRulePrice(variant.id)}
                       />
                       <PricingRuleNote
                         guidance={guidanceByVariantId.get(variant.id)}

@@ -28,6 +28,15 @@ type RetailPriceInputProps = {
   unlocked: boolean;
   /** Asks the workspace to unlock this variant — it collects the reason. */
   onRequestUnlock: () => void;
+  /**
+   * The field was left empty: hand this variant back to the margin rules.
+   *
+   * Fired on blur, never per keystroke. Clearing a field to retype it passes
+   * through empty, and reverting there would snap the rules' number in under
+   * the caret — the same fight with the person typing that made this component
+   * hold its own draft string in the first place.
+   */
+  onClearedToRule: () => void;
 };
 
 /**
@@ -80,6 +89,7 @@ export default function RetailPriceInput({
   onChange,
   unlocked,
   onRequestUnlock,
+  onClearedToRule,
 }: RetailPriceInputProps) {
   const formatted = minorToDecimalString(value.amountMinor, value.currency);
   const [draft, setDraft] = useState(formatted);
@@ -155,6 +165,21 @@ export default function RetailPriceInput({
         onFocus={() => setFocused(true)}
         onBlur={() => {
           setFocused(false);
+
+          /*
+            An empty field is a request, not a zero.
+
+            Leaving it blank used to mean "send nothing", which the draft save
+            read as no change at all and publication read as "resolve it from
+            the rules" — so the same gesture did nothing or everything
+            depending on which button came next. It now means one thing.
+          */
+          if (draft.trim().length === 0) {
+            onClearedToRule();
+
+            return;
+          }
+
           // Tidy the string only once the person has left the field.
           const tidy = minorToDecimalString(value.amountMinor, value.currency);
 

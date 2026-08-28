@@ -733,4 +733,109 @@ describe('the rule behind the price', () => {
       ).toBe('INPUT');
     });
   });
+  /**
+   * Owner report 2026-08-28: clearing the cell looked like it did something and
+   * did not. It sent nothing, which a draft save read as no change and
+   * publication read as "resolve from the rules" — the same gesture doing
+   * nothing or everything depending on which button came next.
+   */
+  describe('handing a price back to the rules', () => {
+    const sellerSet: VariantFixture = {
+      ...VARIANT,
+      retailPriceIsSellerSet: true,
+    };
+
+    const guidance = [
+      {
+        variantId: 'variant-1',
+        suggestedPrice: { amountMinor: 1527, currency: 'USD' as const },
+        unavailableLabel: null,
+        sourceCategoryPath: 'Apparel & Accessories > Clothing',
+        markupPercent: 33.33,
+        sellerOverridden: true,
+        effectiveCost: { amountMinor: 1145, currency: 'USD' as const },
+        fundingBufferPercent: 1.5,
+        marginPercent: 25,
+        priceBeforeRounding: null,
+        contributionFloorApplied: false,
+      },
+    ];
+
+    function renderSellerSet(onUseRulePrice = vi.fn()) {
+      render(
+        <VariantPricingTable
+          variants={[sellerSet]}
+          pricingGuidance={guidance}
+          expandedVariantId={null}
+          onToggleExpanded={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          onRetailChange={vi.fn()}
+          onUseRulePrice={onUseRulePrice}
+          onSellerSkuChange={vi.fn()}
+          onBulkSetPrice={vi.fn()}
+        />,
+      );
+
+      return onUseRulePrice;
+    }
+
+    it('treats an emptied field as a request for the rule price', () => {
+      const onUseRulePrice = renderSellerSet();
+      const field = screen.getByLabelText(
+        `Retail price for ${VARIANT.optionLabel}`,
+      );
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: '' } });
+      fireEvent.blur(field);
+
+      expect(onUseRulePrice).toHaveBeenCalledWith(VARIANT.id);
+    });
+
+    it('does not revert while the field is still being typed in', () => {
+      // Clearing to retype passes through empty. Reverting there would snap the
+      // rules' number in under the caret.
+      const onUseRulePrice = renderSellerSet();
+      const field = screen.getByLabelText(
+        `Retail price for ${VARIANT.optionLabel}`,
+      );
+
+      fireEvent.focus(field);
+      fireEvent.change(field, { target: { value: '' } });
+
+      expect(onUseRulePrice).not.toHaveBeenCalled();
+    });
+
+    it('offers a product-level hand-back only when one is wired', () => {
+      const onHandAllBackToRules = vi.fn();
+
+      render(
+        <VariantPricingTable
+          variants={[sellerSet]}
+          pricingGuidance={guidance}
+          onHandAllBackToRules={onHandAllBackToRules}
+          expandedVariantId={null}
+          onToggleExpanded={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          onRetailChange={vi.fn()}
+          onUseRulePrice={vi.fn()}
+          onSellerSkuChange={vi.fn()}
+          onBulkSetPrice={vi.fn()}
+        />,
+      );
+
+      screen.getByRole('button', { name: 'Use my rules for all' }).click();
+
+      expect(onHandAllBackToRules).toHaveBeenCalled();
+    });
+
+    it('hides it when nothing is overridden', () => {
+      // A control that would change nothing reads as "already done".
+      renderSellerSet();
+
+      expect(
+        screen.queryByRole('button', { name: 'Use my rules for all' }),
+      ).toBeNull();
+    });
+  });
 });
