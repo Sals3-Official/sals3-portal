@@ -1,0 +1,77 @@
+# Manual, one order at a time — no schedule.
+#
+# Repoints one order's contact address at the account that paid for it, for
+# orders stranded before `buyer_uid` existed: the address typed into the
+# checkout form differed from the buyer's account address, so the order
+# disappeared from their list and the receipt page refused them.
+#
+# `buyer_uid` prevents this for every order placed after it shipped. It cannot
+# reach back and rescue a row that never recorded one, which is what this is for.
+#
+# The endpoint refuses an order that already carries a buyer_uid, and reports
+# the address it replaced so the run log shows what actually changed.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin.
+
+name: Orders Repair Buyer Identity
+
+on:
+  workflow_dispatch:
+    inputs:
+      order_number:
+        description: 'Order number, e.g. S3-20260828-F09541C867'
+        required: true
+        type: string
+      buyer_email:
+        description: "The account's own email address, which the order should belong to"
+        required: true
+        type: string
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the buyer-identity repair endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+          ORDER_NUMBER: ${{ inputs.order_number }}
+          BUYER_EMAIL: ${{ inputs.buyer_email }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/orders/repair-buyer-identity"
+
+          # Inputs go through jq rather than shell interpolation so an address
+          # containing a quote cannot break out of the JSON body.
+          body=$(jq -nc --arg n "$ORDER_NUMBER" --arg e "$BUYER_EMAIL" \
+            '{orderNumber: $n, buyerEmail: $e}')
+
+          status=$(curl -sS -o /tmp/repair-response.json -w '%{http_code}' \
+            -X POST "$endpoint" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H 'Content-Type: application/json' \
+            -d "$body")
+
+          cat /tmp/repair-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "repair returned HTTP $status — nothing was changed" >&2
+            exit 1
+          fi
+
+          if ! grep -q '"ok":true' /tmp/repair-response.json; then
+            echo "repair did not report success" >&2
+            exit 1
+          fi
+
+          echo "Repaired. The response above names the address that was replaced."

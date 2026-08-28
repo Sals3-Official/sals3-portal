@@ -57,6 +57,23 @@ export const checkoutIntents = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     status: checkoutIntentStatusEnum('status').notNull().default('PENDING'),
     buyerEmail: text('buyer_email').notNull(),
+    /**
+     * The storefront's verified account id for whoever was signed in when this
+     * intent was created — Firebase's `uid`, taken from the session cookie and
+     * never from anything the request body carries.
+     *
+     * `buyer_email` cannot do this job. It is the contact address the buyer
+     * types into the checkout form, so it identifies a mailbox, not a person:
+     * on 2026-08-28 a buyer paid for an order, was refused their own receipt,
+     * and could not see the order in their list, because the address they had
+     * typed differed from the one on their account. Nothing warned them, and
+     * the order was theirs the whole time.
+     *
+     * Nullable because every intent created before this column has no uid and
+     * must not be given a false one — see `buyer-read.ts` for the fallback
+     * those rows still authorize through.
+     */
+    buyerUid: text('buyer_uid'),
     amountMinor: bigint('amount_minor', { mode: 'bigint' }).notNull(),
     currency: text('currency').notNull(),
     cartSnapshot: jsonb('cart_snapshot').notNull(),
@@ -108,6 +125,8 @@ export const sals3Orders = pgTable(
       .notNull()
       .default('PAID'),
     buyerEmail: text('buyer_email').notNull(),
+    /** Copied from the intent at acceptance. See `checkout_intents.buyer_uid`. */
+    buyerUid: text('buyer_uid'),
     amountMinor: bigint('amount_minor', { mode: 'bigint' }).notNull(),
     currency: text('currency').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true })
@@ -123,6 +142,9 @@ export const sals3Orders = pgTable(
     uniqueIndex('sals3_orders_stripe_session_key').on(
       table.stripeCheckoutSessionId,
     ),
+    // The buyer's order list is the hottest read on this table and now filters
+    // on the uid first.
+    index('sals3_orders_buyer_uid_idx').on(table.buyerUid),
     check('sals3_orders_amount_non_negative', sql`${table.amountMinor} >= 0`),
   ],
 );

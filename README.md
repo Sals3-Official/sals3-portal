@@ -166,6 +166,25 @@ the run unless the response proves both `columnExistsAfter: true` and
 `lock_timeout` between the two statements would leave the column present and the
 constraint absent. Idempotent; safe to run more than once.
 
+**An order belongs to an account, not to an address.** `checkout_intents` and
+`sals3_orders` carry a nullable `buyer_uid` — the storefront's verified Firebase
+uid, sent as `X-Buyer-Uid` and taken from its session cookie, never from a
+request body. `buyer-read.ts` authorizes a row that has one **by uid alone**;
+email is not a fallback for those rows, because allowing one would mean anyone
+who got an order's contact address onto their own account could read it. A row
+without a uid still authorizes by email, which is what every order accepted
+before 2026-08-28 does.
+
+Why: `buyer_email` is the contact address typed into the checkout form, so it
+names a mailbox rather than a person. On 2026-08-28 a buyer paid for an order,
+was refused their own receipt, and could not see the order in their list,
+because the address they typed differed from the one on their account — while
+the order itself had been created and paid at CJ seven seconds later. Migration
+`drizzle/0033_normal_magus.sql`, applied with the **Orders Migrate Buyer Uid**
+workflow. Orders stranded before the column existed are repointed one at a time
+with **Orders Repair Buyer Identity**, which refuses any row that already has a
+uid.
+
 The same bearer token protects storefront order endpoints used by Stripe
 webhooks in `sals3-ecommerce`:
 

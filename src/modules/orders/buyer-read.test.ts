@@ -289,3 +289,87 @@ describe('frozen listing snapshot', () => {
     expect(serialised).not.toContain(LINE_ROW.externalVariantId);
   });
 });
+
+/**
+ * The 2026-08-28 failure: `buyer_email` is the contact address typed into the
+ * checkout form, so a buyer who typed anything other than their account address
+ * paid for an order that then vanished from their list and refused them their
+ * own receipt. `buyer_uid` comes from the verified session cookie instead.
+ */
+describe('buyer identity', () => {
+  const WITH_UID = {
+    ...ORDER_ROW,
+    buyerEmail: 'typed-at-checkout@example.com',
+    buyerUid: 'firebase-uid-1',
+  };
+
+  it('lets the account that paid read an order whose contact address differs', async () => {
+    arrange([WITH_UID]);
+
+    const order = await readBuyerOrder(
+      'account@example.com',
+      ORDER_ROW.orderNumber,
+      { buyerUid: 'firebase-uid-1' },
+    );
+
+    expect(order?.orderNumber).toBe(ORDER_ROW.orderNumber);
+  });
+
+  /**
+   * Once a row carries a uid, email is not a fallback. Allowing it back in
+   * would mean anyone who got an order's contact address onto their own
+   * account could read that order.
+   */
+  it('refuses a matching email when the uid does not match', async () => {
+    arrange([WITH_UID]);
+
+    const order = await readBuyerOrder(
+      'typed-at-checkout@example.com',
+      ORDER_ROW.orderNumber,
+      { buyerUid: 'someone-else' },
+    );
+
+    expect(order).toBeNull();
+  });
+
+  it('refuses a uid-bearing order to a caller that sends no uid', async () => {
+    arrange([WITH_UID]);
+
+    const order = await readBuyerOrder(
+      'typed-at-checkout@example.com',
+      ORDER_ROW.orderNumber,
+    );
+
+    expect(order).toBeNull();
+  });
+
+  /** Every order placed before the column existed still authorizes by email. */
+  it('still reads a pre-uid order by email alone', async () => {
+    arrange([{ ...ORDER_ROW, buyerUid: null }]);
+
+    const order = await readBuyerOrder(
+      ORDER_ROW.buyerEmail,
+      ORDER_ROW.orderNumber,
+      { buyerUid: 'firebase-uid-1' },
+    );
+
+    expect(order?.orderNumber).toBe(ORDER_ROW.orderNumber);
+  });
+
+  /**
+   * A deployment live before the migration lands reads rows with no `buyer_uid`
+   * key at all. Treating that as "has a uid I cannot match" would refuse every
+   * buyer their own orders for the length of that window.
+   */
+  it('treats a row with no buyer_uid key as a pre-uid order', async () => {
+    arrange([ORDER_ROW]);
+
+    const order = await readBuyerOrder(
+      ORDER_ROW.buyerEmail,
+      ORDER_ROW.orderNumber,
+      { buyerUid: 'firebase-uid-1' },
+    );
+
+    expect(order?.orderNumber).toBe(ORDER_ROW.orderNumber);
+  });
+});
