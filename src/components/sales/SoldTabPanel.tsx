@@ -1,13 +1,18 @@
+import type { SoldRange } from '@/lib/portal/review-params';
 import type {
   SellerSoldRow,
   SellerSoldSummary,
 } from '@/modules/orders/seller-sold-read';
+import SoldRangeBar from './SoldRangeBar';
 import SoldSummaryBand from './SoldSummaryBand';
 import SoldTable from './SoldTable';
 
 type SoldTabPanelProps = {
   summary: SellerSoldSummary;
   rows: SellerSoldRow[];
+  range: SoldRange;
+  /** Query string the export link carries, so the file matches the screen. */
+  exportQuery: string;
 };
 
 /**
@@ -18,7 +23,12 @@ type SoldTabPanelProps = {
  * refunded reads as a bug to the person watching it, so the rule that makes it
  * fall is stated once, at the top, before the first number.
  */
-export default function SoldTabPanel({ summary, rows }: SoldTabPanelProps) {
+export default function SoldTabPanel({
+  summary,
+  rows,
+  range,
+  exportQuery,
+}: SoldTabPanelProps) {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex gap-2.5 rounded-lg border border-border bg-card p-3.5">
@@ -42,6 +52,8 @@ export default function SoldTabPanel({ summary, rows }: SoldTabPanelProps) {
           so one order of three counts as three.
         </p>
       </div>
+
+      <SoldRangeBar range={range} exportQuery={exportQuery} />
 
       <SoldSummaryBand summary={summary} rows={rows} />
 

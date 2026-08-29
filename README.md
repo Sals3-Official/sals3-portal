@@ -1679,6 +1679,30 @@ on a selectively-migrated database the Reviews tab stays usable while the Sold
 tab explains the migration gap and names it as one, rather than rendering an
 empty table that would read as "you have sold nothing".
 
+### The window, and the export
+
+The Sold tab filters on `sals3_orders.created_at` — when the money cleared, so
+that is when the sale happened. Deliberately **not** the delivery date: that
+would move a sale between months depending on how long CJ took to ship it, and a
+seller reconciling August would find August changing under them.
+
+Two shapes, because they answer different questions (`parseSoldRange`). A
+relative window (`?range=30d`) is what a seller checking in wants, and it stays
+true when the link is opened next week. An absolute one (`?from=&to=`) is what
+someone reconciling a month wants, and must not drift — so presets never bake
+today's date into the URL. Explicit bounds win when both are present, and `to`
+is pushed to the following midnight because an exclusive bound on the end date
+would silently drop every order placed that day.
+
+`GET /api/portal/sales/export` returns the same rows as CSV. It resolves the
+seller from the session — never from the query string, because the response
+carries revenue — and shares `parseSoldRange` with the screen so the file cannot
+drift from the table it claims to be. Every cell is quoted and any value opening
+with `= + - @` or a bare tab/return is prefixed with an apostrophe: a
+seller-authored title is text a spreadsheet would otherwise execute as a formula.
+Money leaves as a bare major-unit decimal with the currency in its own column,
+because `1,129.99 USD` is a string no spreadsheet can sum.
+
 The same count reaches the storefront card feed as `soldUnits`
 (`lib/storefront/catalog-feed.ts`), omitted rather than zeroed, and attached by
 `withCardAggregates` under the same rule as the rating: a failure to count is

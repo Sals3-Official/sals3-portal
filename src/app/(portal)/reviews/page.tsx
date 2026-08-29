@@ -10,8 +10,10 @@ import getDb, { isDatabaseConfigured } from '@/lib/db/client';
 import {
   parseReviewsTab,
   parseReviewView,
+  parseSoldRange,
   REVIEWS_PAGE_SIZE,
   type ReviewSearchParams,
+  type SoldRange,
 } from '@/lib/portal/review-params';
 import {
   readSellerSoldRows,
@@ -73,9 +75,13 @@ async function reviewTablesExist(): Promise<boolean> {
 function SoldTab({
   summary,
   rows,
+  range,
+  exportQuery,
 }: {
   summary: SellerSoldSummary | null;
   rows: SellerSoldRow[] | null;
+  range: SoldRange;
+  exportQuery: string;
 }) {
   if (summary === null || rows === null) {
     return (
@@ -86,7 +92,33 @@ function SoldTab({
     );
   }
 
-  return <SoldTabPanel summary={summary} rows={rows} />;
+  return (
+    <SoldTabPanel
+      summary={summary}
+      rows={rows}
+      range={range}
+      exportQuery={exportQuery}
+    />
+  );
+}
+
+/**
+ * The window, as the export route will read it back.
+ *
+ * Only the three keys the route parses are forwarded. Passing the whole query
+ * through would let a star filter or a page number ride along into a URL that
+ * ignores them, which reads as though they applied.
+ */
+function soldExportQuery(params: ReviewSearchParams): string {
+  const search = new URLSearchParams();
+
+  if (params.range !== undefined) search.set('range', params.range);
+  if (params.from !== undefined) search.set('from', params.from);
+  if (params.to !== undefined) search.set('to', params.to);
+
+  const query = search.toString();
+
+  return query === '' ? '' : `?${query}`;
 }
 
 function Frame({ children }: { children: React.ReactNode }) {
@@ -132,6 +164,11 @@ export default async function ReviewsAndSalesPage({
   const params = await searchParams;
   const tab = parseReviewsTab(params);
   const view = parseReviewView(params);
+  // Resolved once, here: the table, the band and the export all have to describe
+  // the same window, and a second `new Date()` further down could land on the
+  // other side of midnight from this one.
+  const range = parseSoldRange(params, new Date());
+  const exportQuery = soldExportQuery(params);
 
   const resolved = await readOrUnavailable('reviews and sales', async () => {
     const { sellerAccount } = await requireDropshipperAccount();
@@ -152,8 +189,8 @@ export default async function ReviewsAndSalesPage({
         page: view.page,
         limit: REVIEWS_PAGE_SIZE,
       }),
-      hasOrderTables ? readSellerSoldSummary(sellerAccount.id) : null,
-      hasOrderTables ? readSellerSoldRows(sellerAccount.id) : null,
+      hasOrderTables ? readSellerSoldSummary(sellerAccount.id, range) : null,
+      hasOrderTables ? readSellerSoldRows(sellerAccount.id, range) : null,
     ]);
 
     return { summary, page, soldSummary, soldRows };
@@ -194,7 +231,12 @@ export default async function ReviewsAndSalesPage({
       />
 
       {tab === 'sold' ? (
-        <SoldTab summary={soldSummary} rows={soldRows} />
+        <SoldTab
+          summary={soldSummary}
+          rows={soldRows}
+          range={range}
+          exportQuery={exportQuery}
+        />
       ) : (
         <ReviewsTabPanel
           summary={summary}

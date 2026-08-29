@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { buildReviewQuery, parseReviewView } from './review-params';
+import {
+  buildReviewQuery,
+  parseReviewView,
+  parseSoldRange,
+  soldRangeLabel,
+} from './review-params';
 
 describe('parseReviewView', () => {
   it('defaults to every review on page one', () => {
@@ -97,5 +102,84 @@ describe('buildReviewQuery', () => {
 
   it('ignores an unknown tab rather than putting it in the URL', () => {
     expect(buildReviewQuery({}, { tab: 'made-up' })).toBe('/reviews');
+  });
+});
+
+describe('parseSoldRange', () => {
+  const now = new Date('2026-08-30T12:00:00.000Z');
+
+  it('defaults to the whole history', () => {
+    const range = parseSoldRange({}, now);
+
+    expect(range.key).toBe('all');
+    expect(range.from).toBeNull();
+    expect(range.to).toBeNull();
+  });
+
+  it('reads a relative window back from the given now', () => {
+    const range = parseSoldRange({ range: '30d' }, now);
+
+    expect(range.key).toBe('30d');
+    expect(range.from?.toISOString()).toBe('2026-07-31T12:00:00.000Z');
+    expect(range.to).toBeNull();
+  });
+
+  it('makes an explicit end date inclusive of that whole day', () => {
+    const range = parseSoldRange({ from: '2026-08-01', to: '2026-08-05' }, now);
+
+    expect(range.key).toBe('custom');
+    expect(range.from?.toISOString()).toBe('2026-08-01T00:00:00.000Z');
+    // Exclusive upper bound at the following midnight: without this, every
+    // order placed on the 5th would be silently dropped from the total.
+    expect(range.to?.toISOString()).toBe('2026-08-06T00:00:00.000Z');
+  });
+
+  it('lets explicit bounds win over a relative key', () => {
+    const range = parseSoldRange(
+      { range: '30d', from: '2026-01-01', to: '2026-01-31' },
+      now,
+    );
+
+    expect(range.key).toBe('custom');
+    expect(range.from?.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('falls back to the whole history rather than erroring on nonsense', () => {
+    expect(parseSoldRange({ range: 'yesterday' }, now).key).toBe('all');
+    expect(parseSoldRange({ from: 'soon', to: 'later' }, now).key).toBe('all');
+    expect(
+      parseSoldRange({ from: '2026-13-45', to: '2026-13-46' }, now).key,
+    ).toBe('all');
+  });
+
+  it('ignores a reversed pair instead of returning an empty window', () => {
+    const range = parseSoldRange({ from: '2026-08-31', to: '2026-08-01' }, now);
+
+    // A backwards range would match no orders at all and read as "you sold
+    // nothing", which is a different and false claim.
+    expect(range.key).toBe('all');
+  });
+
+  it('echoes the inputs back so the control can repopulate', () => {
+    const range = parseSoldRange({ from: '2026-08-01', to: '2026-08-05' }, now);
+
+    expect(range.fromInput).toBe('2026-08-01');
+    expect(range.toInput).toBe('2026-08-05');
+  });
+});
+
+describe('soldRangeLabel', () => {
+  const now = new Date('2026-08-30T12:00:00.000Z');
+
+  it('names each window the way the export filename will', () => {
+    expect(soldRangeLabel(parseSoldRange({}, now))).toBe('All time');
+    expect(soldRangeLabel(parseSoldRange({ range: '90d' }, now))).toBe(
+      'Last 90 days',
+    );
+    expect(
+      soldRangeLabel(
+        parseSoldRange({ from: '2026-08-01', to: '2026-08-05' }, now),
+      ),
+    ).toBe('2026-08-01 to 2026-08-05');
   });
 });

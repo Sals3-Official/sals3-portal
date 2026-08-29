@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import getDb, { type DbExecutor } from '@/lib/db/client';
 import { sals3OrderLines, sals3Orders } from '@/lib/db/schema/orders';
 import { products } from '@/lib/db/schema/product-catalog';
@@ -95,19 +95,42 @@ function toCount(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+/**
+ * The window a figure covers. Both bounds optional; `to` is **exclusive**, so
+ * the caller has already pushed an inclusive end-date to the following midnight.
+ */
+export type SoldDateRange = { from: Date | null; to: Date | null };
+
+export const WHOLE_HISTORY: SoldDateRange = { from: null, to: null };
+
+/**
+ * Filtered on `sals3_orders.created_at` — when the order was accepted, which is
+ * when the money cleared and therefore when the sale happened. Deliberately not
+ * the parcel's delivery date: that would move a sale between months depending on
+ * how long CJ took to ship it, and a seller reconciling August would find August
+ * changing under them.
+ *
+ * Plain `gte`/`lt` operators rather than a `sql` template: a value interpolated
+ * into a template has no column context, skips `mapToDriverValue`, and reaches
+ * the driver as a raw `Date` the query then rejects.
+ */
 function sellerScope(
   sellerAccountId: string,
   paymentStates: readonly OrderPaymentStatus[],
+  range: SoldDateRange,
 ) {
   return and(
     eq(supplierConnections.sellerAccountId, sellerAccountId),
     inArray(sals3Orders.paymentStatus, [...paymentStates]),
+    range.from === null ? undefined : gte(sals3Orders.createdAt, range.from),
+    range.to === null ? undefined : lt(sals3Orders.createdAt, range.to),
   );
 }
 
 /** Per-product sales, richest first. Reviews are merged in, never joined. */
 export async function readSellerSoldRows(
   sellerAccountId: string,
+  range: SoldDateRange = WHOLE_HISTORY,
   executor: DbExecutor = getDb(),
 ): Promise<SellerSoldRow[]> {
   const [sales, reviewTallies] = await Promise.all([
@@ -134,7 +157,7 @@ export async function readSellerSoldRows(
       )
       .innerJoin(sals3Orders, eq(sals3Orders.id, sals3OrderLines.orderId))
       .leftJoin(products, eq(products.id, sals3OrderLines.productId))
-      .where(sellerScope(sellerAccountId, [SOLD_PAYMENT_STATE]))
+      .where(sellerScope(sellerAccountId, [SOLD_PAYMENT_STATE], range))
       .groupBy(
         sals3OrderLines.productId,
         sals3OrderLines.currency,
@@ -204,6 +227,7 @@ export async function readSellerSoldRows(
  */
 export async function readSellerSoldSummary(
   sellerAccountId: string,
+  range: SoldDateRange = WHOLE_HISTORY,
   executor: DbExecutor = getDb(),
 ): Promise<SellerSoldSummary> {
   const [totals, revenue, reversed] = await Promise.all([
@@ -219,7 +243,7 @@ export async function readSellerSoldSummary(
         eq(supplierConnections.id, sals3OrderLines.supplierConnectionId),
       )
       .innerJoin(sals3Orders, eq(sals3Orders.id, sals3OrderLines.orderId))
-      .where(sellerScope(sellerAccountId, [SOLD_PAYMENT_STATE])),
+      .where(sellerScope(sellerAccountId, [SOLD_PAYMENT_STATE], range)),
 
     executor
       .select({
@@ -232,7 +256,7 @@ export async function readSellerSoldSummary(
         eq(supplierConnections.id, sals3OrderLines.supplierConnectionId),
       )
       .innerJoin(sals3Orders, eq(sals3Orders.id, sals3OrderLines.orderId))
-      .where(sellerScope(sellerAccountId, [SOLD_PAYMENT_STATE]))
+      .where(sellerScope(sellerAccountId, [SOLD_PAYMENT_STATE], range))
       .groupBy(sals3OrderLines.currency),
 
     executor
@@ -245,7 +269,7 @@ export async function readSellerSoldSummary(
         eq(supplierConnections.id, sals3OrderLines.supplierConnectionId),
       )
       .innerJoin(sals3Orders, eq(sals3Orders.id, sals3OrderLines.orderId))
-      .where(sellerScope(sellerAccountId, REVERSED_PAYMENT_STATES)),
+      .where(sellerScope(sellerAccountId, REVERSED_PAYMENT_STATES, range)),
   ]);
 
   return {
