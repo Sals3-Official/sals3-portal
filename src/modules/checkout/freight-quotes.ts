@@ -25,6 +25,7 @@ import PostgresSupplierSecretStore from '@/lib/secrets/postgres-supplier-secret-
 import createGovernedFetch from '@/modules/catalog/discovery/governed-fetch';
 import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
 import { CJ_BASE_URL, CjApiError } from '@/services/cj/config';
+import { CHECKOUT_DESTINATION_CODES } from '@/modules/market-config/checkout-destinations';
 import { classifyShippingTiers, type ShippingTier } from './shipping-tiers';
 import {
   freeShippingProgress,
@@ -33,7 +34,12 @@ import {
 
 const QUOTE_TTL_MS = 15 * 60 * 1000;
 const CJ_REQUEST_TIMEOUT_MS = 8_000;
-const CHECKOUT_FREIGHT_COUNTRIES = ['AU', 'PH', 'FJ'] as const;
+/**
+ * Re-exported from the one list, not written again. This module used to carry
+ * its own copy of the same three codes; `checkout-destinations.ts` explains why
+ * that list now has a single home.
+ */
+const CHECKOUT_FREIGHT_COUNTRIES = CHECKOUT_DESTINATION_CODES;
 const OPTIONAL_POSTAL_CODE_COUNTRIES = ['FJ'] as const;
 
 type CheckoutFreightCountry = (typeof CHECKOUT_FREIGHT_COUNTRIES)[number];

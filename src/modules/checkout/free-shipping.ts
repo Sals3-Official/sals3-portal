@@ -1,10 +1,18 @@
-const FREE_SHIPPING_ENV_KEYS = {
+import type { CheckoutDestinationCode } from '@/modules/market-config/checkout-destinations';
+
+/**
+ * Keyed by `CheckoutDestinationCode` rather than by three free-standing
+ * strings, so opening a fourth checkout destination fails to compile here
+ * instead of silently shipping a market with no threshold. The three codes
+ * themselves live in `checkout-destinations.ts`.
+ */
+const FREE_SHIPPING_ENV_KEYS: Record<CheckoutDestinationCode, string> = {
   AU: 'SALS3_FREE_STANDARD_SHIPPING_AU_USD',
   PH: 'SALS3_FREE_STANDARD_SHIPPING_PH_USD',
   FJ: 'SALS3_FREE_STANDARD_SHIPPING_FJ_USD',
-} as const;
+};
 
-export type FreeShippingCountry = keyof typeof FREE_SHIPPING_ENV_KEYS;
+export type FreeShippingCountry = CheckoutDestinationCode;
 
 export type FreeShippingProgress = {
   thresholdAmountMinor: number;

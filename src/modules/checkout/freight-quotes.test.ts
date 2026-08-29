@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
 import {
   CheckoutFreightQuoteError,
+  checkoutFreightAddressSchema,
   checkoutFreightQuoteRequestSchema,
   quoteCheckoutFreight,
 } from './freight-quotes';
@@ -556,5 +557,58 @@ describe('quoteCheckoutFreight', () => {
         ],
       }),
     ).rejects.toThrow('No delivery method is available');
+  });
+});
+
+/**
+ * The country enum moved from a literal in this file to an import
+ * (`checkout-destinations.ts`) on 2026-08-30, so that the storefront preview,
+ * the free-shipping thresholds and this schema stop each keeping their own copy
+ * of the same three codes.
+ *
+ * Nothing asserted what that enum admits, which made the move unguarded: if the
+ * import ever resolved to the *pricing* list — six measured destinations, the
+ * obvious wrong thing to point it at — checkout would accept an NZ, US or CA
+ * address that CJ cannot be asked to quote, and the failure would surface at the
+ * supplier call instead of at validation. These pin both sides.
+ */
+describe('checkoutFreightAddressSchema country enum', () => {
+  const address = {
+    email: 'buyer@example.com',
+    fullName: 'A Buyer',
+    phone: '0400000000',
+    addressLine1: '1 Test Street',
+    city: 'Sydney',
+    region: 'New South Wales',
+    postalCode: '2000',
+  };
+
+  it.each(['AU', 'PH', 'FJ'])(
+    'admits %s, which freight can quote',
+    (country) => {
+      expect(
+        checkoutFreightAddressSchema.safeParse({ ...address, country }).success,
+      ).toBe(true);
+    },
+  );
+
+  /**
+   * Priceable but not checkout-capable. A margin may be set for each of these
+   * (owner decision 2026-08-25), and that is deliberately not the same
+   * permission as being able to complete an order.
+   */
+  it.each(['NZ', 'US', 'CA'])(
+    'refuses %s, which is priceable but has no freight quote',
+    (country) => {
+      expect(
+        checkoutFreightAddressSchema.safeParse({ ...address, country }).success,
+      ).toBe(false);
+    },
+  );
+
+  it.each(['au', 'AUS', '', 'ZZ'])('refuses the malformed %s', (country) => {
+    expect(
+      checkoutFreightAddressSchema.safeParse({ ...address, country }).success,
+    ).toBe(false);
   });
 });
