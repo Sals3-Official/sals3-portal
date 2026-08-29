@@ -608,3 +608,86 @@ export async function writeReprice(
 
   return { ok: true, written: changed.length };
 }
+
+export type ApplyRepricePlanActor = {
+  actorId: string;
+  sellerAccountId: string;
+  /** Recorded against every offer this run moves. */
+  reason: string;
+  /** Where the run came from, e.g. `market-rules-reprice`. */
+  source: string;
+};
+
+/**
+ * Writes a plan and records why, in one transaction.
+ *
+ * Extracted so the Market Rules dialog and the catalogue sweep cannot drift.
+ * They already differ in how a run is chosen and approved — a reviewed page
+ * versus a dispatched job — and that is the whole of the difference. What gets
+ * written, and what the audit trail says about it, must be identical, and the
+ * only way to guarantee that is for there to be one of it.
+ *
+ * One audit event per offer, the same shape publication writes. A price change
+ * a buyer can see is never a bulk footnote, however many of them a single call
+ * makes.
+ */
+export async function applyRepricePlan(
+  tx: Executor,
+  lines: RepriceLine[],
+  actor: ApplyRepricePlanActor,
+  appendAuditEvent: (
+    executor: Executor,
+    event: {
+      actorId: string;
+      action: string;
+      entityType: string;
+      entityId: string;
+      payload: Record<string, unknown>;
+    },
+  ) => Promise<unknown>,
+): Promise<RepriceWriteResult> {
+  const result = await writeReprice(tx, lines, {
+    actorId: actor.actorId,
+    sellerAccountId: actor.sellerAccountId,
+  });
+
+  if (!result.ok) return result;
+
+  // eslint-disable-next-line no-restricted-syntax -- ordered writes inside the caller's transaction.
+  for (const line of lines.filter(
+    (candidate) => candidate.status === 'CHANGED',
+  )) {
+    // eslint-disable-next-line no-await-in-loop
+    await appendAuditEvent(tx, {
+      actorId: actor.actorId,
+      action: 'catalog_product_offer.repriced',
+      entityType: 'product_offer',
+      entityId: line.offerId,
+      payload: {
+        sellerAccountId: actor.sellerAccountId,
+        productId: line.productId,
+        sku: line.sku,
+        marketCode: line.marketCode,
+        previousPriceMinor: line.currentPriceMinor,
+        priceMinor: line.newPriceMinor,
+        priceCurrency: line.newPriceCurrency,
+        /*
+          Which of two different things happened to this offer: a rule moved a
+          price the rules already owned, or a person's own decision was taken
+          back. `previousPriceMinor` above is what makes the second one
+          recoverable at all -- product_offers has no history table.
+        */
+        reclaimedFromSeller: line.reclaimed,
+        reason: actor.reason,
+        resolvedLayer:
+          line.decision !== null &&
+          line.decision.outcome === 'PRODUCT_MARGIN_ESTIMATE'
+            ? line.decision.resolvedLayer
+            : null,
+        source: actor.source,
+      },
+    });
+  }
+
+  return result;
+}

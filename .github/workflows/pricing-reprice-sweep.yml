@@ -1,0 +1,144 @@
+# Brings every live price in line with today's market rules. Manual only.
+#
+# WHY THIS IS NOT A BUTTON IN THE PORTAL
+#
+# The Market Rules dialog deliberately refuses to run unscoped — owner decision
+# 2026-08-29, on a catalogue heading for millions of listings: one query, one
+# preview table and one click must never stand between a seller and every price
+# they own. That still holds. The screen covers one department in one
+# destination, reviewed before it is applied.
+#
+# What the screen cannot be is a way to FINISH. Aligning a catalogue after a
+# rules change is every department across every destination, several pages deep
+# — hundreds of reviewed clicks for a job with no judgement in it. That is what
+# this is for.
+#
+# READ IT BEFORE YOU RUN IT
+#
+# `dry-run: true` (the default) writes nothing. It reports how many prices the
+# FIRST PAGE of every scope would move, which is a LOWER BOUND — a dry run
+# cannot advance within a scope without writing, so it never sees page two.
+# Treat it as "at least this many are out of line", never as a total.
+#
+# RECLAIM IS OFF UNLESS YOU ASK
+#
+# `reclaim: true` replaces prices a person typed. `product_offers` keeps no
+# history, so the old number survives only in the audit payload. A seller
+# approving that in the dialog has read the department it applies to; nobody
+# reads a sweep. Leave it off unless you mean it.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin.
+
+name: Pricing Reprice Sweep
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Plan and count only. Writes nothing.'
+        type: boolean
+        default: true
+      reclaim:
+        description: 'Also take back prices a person typed. Read the note above.'
+        type: boolean
+        default: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    # A whole catalogue is many calls, and each one may run for minutes.
+    timeout-minutes: 120
+
+    steps:
+      - name: Sweep until it reports done
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+          DRY_RUN: ${{ inputs.dry-run }}
+          RECLAIM: ${{ inputs.reclaim }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/pricing/reprice-sweep"
+          method=POST
+          if [ "$DRY_RUN" = "true" ]; then
+            method=GET
+            echo "--- DRY RUN: nothing will be written ---"
+          else
+            echo "--- APPLYING: buyers see these prices as soon as this finishes ---"
+          fi
+
+          scope_index=0
+          after_sku=""
+          calls=0
+          written_total=0
+          changed_total=0
+
+          # A ceiling, not an expectation. A sweep that has not converged after
+          # this many calls is looping, and a job that keeps calling forever is
+          # worse than one that stops and says so.
+          MAX_CALLS=200
+
+          while [ "$calls" -lt "$MAX_CALLS" ]; do
+            calls=$((calls + 1))
+
+            url="$endpoint?scopeIndex=$scope_index&reclaim=$RECLAIM"
+            if [ -n "$after_sku" ]; then
+              url="$url&afterSku=$after_sku"
+            fi
+
+            status=$(curl -sS -o /tmp/sweep.json -w '%{http_code}' \
+              -X "$method" "$url" \
+              -H "Authorization: Bearer $CRON_SECRET")
+
+            if [ "$status" -ge 300 ]; then
+              echo "Call $calls returned HTTP $status" >&2
+              cat /tmp/sweep.json >&2
+              echo >&2
+              echo "Nothing is half-written: each page commits on its own, so" >&2
+              echo "re-running resumes from the last page that landed." >&2
+              exit 1
+            fi
+
+            done_flag=$(jq -r '.done' /tmp/sweep.json)
+            scope_index=$(jq -r '.position.scopeIndex' /tmp/sweep.json)
+            after_sku=$(jq -r '.position.afterSku // ""' /tmp/sweep.json)
+            scope_count=$(jq -r '.scopeCount' /tmp/sweep.json)
+            changed=$(jq -r '.totals.changed' /tmp/sweep.json)
+            written=$(jq -r '.totals.written' /tmp/sweep.json)
+
+            changed_total=$((changed_total + changed))
+            written_total=$((written_total + written))
+
+            echo "call $calls: scope $scope_index/$scope_count · changed $changed · written $written · done=$done_flag"
+
+            if [ "$done_flag" = "true" ]; then
+              break
+            fi
+          done
+
+          if [ "$done_flag" != "true" ]; then
+            echo "Stopped after $MAX_CALLS calls without finishing." >&2
+            echo "Position: scopeIndex=$scope_index afterSku=$after_sku" >&2
+            exit 1
+          fi
+
+          echo
+          echo "--- finished ---"
+          echo "scopes:  $scope_count"
+          echo "changed: $changed_total"
+          echo "written: $written_total"
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo
+            echo "Nothing was written. 'changed' counts the first page of each"
+            echo "scope only, so it is a lower bound — run with dry-run off to"
+            echo "page through the rest."
+          fi
