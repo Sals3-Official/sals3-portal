@@ -1475,6 +1475,7 @@ export default function ProductEditorWorkspace({
         descriptionBlocks.map((entry) => entry.block),
       )}
       variants={variants}
+      offeredMarketCodes={fixture.offeredMarketCodes}
       media={effectivePreviewMedia}
       specifications={specifications}
       previewMarketCode={previewMarketCode}

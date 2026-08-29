@@ -9,7 +9,7 @@ vi.mock('server-only', () => ({}));
 
 /* eslint-disable import/first */
 import type { CatalogueProductFixture } from '@/lib/seller-center/product-catalogue/types';
-import { productToEditorFixture } from './read-model';
+import { offeredMarkets, productToEditorFixture } from './read-model';
 /* eslint-enable import/first */
 
 /**
@@ -880,5 +880,66 @@ describe('productToEditorFixture — variants default to enabled when eligible',
 
     expect(fixture.variants).toHaveLength(1);
     expect(fixture.variants[0]?.enabled).toBe(true);
+  });
+});
+
+/**
+ * Which markets a buyer can actually reach, as opposed to which markets the
+ * margin rules can price. The Draft Storefront Preview shows a price for all
+ * three checkout destinations; this is what lets it say that two of them are
+ * not on sale.
+ */
+describe('offeredMarkets', () => {
+  it('counts a PUBLISHED offer', () => {
+    expect(
+      offeredMarkets([{ publishState: 'PUBLISHED', marketCode: 'AU' }]),
+    ).toEqual(['AU']);
+  });
+
+  /**
+   * The load-bearing predicate. Each of these rows exists in the table and
+   * serves no buyer; counting one would put a price on a shopfront nobody can
+   * open.
+   */
+  it.each(['UNPUBLISHED', 'PAUSED', 'ARCHIVED', null])(
+    'does not count a %s offer',
+    (publishState) => {
+      expect(offeredMarkets([{ publishState, marketCode: 'AU' }])).toEqual([]);
+    },
+  );
+
+  it('reports each market once however many variants carry it', () => {
+    expect(
+      offeredMarkets([
+        { publishState: 'PUBLISHED', marketCode: 'AU' },
+        { publishState: 'PUBLISHED', marketCode: 'AU' },
+        { publishState: 'PUBLISHED', marketCode: 'PH' },
+      ]),
+    ).toEqual(['AU', 'PH']);
+  });
+
+  it('is empty for a product with no offers at all', () => {
+    expect(offeredMarkets([])).toEqual([]);
+  });
+});
+
+/**
+ * The projection has to carry it through, or the panel is handed `undefined`
+ * for a real product and quietly claims nothing.
+ */
+describe('productToEditorFixture — offered markets', () => {
+  it('passes the offered markets to the editor', () => {
+    const { fixture } = productToEditorFixture({
+      ...CATALOGUE_PRODUCT,
+      offeredMarketCodes: ['AU'],
+    });
+
+    expect(fixture.offeredMarketCodes).toEqual(['AU']);
+  });
+
+  it('leaves it undefined when the catalogue row carries none', () => {
+    const { fixture } = productToEditorFixture(CATALOGUE_PRODUCT);
+
+    expect(fixture.offeredMarketCodes).toBeUndefined();
   });
 });

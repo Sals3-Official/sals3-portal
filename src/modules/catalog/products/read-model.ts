@@ -402,6 +402,31 @@ function editorListingState(
  * render, which is `NO_USABLE_PICTURES` and blocks publication - not a silent
  * empty gallery.
  */
+/**
+ * The markets a buyer can actually order this product from.
+ *
+ * `PUBLISHED` only. An `UNPUBLISHED`, `PAUSED` or `ARCHIVED` row exists and
+ * serves nobody, and counting one would let the editor promise a shopfront that
+ * answers nothing. Almost always a single entry today, which is the point:
+ * `publish.ts` takes `offerDestinations[0]`, so a product is offered in exactly
+ * one market while the editor prices it for three.
+ *
+ * Exported and pure for the same reason `mediaStatusOf` is: the predicate that
+ * decides whether a market appears is the whole behaviour, and left inline in
+ * the query path it would be the one line no test ever runs.
+ */
+export function offeredMarkets(
+  offers: readonly { publishState: string | null; marketCode: string }[],
+): string[] {
+  return [
+    ...new Set(
+      offers
+        .filter((offer) => offer.publishState === 'PUBLISHED')
+        .map((offer) => offer.marketCode),
+    ),
+  ];
+}
+
 export function mediaStatusOf(
   media: ProductMediaSourceRow[],
   showSupplierPhoto: boolean,
@@ -929,6 +954,7 @@ function buildCatalogueProducts(
       const productAvailability = availability(
         firstOffer?.availabilityState ?? null,
       );
+      const offeredMarketCodes = offeredMarkets(productOffersForSeller);
       const productEvidence = evidenceSchema.safeParse(
         source?.snapshot?.evidence,
       );
@@ -1130,6 +1156,7 @@ function buildCatalogueProducts(
           firstOffer?.priceCurrency ?? null,
         ),
         availability: productAvailability,
+        offeredMarketCodes,
         stockEvidence: stockEvidence(
           catalogueVariants[0]?.supplierObservedQuantity ?? null,
         ),
@@ -1930,6 +1957,7 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
       product.categoryAttributeControlsVersion ?? null,
     variants,
     markets: editorMarkets(product),
+    offeredMarketCodes: product.offeredMarketCodes,
     marketsNotEnabledCount: 0,
     media: editorGalleryMedia(product),
     variantPhotoCount: product.variantPhotoCount ?? 0,

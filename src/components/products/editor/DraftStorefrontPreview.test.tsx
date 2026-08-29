@@ -48,12 +48,13 @@ function variant(): VariantFixture {
 const SPECIFICATIONS: SpecificationFixture[] = [];
 const MEDIA: MediaItemFixture[] = [];
 
-function renderPreview(marketCode: string) {
+function renderPreview(marketCode: string, offeredMarketCodes?: string[]) {
   return render(
     <DraftStorefrontPreview
       productName="Men's Camouflage Casual Pants"
       description="High-stretch camouflage trousers."
       variants={[variant()]}
+      offeredMarketCodes={offeredMarketCodes}
       media={MEDIA}
       specifications={SPECIFICATIONS}
       previewMarketCode={marketCode}
@@ -178,5 +179,55 @@ describe('DraftStorefrontPreview', () => {
 
     expect(await screen.findByText(/Draft price/u)).toBeInTheDocument();
     expect(mocks.pricesByDestinationAction).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The price and the shopfront are two different questions, and until
+ * 2026-08-30 this panel answered only the first.
+ *
+ * `publish.ts` takes `offerDestinations[0]`, so a product is offered in exactly
+ * one market. Pricing all three checkout destinations without saying which one
+ * a buyer can reach turns a useful preview into a quoted price for a shop that
+ * does not exist.
+ */
+describe('DraftStorefrontPreview reach', () => {
+  it('says nothing when the market is one the product is published to', async () => {
+    renderPreview('AU', ['AU']);
+
+    expect(await screen.findByText('$20.70')).toBeInTheDocument();
+    expect(screen.queryByText(/Not on sale/u)).toBeNull();
+    expect(screen.queryByText(/Not published yet/u)).toBeNull();
+  });
+
+  it('warns, and still shows the price, for a market with no offer', async () => {
+    renderPreview('PH', ['AU']);
+
+    expect(
+      await screen.findByText(/Not on sale in Philippines/u),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/published to Australia/u)).toBeInTheDocument();
+    // The number stays: it is what the seller needs in order to decide whether
+    // publishing there is worth it.
+    expect(screen.getByText('$14.50')).toBeInTheDocument();
+  });
+
+  it('distinguishes an unpublished draft from a wrong market', async () => {
+    renderPreview('AU', []);
+
+    expect(await screen.findByText(/Not published yet/u)).toBeInTheDocument();
+    expect(screen.queryByText(/Not on sale in/u)).toBeNull();
+  });
+
+  /**
+   * The illustrative fixtures carry no offers at all. Claiming "not published"
+   * there would be inventing a fact about a product that does not exist.
+   */
+  it('claims nothing when there are no offers to read', async () => {
+    renderPreview('AU', undefined);
+
+    expect(await screen.findByText('$20.70')).toBeInTheDocument();
+    expect(screen.queryByText(/Not on sale/u)).toBeNull();
+    expect(screen.queryByText(/Not published yet/u)).toBeNull();
   });
 });

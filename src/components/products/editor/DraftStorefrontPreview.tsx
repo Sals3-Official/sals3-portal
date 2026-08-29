@@ -43,6 +43,20 @@ type MarketPriceState =
  * A panel that fell silent on error would be indistinguishable from one still
  * loading and from a product that genuinely cannot be priced.
  */
+/**
+ * A market's own name, falling back to the code.
+ *
+ * The fallback is reachable: a product can hold a published offer in a market
+ * that is no longer a checkout destination, and naming it `NZ` is honest where
+ * silently dropping it would make the sentence claim the product is published
+ * nowhere.
+ */
+function nameForMarket(code: string): string {
+  return (
+    listCheckoutDestinations().find((item) => item.code === code)?.label ?? code
+  );
+}
+
 function messageFor(reason: string): string {
   switch (reason) {
     case 'denied':
@@ -104,6 +118,14 @@ type DraftStorefrontPreviewProps = {
   productName: string;
   description: string;
   variants: VariantFixture[];
+  /**
+   * The markets this product actually has a published offer in.
+   *
+   * `undefined` for an illustrative fixture with no offers to read; `[]` for a
+   * real product published nowhere yet. The panel says something different for
+   * each, because a seller can act on one of them and not the other.
+   */
+  offeredMarketCodes?: string[];
   media: MediaItemFixture[];
   specifications: SpecificationFixture[];
   previewMarketCode: string;
@@ -156,6 +178,7 @@ export default function DraftStorefrontPreview({
   productName,
   description,
   variants,
+  offeredMarketCodes,
   media,
   specifications,
   previewMarketCode,
@@ -252,9 +275,66 @@ export default function DraftStorefrontPreview({
       ? (prices.byMarket.get(previewMarketCode) ?? null)
       : null;
 
+  /**
+   * Whether a buyer in the previewed market could actually reach this product.
+   *
+   * `undefined` means there are no offers to read - the illustrative fixtures -
+   * so nothing is claimed either way. Otherwise the answer is a real one, and
+   * for most products today it is "no" for two of the three markets: `publish.ts`
+   * takes `offerDestinations[0]`, so a product carries exactly one offer.
+   *
+   * This is deliberately separate from the price. The price below is what the
+   * margin rules *would* charge; this says whether anyone is being charged it.
+   * Collapsing the two - hiding the price for an unoffered market - would take
+   * away the number the seller needs in order to decide whether to publish
+   * there.
+   */
+  const reach: 'unknown' | 'none' | 'offered' | 'elsewhere' = (() => {
+    if (offeredMarketCodes === undefined) return 'unknown';
+    if (offeredMarketCodes.length === 0) return 'none';
+
+    return offeredMarketCodes.includes(previewMarketCode)
+      ? 'offered'
+      : 'elsewhere';
+  })();
+
   const marketLabel =
     destinations.find((item) => item.code === previewMarketCode)?.label ??
     previewMarketCode;
+
+  /**
+   * Whether anyone in this market can reach the product at all.
+   *
+   * Sits above the picker rather than inside the card, because it is a fact
+   * about the shopfront and not about the listing: the card below is a faithful
+   * render of a page that, in two markets out of three, no buyer can currently
+   * open.
+   */
+  function reachNotice() {
+    if (reach === 'unknown' || reach === 'offered') return null;
+
+    if (reach === 'none') {
+      return (
+        <p className="m-0 rounded-lg border border-warning-border bg-warning-surface px-3 py-2 text-xs leading-relaxed text-amber-700">
+          Not published yet, so no buyer can reach this product in any market.
+          The price below is what your rules would charge once you publish.
+        </p>
+      );
+    }
+
+    return (
+      <p className="m-0 rounded-lg border border-warning-border bg-warning-surface px-3 py-2 text-xs leading-relaxed text-amber-700">
+        <span className="font-semibold">Not on sale in {marketLabel}.</span>{' '}
+        This product is published to{' '}
+        {(offeredMarketCodes ?? [])
+          .map((code) => nameForMarket(code))
+          .join(', ')}
+        , so a buyer in {marketLabel} cannot see or buy it. Publishing writes
+        one market per product today. The price below is what your {marketLabel}{' '}
+        rules would charge if you did.
+      </p>
+    );
+  }
 
   /**
    * The price a buyer in the selected market would see, and where it came from.
@@ -342,6 +422,8 @@ export default function DraftStorefrontPreview({
           <StatusPill label="Draft preview" tone="info" />
         </div>
       </div>
+
+      {reachNotice()}
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="preview-market">Preview market</Label>
