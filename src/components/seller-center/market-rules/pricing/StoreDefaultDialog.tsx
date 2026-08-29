@@ -54,11 +54,12 @@ type StoreDefaultDialogProps = {
 const MIN_REASON_CHARS = 10;
 
 /**
- * The reserve for one pricing scope: the markup a sale may never fall below.
+ * Operating expenses for one pricing scope: the share of supplier cost every
+ * sale sets aside, and so the price a sale may never fall below.
  *
  * ## One number, after two
  *
- * This dialog used to carry a `Base markup over cost` beside the reserve. That
+ * This dialog used to carry a `Base markup over cost` beside it. That
  * field was the fallback for a category with no markup of its own -- a branch
  * the resolver reaches only when `nearestCategoryPolicy === null`, which never
  * happens here because every category carries a markup. Owner decision
@@ -66,7 +67,7 @@ const MIN_REASON_CHARS = 10;
  * one that always does, is what made this screen unreadable. It is gone, the
  * column is nullable, and the action writes null.
  *
- * ## The two reserve fields are one choice, not two
+ * ## The two opex fields are one choice, not two
  *
  * Owner rule 2026-08-26: the minimum a margin may never fall below is either a
  * percentage or a fixed amount, never both. Typing into one disables the other
@@ -117,9 +118,9 @@ export default function StoreDefaultDialog({
   const percentInUse = floorPercent.trim() !== '';
 
   /*
-    A reserve is optional -- an unset one means prices are simply not floored,
+    An opex figure is optional -- an unset one means prices are simply not floored,
     which is a legitimate choice. Only the reason is required, so this dialog
-    can also be used to clear a reserve someone no longer wants.
+    can also be used to clear one someone no longer wants.
   */
   const ready = reason.trim().length >= MIN_REASON_CHARS;
 
@@ -177,8 +178,7 @@ export default function StoreDefaultDialog({
             — {scope.label}
           </DialogTitle>
           <DialogDescription>
-            The markup on a sale never drops below this, whatever the category
-            says.
+            What every sale sets aside for running the business.
           </DialogDescription>
         </DialogHeader>
 
@@ -198,12 +198,20 @@ export default function StoreDefaultDialog({
 
           <fieldset className="flex flex-col gap-2 rounded-md border border-border p-3">
             <legend className="px-1 text-sm font-medium">
-              Never below this
+              Operating expenses
             </legend>
+            {/*
+              One sentence, in the owner's own words.
+
+              This was a paragraph plus a three-row worked example, and they
+              read both and still asked what the field was. The arithmetic was
+              never the confusing part — the word "reserve" was, because it
+              named the mechanism instead of the money. It is opex.
+            */}
             <p className="text-xs text-muted-foreground">
-              What every sale must leave behind for your operating expenses. If
-              a category would price something under this, the reserve wins. Use
-              a percentage or an amount, not both.
+              50% here means half of what you pay the supplier is set aside for
+              operating expenses, and nothing sells below cost plus that. Use a
+              percentage or an amount, not both.
             </p>
 
             <div className="flex flex-wrap items-end gap-4">
@@ -227,7 +235,7 @@ export default function StoreDefaultDialog({
                     value={floorPercent}
                     disabled={amountInUse}
                     onChange={(event) => setFloorPercent(event.target.value)}
-                    aria-label={`Minimum markup percent for ${scope.label}`}
+                    aria-label={`Opex percent of cost for ${scope.label}`}
                     className="w-24 text-right"
                   />
                   <span className="text-sm text-muted-foreground">%</span>
@@ -247,7 +255,7 @@ export default function StoreDefaultDialog({
                     value={floorAmount}
                     disabled={percentInUse}
                     onChange={(event) => setFloorAmount(event.target.value)}
-                    aria-label={`Minimum contribution amount for ${scope.label}`}
+                    aria-label={`Opex amount for ${scope.label}`}
                     className="w-28 text-right"
                   />
                 </div>

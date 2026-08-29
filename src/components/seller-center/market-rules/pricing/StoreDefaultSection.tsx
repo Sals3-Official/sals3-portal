@@ -101,15 +101,14 @@ export default async function StoreDefaultSection({
         />
         <div className="flex flex-col gap-1">
           <h2 id="store-default-heading" className="text-base font-semibold">
-            Reserve
+            Operating expenses
           </h2>
           <p className="max-w-[78ch] text-sm text-muted-foreground">
-            The markup on a sale must never drop below this, because this is
-            what pays your operating expenses — at the reserve you break even.
-            Set it as a percentage or as a fixed amount, one or the other.
-            Categories set the markup; this only ever lifts a price, never
-            lowers one. A destination with no reserve is one you have not set up
-            yet.
+            What every sale sets aside for running the business. 50% means half
+            of what you pay the supplier — at that price you break even. Set it
+            as a percentage or as a fixed amount, one or the other. Categories
+            set the markup; this only ever lifts a price, never lowers one. A
+            destination with nothing set is one you have not set up yet.
           </p>
         </div>
       </div>

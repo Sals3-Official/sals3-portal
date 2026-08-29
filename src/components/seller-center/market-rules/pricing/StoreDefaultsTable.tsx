@@ -31,7 +31,7 @@ type StoreDefaultsTableProps = {
  * they were unified.
  *
  * The stored value is a margin rate either way; the conversion happens here so
- * the seller reads back the number they typed. Both the reserve and (in
+ * the seller reads back the number they typed. Both the opex share and (in
  * history) the retired base markup go through this — they are the same unit,
  * which is what #244 fixed.
  */
@@ -98,7 +98,7 @@ export default function StoreDefaultsTable({
             destination. A heading that named one would be wrong for exactly the
             row a seller is least sure about.
           */}
-          {['Scope', 'Reserve', 'Rounding', ''].map((heading) => (
+          {['Scope', 'Opex', 'Rounding', ''].map((heading) => (
             <span
               key={heading === '' ? 'actions' : heading}
               role="columnheader"

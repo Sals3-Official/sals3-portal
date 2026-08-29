@@ -71,6 +71,32 @@ export function PricingWorkingLines({
 }) {
   if (guidance.suggestedPrice === null) return null;
 
+  /*
+    The opex floor, and the share of cost it represents.
+
+    The percentage is derived from two of the resolver's own numbers rather than
+    plumbed through as a third: `reserveFloor / effectiveCost - 1` is what the
+    seller typed, and deriving it here cannot drift from them the way a separate
+    field could. It is a LABEL — no price is ever computed from it, which is the
+    line between this and a second pricing formula.
+
+    Rounded to whole percent: a stored rate of `0.333333` is 50.00005% of cost,
+    and showing that would be precision nobody asked for about a number they
+    typed as `50`.
+  */
+  const opexLine =
+    guidance.reserveFloor === null || guidance.effectiveCost === null
+      ? null
+      : {
+          label: `Never below (${Math.round(
+            (guidance.reserveFloor.amountMinor /
+              guidance.effectiveCost.amountMinor -
+              1) *
+              100,
+          )}% opex)`,
+          amount: guidance.reserveFloor,
+        };
+
   return (
     <span className="flex flex-col gap-1.5">
       <span className="font-medium">How this price is worked out</span>
@@ -85,6 +111,25 @@ export function PricingWorkingLines({
           <span className="flex justify-between gap-4">
             <span>{`+ ${guidance.fundingBufferPercent}% funding buffer`}</span>
             <span>{formatMoney(guidance.effectiveCost)}</span>
+          </span>
+        )}
+        {/*
+          Operating expenses, directly under the cost they are a share of.
+
+          Owner decision 2026-08-30: this is opex, not a "reserve" — the word
+          nobody outside the code recognised. The percentage is what a seller
+          sets aside out of supplier cost, so the line belongs beside the cost
+          rather than at the bottom next to a verdict.
+
+          Labelled `Never below` and not `+`, because it is a floor and not a
+          step. The markup line under it multiplies the BUFFERED cost, not this
+          — reading these as a running total would have the price built on the
+          wrong number, which is exactly what a `+` here would imply.
+        */}
+        {opexLine === null ? null : (
+          <span className="flex justify-between gap-4">
+            <span>{opexLine.label}</span>
+            <span>{formatMoney(opexLine.amount)}</span>
           </span>
         )}
         {guidance.markupPercent === null ? null : (
@@ -103,38 +148,20 @@ export function PricingWorkingLines({
             <span>{formatMoney(guidance.suggestedPrice)}</span>
           </span>
         )}
-        {/*
-          The reserve, shown whether or not it won.
-
-          Only the winning case used to appear, as a sentence below the sum. So a
-          seller who had just set a reserve in Market rules and came here to check
-          it saw nothing at all, and could not tell "the reserve is set and this
-          markup clears it" from "the reserve never saved" — the owner hit exactly
-          that on 2026-08-29 and had to reload the page to guess. A line that is
-          always present answers the question the visit is about.
-        */}
-        {guidance.reserveFloor === null ? null : (
-          <span className="flex justify-between gap-4">
-            <span>Your reserve</span>
-            <span>{formatMoney(guidance.reserveFloor)}</span>
-          </span>
-        )}
       </span>
 
       {/*
-        The sentence only when the reserve actually did something.
+        Only when the opex floor actually did something.
 
-        It used to say "your markup is above your reserve, so the reserve did
-        not change this price" on every row — which is true, permanent, and
-        noise: on this account the markup clears the reserve everywhere, so it
-        was a paragraph that never changed sitting under a sum that does. The
-        `Your reserve` line above already answers "is it set and where is it";
-        this answers "did it fire", and there is nothing to say when it did not.
+        It used to say the markup was above it on every row, which is true,
+        permanent, and noise: on this account the markup clears opex everywhere,
+        so it was a paragraph that never changed sitting under a sum that does.
+        The line above answers "is it set and where"; this answers "did it fire".
       */}
-      {guidance.reserveFloor !== null && guidance.contributionFloorApplied ? (
+      {opexLine !== null && guidance.contributionFloorApplied ? (
         <span>
-          Your reserve set this price, not your markup — the markup on its own
-          would have priced it lower.
+          Your opex floor set this price, not your markup — the markup on its
+          own would have priced it lower.
         </span>
       ) : null}
     </span>
