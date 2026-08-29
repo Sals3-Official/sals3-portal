@@ -9,6 +9,7 @@ function row(over: Partial<SellerSoldRow> = {}): SellerSoldRow {
     imageUrl: null,
     currency: 'USD',
     units: 142,
+    deliveredUnits: 142,
     orders: 118,
     revenueMinor: 133338,
     reviewCount: 12,

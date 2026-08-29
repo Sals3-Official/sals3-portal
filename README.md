@@ -1668,10 +1668,14 @@ Three things about it are load-bearing:
 The band's share bars are drawn to each row's share of the account total —
 exactly the number printed beside them — and everything past the fifth product
 folds into one "N more products" row so the column still reaches 100%. No best
-seller is named while the top two are tied. "Selling, never reviewed" is the one
-figure that crosses the two tabs: the products that sell and have no review are
-the cheapest reviews to win, and nothing else in the Seller Center says which
-those are.
+seller is named while the top two are tied. "Delivered, not reviewed" is the one
+figure that crosses the two tabs, and it counts **arrivals, not sales**: a review
+is gated on `REVIEWABLE_PARCEL_STATE`, so a parcel still in the air cannot be
+reviewed at all and counting it would pad the tile with work nobody can do. On a
+two-to-four-week CJ transit that is most of what has sold, which is why
+`deliveredUnits` is joined through `fulfillment_groups` per product — the one
+place `parcel_state` lives. Products sold but not yet arrived are named
+separately underneath rather than folded in or hidden.
 
 The order tables are checked separately from the review tables
 (`modules/orders/table-presence.ts`). Their absence does not take the page down:

@@ -13,6 +13,7 @@ function row(over: Partial<SellerSoldRow> = {}): SellerSoldRow {
     imageUrl: null,
     currency: 'USD',
     units: 142,
+    deliveredUnits: 142,
     orders: 118,
     revenueMinor: 133338,
     reviewCount: 12,
@@ -92,21 +93,29 @@ describe('SoldSummaryBand', () => {
     expect(screen.queryByText(/of everything sold/)).not.toBeInTheDocument();
   });
 
-  it('counts the products that sell and have never been reviewed', () => {
+  it('counts only the products that arrived and were never reviewed', () => {
     render(
       <SoldSummaryBand
         summary={summary({ totalUnits: 100 })}
         rows={[
-          row({ productId: 'a', units: 60, reviewCount: 3, averageRating: 4 }),
+          row({
+            productId: 'a',
+            units: 60,
+            deliveredUnits: 60,
+            reviewCount: 3,
+            averageRating: 4,
+          }),
           row({
             productId: 'b',
             units: 25,
+            deliveredUnits: 25,
             reviewCount: 0,
             averageRating: null,
           }),
           row({
             productId: 'c',
             units: 15,
+            deliveredUnits: 0,
             reviewCount: 0,
             averageRating: null,
           }),
@@ -114,10 +123,36 @@ describe('SoldSummaryBand', () => {
       />,
     );
 
-    expect(screen.getByText('Selling, never reviewed')).toBeInTheDocument();
-    expect(screen.getByText('2')).toBeInTheDocument();
+    // Only b. c has sold 15 but nothing has arrived, so nobody can review it —
+    // counting it would point the seller at work that cannot be done.
+    expect(screen.getByText('Delivered, not reviewed')).toBeInTheDocument();
+    expect(screen.getByText('1')).toBeInTheDocument();
     expect(
-      screen.getByText(/40 units sold between them, no review yet/),
+      screen.getByText(/25 delivered units between them, no review yet/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/1 more product is sold but still in transit/),
+    ).toBeInTheDocument();
+  });
+
+  it('says nobody can review anything while nothing has arrived', () => {
+    render(
+      <SoldSummaryBand
+        summary={summary({ totalUnits: 5 })}
+        rows={[
+          row({
+            productId: 'a',
+            units: 5,
+            deliveredUnits: 0,
+            reviewCount: 0,
+            averageRating: null,
+          }),
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByText(/Nothing has arrived yet, so nobody is able to review/),
     ).toBeInTheDocument();
   });
 

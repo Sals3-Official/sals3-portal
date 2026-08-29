@@ -330,3 +330,36 @@ describe('the date window', () => {
     ).toHaveLength(3);
   });
 });
+
+describe('delivered units', () => {
+  it('merges the delivered tally in without touching the sold figure', async () => {
+    const fake = fakeDb([
+      [saleRow(), saleRow({ productId: MASK, units: '96' })],
+      [],
+      [
+        { productId: BEANIE, units: '31' },
+        { productId: MASK, units: '4' },
+      ],
+    ]);
+    dbState.db = fake.db;
+
+    const rows = await readSellerSoldRows(SELLER);
+
+    expect(rows[0].units).toBe(142);
+    expect(rows[0].deliveredUnits).toBe(31);
+    expect(rows[1].units).toBe(96);
+    expect(rows[1].deliveredUnits).toBe(4);
+  });
+
+  it('reports nought delivered for a product still entirely in transit', async () => {
+    const fake = fakeDb([[saleRow()], [], []]);
+    dbState.db = fake.db;
+
+    const rows = await readSellerSoldRows(SELLER);
+
+    // Absent from the delivered tally means nothing has landed — not that the
+    // query failed, and not that the sale did not happen.
+    expect(rows[0].units).toBe(142);
+    expect(rows[0].deliveredUnits).toBe(0);
+  });
+});
