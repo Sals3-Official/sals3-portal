@@ -1504,6 +1504,15 @@ export async function getFundingBufferHistoryAction(): Promise<
  */
 const repriceScopeSchema = z.object({
   categoryCode: z.string().trim().min(1).max(64),
+  /**
+   * Where the previous page stopped, or `null` to start at the beginning.
+   *
+   * Part of the scope rather than a separate argument, so it is covered by the
+   * apply's scope comparison: an apply that resumed from a different position
+   * than the preview would write a page nobody looked at, and two pages of a
+   * large scope can easily share a fingerprint.
+   */
+  afterSku: z.string().trim().min(1).max(64).nullable().default(null),
   marketCode: z
     .string()
     .refine(isPricingScopeDestination, {
@@ -1559,6 +1568,8 @@ export type RepricePreview = {
   counts: RepricePlan['counts'];
   truncated: boolean;
   candidateCount: number;
+  /** Hand back as `scope.afterSku` to cover the rows past this page. */
+  nextAfterSku: string | null;
   fingerprint: string;
   /** Everything except the rows where nothing happens — those are a count, not a list. */
   lines: RepricePreviewLine[];
@@ -1631,6 +1642,7 @@ export async function previewRepriceAction(
         counts: plan.counts,
         truncated: plan.truncated,
         candidateCount: plan.candidateCount,
+        nextAfterSku: plan.nextAfterSku,
         fingerprint: plan.fingerprint,
         // The unchanged rows are the majority and say nothing; every row that
         // would move, be skipped, or refuse is listed by name.

@@ -1424,7 +1424,11 @@ describe('repricing live offers', () => {
    * same 500 forever — owner decision 2026-08-29, on a catalogue heading for
    * millions of listings.
    */
-  const PREVIEW_SCOPE = { categoryCode: 'CAT-GGL-166', marketCode: 'AU' };
+  const PREVIEW_SCOPE = {
+    categoryCode: 'CAT-GGL-166',
+    marketCode: 'AU',
+    afterSku: null,
+  };
 
   describe('previewRepriceAction', () => {
     it('refuses a run with no scope rather than pricing everything', async () => {
@@ -1455,7 +1459,7 @@ describe('repricing live offers', () => {
       expect(repriceMocks.planReprice).toHaveBeenCalledWith(
         expect.anything(),
         SELLER_A_ID,
-        { categoryCode: 'CAT-GGL-166', marketCode: null },
+        { categoryCode: 'CAT-GGL-166', marketCode: null, afterSku: null },
         { reclaimSellerPriced: false },
       );
     });
@@ -1511,7 +1515,7 @@ describe('repricing live offers', () => {
       fingerprint: '1-abc',
       reason: 'Supplier costs rose across the department.',
       // Required on both halves since 2026-08-29 — there is no "everything" run.
-      scope: { categoryCode: 'CAT-GGL-166', marketCode: 'AU' },
+      scope: { categoryCode: 'CAT-GGL-166', marketCode: 'AU', afterSku: null },
     };
 
     it('writes the plan it recomputed, not one the caller sent', async () => {
