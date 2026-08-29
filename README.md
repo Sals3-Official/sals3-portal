@@ -1637,6 +1637,53 @@ paging and search all live in the URL (`review-params.ts`), so a view is
 shareable and the back button behaves; a filter change resets `page`, which is
 the bug `buildQueryString` shipped on the sourcing screens.
 
+The route now carries **two tabs, Reviews and Sold**, switched by `?view=sold`
+— its own key, because `?tab=` was already the reply-state filter. Switching
+tabs drops the star and text filters rather than carrying them: "4-star, no
+reply" means nothing on a table of units sold, and a filter that survives into a
+screen with no control to clear it is a trap.
+
+### Sold
+
+`modules/orders/seller-sold-read.ts` counts what the account has actually sold.
+It needs **no new column, no counter to drift, and no CJ call** — every fact is
+already frozen on `sals3_order_lines` (`product_id`, `quantity`,
+`unit_amount_minor`) with `sals3_orders.payment_status` saying whether the money
+stood.
+
+Three things about it are load-bearing:
+
+- **Tenancy goes through the line.** `sals3_order_lines.supplier_connection_id`
+  is `NOT NULL`, so scoping is one join. It deliberately does _not_ route through
+  `fulfillment_groups` the way the review reader must — that column is nullable,
+  and an inner join through it would silently drop any line not yet grouped into
+  a parcel, understating the seller's own sales.
+- **Only `PAID` counts.** `REFUNDED` and `DISPUTED` are excluded, so a sold count
+  can go **down**. The tab says so above the first number, and `refundedUnits` is
+  returned beside the total so the drop reconciles instead of reading as a bug.
+- **Reviews are a second query, merged by product id in JavaScript.** Joining
+  them into the aggregate would fan each order line out into one row per review
+  and multiply every quantity by it.
+
+The band's share bars are drawn to each row's share of the account total —
+exactly the number printed beside them — and everything past the fifth product
+folds into one "N more products" row so the column still reaches 100%. No best
+seller is named while the top two are tied. "Selling, never reviewed" is the one
+figure that crosses the two tabs: the products that sell and have no review are
+the cheapest reviews to win, and nothing else in the Seller Center says which
+those are.
+
+The order tables are checked separately from the review tables
+(`modules/orders/table-presence.ts`). Their absence does not take the page down:
+on a selectively-migrated database the Reviews tab stays usable while the Sold
+tab explains the migration gap and names it as one, rather than rendering an
+empty table that would read as "you have sold nothing".
+
+The same count reaches the storefront card feed as `soldUnits`
+(`lib/storefront/catalog-feed.ts`), omitted rather than zeroed, and attached by
+`withCardAggregates` under the same rule as the rating: a failure to count is
+logged and costs the aggregate, never the catalogue.
+
 A seller can answer a review **once, editable** — versioned with
 `supersedes_id` behind the partial unique index, never updated in place, because
 PR #80 shipped the opposite on pricing overrides and lost the replacement

@@ -215,6 +215,14 @@ export type StorefrontProduct = {
    * evidence about CJ's own marketplace (ADR-013 §7).
    */
   rating?: { average: number; count: number };
+  /**
+   * Units sold, omitted until at least one has been. Never a supplier's figure:
+   * CJ's `listedNum` counts listings on CJ's own marketplace, not Sals3 sales
+   * (ADR-013 §7). Omitted rather than zero, so a card cannot render "0 sold" —
+   * on a young catalogue that reads as "nobody buys here", which is a verdict
+   * the absence of sales does not support.
+   */
+  soldUnits?: number;
   category: string;
   /** Which currency `priceMinor` is denominated in. ADR-003 phase 1: `USD`. */
   currency: string;
@@ -417,6 +425,9 @@ export function toStorefrontProduct(
     ...(row.rating === undefined
       ? {}
       : { rating: { average: row.rating.average, count: row.rating.count } }),
+    ...(row.soldUnits === undefined || row.soldUnits <= 0
+      ? {}
+      : { soldUnits: row.soldUnits }),
     shipLine: DELIVERY_AT_CHECKOUT_LINE,
     category,
     currency: row.priceCurrency,

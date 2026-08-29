@@ -16,6 +16,9 @@ import type { SellerReviewFilter } from '@/modules/reviews/seller-read';
 export const REVIEWS_PAGE_SIZE = 20;
 
 export type ReviewSearchParams = {
+  /** Which of the page's two tabs is open. `tab` is already taken by the
+      reply-state filter below, so the page-level switch needs its own key. */
+  view?: string;
   tab?: string;
   stars?: string;
   q?: string;
@@ -28,6 +31,17 @@ export type ReviewView = {
 };
 
 const REPLY_STATES = new Set(['needs-reply', 'replied']);
+
+/** The page's two tabs. Reviews is the default and carries no query key. */
+export type ReviewsTab = 'reviews' | 'sold';
+
+/**
+ * Total, like every other parser here: anything that is not exactly `sold`
+ * reads as the default tab rather than erroring on a hand-edited URL.
+ */
+export function parseReviewsTab(params: ReviewSearchParams): ReviewsTab {
+  return params.view === 'sold' ? 'sold' : 'reviews';
+}
 
 function parseStars(value: string | undefined): ReviewRating[] {
   if (value === undefined || value.trim() === '') return [];
