@@ -103,7 +103,7 @@ export default function PricePerDestination({
   return (
     <Tooltip onOpenChange={handleOpenChange}>
       {/*
-        The trigger is the price itself, which is what the owner asked to hover.
+        The trigger is whatever it wraps — the price, or the supplier cost.
         Rendered as a button so it is reachable by keyboard: a tooltip that only
         answers a mouse is a tooltip half the people who need it cannot open.
       */}
@@ -146,7 +146,22 @@ export default function PricePerDestination({
                       {destination.unavailableLabel ?? 'No price'}
                     </span>
                   ) : (
-                    <span>{formatMoney(destination.price)}</span>
+                    <span className="flex gap-2">
+                      <span>{formatMoney(destination.price)}</span>
+                      {/*
+                        The local figure second and dimmed, never instead of the
+                        USD one. ADR-003 phase 1 charges USD everywhere, so the
+                        approximation is a sanity check on a shelf price — a
+                        seller cannot tell from `$14.79` whether that is sane in
+                        Fiji. Absent entirely when no rate source answered,
+                        rather than shown as a guess.
+                      */}
+                      {destination.approximateLocal === null ? null : (
+                        <span className="text-ink-faint">
+                          ≈ {formatMoney(destination.approximateLocal)}
+                        </span>
+                      )}
+                    </span>
                   )}
                 </span>
               ))}
@@ -155,7 +170,8 @@ export default function PricePerDestination({
 
           <span className="text-ink-faint">
             Each destination has its own markup in Market rules, so the same
-            product is not the same price everywhere.
+            product is not the same price everywhere. Charged in USD; local
+            amounts are approximate.
           </span>
         </span>
       </TooltipContent>

@@ -27,12 +27,22 @@ const DESTINATIONS = [
     marketCode: 'AU',
     label: 'Australia',
     price: { amountMinor: 2070, currency: 'USD' },
+    approximateLocal: { amountMinor: 2877, currency: 'AUD' },
     unavailableLabel: null,
   },
   {
     marketCode: 'NZ',
     label: 'New Zealand',
     price: { amountMinor: 690, currency: 'USD' },
+    approximateLocal: { amountMinor: 1160, currency: 'NZD' },
+    unavailableLabel: null,
+  },
+  {
+    marketCode: 'GLOBAL',
+    label: 'Global',
+    price: { amountMinor: 2070, currency: 'USD' },
+    // Global's buyers share no currency, so there is nothing to convert to.
+    approximateLocal: null,
     unavailableLabel: null,
   },
 ];
@@ -86,10 +96,79 @@ describe('PricePerDestination', () => {
       Australia a different price would have tested a scenario that cannot
       happen.
     */
-    expect(screen.getAllByText('$20.70')).toHaveLength(2);
+    // Three: the trigger, Australia, and Global — which prices from the same
+    // rules and so lands on the same number.
+    expect(screen.getAllByText('$20.70')).toHaveLength(3);
     // And the point of the whole feature: the same product, a different number.
     expect(screen.getByText('New Zealand')).toBeInTheDocument();
     expect(screen.getByText('$6.90')).toBeInTheDocument();
+  });
+
+  it('shows the local amount beside the charged one, never instead of it', async () => {
+    /*
+      ADR-003 phase 1 charges USD in every market. The local figure is a sanity
+      check on a shelf price — a seller cannot tell from `$20.70` whether that
+      is sane in Australia — and showing it alone would state a price nobody is
+      charged.
+    */
+    render(
+      <PricePerDestination variantId="11111111-1111-4111-a111-111111111111">
+        <span>$20.70</span>
+      </PricePerDestination>,
+    );
+
+    open();
+
+    expect(await screen.findByText('Australia')).toBeInTheDocument();
+    expect(screen.getAllByText('$20.70').length).toBeGreaterThan(1);
+    expect(screen.getByText('≈ A$28.77')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Charged in USD; local amounts are approximate/),
+    ).toBeInTheDocument();
+  });
+
+  it('shows Global, and shows it without a conversion', async () => {
+    // Global is every country with no column of its own — most of the world —
+    // and it was left out until the owner asked for it on 2026-08-30. Its
+    // buyers share no currency, so there is nothing to approximate to.
+    render(
+      <PricePerDestination variantId="11111111-1111-4111-a111-111111111111">
+        <span>$20.70</span>
+      </PricePerDestination>,
+    );
+
+    open();
+
+    expect(await screen.findByText('Global')).toBeInTheDocument();
+    expect(screen.queryByText(/≈ .*GLOBAL/)).toBeNull();
+  });
+
+  it('omits the local figure rather than guessing when no rate answered', async () => {
+    // A guessed rate is indistinguishable from a real one by the time it
+    // reaches a seller deciding what to charge.
+    mocks.pricesByDestinationAction.mockResolvedValue({
+      ok: true,
+      destinations: [
+        {
+          marketCode: 'FJ',
+          label: 'Fiji',
+          price: { amountMinor: 2070, currency: 'USD' },
+          approximateLocal: null,
+          unavailableLabel: null,
+        },
+      ],
+    });
+
+    render(
+      <PricePerDestination variantId="11111111-1111-4111-a111-111111111111">
+        <span>$20.70</span>
+      </PricePerDestination>,
+    );
+
+    open();
+
+    expect(await screen.findByText('Fiji')).toBeInTheDocument();
+    expect(screen.queryByText(/≈/)).toBeNull();
   });
 
   it('asks once per row, not once per hover', async () => {
@@ -129,6 +208,7 @@ describe('PricePerDestination', () => {
           marketCode: 'CA',
           label: 'Canada',
           price: null,
+          approximateLocal: null,
           unavailableLabel: 'No margin policy — set a category markup',
         },
       ],
