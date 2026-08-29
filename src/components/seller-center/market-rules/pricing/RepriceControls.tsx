@@ -27,6 +27,21 @@ import { MAX_REPRICE_OFFERS } from '@/modules/pricing/reprice-limits';
 
 type RepriceControlsProps = {
   canManage: boolean;
+  /**
+   * The departments a run may be scoped to, in the order the table shows them.
+   *
+   * Departments only, not the whole 5,595-row taxonomy. A run covers the chosen
+   * category **and its subtree**, and every product sits under a department, so
+   * the 21 roots already reach everything — offering all of them would be a
+   * longer list that can select nothing extra.
+   */
+  categories: ReadonlyArray<{ code: string; name: string }>;
+  /** One entry per column of the Category markups table, Global included. */
+  scopes: ReadonlyArray<{
+    key: string;
+    label: string;
+    marketCode: string | null;
+  }>;
 };
 
 const MIN_REASON_CHARS = 10;
@@ -97,9 +112,26 @@ function RepriceRow({ line }: { line: RepricePreviewLine }) {
  * somebody typed by hand — because "nothing happened to these" is exactly the
  * part a summary count hides.
  */
-export default function RepriceControls({ canManage }: RepriceControlsProps) {
+export default function RepriceControls({
+  canManage,
+  categories,
+  scopes,
+}: RepriceControlsProps) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
+  /*
+    The scope, and there is no "everything" option on purpose.
+
+    An unscoped run used to exist. It selected every published offer this seller
+    owned, ordered by title, and took the first 500 — with no cursor, so it
+    returned the same 500 forever and everything past the 500th product
+    alphabetically was unreachable. Owner decision 2026-08-29, on a catalogue
+    heading for millions of listings: one button must never stand between a
+    seller and every price they own. Both selections start empty so the first
+    choice is deliberate rather than inherited from whatever sorted first.
+  */
+  const [categoryCode, setCategoryCode] = useState('');
+  const [scopeKey, setScopeKey] = useState('');
   const [isChecking, startChecking] = useTransition();
   const [isApplying, startApplying] = useTransition();
   const [preview, setPreview] = useState<RepricePreview | null>(null);
@@ -131,7 +163,22 @@ export default function RepriceControls({ canManage }: RepriceControlsProps) {
     (preview !== null &&
       confirmCount.trim() === String(preview.counts.changed));
 
+  const selectedScope = scopes.find((scope) => scope.key === scopeKey) ?? null;
+  /*
+    Resolved to an object rather than carried as two strings. `marketCode` is
+    `null` for Global and a country code otherwise, and `null` is a real value
+    here rather than "not chosen" — `scopeKey` is what says whether a choice was
+    made, which is why the empty string is the unchosen state and not `null`.
+  */
+  const scope =
+    categoryCode === '' || selectedScope === null
+      ? null
+      : { categoryCode, marketCode: selectedScope.marketCode };
+
+  const canCheck = scope !== null && !isChecking;
+
   const canApply =
+    scope !== null &&
     preview !== null &&
     preview.counts.changed > 0 &&
     reason.trim().length >= MIN_REASON_CHARS &&
@@ -145,10 +192,12 @@ export default function RepriceControls({ canManage }: RepriceControlsProps) {
   }
 
   function handleCheck() {
+    if (scope === null) return;
+
     setError(null);
 
     startChecking(async () => {
-      const result = await previewRepriceAction(reclaimSellerPriced);
+      const result = await previewRepriceAction(scope, reclaimSellerPriced);
 
       if (!result.ok) {
         setPreview(null);
@@ -174,6 +223,10 @@ export default function RepriceControls({ canManage }: RepriceControlsProps) {
         fingerprint: preview.fingerprint,
         reason,
         reclaimSellerPriced,
+        // Re-sent, and re-checked server-side. Two empty plans share a
+        // fingerprint, so without this an apply could name a different category
+        // than the preview and still pass the staleness check.
+        scope,
       });
 
       if (!result.ok) {
@@ -247,11 +300,67 @@ export default function RepriceControls({ canManage }: RepriceControlsProps) {
           <div className="flex flex-col gap-5">
             <section className="flex flex-col gap-2">
               <h3 className="text-sm font-semibold">
-                1. Check what would change
+                1. Choose what to reprice
+              </h3>
+              <p className="text-xs text-ink-faint">
+                One department, one destination. The run covers every published
+                product under that department, including its sub-categories.
+              </p>
+
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="reprice-category">Department</Label>
+                  <select
+                    id="reprice-category"
+                    className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                    value={categoryCode}
+                    onChange={(event) => {
+                      setCategoryCode(event.target.value);
+                      // Same discipline as the reclaim checkbox: a preview
+                      // describes the scope it was run for, and nothing else.
+                      setPreview(null);
+                      setConfirmCount('');
+                      setError(null);
+                    }}
+                  >
+                    <option value="">Choose a department…</option>
+                    {categories.map((category) => (
+                      <option key={category.code} value={category.code}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="reprice-scope">Destination</Label>
+                  <select
+                    id="reprice-scope"
+                    className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                    value={scopeKey}
+                    onChange={(event) => {
+                      setScopeKey(event.target.value);
+                      setPreview(null);
+                      setConfirmCount('');
+                      setError(null);
+                    }}
+                  >
+                    <option value="">Choose a destination…</option>
+                    {scopes.map((scopeOption) => (
+                      <option key={scopeOption.key} value={scopeOption.key}>
+                        {scopeOption.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <h3 className="mt-2 text-sm font-semibold">
+                2. Check what would change
               </h3>
               <p className="text-xs text-ink-faint">
                 Nothing is written by this step. It runs today&apos;s rules
-                against every published product and shows you the result.
+                against the products you chose and shows you the result.
               </p>
               {/*
                 Off by default, and clearing the preview when it changes: a plan
@@ -290,7 +399,7 @@ export default function RepriceControls({ canManage }: RepriceControlsProps) {
                 size="sm"
                 className="self-start"
                 onClick={handleCheck}
-                disabled={isChecking || isApplying}
+                disabled={!canCheck || isApplying}
               >
                 <RefreshCw aria-hidden="true" className="size-3.5" />
                 {isChecking ? 'Checking…' : 'Check what would change'}
@@ -352,7 +461,7 @@ export default function RepriceControls({ canManage }: RepriceControlsProps) {
             {canManage && preview !== null && preview.counts.changed > 0 ? (
               <section className="flex flex-col gap-3 border-t border-border pt-4">
                 <h3 className="text-sm font-semibold">
-                  2. Apply the new prices
+                  3. Apply the new prices
                 </h3>
 
                 <div className="flex flex-col gap-1.5">

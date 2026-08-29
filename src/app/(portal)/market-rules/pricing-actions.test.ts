@@ -1418,9 +1418,50 @@ describe('repricing live offers', () => {
     repriceMocks.writeReprice.mockResolvedValue({ ok: true, written: 1 });
   });
 
+  /**
+   * Every run is scoped now. The unscoped one selected every published offer
+   * ordered by title and kept the first 500 with no cursor, so it returned the
+   * same 500 forever — owner decision 2026-08-29, on a catalogue heading for
+   * millions of listings.
+   */
+  const PREVIEW_SCOPE = { categoryCode: 'CAT-GGL-166', marketCode: 'AU' };
+
   describe('previewRepriceAction', () => {
+    it('refuses a run with no scope rather than pricing everything', async () => {
+      const result = await previewRepriceAction(undefined);
+
+      expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+      expect(repriceMocks.planReprice).not.toHaveBeenCalled();
+    });
+
+    it('refuses a destination this account cannot price for', async () => {
+      // The allow list, not "any two letters": a typo should be refused rather
+      // than run against a market nobody will notice is missing.
+      const result = await previewRepriceAction({
+        categoryCode: 'CAT-GGL-166',
+        marketCode: 'ZZ',
+      });
+
+      expect(result).toMatchObject({ ok: false, reason: 'invalid_input' });
+      expect(repriceMocks.planReprice).not.toHaveBeenCalled();
+    });
+
+    it('passes Global through as a null market, not as a missing one', async () => {
+      await previewRepriceAction({
+        categoryCode: 'CAT-GGL-166',
+        marketCode: null,
+      });
+
+      expect(repriceMocks.planReprice).toHaveBeenCalledWith(
+        expect.anything(),
+        SELLER_A_ID,
+        { categoryCode: 'CAT-GGL-166', marketCode: null },
+        { reclaimSellerPriced: false },
+      );
+    });
+
     it('writes nothing', async () => {
-      const result = await previewRepriceAction();
+      const result = await previewRepriceAction(PREVIEW_SCOPE);
 
       expect(result).toMatchObject({ ok: true });
       expect(transactionMock).not.toHaveBeenCalled();
@@ -1428,7 +1469,7 @@ describe('repricing live offers', () => {
     });
 
     it('lists the rows that move and counts the ones that do not', async () => {
-      const result = await previewRepriceAction();
+      const result = await previewRepriceAction(PREVIEW_SCOPE);
 
       if (!result.ok) throw new Error('expected a preview');
       expect(result.data.counts.unchanged).toBe(4);
@@ -1449,7 +1490,7 @@ describe('repricing live offers', () => {
         }),
       );
 
-      const result = await previewRepriceAction();
+      const result = await previewRepriceAction(PREVIEW_SCOPE);
 
       if (!result.ok) throw new Error('expected a preview');
       expect(result.data.lines).toHaveLength(0);
@@ -1458,7 +1499,7 @@ describe('repricing live offers', () => {
     it('denies a role that may set margins but not publish', async () => {
       requirePermissionMock.mockResolvedValue({ ...SESSION, role: 'viewer' });
 
-      const result = await previewRepriceAction();
+      const result = await previewRepriceAction(PREVIEW_SCOPE);
 
       expect(result).toEqual({ ok: false, reason: 'denied' });
       expect(repriceMocks.planReprice).not.toHaveBeenCalled();
@@ -1469,6 +1510,8 @@ describe('repricing live offers', () => {
     const VALID_INPUT = {
       fingerprint: '1-abc',
       reason: 'Supplier costs rose across the department.',
+      // Required on both halves since 2026-08-29 — there is no "everything" run.
+      scope: { categoryCode: 'CAT-GGL-166', marketCode: 'AU' },
     };
 
     it('writes the plan it recomputed, not one the caller sent', async () => {
