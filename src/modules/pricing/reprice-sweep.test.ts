@@ -98,6 +98,56 @@ describe('runRepriceSweep', () => {
     });
   });
 
+  it('counts the pages it planned, so the run can be checked', async () => {
+    /*
+      Without this the run is unfalsifiable. `done: true` with `changed: 0`
+      reads identically whether the sweep walked every page of a 500-offer scope
+      or stopped at the first — and a report nobody can check is how the old
+      "run it again afterwards to reach the rest" survived being wrong.
+    */
+    planRepriceMock
+      .mockResolvedValueOnce(
+        plan({
+          counts: { changed: 1, unchanged: 0, unpriceable: 0, manual: 0 },
+          nextAfterSku: 'SKU-500',
+        }),
+      )
+      .mockResolvedValueOnce(
+        plan({
+          counts: { changed: 1, unchanged: 0, unpriceable: 0, manual: 0 },
+          nextAfterSku: 'SKU-999',
+        }),
+      )
+      .mockResolvedValue(plan());
+
+    const result = await runRepriceSweep(
+      {} as never,
+      SCOPES,
+      options(),
+      frozenClock,
+    );
+
+    // Three pages for the first scope, one each for the other two.
+    expect(result.totals.pagesVisited).toBe(5);
+    expect(result.totals.scopesVisited).toBe(3);
+    // One scope needed continuing, not three pages' worth of scopes.
+    expect(result.totals.scopesPaged).toBe(1);
+  });
+
+  it('reports no paging when every scope fits in one page', async () => {
+    // The number that makes the one above meaningful: if it were always
+    // non-zero it would say nothing about whether paging engaged.
+    const result = await runRepriceSweep(
+      {} as never,
+      SCOPES,
+      options(),
+      frozenClock,
+    );
+
+    expect(result.totals.pagesVisited).toBe(3);
+    expect(result.totals.scopesPaged).toBe(0);
+  });
+
   it('never advances within a scope on a dry run', async () => {
     /*
       The failure this prevents: a plan-only pass that walked page two would

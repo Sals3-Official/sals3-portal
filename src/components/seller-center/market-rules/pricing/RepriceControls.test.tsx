@@ -84,7 +84,7 @@ function openAndScope(categoryCode = 'CAT-GGL-166', scopeKey: string = 'AU') {
   fireEvent.click(
     screen.getByRole('button', { name: /Reprice live products/ }),
   );
-  fireEvent.change(screen.getByLabelText('Department'), {
+  fireEvent.change(screen.getByLabelText('Category'), {
     target: { value: categoryCode },
   });
   fireEvent.change(screen.getByLabelText('Destination'), {
@@ -172,8 +172,45 @@ describe('RepriceControls', () => {
     fireEvent.click(
       screen.getByRole('button', { name: /Reprice live products/ }),
     );
-    fireEvent.change(screen.getByLabelText('Department'), {
+    fireEvent.change(screen.getByLabelText('Category'), {
       target: { value: 'CAT-GGL-166' },
+    });
+
+    expect(
+      screen.getByRole('button', { name: /Check what would change/ }),
+    ).toBeDisabled();
+  });
+
+  it('sends All categories as a null category, not a sentinel string', async () => {
+    /*
+      `'ALL'` is a value a `<select>` can carry; it is not a category code. The
+      engine reads `null` as "no category filter", and a sentinel reaching it
+      would resolve no category and price nothing while reporting success.
+    */
+    renderControls();
+
+    openAndScope('ALL', 'AU');
+    fireEvent.click(
+      screen.getByRole('button', { name: /Check what would change/ }),
+    );
+    await screen.findByText(/1 price moves/);
+
+    expect(mocks.previewRepriceAction).toHaveBeenCalledWith(
+      { categoryCode: null, marketCode: 'AU', afterSku: null },
+      false,
+    );
+  });
+
+  it('keeps "nothing chosen" apart from "all categories"', async () => {
+    // Both become `null` on the wire, so the empty string has to stay the
+    // unchosen state — otherwise opening the dialog would look like a choice.
+    renderControls();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Reprice live products/ }),
+    );
+    fireEvent.change(screen.getByLabelText('Destination'), {
+      target: { value: 'AU' },
     });
 
     expect(
@@ -211,7 +248,7 @@ describe('RepriceControls', () => {
 
     expect(screen.getByText('Corduroy jacket')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('Department'), {
+    fireEvent.change(screen.getByLabelText('Category'), {
       target: { value: 'CAT-GGL-436' },
     });
 
@@ -279,7 +316,7 @@ describe('RepriceControls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply new prices' }));
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
 
-    fireEvent.change(screen.getByLabelText('Department'), {
+    fireEvent.change(screen.getByLabelText('Category'), {
       target: { value: 'CAT-GGL-436' },
     });
     await checkAgain();

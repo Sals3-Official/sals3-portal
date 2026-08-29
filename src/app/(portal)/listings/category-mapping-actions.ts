@@ -140,6 +140,40 @@ export async function decideCategoryMappingAction(
 
   if (!result.ok) return refuse(result.reason);
 
+  /*
+    Price the draft now that the category is known.
+
+    `create-draft.ts` calls the resolver with `UNMAPPED` and a null category —
+    hardcoded to decline, correctly, because a freshly sourced CJ product has no
+    Sals3 category yet. Nothing priced it afterwards: `resolveProductPricing`
+    had four callers and this path was not among them. So a sourced product sat
+    at `PRICING_UNRESOLVED` for good, the catalogue read **Not available**, and
+    publication was blocked for a reason that had already been fixed.
+
+    Deliberately not fatal. A category was successfully decided, and that is
+    what the caller asked for; a pricing pass that fails must not report the
+    category edit as failed and invite a retry that would rewrite what already
+    landed. The offers keep whatever they had, and the next edit or publish
+    tries again.
+  */
+  try {
+    const { default: priceDraftOffers } =
+      await import('@/modules/catalog/products/price-draft-offers');
+    const { default: getDb } = await import('@/lib/db/client');
+
+    await priceDraftOffers(getDb(), {
+      sellerAccountId: authorization.sellerAccountId,
+      productId: parsed.data.productId,
+      actorId: authorization.actorId,
+    });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[portal] pricing a draft after a category edit failed', {
+      productId: parsed.data.productId,
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+  }
+
   // The editor reads the resolved category through the catalogue read-model,
   // and a published PDP through the storefront cache — same two-cache
   // reasoning as `saveOptionMappingAction`, since this can also change an

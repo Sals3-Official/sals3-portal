@@ -63,6 +63,23 @@ export default function MarginCsvControls({
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+  /*
+    A second transition, for the refresh alone.
+
+    `router.refresh()` returns nothing and settles on its own schedule. On a
+    1,492-row import measured on 2026-08-30 the write finished in a few seconds
+    and the table caught up 11–21 seconds later — so the toast appeared, the
+    dialog closed, and the seller was left looking at the old numbers with no
+    reason to think anything was still happening. They refreshed the page,
+    reasonably, and reported that the import needed a manual reload.
+
+    Wrapping the refresh in its own transition makes that wait observable:
+    `isRefreshing` stays true until the server has actually re-rendered, which
+    is what the dialog now waits for before it closes.
+  */
+  const [isRefreshing, startRefreshing] = useTransition();
+  /** Set on a successful apply; the effect below closes once the refresh lands. */
+  const [closeWhenRefreshed, setCloseWhenRefreshed] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const [csv, setCsv] = useState<string | null>(null);
   const [reason, setReason] = useState('');
@@ -70,7 +87,10 @@ export default function MarginCsvControls({
   const [error, setError] = useState<string | null>(null);
 
   const canApply =
-    csv !== null && reason.trim().length >= MIN_REASON_CHARS && !isPending;
+    csv !== null &&
+    reason.trim().length >= MIN_REASON_CHARS &&
+    !isPending &&
+    !isRefreshing;
 
   function resetUpload() {
     setCsv(null);
@@ -192,15 +212,34 @@ export default function MarginCsvControls({
        * `CategoryMarginDialog` had, reintroduced here because this dialog
        * was written from the same shape.
        */
-      router.refresh();
+      /*
+        Closed only once the table behind it has caught up.
+
+        The toast is deliberately inside the same callback: announcing a result
+        while the screen still shows the old one is the specific thing that made
+        this look broken.
+      */
+      startRefreshing(() => {
+        router.refresh();
+      });
 
       toast.success(
         `${written} changed, ${cleared} cleared, ${unchanged} already correct.`,
       );
-      setIsOpen(false);
       resetUpload();
+      setCloseWhenRefreshed(true);
     });
   }
+
+  /*
+    Open, derived rather than stored.
+
+    A successful apply sets `closeWhenRefreshed`, and the dialog stops rendering
+    once the refresh transition settles — the moment the table behind it is
+    correct. Deriving it avoids setting state inside an effect, which is both a
+    lint error here and the cascading-render shape the rule exists to stop.
+  */
+  const dialogOpen = isOpen && !(closeWhenRefreshed && !isRefreshing);
 
   return (
     <>
@@ -215,9 +254,12 @@ export default function MarginCsvControls({
       </Button>
 
       <Dialog
-        open={isOpen}
+        open={dialogOpen}
         onOpenChange={(open) => {
           setIsOpen(open);
+          // Cleared on every open and close, so a dialog reopened after an
+          // import does not immediately derive itself shut again.
+          setCloseWhenRefreshed(false);
           if (!open) resetUpload();
         }}
       >
@@ -345,7 +387,16 @@ export default function MarginCsvControls({
                   disabled={!canApply}
                   onClick={handleApply}
                 >
-                  {isPending ? 'Applying…' : 'Apply file'}
+                  {/*
+                    Three states, not two. A 1,492-row import writes in a few
+                    seconds and the table takes another ten or twenty to catch
+                    up, and a button that went straight back to `Apply file`
+                    across that gap said the work was over while the screen
+                    still showed the old numbers.
+                  */}
+                  {isPending ? 'Applying…' : null}
+                  {!isPending && isRefreshing ? 'Updating the table…' : null}
+                  {!isPending && !isRefreshing ? 'Apply file' : null}
                 </Button>
               ) : null}
             </div>

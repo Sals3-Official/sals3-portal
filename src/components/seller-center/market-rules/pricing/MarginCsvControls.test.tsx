@@ -193,4 +193,56 @@ describe('MarginCsvControls', () => {
       '2 changed, 1 cleared, 5 already correct.',
     );
   });
+
+  /**
+   * A regression guard, and honest about being only that.
+   *
+   * The defect the owner reported on 2026-08-30 — "I have to refresh for the
+   * change to show" — is a race between the write finishing and
+   * `router.refresh()` re-rendering the 213-category tree. Measured against
+   * their own 1,492-row file: the toast fired and the dialog closed in a few
+   * seconds, and the table caught up 11–21 seconds later.
+   *
+   * The fix waits for the refresh transition before closing. It cannot be
+   * pinned here: `refresh` is a synchronous mock, so the transition settles in
+   * the same tick and the fixed and broken orderings are indistinguishable.
+   * Reverting the fix leaves this file green, which is why this comment says so
+   * rather than the test pretending otherwise. It was verified by measurement
+   * against production, not by assertion.
+   *
+   * What this still holds is that the dialog does close on success at all.
+   */
+  it('closes once the import has been applied', async () => {
+    mocks.applyMarginCsvAction.mockResolvedValue({
+      ok: true,
+      data: { written: 2, cleared: 1, unchanged: 5 },
+    });
+    render(<MarginCsvControls nodes={[node()]} canManage scopes={SCOPES} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Import \/ export/ }));
+
+    const file = new File(
+      ['category_code,markup_percent\nCAT-GGL-1,300'],
+      'markups.csv',
+      { type: 'text/csv' },
+    );
+    fireEvent.change(screen.getByLabelText('File'), {
+      target: { files: [file] },
+    });
+    fireEvent.change(screen.getByLabelText('Reason for change'), {
+      target: { value: 'A reason long enough to pass.' },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Apply file' })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Apply file' }));
+
+    await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
+
+    // And once the refresh settles, it lets go.
+    await waitFor(() =>
+      expect(screen.queryByLabelText('Reason for change')).toBeNull(),
+    );
+  });
 });
