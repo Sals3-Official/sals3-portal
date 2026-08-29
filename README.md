@@ -1653,14 +1653,20 @@ stood.
 
 Three things about it are load-bearing:
 
-- **Tenancy goes through the line.** `sals3_order_lines.supplier_connection_id`
-  is `NOT NULL`, so scoping is one join. It deliberately does _not_ route through
-  `fulfillment_groups` the way the review reader must — that column is nullable,
-  and an inner join through it would silently drop any line not yet grouped into
-  a parcel, understating the seller's own sales.
-- **Only `PAID` counts.** `REFUNDED` and `DISPUTED` are excluded, so a sold count
-  can go **down**. The tab says so above the first number, and `refundedUnits` is
-  returned beside the total so the drop reconciles instead of reading as a bug.
+- **A sale is a delivery, not a payment** (owner decision, 2026-08-30). A unit
+  counts once the payment cleared _and_ the parcel reached `DELIVERED`: goods
+  still in the air can be lost or refused, and counting them early counts
+  something that may never happen. CJ transit runs two to four weeks, so the
+  figure lags the money by about that much — `inTransitUnits` is returned and
+  rendered beside it so the gap is visible rather than mysterious. `REFUNDED`
+  and `DISPUTED` are excluded too, so the number can also go down.
+- **The parcel join is required, and that flips an earlier hazard.**
+  `fulfillment_group_id` is nullable, and an earlier version of this module
+  avoided joining through it precisely because that would drop ungrouped lines
+  and understate sales. Under the delivered rule the same behaviour is correct:
+  a line with no parcel has definitionally not arrived. Tenancy still goes
+  through `supplier_connection_id`, which is `NOT NULL`, so scope never depends
+  on a parcel existing.
 - **Reviews are a second query, merged by product id in JavaScript.** Joining
   them into the aggregate would fan each order line out into one row per review
   and multiply every quantity by it.
@@ -1668,14 +1674,10 @@ Three things about it are load-bearing:
 The band's share bars are drawn to each row's share of the account total —
 exactly the number printed beside them — and everything past the fifth product
 folds into one "N more products" row so the column still reaches 100%. No best
-seller is named while the top two are tied. "Delivered, not reviewed" is the one
-figure that crosses the two tabs, and it counts **arrivals, not sales**: a review
-is gated on `REVIEWABLE_PARCEL_STATE`, so a parcel still in the air cannot be
-reviewed at all and counting it would pad the tile with work nobody can do. On a
-two-to-four-week CJ transit that is most of what has sold, which is why
-`deliveredUnits` is joined through `fulfillment_groups` per product — the one
-place `parcel_state` lives. Products sold but not yet arrived are named
-separately underneath rather than folded in or hidden.
+seller is named while the top two are tied. "Sold, not reviewed" is the one
+figure that crosses the two tabs, and it is actionable precisely because a sale
+is a delivery: every product it names is one a buyer is already holding and
+could write about today.
 
 The order tables are checked separately from the review tables
 (`modules/orders/table-presence.ts`). Their absence does not take the page down:

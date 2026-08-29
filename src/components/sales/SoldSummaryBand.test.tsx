@@ -13,7 +13,6 @@ function row(over: Partial<SellerSoldRow> = {}): SellerSoldRow {
     imageUrl: null,
     currency: 'USD',
     units: 142,
-    deliveredUnits: 142,
     orders: 118,
     revenueMinor: 133338,
     reviewCount: 12,
@@ -29,6 +28,7 @@ function summary(over: Partial<SellerSoldSummary> = {}): SellerSoldSummary {
     productCount: 7,
     revenueByCurrency: [{ currency: 'USD', revenueMinor: 409530 }],
     refundedUnits: 0,
+    inTransitUnits: 0,
     ...over,
   };
 }
@@ -93,29 +93,21 @@ describe('SoldSummaryBand', () => {
     expect(screen.queryByText(/of everything sold/)).not.toBeInTheDocument();
   });
 
-  it('counts only the products that arrived and were never reviewed', () => {
+  it('counts the products that sold and were never reviewed', () => {
     render(
       <SoldSummaryBand
         summary={summary({ totalUnits: 100 })}
         rows={[
-          row({
-            productId: 'a',
-            units: 60,
-            deliveredUnits: 60,
-            reviewCount: 3,
-            averageRating: 4,
-          }),
+          row({ productId: 'a', units: 60, reviewCount: 3, averageRating: 4 }),
           row({
             productId: 'b',
             units: 25,
-            deliveredUnits: 25,
             reviewCount: 0,
             averageRating: null,
           }),
           row({
             productId: 'c',
             units: 15,
-            deliveredUnits: 0,
             reviewCount: 0,
             averageRating: null,
           }),
@@ -123,37 +115,41 @@ describe('SoldSummaryBand', () => {
       />,
     );
 
-    // Only b. c has sold 15 but nothing has arrived, so nobody can review it —
-    // counting it would point the seller at work that cannot be done.
-    expect(screen.getByText('Delivered, not reviewed')).toBeInTheDocument();
-    expect(screen.getByText('1')).toBeInTheDocument();
+    // Every row on this surface has already been delivered, so an unreviewed
+    // product is one a buyer is holding right now — the tile names work that
+    // can actually be done.
+    expect(screen.getByText('Sold, not reviewed')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
     expect(
-      screen.getByText(/25 delivered units between them, no review yet/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/1 more product is sold but still in transit/),
+      screen.getByText(/40 units between them, no review yet/),
     ).toBeInTheDocument();
   });
 
-  it('says nobody can review anything while nothing has arrived', () => {
+  it('shows what is paid for but still moving, so it cannot look lost', () => {
     render(
       <SoldSummaryBand
-        summary={summary({ totalUnits: 5 })}
-        rows={[
-          row({
-            productId: 'a',
-            units: 5,
-            deliveredUnits: 0,
-            reviewCount: 0,
-            averageRating: null,
-          }),
-        ]}
+        summary={summary({ totalUnits: 5, inTransitUnits: 78 })}
+        rows={[row({ units: 5 })]}
+      />,
+    );
+
+    // A sale is not counted until the parcel lands, so without this row a
+    // seller who remembers taking 83 orders would find 78 of them simply gone.
+    expect(screen.getByText('Paid, still in transit')).toBeInTheDocument();
+    expect(screen.getByText('78 units')).toBeInTheDocument();
+  });
+
+  it('hides the in-transit row when nothing is moving', () => {
+    render(
+      <SoldSummaryBand
+        summary={summary({ inTransitUnits: 0 })}
+        rows={[row()]}
       />,
     );
 
     expect(
-      screen.getByText(/Nothing has arrived yet, so nobody is able to review/),
-    ).toBeInTheDocument();
+      screen.queryByText('Paid, still in transit'),
+    ).not.toBeInTheDocument();
   });
 
   it('shows the refunded line only when something was refunded', () => {
@@ -177,7 +173,7 @@ describe('SoldSummaryBand', () => {
     expect(screen.getByText('6 units')).toBeInTheDocument();
   });
 
-  it('says nothing has sold rather than printing a zero-width chart', () => {
+  it('says nothing has been delivered rather than printing a zero-width chart', () => {
     render(
       <SoldSummaryBand
         summary={summary({
@@ -190,7 +186,9 @@ describe('SoldSummaryBand', () => {
       />,
     );
 
-    expect(screen.getByText('Nothing has sold yet.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Nothing has been delivered yet.'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Named after the first sale.')).toBeInTheDocument();
     expect(screen.getByText('—')).toBeInTheDocument();
   });
