@@ -1,0 +1,122 @@
+# Prices the drafts created before anything could price them. Manual only.
+#
+# WHY THERE IS A BACKLOG
+#
+# create-draft.ts calls the pricing resolver with UNMAPPED and a null category —
+# hardcoded to decline, and correct when written, because a freshly sourced CJ
+# product has no Sals3 category. Nothing priced the offers afterwards: the path
+# that maps a category never called the resolver. So a sourced product sat at
+# PRICING_UNRESOLVED, showed "Not available" in the Product Catalogue, and
+# blocked its own publication.
+#
+# decide-category prices now. That fixes every product mapped from here on and
+# none of the ones mapped before it. This is for those.
+#
+# Verified on the owner's account 2026-08-30: re-saving one product's existing
+# category — changing nothing — moved it from "Not available" to $20.70. This is
+# that, without the clicking.
+#
+# WHAT IT WILL NOT TOUCH
+#
+# Published offers, and drafts that already carry a price. A published price is
+# what a buyer is being charged; a draft that has one was priced by something,
+# possibly a person, and product_offers keeps no history — overwriting either
+# would be a permanent, invisible loss.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin.
+
+name: Products Backfill Draft Pricing
+
+on:
+  workflow_dispatch:
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Price every unresolved draft
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/products/backfill-draft-pricing"
+
+          after=""
+          calls=0
+          visited_total=0
+          resolved_total=0
+          unresolved_total=0
+
+          # A ceiling, not an expectation. A backfill that has not converged
+          # after this many calls is looping, and a job that keeps calling
+          # forever is worse than one that stops and says so.
+          MAX_CALLS=200
+
+          while [ "$calls" -lt "$MAX_CALLS" ]; do
+            calls=$((calls + 1))
+
+            url="$endpoint"
+            if [ -n "$after" ]; then
+              url="$url?afterProductId=$after"
+            fi
+
+            status=$(curl -sS -o /tmp/backfill.json -w '%{http_code}' \
+              -X POST "$url" \
+              -H "Authorization: Bearer $CRON_SECRET")
+
+            if [ "$status" -ge 300 ]; then
+              echo "Call $calls returned HTTP $status" >&2
+              cat /tmp/backfill.json >&2
+              echo >&2
+              echo "Each product is written on its own, so nothing is half-done:" >&2
+              echo "re-running resumes from the last one that landed." >&2
+              exit 1
+            fi
+
+            done_flag=$(jq -r '.done' /tmp/backfill.json)
+            after=$(jq -r '.position.afterProductId // ""' /tmp/backfill.json)
+            visited=$(jq -r '.totals.productsVisited' /tmp/backfill.json)
+            resolved=$(jq -r '.totals.offersResolved' /tmp/backfill.json)
+            unresolved=$(jq -r '.totals.offersStillUnresolved' /tmp/backfill.json)
+
+            visited_total=$((visited_total + visited))
+            resolved_total=$((resolved_total + resolved))
+            unresolved_total=$((unresolved_total + unresolved))
+
+            echo "call $calls: products $visited · priced $resolved · still refused $unresolved · done=$done_flag"
+
+            if [ "$done_flag" = "true" ]; then
+              break
+            fi
+          done
+
+          if [ "$done_flag" != "true" ]; then
+            echo "Stopped after $MAX_CALLS calls without finishing." >&2
+            echo "Position: afterProductId=$after" >&2
+            exit 1
+          fi
+
+          echo
+          echo "--- finished ---"
+          echo "products:      $visited_total"
+          echo "offers priced: $resolved_total"
+          echo "still refused: $unresolved_total"
+
+          if [ "$unresolved_total" -gt 0 ]; then
+            echo
+            echo "Some offers the rules still refuse. That is an answer, not a"
+            echo "failure — each one carries the resolver's own reason, and the"
+            echo "Product Catalogue shows it. Common causes: no supplier cost"
+            echo "observed yet, or a category with no markup in that destination."
+          fi
