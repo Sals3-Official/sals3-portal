@@ -2502,9 +2502,14 @@ export default function ProductEditorWorkspace({
               supplierProductName={fixture.supplierProductName}
               supplierCategoryPath={fixture.supplierCategoryPath}
               supplierMedia={fixture.supplierMedia}
+              // The live gallery count, not `fixture.media`: uploading or
+              // deleting a photo has to move the supplier panel's `Cover` badge
+              // in the same render, or the two panels disagree about which
+              // photograph a buyer meets first until the next reload.
+              sellerGalleryCount={media.length}
               // Only when every tile carries a real row id. A product whose
               // supplier photo exists as the feed's bare `imageUrl` has no row
-              // to position, and offering a grip there would save nothing.
+              // to position, and offering controls there would save nothing.
               onReorderSupplierMedia={
                 handleReorderMedia === undefined ||
                 !fixture.supplierMedia.every((item) => UUID.test(item.id))

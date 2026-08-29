@@ -26,6 +26,13 @@ type SpecificationsSectionProps = {
    * fixture/preview mode.
    */
   onReorderSupplierMedia?: (mediaIds: string[]) => void;
+  /**
+   * How many photos the seller has uploaded to Product media. Passed straight
+   * through: the supplier panel needs it to know whether its own first
+   * photograph is the product's cover, and this section is the only thing
+   * standing between it and the workspace that holds the count.
+   */
+  sellerGalleryCount: number;
   onOpenSourceDrawer: () => void;
   specifications: SpecificationFixture[];
   onSpecificationChange: (key: string, value: string) => void;
@@ -176,6 +183,7 @@ export default function SpecificationsSection({
   supplierCategoryPath,
   supplierMedia,
   onReorderSupplierMedia,
+  sellerGalleryCount,
   onOpenSourceDrawer,
   specifications,
   onSpecificationChange,
@@ -197,6 +205,7 @@ export default function SpecificationsSection({
           <SupplierMediaGallery
             media={supplierMedia}
             onReorder={onReorderSupplierMedia}
+            sellerGalleryCount={sellerGalleryCount}
           />
         </div>
 
