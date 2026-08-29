@@ -91,6 +91,12 @@ export type EditorVariantPricing = {
   marginPercent: number | null;
   /** The price before the rounding rule, when one moved it. `null` when rounding changed nothing. */
   priceBeforeRoundingMinor: number | null;
+  /**
+   * The price the seller's reserve alone would set, or `null` when they have no
+   * reserve. Carried even when the markup beat it — see the field's comment on
+   * `PricingDecision`.
+   */
+  reserveFloorMinor: number | null;
   /** True when the contribution floor, not the margin, set this price. */
   contributionFloorApplied: boolean;
 };
@@ -126,6 +132,7 @@ function unavailable(
     fundingBufferPercent: null,
     marginPercent: null,
     priceBeforeRoundingMinor: null,
+    reserveFloorMinor: null,
     contributionFloorApplied: false,
   };
 }
@@ -297,6 +304,7 @@ export default async function resolveEditorPricingGuidance(
           beforeRounding.amountMinor === rounded.amountMinor
             ? null
             : beforeRounding.amountMinor,
+        reserveFloorMinor: decision.reserveFloorPrice?.amountMinor ?? null,
         contributionFloorApplied: decision.contributionFloorApplied,
       };
     }),

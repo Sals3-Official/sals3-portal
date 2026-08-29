@@ -588,6 +588,69 @@ describe('resolveProductPricing — inheritance and the contribution floor', () 
     }
   });
 
+  /**
+   * Reported by the owner on 2026-08-29: a 50% reserve was set, every category
+   * was at 200%, and nothing anywhere said whether the reserve had taken
+   * effect. `contributionFloorApplied` was false — correctly — and that was the
+   * only signal, so "set and cleared" was indistinguishable from "never saved".
+   */
+  it('reports what the reserve would have charged even when the markup beat it', async () => {
+    // Category 20%: cost 1000 -> 1250. A 10% minimum floors at 1111, and loses.
+    mocks.findActiveStoreDefault.mockResolvedValue(
+      storeDefault({ minContributionRate: '0.100000' }),
+    );
+
+    const result = await resolveProductPricing(EXECUTOR, BASE_INPUT);
+
+    expect(result.outcome).toBe('PRODUCT_MARGIN_ESTIMATE');
+    if (result.outcome === 'PRODUCT_MARGIN_ESTIMATE') {
+      expect(result.contributionFloorApplied).toBe(false);
+      // Not 1250. Reporting the winning price would tell a seller their reserve
+      // produced the number their markup produced, which is the confusion this
+      // field exists to end.
+      expect(result.reserveFloorPrice).toEqual({
+        amountMinor: 1111,
+        currency: 'USD',
+      });
+    }
+  });
+
+  it('reports the amount reserve on the same field as the rate one', async () => {
+    // The two forms are mutually exclusive in the database, so the screen must
+    // not have to know which one is in play to draw the line.
+    mocks.findActiveStoreDefault.mockResolvedValue(
+      storeDefault({ minContributionMinor: BigInt(200) }),
+    );
+
+    const result = await resolveProductPricing(EXECUTOR, BASE_INPUT);
+
+    expect(result.outcome).toBe('PRODUCT_MARGIN_ESTIMATE');
+    if (result.outcome === 'PRODUCT_MARGIN_ESTIMATE') {
+      // cost 1000 + 200.
+      expect(result.reserveFloorPrice).toEqual({
+        amountMinor: 1200,
+        currency: 'USD',
+      });
+    }
+  });
+
+  it('reports no reserve at all rather than a reserve of the bare cost', async () => {
+    /*
+      A store default exists but carries neither floor form. Falling out of the
+      arithmetic as `cost + 0` would put "Your reserve US$10.00" on the screen
+      for a seller who has set none — answering the question wrongly rather than
+      not answering it.
+    */
+    mocks.findActiveStoreDefault.mockResolvedValue(storeDefault());
+
+    const result = await resolveProductPricing(EXECUTOR, BASE_INPUT);
+
+    expect(result.outcome).toBe('PRODUCT_MARGIN_ESTIMATE');
+    if (result.outcome === 'PRODUCT_MARGIN_ESTIMATE') {
+      expect(result.reserveFloorPrice).toBeNull();
+    }
+  });
+
   it('a minimum margin below the category margin changes nothing', async () => {
     // 20% category against a 10% minimum: 1250 beats 1111, so the margin wins.
     mocks.findActiveStoreDefault.mockResolvedValue(

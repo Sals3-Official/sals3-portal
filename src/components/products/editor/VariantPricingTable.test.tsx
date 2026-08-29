@@ -226,6 +226,7 @@ describe('the rule behind the price', () => {
         fundingBufferPercent: 1.5,
         marginPercent: 75,
         priceBeforeRounding: null,
+        reserveFloor: null,
         contributionFloorApplied: false,
       },
     ]);
@@ -261,6 +262,7 @@ describe('the rule behind the price', () => {
             fundingBufferPercent: 1.5,
             marginPercent: 75,
             priceBeforeRounding: null,
+            reserveFloor: null,
             contributionFloorApplied: false,
           },
         ]}
@@ -295,6 +297,7 @@ describe('the rule behind the price', () => {
           fundingBufferPercent: 1.5,
           marginPercent: 75,
           priceBeforeRounding: null,
+          reserveFloor: null,
           contributionFloorApplied: false,
         },
       ],
@@ -320,6 +323,7 @@ describe('the rule behind the price', () => {
         fundingBufferPercent: null,
         marginPercent: null,
         priceBeforeRounding: null,
+        reserveFloor: null,
         contributionFloorApplied: false,
       },
     ]);
@@ -347,6 +351,7 @@ describe('the rule behind the price', () => {
           fundingBufferPercent: 1.5,
           marginPercent: 25,
           priceBeforeRounding: null,
+          reserveFloor: null,
           contributionFloorApplied: false,
         }}
       />,
@@ -380,6 +385,7 @@ describe('the rule behind the price', () => {
       effectiveCost: { amountMinor: 589, currency: 'USD' },
       fundingBufferPercent: 1.5,
       marginPercent: 25,
+      reserveFloor: null,
       contributionFloorApplied: false,
     };
 
@@ -406,8 +412,8 @@ describe('the rule behind the price', () => {
     expect(screen.queryByText('Rounded')).toBeNull();
   });
 
-  /** Saying "from 33.33% markup" would be a lie when the floor set the price. */
-  it('says when the contribution floor set the price instead of the margin', () => {
+  /** Saying "from 33.33% markup" would be a lie when the reserve set the price. */
+  it('says when the reserve set the price instead of the markup', () => {
     render(
       <PricingWorkingLines
         supplierCost={{ amountMinor: 580, currency: 'USD' }}
@@ -422,14 +428,81 @@ describe('the rule behind the price', () => {
           fundingBufferPercent: 1.5,
           marginPercent: 25,
           priceBeforeRounding: null,
+          reserveFloor: { amountMinor: 900, currency: 'USD' },
           contributionFloorApplied: true,
         }}
       />,
     );
 
     expect(
-      screen.getByText(/minimum contribution floor set this price/),
+      screen.getByText(/Your reserve set this price, not your markup/),
     ).toBeInTheDocument();
+  });
+
+  /**
+   * The gap this closes, reported by the owner on 2026-08-29.
+   *
+   * They set a 50% reserve in Market rules, opened a product to check it, and
+   * the working said nothing — because a 200% category markup clears a 50%
+   * reserve and only the winning case was ever drawn. "Reserve is set and the
+   * markup clears it" and "the reserve never saved" looked identical, so the
+   * only way to tell was to reload and guess.
+   */
+  it('shows a reserve that did not win, rather than staying silent about it', () => {
+    render(
+      <PricingWorkingLines
+        supplierCost={{ amountMinor: 486, currency: 'USD' }}
+        guidance={{
+          variantId: 'variant-1',
+          suggestedPrice: { amountMinor: 1479, currency: 'USD' },
+          unavailableLabel: null,
+          sourceCategoryPath: 'Apparel & Accessories',
+          markupPercent: 200,
+          sellerOverridden: false,
+          effectiveCost: { amountMinor: 493, currency: 'USD' },
+          fundingBufferPercent: 1.5,
+          marginPercent: 66.67,
+          priceBeforeRounding: null,
+          // 50% markup over the buffered cost: 493 x 1.5 = 740.
+          reserveFloor: { amountMinor: 740, currency: 'USD' },
+          contributionFloorApplied: false,
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Your reserve')).toBeInTheDocument();
+    expect(screen.getByText('$7.40')).toBeInTheDocument();
+    expect(
+      screen.getByText(/markup is above your reserve/),
+    ).toBeInTheDocument();
+  });
+
+  it('stays silent when there is genuinely no reserve to report', () => {
+    // The distinction the line above exists for only works if the absent case
+    // is actually absent. A "Your reserve US$0.00" row would answer the
+    // question wrongly rather than not at all.
+    render(
+      <PricingWorkingLines
+        supplierCost={{ amountMinor: 486, currency: 'USD' }}
+        guidance={{
+          variantId: 'variant-1',
+          suggestedPrice: { amountMinor: 1479, currency: 'USD' },
+          unavailableLabel: null,
+          sourceCategoryPath: 'Apparel & Accessories',
+          markupPercent: 200,
+          sellerOverridden: false,
+          effectiveCost: { amountMinor: 493, currency: 'USD' },
+          fundingBufferPercent: 1.5,
+          marginPercent: 66.67,
+          priceBeforeRounding: null,
+          reserveFloor: null,
+          contributionFloorApplied: false,
+        }}
+      />,
+    );
+
+    expect(screen.queryByText('Your reserve')).toBeNull();
+    expect(screen.queryByText(/reserve/i)).toBeNull();
   });
 
   it('offers the explainer on a control a keyboard can reach', () => {
@@ -448,6 +521,7 @@ describe('the rule behind the price', () => {
             fundingBufferPercent: 1.5,
             marginPercent: 25,
             priceBeforeRounding: null,
+            reserveFloor: null,
             contributionFloorApplied: false,
           },
         ]}
@@ -482,6 +556,7 @@ describe('the rule behind the price', () => {
             fundingBufferPercent: null,
             marginPercent: null,
             priceBeforeRounding: null,
+            reserveFloor: null,
             contributionFloorApplied: false,
           },
         ]}
@@ -523,6 +598,7 @@ describe('the rule behind the price', () => {
       fundingBufferPercent: 1.5,
       marginPercent: 25,
       priceBeforeRounding: null,
+      reserveFloor: null,
       contributionFloorApplied: false,
     });
 
@@ -630,6 +706,7 @@ describe('the rule behind the price', () => {
       fundingBufferPercent: 1.5,
       marginPercent: 25,
       priceBeforeRounding: null,
+      reserveFloor: null,
       contributionFloorApplied: false,
     };
 
@@ -770,6 +847,7 @@ describe('the rule behind the price', () => {
         fundingBufferPercent: 1.5,
         marginPercent: 25,
         priceBeforeRounding: null,
+        reserveFloor: null,
         contributionFloorApplied: false,
       },
     ];

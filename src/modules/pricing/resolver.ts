@@ -326,6 +326,29 @@ export async function resolveProductPricing(
       : contributionFlooredMinor;
   const contributionFloorApplied = flooredMinor > suggestedMinor;
 
+  /*
+    What the reserve alone would have charged, kept whether or not it won.
+
+    Not `flooredMinor`, which is `max(reserve, markup price)` and therefore
+    equals the markup price whenever the reserve loses — reporting that would
+    tell a seller their reserve produced the very number the markup produced.
+    The reserve's own price is the amount form's `cost + floor` or the rate
+    form's `marginFloorMinor(cost, rate)`, whichever is higher; exactly one of
+    the two is ever set (`pricing_store_defaults_floor_exclusive`), so this is a
+    comparison between a real floor and a zero rather than between two rules.
+
+    `null` when neither form is configured. Zero would read as a reserve of
+    nothing, and "no reserve set" is what the screen has to be able to say.
+  */
+  const amountFloorMinor =
+    minContributionMinor > BigInt(0)
+      ? effectiveProductCostMinor + minContributionMinor
+      : BigInt(0);
+  const reserveOnlyMinor =
+    floorFromRateMinor > amountFloorMinor
+      ? floorFromRateMinor
+      : amountFloorMinor;
+
   const roundedMinor = applyRounding(flooredMinor, roundingRule);
 
   return {
@@ -368,6 +391,13 @@ export async function resolveProductPricing(
             amountMinor: Number(storeDefault.minContributionMinor),
             currency: storeDefault.minContributionCurrency,
           },
+    reserveFloorPrice:
+      reserveOnlyMinor > BigInt(0)
+        ? {
+            amountMinor: Number(reserveOnlyMinor),
+            currency: input.settlementCurrency,
+          }
+        : null,
     contributionFloorApplied,
     productOverrideId,
     productOverrideVersion,

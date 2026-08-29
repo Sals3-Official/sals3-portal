@@ -120,6 +120,21 @@ export type PricingDecision =
       storeDefaultPolicyVersion: number | null;
       /** The seller's minimum contribution floor, when a store default carries one; `null` when no store default exists. */
       minContribution: Money | null;
+      /**
+       * The price the reserve alone would set, whichever of its two forms is
+       * configured, or `null` when the seller has no reserve at all.
+       *
+       * Reported even when it lost, and that is the point. `contributionFloorApplied`
+       * says only whether the reserve won; a seller looking at a price could not tell
+       * "the reserve is set and this markup clears it" from "the reserve never saved"
+       * without going back to Market rules and guessing. This is the number that
+       * separates them, so the screen can show the comparison instead of the verdict.
+       *
+       * Already computed before this existed — the amount form as `cost + floor` and
+       * the rate form as `marginFloorMinor(cost, rate)`, the larger of the two — and
+       * then discarded once the comparison was made. This keeps it.
+       */
+      reserveFloorPrice: Money | null;
       /** True when `cost + floor` beat the percentage price — the floor, not the margin rate, set this suggestion. */
       contributionFloorApplied: boolean;
       productOverrideId: string | null;

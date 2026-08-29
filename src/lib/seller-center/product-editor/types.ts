@@ -595,6 +595,17 @@ export type VariantPricingGuidance = {
   marginPercent: number | null;
   /** The price before the rounding rule moved it. `null` when rounding changed nothing. */
   priceBeforeRounding: MoneyValue | null;
+  /**
+   * What the seller's reserve alone would charge, or `null` when they have no
+   * reserve set.
+   *
+   * Present whether or not the reserve won, which is the whole reason it is
+   * carried: `contributionFloorApplied` answers "did the reserve set this
+   * price", and a seller who has just configured one needs the other question
+   * answered too — "is my reserve even reaching this product". Without this
+   * they are left comparing a price against a number on a different screen.
+   */
+  reserveFloor: MoneyValue | null;
   /** True when the contribution floor, not the margin, set this price. */
   contributionFloorApplied: boolean;
 };
