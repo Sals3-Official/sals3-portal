@@ -2119,6 +2119,13 @@ function toVariantGuidance(
               amountMinor: row.priceBeforeRoundingMinor,
               currency: row.suggestedPriceCurrency,
             },
+      reserveFloor:
+        row.reserveFloorMinor === null || row.suggestedPriceCurrency === null
+          ? null
+          : {
+              amountMinor: row.reserveFloorMinor,
+              currency: row.suggestedPriceCurrency,
+            },
       contributionFloorApplied: row.contributionFloorApplied,
     }));
 }

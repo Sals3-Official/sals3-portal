@@ -103,14 +103,31 @@ export function PricingWorkingLines({
             <span>{formatMoney(guidance.suggestedPrice)}</span>
           </span>
         )}
+        {/*
+          The reserve, shown whether or not it won.
+
+          Only the winning case used to appear, as a sentence below the sum. So a
+          seller who had just set a reserve in Market rules and came here to check
+          it saw nothing at all, and could not tell "the reserve is set and this
+          markup clears it" from "the reserve never saved" — the owner hit exactly
+          that on 2026-08-29 and had to reload the page to guess. A line that is
+          always present answers the question the visit is about.
+        */}
+        {guidance.reserveFloor === null ? null : (
+          <span className="flex justify-between gap-4">
+            <span>Your reserve</span>
+            <span>{formatMoney(guidance.reserveFloor)}</span>
+          </span>
+        )}
       </span>
 
-      {guidance.contributionFloorApplied ? (
+      {guidance.reserveFloor === null ? null : (
         <span>
-          Your minimum contribution floor set this price, not your markup — the
-          markup on its own would have priced it lower.
+          {guidance.contributionFloorApplied
+            ? 'Your reserve set this price, not your markup — the markup on its own would have priced it lower.'
+            : 'Your markup is above your reserve, so the reserve did not change this price.'}
         </span>
-      ) : null}
+      )}
     </span>
   );
 }
