@@ -49,7 +49,7 @@ beforeEach(() => {
 });
 
 describe('StoreDefaultsTable', () => {
-  it('shows each destination its own reserve, in the form it was set', () => {
+  it('shows each destination its own opex figure, in the form it was set', () => {
     render(
       <StoreDefaultsTable
         scopes={SCOPES}
@@ -162,27 +162,24 @@ describe('the minimum is one choice, not two fields', () => {
   it('disables the amount once a percentage is typed', () => {
     openFiji();
 
-    fireEvent.change(screen.getByLabelText('Minimum markup percent for Fiji'), {
+    fireEvent.change(screen.getByLabelText('Opex percent of cost for Fiji'), {
       target: { value: '18' },
     });
 
     // Disabled, not merely ignored. A form that silently drops what someone
     // typed is how people learn not to trust a screen.
-    expect(
-      screen.getByLabelText('Minimum contribution amount for Fiji'),
-    ).toBeDisabled();
+    expect(screen.getByLabelText('Opex amount for Fiji')).toBeDisabled();
   });
 
   it('disables the percentage once an amount is typed', () => {
     openFiji();
 
-    fireEvent.change(
-      screen.getByLabelText('Minimum contribution amount for Fiji'),
-      { target: { value: '4.00' } },
-    );
+    fireEvent.change(screen.getByLabelText('Opex amount for Fiji'), {
+      target: { value: '4.00' },
+    });
 
     expect(
-      screen.getByLabelText('Minimum markup percent for Fiji'),
+      screen.getByLabelText('Opex percent of cost for Fiji'),
     ).toBeDisabled();
   });
 
@@ -191,7 +188,7 @@ describe('the minimum is one choice, not two fields', () => {
 
     openFiji();
 
-    fireEvent.change(screen.getByLabelText('Minimum markup percent for Fiji'), {
+    fireEvent.change(screen.getByLabelText('Opex percent of cost for Fiji'), {
       target: { value: '18' },
     });
     fireEvent.change(screen.getByLabelText('Reason for change to Fiji'), {
@@ -242,10 +239,9 @@ describe('Global writes the null market code, never its column key', () => {
       screen.getByRole('button', { name: 'Set store default for Global' }),
     );
 
-    fireEvent.change(
-      screen.getByLabelText('Minimum markup percent for Global'),
-      { target: { value: '30' } },
-    );
+    fireEvent.change(screen.getByLabelText('Opex percent of cost for Global'), {
+      target: { value: '30' },
+    });
     fireEvent.change(screen.getByLabelText('Reason for change to Global'), {
       target: { value: 'Everywhere we have not measured freight for yet.' },
     });
@@ -285,7 +281,7 @@ describe('Global writes the null market code, never its column key', () => {
         screen.getByRole('button', { name: 'Set store default for Australia' }),
       );
 
-      return screen.findByLabelText(/Minimum markup percent for Australia/);
+      return screen.findByLabelText(/Opex percent of cost for Australia/);
     }
 
     it('labels the reserve as a markup, like the field above it', async () => {

@@ -412,8 +412,8 @@ describe('the rule behind the price', () => {
     expect(screen.queryByText('Rounded')).toBeNull();
   });
 
-  /** Saying "from 33.33% markup" would be a lie when the reserve set the price. */
-  it('says when the reserve set the price instead of the markup', () => {
+  /** Saying "from 33.33% markup" would be a lie when opex set the price. */
+  it('says when the opex floor set the price instead of the markup', () => {
     render(
       <PricingWorkingLines
         supplierCost={{ amountMinor: 580, currency: 'USD' }}
@@ -435,7 +435,7 @@ describe('the rule behind the price', () => {
     );
 
     expect(
-      screen.getByText(/Your reserve set this price, not your markup/),
+      screen.getByText(/Your opex floor set this price, not your markup/),
     ).toBeInTheDocument();
   });
 
@@ -470,8 +470,17 @@ describe('the rule behind the price', () => {
       />,
     );
 
-    expect(screen.getByText('Your reserve')).toBeInTheDocument();
+    /*
+      Named opex, and placed under the cost it is a share of.
+
+      Owner decision 2026-08-30: "reserve" named the mechanism instead of the
+      money, and nobody outside the code read it. The percentage is derived from
+      the floor and the buffered cost — 740 / 493 - 1 rounds to 50% — so the
+      label cannot drift from the two numbers it is made of.
+    */
+    expect(screen.getByText('Never below (50% opex)')).toBeInTheDocument();
     expect(screen.getByText('$7.40')).toBeInTheDocument();
+    expect(screen.queryByText(/reserve/i)).toBeNull();
     /*
       The number, and no sentence.
 
