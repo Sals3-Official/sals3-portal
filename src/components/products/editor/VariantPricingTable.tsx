@@ -947,6 +947,14 @@ export default function VariantPricingTable({
                       <RetailPriceInput
                         label={`Retail price for ${variant.optionLabel}`}
                         value={variant.retailPrice}
+                        /*
+                          Null where the handler is, for the same reason: no
+                          audited write behind fixture and design-preview mode
+                          means no real variant to ask about either.
+                        */
+                        variantId={
+                          onRequestPriceUnlock === undefined ? null : variant.id
+                        }
                         supplierCost={variant.supplierCost}
                         onChange={(amountMinor) =>
                           onRetailChange(variant.id, amountMinor)

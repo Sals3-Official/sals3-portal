@@ -11,10 +11,20 @@ import {
 } from '@/lib/seller-center/product-editor/format';
 import { minimumRetailAmountMinorForSupplierCost } from '@/lib/pricing/retail-price-floor';
 import type { MoneyValue } from '@/lib/seller-center/product-editor/types';
+import PricePerDestination from './PricePerDestination';
 
 type RetailPriceInputProps = {
   label: string;
   value: MoneyValue;
+  /**
+   * This variant, so the locked price can be asked what it is elsewhere.
+   *
+   * `null` in fixture and design-preview mode, where there is no real variant
+   * behind the number and nothing to ask about. The locked price then renders
+   * as plain text — the same as before this existed — rather than as a control
+   * that opens an empty answer.
+   */
+  variantId: string | null;
   /** The supplier's cost, for the floor the server enforces at publish. */
   supplierCost: MoneyValue;
   onChange: (amountMinor: number) => void;
@@ -94,6 +104,7 @@ type RetailPriceInputProps = {
 export default function RetailPriceInput({
   label,
   value,
+  variantId,
   supplierCost,
   onChange,
   unlocked,
@@ -141,11 +152,30 @@ export default function RetailPriceInput({
     the actual failure the owner reported.
   */
   if (!unlocked) {
+    /*
+      The number, hoverable when there is a variant behind it.
+
+      `Retail price` is one destination's price — `pricing-guidance.ts` resolves
+      the seller's active profile market and nothing else — under a heading that
+      claims none. The markups genuinely differ per destination, so the column
+      was true in one country and wrong in the others with nothing saying which.
+      Hovering asks.
+    */
+    const price = (
+      <span className="tabular-nums" aria-label={label}>
+        {formatMoney(value)}
+      </span>
+    );
+
     return (
       <div className="flex items-center gap-1.5">
-        <span className="tabular-nums" aria-label={label}>
-          {formatMoney(value)}
-        </span>
+        {variantId === null ? (
+          price
+        ) : (
+          <PricePerDestination variantId={variantId}>
+            {price}
+          </PricePerDestination>
+        )}
         <Button
           type="button"
           variant="ghost"
