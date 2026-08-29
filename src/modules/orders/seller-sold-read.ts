@@ -1,8 +1,13 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import getDb, { type DbExecutor } from '@/lib/db/client';
-import { sals3OrderLines, sals3Orders } from '@/lib/db/schema/orders';
+import {
+  fulfillmentGroups,
+  sals3OrderLines,
+  sals3Orders,
+} from '@/lib/db/schema/orders';
 import { products } from '@/lib/db/schema/product-catalog';
 import { productReviews } from '@/lib/db/schema/reviews';
+import { REVIEWABLE_PARCEL_STATE } from '@/modules/reviews/contracts';
 import { supplierConnections } from '@/lib/db/schema/supplier-connections';
 
 /**
@@ -66,6 +71,16 @@ export type SellerSoldRow = {
   /** Distinct orders carrying this product, not line count. */
   orders: number;
   revenueMinor: number;
+  /**
+   * Units whose parcel actually arrived.
+   *
+   * Always at or below `units`, usually well below: CJ transit runs two to four
+   * weeks, so most of what has sold is still moving. This is the number that
+   * decides whether a review is even *possible* yet — `REVIEWABLE_PARCEL_STATE`
+   * gates reviewing on delivery — so a "no review yet" prompt built on `units`
+   * would mostly be pointing at parcels in the air.
+   */
+  deliveredUnits: number;
   /** Published reviews for this product. Zero is a real, common answer. */
   reviewCount: number;
   /** Mean of published ratings, or `null` when there are none. */
@@ -95,22 +110,45 @@ function toCount(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+/**
+ * The window a figure covers. Both bounds optional; `to` is **exclusive**, so
+ * the caller has already pushed an inclusive end-date to the following midnight.
+ */
+export type SoldDateRange = { from: Date | null; to: Date | null };
+
+export const WHOLE_HISTORY: SoldDateRange = { from: null, to: null };
+
+/**
+ * Filtered on `sals3_orders.created_at` — when the order was accepted, which is
+ * when the money cleared and therefore when the sale happened. Deliberately not
+ * the parcel's delivery date: that would move a sale between months depending on
+ * how long CJ took to ship it, and a seller reconciling August would find August
+ * changing under them.
+ *
+ * Plain `gte`/`lt` operators rather than a `sql` template: a value interpolated
+ * into a template has no column context, skips `mapToDriverValue`, and reaches
+ * the driver as a raw `Date` the query then rejects.
+ */
 function sellerScope(
   sellerAccountId: string,
   paymentStates: readonly OrderPaymentStatus[],
+  range: SoldDateRange,
 ) {
   return and(
     eq(supplierConnections.sellerAccountId, sellerAccountId),
     inArray(sals3Orders.paymentStatus, [...paymentStates]),
+    range.from === null ? undefined : gte(sals3Orders.createdAt, range.from),
+    range.to === null ? undefined : lt(sals3Orders.createdAt, range.to),
   );
 }
 
 /** Per-product sales, richest first. Reviews are merged in, never joined. */
 export async function readSellerSoldRows(
   sellerAccountId: string,
+  range: SoldDateRange = WHOLE_HISTORY,
   executor: DbExecutor = getDb(),
 ): Promise<SellerSoldRow[]> {
-  const [sales, reviewTallies] = await Promise.all([
+  const [sales, reviewTallies, deliveredTallies] = await Promise.all([
     executor
       .select({
         productId: sals3OrderLines.productId,
@@ -134,7 +172,7 @@ export async function readSellerSoldRows(
       )
       .innerJoin(sals3Orders, eq(sals3Orders.id, sals3OrderLines.orderId))
       .leftJoin(products, eq(products.id, sals3OrderLines.productId))
-      .where(sellerScope(sellerAccountId, [SOLD_PAYMENT_STATE]))
+      .where(sellerScope(sellerAccountId, [SOLD_PAYMENT_STATE], range))
       .groupBy(
         sals3OrderLines.productId,
         sals3OrderLines.currency,
@@ -155,8 +193,39 @@ export async function readSellerSoldRows(
         ),
       )
       .groupBy(productReviews.productId),
+
+    // Delivered units, per product. Joined through `fulfillment_groups` — the
+    // one place `parcel_state` lives — which is exactly the join the sales
+    // aggregate above avoids, and for the opposite reason: there the nullable
+    // group would have dropped ungrouped lines and understated sales, while
+    // here a line with no parcel has definitionally not arrived.
+    executor
+      .select({
+        productId: sals3OrderLines.productId,
+        units: sql<string>`sum(${sals3OrderLines.quantity})`,
+      })
+      .from(sals3OrderLines)
+      .innerJoin(
+        supplierConnections,
+        eq(supplierConnections.id, sals3OrderLines.supplierConnectionId),
+      )
+      .innerJoin(sals3Orders, eq(sals3Orders.id, sals3OrderLines.orderId))
+      .innerJoin(
+        fulfillmentGroups,
+        eq(fulfillmentGroups.id, sals3OrderLines.fulfillmentGroupId),
+      )
+      .where(
+        and(
+          sellerScope(sellerAccountId, [SOLD_PAYMENT_STATE], range),
+          eq(fulfillmentGroups.parcelState, REVIEWABLE_PARCEL_STATE),
+        ),
+      )
+      .groupBy(sals3OrderLines.productId),
   ]);
 
+  const deliveredByProduct = new Map(
+    deliveredTallies.map((row) => [row.productId, toCount(row.units)]),
+  );
   const tallyByProduct = new Map(
     reviewTallies.map((row) => [
       row.productId,
@@ -178,6 +247,7 @@ export async function readSellerSoldRows(
         imageUrl: row.imageUrl,
         currency: row.currency,
         units: toCount(row.units),
+        deliveredUnits: deliveredByProduct.get(row.productId) ?? 0,
         orders: toCount(row.orders),
         revenueMinor: toCount(row.revenueMinor),
         reviewCount,
@@ -204,6 +274,7 @@ export async function readSellerSoldRows(
  */
 export async function readSellerSoldSummary(
   sellerAccountId: string,
+  range: SoldDateRange = WHOLE_HISTORY,
   executor: DbExecutor = getDb(),
 ): Promise<SellerSoldSummary> {
   const [totals, revenue, reversed] = await Promise.all([
@@ -219,7 +290,7 @@ export async function readSellerSoldSummary(
         eq(supplierConnections.id, sals3OrderLines.supplierConnectionId),
       )
       .innerJoin(sals3Orders, eq(sals3Orders.id, sals3OrderLines.orderId))
-      .where(sellerScope(sellerAccountId, [SOLD_PAYMENT_STATE])),
+      .where(sellerScope(sellerAccountId, [SOLD_PAYMENT_STATE], range)),
 
     executor
       .select({
@@ -232,7 +303,7 @@ export async function readSellerSoldSummary(
         eq(supplierConnections.id, sals3OrderLines.supplierConnectionId),
       )
       .innerJoin(sals3Orders, eq(sals3Orders.id, sals3OrderLines.orderId))
-      .where(sellerScope(sellerAccountId, [SOLD_PAYMENT_STATE]))
+      .where(sellerScope(sellerAccountId, [SOLD_PAYMENT_STATE], range))
       .groupBy(sals3OrderLines.currency),
 
     executor
@@ -245,7 +316,7 @@ export async function readSellerSoldSummary(
         eq(supplierConnections.id, sals3OrderLines.supplierConnectionId),
       )
       .innerJoin(sals3Orders, eq(sals3Orders.id, sals3OrderLines.orderId))
-      .where(sellerScope(sellerAccountId, REVERSED_PAYMENT_STATES)),
+      .where(sellerScope(sellerAccountId, REVERSED_PAYMENT_STATES, range)),
   ]);
 
   return {

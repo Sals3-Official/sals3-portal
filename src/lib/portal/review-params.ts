@@ -19,6 +19,11 @@ export type ReviewSearchParams = {
   /** Which of the page's two tabs is open. `tab` is already taken by the
       reply-state filter below, so the page-level switch needs its own key. */
   view?: string;
+  /** Sold tab: a relative window (`30d`) or `custom` when `from`/`to` are set. */
+  range?: string;
+  /** Sold tab: inclusive `YYYY-MM-DD` bounds. Present values beat `range`. */
+  from?: string;
+  to?: string;
   tab?: string;
   stars?: string;
   q?: string;
@@ -41,6 +46,111 @@ export type ReviewsTab = 'reviews' | 'sold';
  */
 export function parseReviewsTab(params: ReviewSearchParams): ReviewsTab {
   return params.view === 'sold' ? 'sold' : 'reviews';
+}
+
+/**
+ * The Sold tab's date window.
+ *
+ * Two shapes, because they answer different questions. A **relative** window
+ * (`?range=30d`) is what a seller checking in wants, and it stays true when the
+ * link is opened next week. An **absolute** window (`?from=&to=`) is what
+ * someone reconciling a month wants, and it must not drift. Presets that baked
+ * today's date into the URL would quietly turn into the wrong month.
+ *
+ * `from`/`to` win when both parse, so a hand-edited URL carrying both keys
+ * cannot render one window while the control shows another.
+ *
+ * Parsing is total, like everything else here: an unknown range, a malformed
+ * date, or a reversed pair falls back to the whole history rather than erroring
+ * or silently showing nothing.
+ */
+export const SOLD_RANGE_KEYS = ['30d', '90d', '12m', 'all'] as const;
+
+export type SoldRangeKey = (typeof SOLD_RANGE_KEYS)[number];
+
+export type SoldRange = {
+  /** `custom` whenever explicit bounds are in play. */
+  key: SoldRangeKey | 'custom';
+  /** Inclusive lower bound, or `null` for "since the beginning". */
+  from: Date | null;
+  /** Exclusive upper bound, or `null` for "up to now". */
+  to: Date | null;
+  /** Echoed back so a control can repopulate its inputs. */
+  fromInput: string;
+  toInput: string;
+};
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseIsoDate(value: string | undefined): Date | null {
+  if (value === undefined || !ISO_DATE.test(value)) return null;
+
+  // `Date.parse` on a bare `YYYY-MM-DD` is UTC midnight, which is what the
+  // comparison below wants. A malformed-but-matching string ("2026-13-45")
+  // still yields NaN, so the guard has to stay.
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/** Days back for each relative window. `all` has no bound. */
+const RANGE_DAYS: Record<Exclude<SoldRangeKey, 'all'>, number> = {
+  '30d': 30,
+  '90d': 90,
+  '12m': 365,
+};
+
+export function parseSoldRange(
+  params: ReviewSearchParams,
+  now: Date,
+): SoldRange {
+  const from = parseIsoDate(params.from);
+  const to = parseIsoDate(params.to);
+
+  if (from !== null && to !== null && from.getTime() <= to.getTime()) {
+    // The upper bound is exclusive, so a `to` of the 5th has to reach the end
+    // of the 5th or every order placed that day is silently dropped — the kind
+    // of off-by-one a seller only catches when a total looks wrong.
+    const exclusiveTo = new Date(to.getTime() + 24 * 60 * 60 * 1000);
+
+    return {
+      key: 'custom',
+      from,
+      to: exclusiveTo,
+      fromInput: params.from ?? '',
+      toInput: params.to ?? '',
+    };
+  }
+
+  const key = (SOLD_RANGE_KEYS as readonly string[]).includes(
+    params.range ?? '',
+  )
+    ? (params.range as SoldRangeKey)
+    : 'all';
+
+  if (key === 'all') {
+    return { key, from: null, to: null, fromInput: '', toInput: '' };
+  }
+
+  const days = RANGE_DAYS[key];
+
+  return {
+    key,
+    from: new Date(now.getTime() - days * 24 * 60 * 60 * 1000),
+    to: null,
+    fromInput: '',
+    toInput: '',
+  };
+}
+
+/** Human label for the active window, for the band and the export filename. */
+export function soldRangeLabel(range: SoldRange): string {
+  if (range.key === 'custom') return `${range.fromInput} to ${range.toInput}`;
+  if (range.key === '30d') return 'Last 30 days';
+  if (range.key === '90d') return 'Last 90 days';
+  if (range.key === '12m') return 'Last 12 months';
+
+  return 'All time';
 }
 
 function parseStars(value: string | undefined): ReviewRating[] {

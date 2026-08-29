@@ -269,3 +269,97 @@ describe('readSoldUnitsForProducts', () => {
     expect(counts.has(MASK)).toBe(false);
   });
 });
+
+describe('the date window', () => {
+  function boundsIn(calls: ReturnType<typeof fakeDb>['calls']): Date[] {
+    const found: Date[] = [];
+    const seen = new Set<unknown>();
+
+    const walk = (node: unknown): void => {
+      if (node instanceof Date) {
+        found.push(node);
+        return;
+      }
+
+      if (node === null || typeof node !== 'object' || seen.has(node)) return;
+
+      seen.add(node);
+      Object.values(node as Record<string, unknown>).forEach(walk);
+    };
+
+    walk(calls.filter((call) => call.method === 'where'));
+
+    return found;
+  }
+
+  it('binds no date at all for the whole history', async () => {
+    const fake = fakeDb([[], []]);
+    dbState.db = fake.db;
+
+    await readSellerSoldRows(SELLER);
+
+    expect(boundsIn(fake.calls)).toEqual([]);
+  });
+
+  it('binds both bounds when a window is given', async () => {
+    const fake = fakeDb([[], []]);
+    dbState.db = fake.db;
+    const from = new Date('2026-08-01T00:00:00.000Z');
+    const to = new Date('2026-08-06T00:00:00.000Z');
+
+    await readSellerSoldRows(SELLER, { from, to });
+
+    const bounds = boundsIn(fake.calls).map((date) => date.toISOString());
+    expect(bounds).toContain('2026-08-01T00:00:00.000Z');
+    expect(bounds).toContain('2026-08-06T00:00:00.000Z');
+  });
+
+  it('applies the same window to the refunded figure as to the totals', async () => {
+    const fake = fakeDb([[], [], []]);
+    dbState.db = fake.db;
+    const from = new Date('2026-08-01T00:00:00.000Z');
+
+    await readSellerSoldSummary(SELLER, { from, to: null });
+
+    // Four `where` clauses across the summary's three statements, and the
+    // refunded one must carry the bound too — otherwise a 30-day view would
+    // subtract a refund from outside its own window.
+    const bounds = boundsIn(fake.calls).map((date) => date.toISOString());
+    expect(
+      bounds.filter((iso) => iso === '2026-08-01T00:00:00.000Z'),
+    ).toHaveLength(3);
+  });
+});
+
+describe('delivered units', () => {
+  it('merges the delivered tally in without touching the sold figure', async () => {
+    const fake = fakeDb([
+      [saleRow(), saleRow({ productId: MASK, units: '96' })],
+      [],
+      [
+        { productId: BEANIE, units: '31' },
+        { productId: MASK, units: '4' },
+      ],
+    ]);
+    dbState.db = fake.db;
+
+    const rows = await readSellerSoldRows(SELLER);
+
+    expect(rows[0].units).toBe(142);
+    expect(rows[0].deliveredUnits).toBe(31);
+    expect(rows[1].units).toBe(96);
+    expect(rows[1].deliveredUnits).toBe(4);
+  });
+
+  it('reports nought delivered for a product still entirely in transit', async () => {
+    const fake = fakeDb([[saleRow()], [], []]);
+    dbState.db = fake.db;
+
+    const rows = await readSellerSoldRows(SELLER);
+
+    // Absent from the delivered tally means nothing has landed — not that the
+    // query failed, and not that the sale did not happen.
+    expect(rows[0].units).toBe(142);
+    expect(rows[0].deliveredUnits).toBe(0);
+  });
+});
