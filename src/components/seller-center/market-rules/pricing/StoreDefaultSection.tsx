@@ -105,9 +105,11 @@ export default async function StoreDefaultSection({
           </h2>
           <p className="max-w-[78ch] text-sm text-muted-foreground">
             The markup on a sale must never drop below this, because this is
-            what pays your operating expenses. Set it as a percentage or as a
-            fixed amount — one or the other. Categories set the markup; this
-            only ever lifts a price, never lowers one.
+            what pays your operating expenses — at the reserve you break even.
+            Set it as a percentage or as a fixed amount, one or the other.
+            Categories set the markup; this only ever lifts a price, never
+            lowers one. A destination with no reserve is one you have not set up
+            yet.
           </p>
         </div>
       </div>
