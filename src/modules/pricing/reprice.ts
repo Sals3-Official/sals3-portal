@@ -95,8 +95,16 @@ export { MAX_REPRICE_OFFERS } from './reprice-limits';
  * the run would leave behind exactly the products the edited rule governs.
  */
 export type RepriceScope = {
-  /** A `sals3_categories.code`. Its whole subtree is covered — see above. */
-  categoryCode: string;
+  /**
+   * A `sals3_categories.code` whose whole subtree is covered — see above — or
+   * `null` for every category in this destination.
+   *
+   * `null` is a deliberate, named choice on the screen ("All categories"), not
+   * a default. The unscoped run this replaced took every offer in every
+   * destination at once; this is still one destination, still paged, and still
+   * shown before it is applied.
+   */
+  categoryCode: string | null;
   /**
    * The destination this run is for, or `null` for the Global rule.
    *
@@ -245,7 +253,8 @@ async function loadCandidates(
   executor: Executor,
   sellerAccountId: string,
   scope: RepriceScope,
-  categoryPath: string,
+  /** `null` when the scope covers every category. */
+  categoryPath: string | null,
 ): Promise<CandidateRow[]> {
   return executor
     .select({
@@ -293,10 +302,12 @@ async function loadCandidates(
           named `Shoes` would also match `Shoes & Boots`, repricing a sibling
           the edited rule never touched.
         */
-        or(
-          eq(sals3Categories.path, categoryPath),
-          like(sals3Categories.path, `${categoryPath} > %`),
-        ),
+        categoryPath === null
+          ? undefined
+          : or(
+              eq(sals3Categories.path, categoryPath),
+              like(sals3Categories.path, `${categoryPath} > %`),
+            ),
         /*
           Global is every destination that has no rule of its own, matching what
           `findNearestActiveCategoryPolicy` would hand the Global rule. An `IS
@@ -403,11 +414,14 @@ export async function planReprice(
     stale screen or a crafted payload, and neither should be answered with a
     price change.
   */
-  const [category] = await executor
-    .select({ path: sals3Categories.path })
-    .from(sals3Categories)
-    .where(eq(sals3Categories.code, scope.categoryCode))
-    .limit(1);
+  const [category] =
+    scope.categoryCode === null
+      ? [{ path: null }]
+      : await executor
+          .select({ path: sals3Categories.path })
+          .from(sals3Categories)
+          .where(eq(sals3Categories.code, scope.categoryCode))
+          .limit(1);
 
   if (category === undefined) {
     return {

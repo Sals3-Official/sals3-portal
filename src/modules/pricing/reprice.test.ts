@@ -281,6 +281,24 @@ describe('planReprice', () => {
     expect(plan.nextAfterSku).toBeNull();
   });
 
+  it('a null category filters on no category at all', async () => {
+    // "All categories" on the screen. Still one destination, still paged, still
+    // shown before it is applied — but no category predicate.
+    const { executor, recorded } = recordingExecutor([]);
+
+    await planReprice(executor as never, SELLER_ID, {
+      ...SCOPE,
+      categoryCode: null,
+    });
+
+    // One select, not two: there is no code to resolve to a path.
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0].rendered).not.toContain('"path" = ');
+    expect(recorded[0].rendered).not.toContain('"path" like ');
+    // And it is still scoped to the destination.
+    expect(recorded[0].rendered).toContain('"market_code" = ');
+  });
+
   it('reads Global as every destination with no rule of its own', async () => {
     /*
       `null` is not a wildcard. The Global rule prices offers into every country

@@ -121,13 +121,22 @@ export function PricingWorkingLines({
         )}
       </span>
 
-      {guidance.reserveFloor === null ? null : (
+      {/*
+        The sentence only when the reserve actually did something.
+
+        It used to say "your markup is above your reserve, so the reserve did
+        not change this price" on every row — which is true, permanent, and
+        noise: on this account the markup clears the reserve everywhere, so it
+        was a paragraph that never changed sitting under a sum that does. The
+        `Your reserve` line above already answers "is it set and where is it";
+        this answers "did it fire", and there is nothing to say when it did not.
+      */}
+      {guidance.reserveFloor !== null && guidance.contributionFloorApplied ? (
         <span>
-          {guidance.contributionFloorApplied
-            ? 'Your reserve set this price, not your markup — the markup on its own would have priced it lower.'
-            : 'Your markup is above your reserve, so the reserve did not change this price.'}
+          Your reserve set this price, not your markup — the markup on its own
+          would have priced it lower.
         </span>
-      )}
+      ) : null}
     </span>
   );
 }

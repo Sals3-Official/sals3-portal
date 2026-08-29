@@ -66,6 +66,21 @@ export type SweepPosition = {
 
 export type SweepTotals = {
   scopesVisited: number;
+  /**
+   * Pages planned, across every scope. One per `planReprice` call.
+   *
+   * Reported because without it the run is unfalsifiable. `done: true` with
+   * `changed: 0` reads identically whether the sweep walked every page of a
+   * 500-offer scope or stopped at the first one, and a report nobody can check
+   * is how the old "run it again afterwards" survived being wrong for as long
+   * as it did.
+   */
+  pagesVisited: number;
+  /**
+   * Scopes that needed more than one page. `0` here alongside a large
+   * `pagesVisited` would mean the paging never engaged.
+   */
+  scopesPaged: number;
   changed: number;
   unchanged: number;
   unpriceable: number;
@@ -184,6 +199,8 @@ export type SweepOptions = {
 
 const EMPTY_TOTALS: SweepTotals = {
   scopesVisited: 0,
+  pagesVisited: 0,
+  scopesPaged: 0,
   changed: 0,
   unchanged: 0,
   unpriceable: 0,
@@ -237,6 +254,7 @@ export async function runRepriceSweep(
       { reclaimSellerPriced: options.reclaimSellerPriced },
     );
 
+    totals.pagesVisited += 1;
     totals.changed += plan.counts.changed;
     totals.unchanged += plan.counts.unchanged;
     totals.unpriceable += plan.counts.unpriceable;
@@ -288,6 +306,12 @@ export async function runRepriceSweep(
     const more = options.apply && plan.nextAfterSku !== null;
 
     if (more) {
+      /*
+        Counted once per scope, on the step that first continues it — a scope
+        with five pages is one paged scope, not four.
+      */
+      if (afterSku === null) totals.scopesPaged += 1;
+
       afterSku = plan.nextAfterSku;
     } else {
       scopeIndex += 1;

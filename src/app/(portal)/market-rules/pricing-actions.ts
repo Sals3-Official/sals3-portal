@@ -1503,7 +1503,8 @@ export async function getFundingBufferHistoryAction(): Promise<
  * this page — see `saveCategoryPolicyInputSchema`.
  */
 const repriceScopeSchema = z.object({
-  categoryCode: z.string().trim().min(1).max(64),
+  /** `null` is the screen's "All categories" — see `RepriceScope`. */
+  categoryCode: z.string().trim().min(1).max(64).nullable(),
   /**
    * Where the previous page stopped, or `null` to start at the beginning.
    *

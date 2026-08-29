@@ -80,6 +80,8 @@ jobs:
           calls=0
           written_total=0
           changed_total=0
+          pages_total=0
+          paged_total=0
 
           # A ceiling, not an expectation. A sweep that has not converged after
           # this many calls is looping, and a job that keeps calling forever is
@@ -113,11 +115,15 @@ jobs:
             scope_count=$(jq -r '.scopeCount' /tmp/sweep.json)
             changed=$(jq -r '.totals.changed' /tmp/sweep.json)
             written=$(jq -r '.totals.written' /tmp/sweep.json)
+            pages=$(jq -r '.totals.pagesVisited' /tmp/sweep.json)
+            paged=$(jq -r '.totals.scopesPaged' /tmp/sweep.json)
 
             changed_total=$((changed_total + changed))
             written_total=$((written_total + written))
+            pages_total=$((pages_total + pages))
+            paged_total=$((paged_total + paged))
 
-            echo "call $calls: scope $scope_index/$scope_count · changed $changed · written $written · done=$done_flag"
+            echo "call $calls: scope $scope_index/$scope_count · pages $pages · changed $changed · written $written · done=$done_flag"
 
             if [ "$done_flag" = "true" ]; then
               break
@@ -133,8 +139,18 @@ jobs:
           echo
           echo "--- finished ---"
           echo "scopes:  $scope_count"
+          # The number that makes the rest checkable. `pages` below `scopes`
+          # would mean a scope was never read at all; `paged: 0` on a catalogue
+          # with a scope over the page size would mean the paging never engaged.
+          echo "pages:   $pages_total  (scopes needing more than one: $paged_total)"
           echo "changed: $changed_total"
           echo "written: $written_total"
+
+          if [ "$pages_total" -lt "$scope_count" ]; then
+            echo >&2
+            echo "Fewer pages than scopes: at least one scope was never read." >&2
+            exit 1
+          fi
 
           if [ "$DRY_RUN" = "true" ]; then
             echo

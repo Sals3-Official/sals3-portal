@@ -472,9 +472,16 @@ describe('the rule behind the price', () => {
 
     expect(screen.getByText('Your reserve')).toBeInTheDocument();
     expect(screen.getByText('$7.40')).toBeInTheDocument();
-    expect(
-      screen.getByText(/markup is above your reserve/),
-    ).toBeInTheDocument();
+    /*
+      The number, and no sentence.
+
+      A line explaining that the reserve did nothing is true on every row of an
+      account whose markup clears it everywhere — a permanent paragraph under a
+      sum that changes. The owner called it noise on 2026-08-30 and was right:
+      `Your reserve $7.40` sitting under `x 3.00 (200% markup) $14.79` already
+      says which one won.
+    */
+    expect(screen.queryByText(/markup is above your reserve/)).toBeNull();
   });
 
   it('stays silent when there is genuinely no reserve to report', () => {

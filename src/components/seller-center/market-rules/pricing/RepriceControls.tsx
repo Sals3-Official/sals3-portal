@@ -46,6 +46,15 @@ type RepriceControlsProps = {
 
 const MIN_REASON_CHARS = 10;
 
+/**
+ * The option value for "every category in this destination".
+ *
+ * Not `''`, which already means nothing has been chosen, and not `null`, which
+ * is what it becomes on the wire. A sentinel the `<select>` can carry keeps
+ * "unchosen" and "all" apart on a control that only speaks strings.
+ */
+const ALL_CATEGORIES = 'ALL';
+
 /** One preview row. Its own component so the table body is not rebuilding closures per row per render. */
 function RepriceRow({ line }: { line: RepricePreviewLine }) {
   const now =
@@ -178,10 +187,20 @@ export default function RepriceControls({
     here rather than "not chosen" — `scopeKey` is what says whether a choice was
     made, which is why the empty string is the unchosen state and not `null`.
   */
+  /*
+    `''` is "nothing chosen"; `ALL_CATEGORIES` is a choice that happens to mean
+    no category filter. Both become `null` downstream, so they cannot be the
+    same value here — the difference is what keeps the check button disabled
+    until somebody has actually decided.
+  */
   const scope =
     categoryCode === '' || selectedScope === null
       ? null
-      : { categoryCode, marketCode: selectedScope.marketCode, afterSku };
+      : {
+          categoryCode: categoryCode === ALL_CATEGORIES ? null : categoryCode,
+          marketCode: selectedScope.marketCode,
+          afterSku,
+        };
 
   const canCheck = scope !== null && !isChecking;
 
@@ -336,13 +355,13 @@ export default function RepriceControls({
                 1. Choose what to reprice
               </h3>
               <p className="text-xs text-ink-faint">
-                One department, one destination. The run covers every published
-                product under that department, including its sub-categories.
+                One category, one destination. The run covers every published
+                product under that category, including its sub-categories.
               </p>
 
               <div className="flex flex-wrap items-end gap-3">
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="reprice-category">Department</Label>
+                  <Label htmlFor="reprice-category">Category</Label>
                   <select
                     id="reprice-category"
                     className="h-9 rounded-md border border-border bg-background px-2 text-sm"
@@ -358,7 +377,8 @@ export default function RepriceControls({
                       setError(null);
                     }}
                   >
-                    <option value="">Choose a department…</option>
+                    <option value="">Choose a category…</option>
+                    <option value={ALL_CATEGORIES}>All categories</option>
                     {categories.map((category) => (
                       <option key={category.code} value={category.code}>
                         {category.name}
@@ -399,8 +419,7 @@ export default function RepriceControls({
                 */
                 <p className="text-xs font-medium text-sals3-deep">
                   Continuing from where the last run stopped. Change either
-                  choice above to start this department again from the
-                  beginning.
+                  choice above to start again from the beginning.
                 </p>
               )}
 
@@ -489,7 +508,7 @@ export default function RepriceControls({
                     role="alert"
                     className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs"
                   >
-                    This department holds more than {MAX_REPRICE_OFFERS} live
+                    This selection holds more than {MAX_REPRICE_OFFERS} live
                     prices in this destination. You are looking at the first{' '}
                     {MAX_REPRICE_OFFERS}. Apply these, then continue — the next
                     page starts where this one ends.
