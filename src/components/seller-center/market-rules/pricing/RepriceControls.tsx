@@ -132,6 +132,14 @@ export default function RepriceControls({
   */
   const [categoryCode, setCategoryCode] = useState('');
   const [scopeKey, setScopeKey] = useState('');
+  /*
+    Where the next page starts, carried across an apply.
+
+    `null` is the beginning. It advances only when a page is applied, so a
+    seller who reads a page and walks away has moved nothing — and a page that
+    was applied is never offered twice.
+  */
+  const [afterSku, setAfterSku] = useState<string | null>(null);
   const [isChecking, startChecking] = useTransition();
   const [isApplying, startApplying] = useTransition();
   const [preview, setPreview] = useState<RepricePreview | null>(null);
@@ -173,7 +181,7 @@ export default function RepriceControls({
   const scope =
     categoryCode === '' || selectedScope === null
       ? null
-      : { categoryCode, marketCode: selectedScope.marketCode };
+      : { categoryCode, marketCode: selectedScope.marketCode, afterSku };
 
   const canCheck = scope !== null && !isChecking;
 
@@ -250,17 +258,42 @@ export default function RepriceControls({
 
       const { written, unpriceable } = result.data;
 
+      /*
+        Advance to the next page, or clear the position when this was the last.
+
+        Taken from the preview that was just applied, not from a fresh read:
+        this is the row the write actually ended on. Set before the refresh so
+        the next `Check what would change` continues rather than restarting.
+      */
+      setAfterSku(preview.nextAfterSku);
+
       // Refresh before closing: a transition dispatched after the surface it
       // runs on is torn down is discarded, which is what left a saved margin
       // stale until a manual reload.
       router.refresh();
+
+      const more = preview.nextAfterSku !== null;
 
       toast.success(
         unpriceable > 0
           ? `${written} repriced. ${unpriceable} could not be priced and still show their old price.`
           : `${written} repriced.`,
       );
-      setIsOpen(false);
+
+      /*
+        Held open when there is more of this scope to cover.
+
+        Closing would send the seller back through the trigger and both
+        selects, and re-choosing a department is what clears the position — so
+        a page would be applied, the dialog would close, and the next run would
+        start from the beginning again, covering the same rows forever. That is
+        the shape of the bug this whole change exists to end, rebuilt one layer
+        up.
+      */
+      if (!more) {
+        setIsOpen(false);
+      }
+
       reset();
     });
   }
@@ -316,6 +349,8 @@ export default function RepriceControls({
                     value={categoryCode}
                     onChange={(event) => {
                       setCategoryCode(event.target.value);
+                      // A position in one department means nothing in another.
+                      setAfterSku(null);
                       // Same discipline as the reclaim checkbox: a preview
                       // describes the scope it was run for, and nothing else.
                       setPreview(null);
@@ -340,6 +375,7 @@ export default function RepriceControls({
                     value={scopeKey}
                     onChange={(event) => {
                       setScopeKey(event.target.value);
+                      setAfterSku(null);
                       setPreview(null);
                       setConfirmCount('');
                       setError(null);
@@ -354,6 +390,19 @@ export default function RepriceControls({
                   </select>
                 </div>
               </div>
+
+              {afterSku === null ? null : (
+                /*
+                  Said out loud, because the alternative is a seller pressing
+                  Check twice and quietly comparing two different pages while
+                  believing they are looking at the same one.
+                */
+                <p className="text-xs font-medium text-sals3-deep">
+                  Continuing from where the last run stopped. Change either
+                  choice above to start this department again from the
+                  beginning.
+                </p>
+              )}
 
               <h3 className="mt-2 text-sm font-semibold">
                 2. Check what would change
@@ -426,13 +475,24 @@ export default function RepriceControls({
                 </p>
 
                 {preview.truncated ? (
+                  /*
+                    The copy this replaces said "run it again afterwards to
+                    reach the rest", and that could not work: nothing excluded
+                    the rows already seen, so a second run returned the same
+                    page forever. It was wrong in a way nobody could catch —
+                    the screen reported "every live price already matches your
+                    rules" while whatever sat past the first page had never been
+                    read. Continuing is a real position now, so this says what
+                    the button beside it will actually do.
+                  */
                   <p
                     role="alert"
                     className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs"
                   >
-                    You have more than {MAX_REPRICE_OFFERS} published products.
-                    This run covers the first {MAX_REPRICE_OFFERS}; run it again
-                    afterwards to reach the rest.
+                    This department holds more than {MAX_REPRICE_OFFERS} live
+                    prices in this destination. You are looking at the first{' '}
+                    {MAX_REPRICE_OFFERS}. Apply these, then continue — the next
+                    page starts where this one ends.
                   </p>
                 ) : null}
 

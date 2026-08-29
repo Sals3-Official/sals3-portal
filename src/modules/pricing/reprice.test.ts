@@ -29,7 +29,11 @@ type Recorded = { rendered: string; params: unknown[] };
  * without one any more, and a literal repeated in thirty cases would make the
  * scope look like part of each test rather than a precondition of all of them.
  */
-const SCOPE = { categoryCode: 'CAT-GGL-1', marketCode: 'AU' } as const;
+const SCOPE = {
+  categoryCode: 'CAT-GGL-1',
+  marketCode: 'AU',
+  afterSku: null,
+} as const;
 
 /** The department the scope's code resolves to. Its subtree is what a run covers. */
 const CATEGORY_PATH = 'Apparel & Accessories';
@@ -47,14 +51,22 @@ function recordingExecutor(
   categoryRows: unknown[] = [{ path: CATEGORY_PATH }],
 ) {
   const recorded: Recorded[] = [];
+  const orderedBy: number[] = [];
   const answers = [categoryRows, rows];
   let call = -1;
 
   const builder: Record<string, unknown> = {};
   const self = (): unknown => builder;
 
-  ['from', 'innerJoin', 'leftJoin', 'orderBy', 'limit'].forEach((name) => {
+  ['from', 'innerJoin', 'leftJoin', 'limit'].forEach((name) => {
     builder[name] = vi.fn(self);
+  });
+  // Recorded separately: the ordering is what makes a cursor resumable, and it
+  // does not appear in the rendered `WHERE` the other assertions read.
+  builder.orderBy = vi.fn((...columns: unknown[]) => {
+    orderedBy.push(columns.length);
+
+    return builder;
   });
   builder.where = vi.fn((condition: SQL | undefined) => {
     const query =
@@ -79,6 +91,7 @@ function recordingExecutor(
       }),
     },
     recorded,
+    orderedBy,
   };
 }
 
@@ -190,6 +203,84 @@ describe('planReprice', () => {
     expect(recorded).toHaveLength(1);
   });
 
+  /**
+   * The failure this closes, observed in production on 2026-08-30.
+   *
+   * A reclaim of Apparel & Accessories in AU covered 500 offers, left whatever
+   * sat past them untouched, and then reported "every live price already
+   * matches your rules". The scope had made the page smaller but not finite:
+   * nothing excluded the rows already seen, so every run returned the same
+   * page, and the dialog's advice to run it again could not reach the rest.
+   */
+  it('starts at the beginning when no position is given', async () => {
+    const { executor, recorded } = recordingExecutor([]);
+
+    await planReprice(executor as never, SELLER_ID, SCOPE);
+
+    expect(recorded[1].rendered).not.toContain('"sals3_sku" > ');
+  });
+
+  it('asks for the rows strictly after a position, so none is priced twice', async () => {
+    const { executor, recorded } = recordingExecutor([]);
+
+    await planReprice(executor as never, SELLER_ID, {
+      ...SCOPE,
+      afterSku: 'S3V-0223B0F67DCC',
+    });
+
+    expect(recorded[1].rendered).toContain('"sals3_sku" > ');
+    expect(recorded[1].params).toContain('S3V-0223B0F67DCC');
+  });
+
+  it('orders by the SKU, which is the thing a position can name', async () => {
+    /*
+      It ordered by `(title, sku)`, which reads better and cannot be resumed
+      from one value: continuing after a title needs the pair, and a pair
+      comparison written as two ANDed inequalities silently skips rows.
+    */
+    const { executor, orderedBy } = recordingExecutor([]);
+
+    await planReprice(executor as never, SELLER_ID, SCOPE);
+
+    // One column, not two. A pair cannot be resumed from a single value.
+    expect(orderedBy).toEqual([1]);
+  });
+
+  it('reports the SKU the page ended on, taken from the covered rows', async () => {
+    /*
+      Not from `loaded`, which carries one extra row solely to detect that more
+      exist. Resuming from the extra row would skip it — the one row nobody
+      would ever notice was missing.
+    */
+    const rows = Array.from({ length: MAX_REPRICE_OFFERS + 1 }, (_, index) =>
+      candidate({
+        offerId: `offer-${index}`,
+        sku: `SKU-${String(index).padStart(4, '0')}`,
+      }),
+    );
+    const { executor } = recordingExecutor(rows);
+    resolveProductPricingMock.mockResolvedValue(resolved(2399));
+
+    const plan = await planReprice(executor as never, SELLER_ID, SCOPE);
+
+    expect(plan.truncated).toBe(true);
+    expect(plan.nextAfterSku).toBe(
+      `SKU-${String(MAX_REPRICE_OFFERS - 1).padStart(4, '0')}`,
+    );
+  });
+
+  it('reports no next position when the page was the last one', async () => {
+    // `null` is what lets the screen say "this scope is finished" rather than
+    // leaving the caller to infer it from a count.
+    const { executor } = recordingExecutor([candidate()]);
+    resolveProductPricingMock.mockResolvedValue(resolved(2399));
+
+    const plan = await planReprice(executor as never, SELLER_ID, SCOPE);
+
+    expect(plan.truncated).toBe(false);
+    expect(plan.nextAfterSku).toBeNull();
+  });
+
   it('reads Global as every destination with no rule of its own', async () => {
     /*
       `null` is not a wildcard. The Global rule prices offers into every country
@@ -202,6 +293,7 @@ describe('planReprice', () => {
     await planReprice(executor as never, SELLER_ID, {
       categoryCode: 'CAT-GGL-1',
       marketCode: null,
+      afterSku: null,
     });
 
     expect(recorded[1].rendered).toContain('"market_code" not in ');

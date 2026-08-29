@@ -1,4 +1,4 @@
-import { and, asc, eq, like, notInArray, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, like, notInArray, or, sql } from 'drizzle-orm';
 import {
   productOffers,
   productVariants,
@@ -107,6 +107,30 @@ export type RepriceScope = {
    * let a Global reprice overwrite Australia's prices with Global's rule.
    */
   marketCode: string | null;
+  /**
+   * Where the previous page stopped, or `null` to start at the beginning.
+   *
+   * The SKU of the last row the previous run covered. Rows are ordered by SKU
+   * and this asks for the ones strictly after it.
+   *
+   * ## Why a cursor and not "run it again"
+   *
+   * The dialog used to say "run it again afterwards to reach the rest", and it
+   * could not work: the query excludes nothing it has already seen, so a second
+   * run returned the same page forever. Scoping to a department made the pages
+   * smaller but not finite — Apparel & Accessories in AU alone holds more than
+   * `MAX_REPRICE_OFFERS` live offers, so on 2026-08-30 a reclaim of that scope
+   * covered 500 and left whatever sat beyond them untouched, while reporting
+   * "every live price already matches your rules".
+   *
+   * ## Why the ordering moved to the SKU
+   *
+   * It was `(title, sku)`, which reads better but cannot be resumed with one
+   * value: continuing after a title needs the pair, and a pair comparison that
+   * is written as two `AND`ed inequalities silently skips rows. `sals3Sku` is
+   * unique per variant, so one value is a complete position.
+   */
+  afterSku: string | null;
 };
 
 /** How many resolver calls are in flight at once. Bounded so a preview cannot exhaust the connection pool. */
@@ -158,9 +182,16 @@ export type RepricePlan = {
     unpriceable: number;
     manual: number;
   };
-  /** True when more published offers exist than `MAX_REPRICE_OFFERS`. */
+  /** True when this scope holds more rows after this page. */
   truncated: boolean;
   candidateCount: number;
+  /**
+   * The SKU this page ended on, to be handed back as `afterSku` to continue.
+   *
+   * `null` when the page is empty or nothing follows it, which is what makes
+   * "there is no more" a value the caller can act on rather than infer.
+   */
+  nextAfterSku: string | null;
   /**
    * A short digest of exactly the writes this plan would make.
    *
@@ -280,9 +311,13 @@ async function loadCandidates(
               ),
             )
           : eq(productOffers.marketCode, scope.marketCode),
+        // Strictly after, so the row the last page ended on is not priced twice.
+        scope.afterSku === null
+          ? undefined
+          : gt(productVariants.sals3Sku, scope.afterSku),
       ),
     )
-    .orderBy(asc(products.title), asc(productVariants.sals3Sku))
+    .orderBy(asc(productVariants.sals3Sku))
     .limit(MAX_REPRICE_OFFERS + 1) as Promise<CandidateRow[]>;
 }
 
@@ -380,6 +415,7 @@ export async function planReprice(
       counts: { changed: 0, unchanged: 0, unpriceable: 0, manual: 0 },
       truncated: false,
       candidateCount: 0,
+      nextAfterSku: null,
       fingerprint: fingerprintOf([]),
     };
   }
@@ -504,6 +540,14 @@ export async function planReprice(
     counts,
     truncated,
     candidateCount: loaded.length,
+    /*
+      Taken from the candidates actually covered, never from `loaded` — which
+      carries one extra row solely to detect that more exist. Resuming from the
+      extra row would skip it.
+    */
+    nextAfterSku: truncated
+      ? (candidates[candidates.length - 1]?.sku ?? null)
+      : null,
     fingerprint: fingerprintOf(lines),
   };
 }

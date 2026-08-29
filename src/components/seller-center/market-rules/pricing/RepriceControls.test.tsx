@@ -47,6 +47,7 @@ function preview(overrides: Record<string, unknown> = {}) {
       counts: { changed: 1, unchanged: 4, unpriceable: 0, manual: 0 },
       truncated: false,
       candidateCount: 5,
+      nextAfterSku: null,
       fingerprint: '1-abc',
       lines: [previewLine()],
       ...overrides,
@@ -89,6 +90,19 @@ function openAndScope(categoryCode = 'CAT-GGL-166', scopeKey: string = 'AU') {
   fireEvent.change(screen.getByLabelText('Destination'), {
     target: { value: scopeKey },
   });
+}
+
+/**
+ * Presses Check once the previous press has finished.
+ *
+ * `openAndCheck` waits for the preview text, which appears while the
+ * `useTransition` is still pending — the button still reads "Checking…" at that
+ * moment, so a second press aimed at its idle label finds nothing.
+ */
+async function checkAgain() {
+  fireEvent.click(
+    await screen.findByRole('button', { name: /Check what would change/ }),
+  );
 }
 
 async function openAndCheck() {
@@ -180,7 +194,7 @@ describe('RepriceControls', () => {
     await screen.findByText(/1 price moves/);
 
     expect(mocks.previewRepriceAction).toHaveBeenCalledWith(
-      { categoryCode: 'CAT-GGL-436', marketCode: null },
+      { categoryCode: 'CAT-GGL-436', marketCode: null, afterSku: null },
       false,
     );
   });
@@ -202,6 +216,101 @@ describe('RepriceControls', () => {
     });
 
     expect(screen.queryByText('Corduroy jacket')).toBeNull();
+  });
+
+  it('does not move its position just because a page was looked at', async () => {
+    /*
+      Checking writes nothing, so it must not advance either. A seller who reads
+      a page and walks away has covered nothing; resuming past it would leave a
+      silent hole exactly where they stopped paying attention.
+    */
+    mocks.previewRepriceAction.mockResolvedValue(
+      preview({ truncated: true, nextAfterSku: 'SKU-0499' }),
+    );
+    renderControls();
+
+    await openAndCheck();
+    await checkAgain();
+
+    await waitFor(() =>
+      expect(mocks.previewRepriceAction).toHaveBeenLastCalledWith(
+        { categoryCode: 'CAT-GGL-166', marketCode: 'AU', afterSku: null },
+        false,
+      ),
+    );
+  });
+
+  it('continues from where an applied page ended', async () => {
+    mocks.previewRepriceAction.mockResolvedValue(
+      preview({ truncated: true, nextAfterSku: 'SKU-0499' }),
+    );
+    renderControls();
+
+    await openAndCheck();
+    fireEvent.change(screen.getByLabelText('Reason for change'), {
+      target: { value: REASON },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply new prices' }));
+
+    await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
+
+    await checkAgain();
+
+    await waitFor(() =>
+      expect(mocks.previewRepriceAction).toHaveBeenLastCalledWith(
+        { categoryCode: 'CAT-GGL-166', marketCode: 'AU', afterSku: 'SKU-0499' },
+        false,
+      ),
+    );
+  });
+
+  it('starts a different department from the beginning again', async () => {
+    // A position in one department means nothing in another, and carrying it
+    // over would skip whatever sorts before it in the new one.
+    mocks.previewRepriceAction.mockResolvedValue(
+      preview({ truncated: true, nextAfterSku: 'SKU-0499' }),
+    );
+    renderControls();
+
+    await openAndCheck();
+    fireEvent.change(screen.getByLabelText('Reason for change'), {
+      target: { value: REASON },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply new prices' }));
+    await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByLabelText('Department'), {
+      target: { value: 'CAT-GGL-436' },
+    });
+    await checkAgain();
+
+    await waitFor(() =>
+      expect(mocks.previewRepriceAction).toHaveBeenLastCalledWith(
+        { categoryCode: 'CAT-GGL-436', marketCode: 'AU', afterSku: null },
+        false,
+      ),
+    );
+  });
+
+  it('says so on screen when it is continuing rather than starting over', async () => {
+    // Otherwise a seller presses Check twice and quietly compares two different
+    // pages while believing they are the same one.
+    mocks.previewRepriceAction.mockResolvedValue(
+      preview({ truncated: true, nextAfterSku: 'SKU-0499' }),
+    );
+    renderControls();
+
+    await openAndCheck();
+    expect(screen.queryByText(/Continuing from where/)).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('Reason for change'), {
+      target: { value: REASON },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply new prices' }));
+
+    expect(
+      await screen.findByText(/Continuing from where the last run stopped/),
+    ).toBeInTheDocument();
   });
 
   it('shows what each price is now and what it becomes', async () => {
@@ -257,7 +366,11 @@ describe('RepriceControls', () => {
         reclaimSellerPriced: false,
         // Re-sent so the server can refuse an apply that names a different
         // scope than the preview — two empty plans share a fingerprint.
-        scope: { categoryCode: 'CAT-GGL-166', marketCode: 'AU' },
+        scope: {
+          categoryCode: 'CAT-GGL-166',
+          marketCode: 'AU',
+          afterSku: null,
+        },
       }),
     );
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
@@ -339,7 +452,15 @@ describe('RepriceControls', () => {
     ).toBeInTheDocument();
   });
 
-  /** A silent cap reads as "everything is up to date" when it is not. */
+  /**
+   * A silent cap reads as "everything is up to date" when it is not — and the
+   * copy this replaced was worse than silent. It said "run it again afterwards
+   * to reach the rest", which could not work: nothing excluded the rows already
+   * seen, so a second run returned the same page forever. On 2026-08-30 a
+   * reclaim of Apparel & Accessories in AU covered 500 offers, left whatever sat
+   * beyond them untouched, and then reported that every live price matched the
+   * rules.
+   */
   it('says when the run could not cover every product', async () => {
     mocks.previewRepriceAction.mockResolvedValue(preview({ truncated: true }));
     renderControls();
@@ -347,7 +468,7 @@ describe('RepriceControls', () => {
     await openAndCheck();
 
     expect(
-      screen.getByText(/more than 500 published products/),
+      screen.getByText(/holds more than 500 live prices in this destination/),
     ).toBeInTheDocument();
   });
 
@@ -395,7 +516,7 @@ describe('RepriceControls', () => {
       await openWithReclaim();
 
       expect(mocks.previewRepriceAction).toHaveBeenCalledWith(
-        { categoryCode: 'CAT-GGL-166', marketCode: 'AU' },
+        { categoryCode: 'CAT-GGL-166', marketCode: 'AU', afterSku: null },
         true,
       );
     });
@@ -405,7 +526,7 @@ describe('RepriceControls', () => {
       await openAndCheck();
 
       expect(mocks.previewRepriceAction).toHaveBeenCalledWith(
-        { categoryCode: 'CAT-GGL-166', marketCode: 'AU' },
+        { categoryCode: 'CAT-GGL-166', marketCode: 'AU', afterSku: null },
         false,
       );
     });
