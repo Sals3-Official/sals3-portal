@@ -163,6 +163,17 @@ describe('database-unconfigured behaviour is honest and build-safe', () => {
    * Importing this module must have no side effect; only running a query may
    * require configuration.
    */
+  /*
+    Its own timeout, well past Vitest's 5s default.
+
+    This case imports four module graphs at once — the resolver, the category
+    form, governance and the repository, the last of which pulls the Drizzle
+    schema. On a cold Vite transform cache that is real work, and it timed out
+    twice inside `npm run verify` on 2026-08-29 and 2026-08-30 while passing on
+    every run afterwards. Nothing here measures how fast a module transforms:
+    the assertion is that importing has no side effect, and a module that
+    connected at import would still fail this, thirty seconds later.
+  */
   it('imports with no DATABASE_URL and does not connect', async () => {
     const previous = process.env.DATABASE_URL;
     delete process.env.DATABASE_URL;
@@ -183,7 +194,7 @@ describe('database-unconfigured behaviour is honest and build-safe', () => {
     } finally {
       if (previous !== undefined) process.env.DATABASE_URL = previous;
     }
-  });
+  }, 30_000);
 
   it('never reads DATABASE_URL or reaches for a client itself', () => {
     const offenders = collectSourceFiles(MODULE_ROOT, true)
