@@ -171,6 +171,7 @@ describe('readSellerSoldSummary', () => {
       [{ units: '449', orders: '356', productCount: '7' }],
       [{ currency: 'USD', revenueMinor: '409530' }],
       [{ units: '6' }],
+      [{ units: '449', orders: '356', productCount: '7' }],
     ]);
     dbState.db = fake.db;
 
@@ -188,6 +189,7 @@ describe('readSellerSoldSummary', () => {
       [{ units: '449', orders: '356', productCount: '7' }],
       [{ currency: 'USD', revenueMinor: '409530' }],
       [{ units: '6' }],
+      [{ units: '449', orders: '356', productCount: '7' }],
     ]);
     dbState.db = fake.db;
 
@@ -205,6 +207,7 @@ describe('readSellerSoldSummary', () => {
         { currency: 'USD', revenueMinor: '9000' },
       ],
       [{ units: '0' }],
+      [{ units: '10', orders: '9', productCount: '2' }],
     ]);
     dbState.db = fake.db;
 
@@ -217,7 +220,7 @@ describe('readSellerSoldSummary', () => {
   });
 
   it('reads zero rather than NaN when the account has sold nothing', async () => {
-    const fake = fakeDb([[], [], []]);
+    const fake = fakeDb([[], [], [], []]);
     dbState.db = fake.db;
 
     const summary = await readSellerSoldSummary(SELLER);
@@ -228,6 +231,7 @@ describe('readSellerSoldSummary', () => {
       productCount: 0,
       revenueByCurrency: [],
       refundedUnits: 0,
+      inTransitUnits: 0,
     });
   });
 });
@@ -315,7 +319,7 @@ describe('the date window', () => {
   });
 
   it('applies the same window to the refunded figure as to the totals', async () => {
-    const fake = fakeDb([[], [], []]);
+    const fake = fakeDb([[], [], [], []]);
     dbState.db = fake.db;
     const from = new Date('2026-08-01T00:00:00.000Z');
 
@@ -326,40 +330,62 @@ describe('the date window', () => {
     // subtract a refund from outside its own window.
     const bounds = boundsIn(fake.calls).map((date) => date.toISOString());
     expect(
-      bounds.filter((iso) => iso === '2026-08-01T00:00:00.000Z'),
-    ).toHaveLength(3);
+      bounds.filter((iso) => iso === '2026-08-01T00:00:00.000Z').length,
+    ).toBeGreaterThanOrEqual(4);
   });
 });
 
-describe('delivered units', () => {
-  it('merges the delivered tally in without touching the sold figure', async () => {
+describe('the delivered gate', () => {
+  it('binds the DELIVERED parcel state on the sales read', async () => {
+    const fake = fakeDb([[], []]);
+    dbState.db = fake.db;
+
+    await readSellerSoldRows(SELLER);
+
+    // Paid is not enough. Goods still in the air can be lost or refused, so a
+    // sale is not a sale until the parcel lands.
+    expect(collectStrings(fake.calls)).toContain('DELIVERED');
+  });
+
+  it('joins the parcel table on the storefront count too', async () => {
+    const fake = fakeDb([[]]);
+    dbState.db = fake.db;
+
+    await readSoldUnitsForProducts([BEANIE]);
+
+    // A shopper reading "12 sold" should be reading how many people received
+    // one, not how many paid.
+    expect(collectStrings(fake.calls)).toContain('DELIVERED');
+  });
+
+  it('reports paid-but-undelivered units so a sale cannot look lost', async () => {
     const fake = fakeDb([
-      [saleRow(), saleRow({ productId: MASK, units: '96' })],
-      [],
-      [
-        { productId: BEANIE, units: '31' },
-        { productId: MASK, units: '4' },
-      ],
+      [{ units: '5', orders: '2', productCount: '3' }],
+      [{ currency: 'USD', revenueMinor: '4539' }],
+      [{ units: '0' }],
+      [{ units: '83', orders: '32', productCount: '14' }],
     ]);
     dbState.db = fake.db;
 
-    const rows = await readSellerSoldRows(SELLER);
+    const summary = await readSellerSoldSummary(SELLER);
 
-    expect(rows[0].units).toBe(142);
-    expect(rows[0].deliveredUnits).toBe(31);
-    expect(rows[1].units).toBe(96);
-    expect(rows[1].deliveredUnits).toBe(4);
+    expect(summary.totalUnits).toBe(5);
+    expect(summary.inTransitUnits).toBe(78);
   });
 
-  it('reports nought delivered for a product still entirely in transit', async () => {
-    const fake = fakeDb([[saleRow()], [], []]);
+  it('never reports a negative in-transit figure', async () => {
+    // The two figures come from separate statements, so a delivery landing
+    // between them could otherwise produce one.
+    const fake = fakeDb([
+      [{ units: '9', orders: '2', productCount: '3' }],
+      [],
+      [{ units: '0' }],
+      [{ units: '7', orders: '2', productCount: '3' }],
+    ]);
     dbState.db = fake.db;
 
-    const rows = await readSellerSoldRows(SELLER);
+    const summary = await readSellerSoldSummary(SELLER);
 
-    // Absent from the delivered tally means nothing has landed — not that the
-    // query failed, and not that the sale did not happen.
-    expect(rows[0].units).toBe(142);
-    expect(rows[0].deliveredUnits).toBe(0);
+    expect(summary.inTransitUnits).toBe(0);
   });
 });

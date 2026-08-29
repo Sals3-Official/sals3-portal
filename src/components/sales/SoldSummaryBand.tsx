@@ -19,8 +19,13 @@ type SoldSummaryBandProps = {
  * layout when switching. CSS bar meters again — no chart library ships for six
  * bars, and none is needed.
  *
- * Refunded units appear only when there are some. A permanent "0 refunded" row
- * would spend a line saying nothing on almost every account.
+ * A sale is counted only once the parcel arrives, so the headline lags the money
+ * by a transit. "Paid, still in transit" is what keeps that gap visible: without
+ * it a seller who remembers taking an order would find it simply absent.
+ *
+ * Both that row and the refunded one appear only when they are non-zero. A
+ * permanent "0 refunded" would spend a line saying nothing on almost every
+ * account.
  */
 export default function SoldSummaryBand({
   summary,
@@ -40,9 +45,19 @@ export default function SoldSummaryBand({
         </div>
         <span className="text-xs leading-normal text-ink-subtle">
           {summary.totalUnits === 0
-            ? 'Nothing has sold yet.'
-            : `From ${summary.distinctOrders.toLocaleString('en-US')} paid ${summary.distinctOrders === 1 ? 'order' : 'orders'} across ${summary.productCount} ${summary.productCount === 1 ? 'product' : 'products'}.`}
+            ? 'Nothing has been delivered yet.'
+            : `Delivered across ${summary.distinctOrders.toLocaleString('en-US')} ${summary.distinctOrders === 1 ? 'order' : 'orders'} and ${summary.productCount} ${summary.productCount === 1 ? 'product' : 'products'}.`}
         </span>
+        {summary.inTransitUnits === 0 ? null : (
+          <div className="mt-1 flex items-baseline justify-between gap-2 border-t border-border pt-2.5">
+            <span className="text-[0.6875rem] text-ink-faint">
+              Paid, still in transit
+            </span>
+            <span className="text-[0.8125rem] font-semibold text-ink tabular-nums">
+              {summary.inTransitUnits.toLocaleString('en-US')} units
+            </span>
+          </div>
+        )}
         {summary.refundedUnits === 0 ? null : (
           <div className="mt-1 flex items-baseline justify-between gap-2 border-t border-border pt-2.5">
             <span className="text-[0.6875rem] text-ink-faint">

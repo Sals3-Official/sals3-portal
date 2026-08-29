@@ -64,47 +64,34 @@ function BestSeller({
  * The three figures on the band's right edge: what the sales were worth, what
  * leads, and the one that crosses into the other tab.
  *
- * "Delivered, not reviewed" is the only number in the Seller Center that says
- * which products earn a review request today. It counts arrivals, not sales: a
- * parcel still in the air cannot be reviewed at all, so counting it would pad
- * the figure with work nobody can do.
+ * "Sold, not reviewed" is the only number in the Seller Center that says which
+ * products earn a review request. Because a sale is not counted until the
+ * parcel lands, every product it names is one a buyer is already holding.
  */
-/** Three genuinely different states, so an if-chain rather than nested ternaries. */
+/** Two genuinely different states, so an if rather than a nested ternary. */
 function reviewPromptCopy(
-  arrivedCount: number,
   unreviewedCount: number,
   unreviewedUnits: number,
 ): string {
-  if (arrivedCount === 0) {
-    return 'Nothing has arrived yet, so nobody is able to review anything.';
-  }
-
   if (unreviewedCount === 0) {
-    return 'Every product that has arrived has at least one review.';
+    return 'Every product that has sold has at least one review.';
   }
 
-  return `${unreviewedUnits.toLocaleString('en-US')} delivered units between them, no review yet. These are the ones a buyer could actually review today.`;
+  return `${unreviewedUnits.toLocaleString('en-US')} units between them, no review yet. Every one of these has reached a buyer who could write one.`;
 }
 
 export default function SoldHighlights({ summary, rows }: SoldHighlightsProps) {
-  // Delivered, not merely sold. A product still in the air cannot be reviewed
-  // at all, so counting it here would pad the figure with work nobody can do —
-  // and this tile exists to name the work that is actually available.
-  const arrived = rows.filter((row) => row.deliveredUnits > 0);
-  const unreviewed = arrived.filter((row) => row.reviewCount === 0);
+  // Every row here has already arrived — a sale is not counted until the parcel
+  // lands — so an unreviewed product is one a real buyer is holding and could
+  // write about today. That is what makes this tile actionable rather than a
+  // list of parcels in the air.
+  const unreviewed = rows.filter((row) => row.reviewCount === 0);
   const unreviewedUnits = unreviewed.reduce(
-    (total, row) => total + row.deliveredUnits,
+    (total, row) => total + row.units,
     0,
   );
-  const inTransit = rows.filter(
-    (row) => row.deliveredUnits === 0 && row.reviewCount === 0,
-  ).length;
   const revenue = summary.revenueByCurrency[0];
-  const arrivedCopy = reviewPromptCopy(
-    arrived.length,
-    unreviewed.length,
-    unreviewedUnits,
-  );
+  const arrivedCopy = reviewPromptCopy(unreviewed.length, unreviewedUnits);
 
   return (
     <div className="flex flex-col border-border lg:border-l">
@@ -124,9 +111,7 @@ export default function SoldHighlights({ summary, rows }: SoldHighlightsProps) {
 
       <div className="flex flex-col gap-1 bg-warning-surface px-4 py-3">
         <div className="flex items-center justify-between gap-2.5">
-          <span className="text-xs text-ink-muted">
-            Delivered, not reviewed
-          </span>
+          <span className="text-xs text-ink-muted">Sold, not reviewed</span>
           <span className="font-display text-[1.0625rem] font-semibold text-ink tabular-nums">
             {unreviewed.length}
           </span>
@@ -134,12 +119,6 @@ export default function SoldHighlights({ summary, rows }: SoldHighlightsProps) {
         <span className="text-[0.6875rem] leading-normal text-ink-subtle">
           {arrivedCopy}
         </span>
-        {inTransit === 0 ? null : (
-          <span className="text-[0.6875rem] leading-normal text-ink-faint">
-            {inTransit} more {inTransit === 1 ? 'product is' : 'products are'}{' '}
-            sold but still in transit, so they are not counted here.
-          </span>
-        )}
       </div>
     </div>
   );

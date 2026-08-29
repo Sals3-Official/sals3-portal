@@ -44,12 +44,14 @@ export default function SoldTabPanel({
           <path d="M8 7.2v4M8 4.9v.1" />
         </svg>
         <p className="text-[0.8125rem] leading-relaxed text-ink-muted">
-          A sale counts from the moment the payment clears.{' '}
-          <strong className="font-semibold text-ink">
-            Refunded and disputed lines are removed
-          </strong>
-          , so this number can go down. Units are what buyers actually ordered,
-          so one order of three counts as three.
+          A sale counts once the parcel is{' '}
+          <strong className="font-semibold text-ink">delivered</strong>, not
+          when the payment clears — goods still in transit can still be lost or
+          refused. Delivery takes two to four weeks, so a new order appears here
+          well after you were paid for it; until then it is counted under
+          &ldquo;Paid, still in transit&rdquo;. Refunded and disputed lines are
+          removed, so this number can also go down. Units are what buyers
+          actually ordered, so one order of three counts as three.
         </p>
       </div>
 
