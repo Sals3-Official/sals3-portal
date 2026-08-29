@@ -135,7 +135,21 @@ export default function StoreDefaultsTable({
                     ? formatAmount(floor.minor, floor.currency)
                     : null}
                   {floor.kind === 'NONE' ? (
-                    <span className="text-ink-faint">None</span>
+                    /*
+                      "Not set up yet", not "None".
+
+                      Owner decision 2026-08-29: a scope with no reserve is a
+                      country they have not turned on, not one they turned the
+                      reserve off for. `None` read as a configured zero — a
+                      deliberate "no floor" — and every screen that showed it
+                      invited being told to go fill it in.
+
+                      Wording chosen to be true without claiming more than is
+                      built: nothing here stops a product pricing or selling
+                      into that destination, so this says the reserve is unset,
+                      not that the country is closed.
+                    */
+                    <span className="text-ink-faint">Not set up yet</span>
                   ) : null}
                 </span>
               </div>

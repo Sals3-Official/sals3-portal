@@ -67,7 +67,7 @@ describe('StoreDefaultsTable', () => {
     expect(screen.getByText('US$4.00')).toBeInTheDocument();
   });
 
-  it('says None rather than zero when a destination has no minimum', () => {
+  it('says a destination is not set up yet, rather than zero or None', () => {
     render(
       <StoreDefaultsTable
         scopes={SCOPES}
@@ -76,9 +76,20 @@ describe('StoreDefaultsTable', () => {
       />,
     );
 
-    // `0` reads as a configured floor of nothing. "None" is the honest word for
-    // a rule that was never set.
-    expect(screen.getAllByText('None').length).toBeGreaterThan(0);
+    /*
+      Three readings, and only one is right.
+
+      `0` reads as a configured floor of nothing. `None` reads as a deliberate
+      "no floor" — which is how the owner's unset destinations kept being
+      reported back to them as gaps to fill. Owner decision 2026-08-29: a scope
+      with no reserve is a country not turned on yet, and the screen should say
+      so.
+
+      Asserted as the absence of the old word too: a row that said both would be
+      the same ambiguity with more text.
+    */
+    expect(screen.getAllByText('Not set up yet').length).toBeGreaterThan(0);
+    expect(screen.queryByText('None')).toBeNull();
   });
 
   it('offers Set where no rule exists and Edit where one does', () => {
@@ -129,7 +140,7 @@ describe('StoreDefaultsTable', () => {
 
     expect(screen.queryByRole('button', { name: /store default/ })).toBeNull();
     // The values stay readable — read-only is not blank.
-    expect(screen.getAllByText('None').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Not set up yet').length).toBeGreaterThan(0);
   });
 });
 
