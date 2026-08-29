@@ -49,6 +49,7 @@ import {
 import { suggestMetaDescription } from '@/lib/seller-center/product-editor/suggest-meta-description';
 import describeRefusedUploads from '@/lib/products/describe-refused-uploads';
 import previewMedia from '@/lib/products/preview-media';
+import { listCheckoutDestinations } from '@/modules/market-config/checkout-destinations';
 import { PUBLISH_GATES } from '@/lib/products/publish-gates';
 import predictPublishBlockers from '@/lib/seller-center/product-editor/publish-blockers';
 import {
@@ -836,8 +837,16 @@ export default function ProductEditorWorkspace({
   } | null>(null);
   const [bulkPricingMode, setBulkPricingMode] =
     useState<BulkPricingMode | null>(null);
+  /*
+    The first market a buyer can actually order from, not `fixture.markets[0]`.
+
+    That list is the Markets tab's evidence of the one *configured offer*
+    market, and its single row is coded `DB` - which is what the preview's own
+    picker used to display. The preview asks a different question, so it reads
+    the checkout destinations directly.
+  */
   const [previewMarketCode, setPreviewMarketCode] = useState(
-    fixture.markets[0]?.code ?? '',
+    listCheckoutDestinations()[0]?.code ?? '',
   );
   const [previewVariantId, setPreviewVariantId] = useState(
     fixture.variants[0]?.id ?? '',
@@ -1466,7 +1475,7 @@ export default function ProductEditorWorkspace({
         descriptionBlocks.map((entry) => entry.block),
       )}
       variants={variants}
-      markets={fixture.markets}
+      offeredMarketCodes={fixture.offeredMarketCodes}
       media={effectivePreviewMedia}
       specifications={specifications}
       previewMarketCode={previewMarketCode}

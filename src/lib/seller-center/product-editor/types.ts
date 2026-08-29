@@ -482,6 +482,19 @@ export type ProductEditorFixture = {
   };
   variants: VariantFixture[];
   markets: MarketEvidenceFixture[];
+  /**
+   * The markets this product actually has a `PUBLISHED` offer in.
+   *
+   * The Draft Storefront Preview prices every checkout destination through the
+   * margin rules, which answers "what would this cost in Fiji" and not "can
+   * anyone in Fiji buy it". Those differ today: `publish.ts` takes
+   * `offerDestinations[0]`, so a product is offered in exactly one market and a
+   * preview of the other two is a shop that does not exist. This is what lets
+   * the panel say so.
+   *
+   * `undefined` on the illustrative fixtures, which have no offers to read.
+   */
+  offeredMarketCodes?: string[];
   /** Markets not enabled for this seller - stated, never rendered as evidence. */
   marketsNotEnabledCount: number;
   /**

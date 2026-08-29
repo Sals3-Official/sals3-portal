@@ -457,6 +457,22 @@ export type CatalogueProductFixture = {
    * (`derive.ts`) rather than read from these fields directly.
    */
   availability: Availability;
+  /**
+   * The market codes this product actually has a `PUBLISHED` offer in.
+   *
+   * Almost always a single entry today, and that is the point: `publish.ts`
+   * resolves a list of offer destinations and then takes
+   * `offerDestinations[0]`, so a variant carries exactly one offer. A screen
+   * that shows a price for six destinations has to be able to say which of them
+   * a buyer can actually order from, or it is quoting a shop that does not
+   * exist.
+   *
+   * Three states, and the editor says something different for each: a list is
+   * a real published product, `[]` is a real draft published nowhere, and
+   * `undefined` is an illustrative fixture with no offers to read at all.
+   * Optional for the same reason `assignableMedia` is.
+   */
+  offeredMarketCodes?: string[];
   stockEvidence: StockEvidenceKind;
   supplierObservedQuantity: number | null;
   lastCheckedAt: string;
