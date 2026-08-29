@@ -22,6 +22,10 @@ function renderSection(overrides: Partial<ProductEditorFixture> = {}) {
       supplierProductName={fixture.supplierProductName}
       supplierCategoryPath={fixture.supplierCategoryPath}
       supplierMedia={fixture.supplierMedia}
+      // Read from the fixture rather than hard-coded, so a fixture that later
+      // gains a seller upload flips this section into the state where the
+      // supplier panel must stop claiming the cover.
+      sellerGalleryCount={fixture.media.length}
       onOpenSourceDrawer={vi.fn()}
       specifications={fixture.specifications}
       onSpecificationChange={vi.fn()}
