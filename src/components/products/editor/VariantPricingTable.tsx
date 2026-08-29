@@ -203,47 +203,39 @@ function PricingWorking({
 }) {
   if (guidance.suggestedPrice === null) return null;
 
+  /*
+    The working, and only the working.
+
+    A `Per country` control stood here for one commit. It was a fourth way to
+    reach a list already reachable from every price and every supplier cost in
+    the column — eighteen dotted-underlined triggers on this product alone,
+    which is what signals the list exists. Removed rather than kept for
+    discoverability the column already has.
+
+    The icon is not click-to-open either, which the owner had asked about.
+    Nothing on screen distinguishes an icon that answers on hover from one that
+    answers differently on click, and on a touch screen there is no hover at all
+    — one control with two behaviours is one behaviour nobody finds and one that
+    breaks on a phone. Two questions, two places: this says how the number was
+    reached, the prices themselves say what it is elsewhere.
+  */
   return (
-    <span className="inline-flex items-center gap-1">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-label="How this price is worked out"
-              className="inline-flex text-muted-foreground hover:text-foreground"
-            >
-              <Info aria-hidden="true" className="size-3.5" />
-            </button>
-          }
-        />
-        <TooltipContent className="max-w-xs">
-          <PricingWorkingLines
-            guidance={guidance}
-            supplierCost={supplierCost}
-          />
-        </TooltipContent>
-      </Tooltip>
-
-      {/*
-        The per-destination breakdown, on the header rather than only per row.
-
-        Owner request 2026-08-30: they wanted the icon to open a list of what
-        this product costs in every market, in each one's own currency. It is
-        the same component the price and the supplier cost use — one place
-        decides what that list says, so the three cannot drift.
-
-        Attached to the shared working, which only renders when every listed
-        variant resolves to the same sum. That is the condition under which one
-        variant's destinations are true of the column; when costs differ the
-        header shows nothing and the per-row triggers still answer.
-      */}
-      <PricePerDestination variantId={guidance.variantId}>
-        <span className="text-[11px] font-medium text-primary underline decoration-dotted underline-offset-4">
-          Per country
-        </span>
-      </PricePerDestination>
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label="How this price is worked out"
+            className="inline-flex text-muted-foreground hover:text-foreground"
+          >
+            <Info aria-hidden="true" className="size-3.5" />
+          </button>
+        }
+      />
+      <TooltipContent className="max-w-xs">
+        <PricingWorkingLines guidance={guidance} supplierCost={supplierCost} />
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
