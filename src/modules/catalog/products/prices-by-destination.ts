@@ -11,6 +11,23 @@ import { listPricingScopeDestinations } from '@/modules/pricing/pricing-scope-de
 import { resolveProductPricing } from '@/modules/pricing/resolver';
 import type { CategoryMappingConfidence } from '@/modules/pricing/types';
 import type { MoneyValue } from '@/lib/seller-center/product-editor/types';
+import displayFxRates from '@/lib/portal/display-fx';
+import {
+  displayCurrencies,
+  displayCurrencyFor,
+  GLOBAL_DISPLAY_CODE,
+} from '@/lib/portal/destination-display-currency';
+
+/**
+ * A well-formed country code Sals3 has not named, used to ask the resolver for
+ * the Global rule.
+ *
+ * `resolveProductPricing` refuses anything that is not `^[A-Z]{2}$` and treats
+ * every unnamed country as Global, so this is not a stand-in for Global — it is
+ * a member of the set Global prices, and the honest way to ask what that set
+ * pays. `AQ` is Antarctica: real, well-formed, and never a named destination.
+ */
+const GLOBAL_PROBE_CODE = 'AQ';
 
 /**
  * What one variant would be priced at in each destination this account sells to.
@@ -42,23 +59,43 @@ import type { MoneyValue } from '@/lib/seller-center/product-editor/types';
  * nothing forced them to agree. The resolver is the only thing that may say what
  * a price is.
  *
- * ## Global is deliberately not a row
+ * ## Global is a row after all
  *
- * Global is a rule scope, not a destination. A buyer orders from a country, and
- * the Global rule is what prices the countries with no column of their own —
- * quoting "Global: $20.70" would name a place nobody can order from.
+ * It was left out on the reading that Global is a rule scope rather than a
+ * destination, and quoting it would name a place nobody orders from. Owner
+ * decision 2026-08-30 overrides that, and they are right: Global is what a
+ * buyer in every country WITHOUT a column of its own pays, which is most of the
+ * world. Leaving it out hid the price that covers the largest set of buyers.
+ *
+ * It shows in USD, because those buyers share no single currency.
+ *
+ * ## The local figures are approximate, and say so
+ *
+ * ADR-003 phase 1 charges USD everywhere. A seller cannot tell from `$14.79`
+ * whether that is a sane shelf price in Fiji, which is what the approximation
+ * answers — the same thing the storefront already shows buyers. It never
+ * reaches the resolver and is never stored.
  */
 
 /** ADR-003 phase 1, the same constant `publishProduct` and the reprice pass. */
 const SETTLEMENT_CURRENCY = 'USD';
 
 export type DestinationPrice = {
-  /** ISO 3166-1 alpha-2. */
+  /** ISO 3166-1 alpha-2, or `GLOBAL`. */
   marketCode: string;
   /** The destination's own name, for a reader who does not think in codes. */
   label: string;
-  /** `null` when the rules refuse — see `unavailableLabel`. */
+  /** What is charged. USD in every market — ADR-003 phase 1. */
   price: MoneyValue | null;
+  /**
+   * The same money in the currency that destination's buyers think in, or
+   * `null`.
+   *
+   * APPROXIMATE, and never what anybody is charged. `null` when the
+   * destination already thinks in USD, or when no rate source answered — see
+   * `lib/portal/display-fx.ts`, which fails to nothing rather than guessing.
+   */
+  approximateLocal: MoneyValue | null;
   /** The resolver's own reason, written for a seller who has to fix it. */
   unavailableLabel: string | null;
 };
@@ -162,7 +199,20 @@ export default async function pricesByDestination(
           currency: variant.costCurrency,
         };
 
-  const destinations = listPricingScopeDestinations();
+  /*
+    The six named destinations, plus Global for every country without a column
+    of its own. Global carries no country code — `resolveProductPricing` refuses
+    a malformed one and treats any unnamed country as Global, so `ZZ` is not a
+    stand-in: it is a real, well-formed code Sals3 has not named, which is
+    exactly the set the Global rule prices.
+  */
+  const destinations = [
+    ...listPricingScopeDestinations(),
+    { code: GLOBAL_PROBE_CODE, label: 'Global' },
+  ];
+
+  // Fetched once for the whole product rather than per destination.
+  const rates = await displayFxRates(displayCurrencies());
 
   return Promise.all(
     destinations.map(async (destination): Promise<DestinationPrice> => {
@@ -178,22 +228,44 @@ export default async function pricesByDestination(
         marketCode: destination.code,
       });
 
+      const shownCode =
+        destination.code === GLOBAL_PROBE_CODE
+          ? GLOBAL_DISPLAY_CODE
+          : destination.code;
+
       if (decision.outcome === 'PRICING_UNAVAILABLE') {
         return {
-          marketCode: destination.code,
+          marketCode: shownCode,
           label: destination.label,
           price: null,
+          approximateLocal: null,
           unavailableLabel: decision.reasonLabel,
         };
       }
 
+      // The rounded price, which is what a buyer would be charged and what
+      // `publishProduct` would store — not `suggestedItemPrice`, which is the
+      // figure before the rounding rule moved it.
+      const price = decision.roundedSuggestedItemPrice;
+      const currency = displayCurrencyFor(shownCode);
+      const rate = currency === null ? undefined : rates[currency];
+
       return {
-        marketCode: destination.code,
+        marketCode: shownCode,
         label: destination.label,
-        // The rounded price, which is what a buyer would be charged and what
-        // `publishProduct` would store — not `suggestedItemPrice`, which is the
-        // figure before the rounding rule moved it.
-        price: decision.roundedSuggestedItemPrice,
+        price,
+        /*
+          Absent rather than approximated when no source answered. A guessed
+          rate is indistinguishable from a real one by the time it reaches a
+          seller deciding what to charge.
+        */
+        approximateLocal:
+          currency === undefined || currency === null || rate === undefined
+            ? null
+            : {
+                amountMinor: Math.round(price.amountMinor * rate),
+                currency,
+              },
         unavailableLabel: null,
       };
     }),

@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import PricePerDestination from '@/components/products/editor/PricePerDestination';
 import RetailPriceInput from '@/components/products/editor/RetailPriceInput';
 import { cn } from '@/lib/utils';
 import StatusPill from '@/components/seller-center/shared/StatusPill';
@@ -203,22 +204,46 @@ function PricingWorking({
   if (guidance.suggestedPrice === null) return null;
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            aria-label="How this price is worked out"
-            className="inline-flex text-muted-foreground hover:text-foreground"
-          >
-            <Info aria-hidden="true" className="size-3.5" />
-          </button>
-        }
-      />
-      <TooltipContent className="max-w-xs">
-        <PricingWorkingLines guidance={guidance} supplierCost={supplierCost} />
-      </TooltipContent>
-    </Tooltip>
+    <span className="inline-flex items-center gap-1">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label="How this price is worked out"
+              className="inline-flex text-muted-foreground hover:text-foreground"
+            >
+              <Info aria-hidden="true" className="size-3.5" />
+            </button>
+          }
+        />
+        <TooltipContent className="max-w-xs">
+          <PricingWorkingLines
+            guidance={guidance}
+            supplierCost={supplierCost}
+          />
+        </TooltipContent>
+      </Tooltip>
+
+      {/*
+        The per-destination breakdown, on the header rather than only per row.
+
+        Owner request 2026-08-30: they wanted the icon to open a list of what
+        this product costs in every market, in each one's own currency. It is
+        the same component the price and the supplier cost use — one place
+        decides what that list says, so the three cannot drift.
+
+        Attached to the shared working, which only renders when every listed
+        variant resolves to the same sum. That is the condition under which one
+        variant's destinations are true of the column; when costs differ the
+        header shows nothing and the per-row triggers still answer.
+      */}
+      <PricePerDestination variantId={guidance.variantId}>
+        <span className="text-[11px] font-medium text-primary underline decoration-dotted underline-offset-4">
+          Per country
+        </span>
+      </PricePerDestination>
+    </span>
   );
 }
 
@@ -972,7 +997,24 @@ export default function VariantPricingTable({
                   </TableCell>
                   <TableCell className={EVIDENCE_CELL}>
                     <div className="flex flex-col gap-0.5 tabular-nums">
-                      <span>{formatMoney(variant.supplierCost)}</span>
+                      {/*
+                        The same per-destination answer as the price beside it.
+
+                        Owner request 2026-08-30: a seller reading a cost wants
+                        to know what it becomes in each market without moving
+                        their eye to another column. Same component, different
+                        trigger — one place decides what that list says.
+
+                        Null in fixture and design-preview mode for the same
+                        reason the price is: no real variant to ask about.
+                      */}
+                      {onRequestPriceUnlock === undefined ? (
+                        <span>{formatMoney(variant.supplierCost)}</span>
+                      ) : (
+                        <PricePerDestination variantId={variant.id}>
+                          <span>{formatMoney(variant.supplierCost)}</span>
+                        </PricePerDestination>
+                      )}
                       <span className="text-xs text-muted-foreground">
                         Observed {formatDateTime(variant.evidenceCapturedAt)}
                       </span>
