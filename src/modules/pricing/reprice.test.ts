@@ -22,11 +22,33 @@ import {
 const dialect = new PgDialect();
 const SELLER_ID = '11111111-1111-4111-a111-111111111111';
 
-type Recorded = { rendered: string };
+type Recorded = { rendered: string; params: unknown[] };
 
-/** A chainable stand-in for the query builder, recording the `WHERE` it was given. */
-function recordingExecutor(rows: unknown[]) {
+/**
+ * The scope every run needs. Its own constant because a plan cannot be built
+ * without one any more, and a literal repeated in thirty cases would make the
+ * scope look like part of each test rather than a precondition of all of them.
+ */
+const SCOPE = { categoryCode: 'CAT-GGL-1', marketCode: 'AU' } as const;
+
+/** The department the scope's code resolves to. Its subtree is what a run covers. */
+const CATEGORY_PATH = 'Apparel & Accessories';
+
+/**
+ * A chainable stand-in for the query builder, recording the `WHERE` it was given.
+ *
+ * `planReprice` issues two selects now — the category path, then the candidates
+ * — so this answers them in order rather than handing the same rows to both.
+ * `categoryRows` defaults to a found category; pass `[]` to exercise the
+ * unknown-code path.
+ */
+function recordingExecutor(
+  rows: unknown[],
+  categoryRows: unknown[] = [{ path: CATEGORY_PATH }],
+) {
   const recorded: Recorded[] = [];
+  const answers = [categoryRows, rows];
+  let call = -1;
 
   const builder: Record<string, unknown> = {};
   const self = (): unknown => builder;
@@ -35,16 +57,29 @@ function recordingExecutor(rows: unknown[]) {
     builder[name] = vi.fn(self);
   });
   builder.where = vi.fn((condition: SQL | undefined) => {
-    recorded.push({
-      rendered:
-        condition === undefined ? '' : dialect.sqlToQuery(condition).sql,
-    });
+    const query =
+      condition === undefined
+        ? { sql: '', params: [] }
+        : dialect.sqlToQuery(condition);
+
+    // Params as well as SQL: the rendered string carries `$1` placeholders, so
+    // the pattern a LIKE actually matches on is only visible here.
+    recorded.push({ rendered: query.sql, params: query.params });
 
     return builder;
   });
-  builder.then = (resolve: (value: unknown) => unknown) => resolve(rows);
+  builder.then = (resolve: (value: unknown) => unknown) =>
+    resolve(answers[call] ?? rows);
 
-  return { executor: { select: vi.fn(() => builder) }, recorded };
+  return {
+    executor: {
+      select: vi.fn(() => {
+        call += 1;
+        return builder;
+      }),
+    },
+    recorded,
+  };
 }
 
 function candidate(overrides: Record<string, unknown> = {}) {
@@ -88,18 +123,104 @@ describe('planReprice', () => {
   it('reads only this seller’s published offers', async () => {
     const { executor, recorded } = recordingExecutor([]);
 
-    await planReprice(executor as never, SELLER_ID);
+    await planReprice(executor as never, SELLER_ID, SCOPE);
 
+    // Two selects now: the category path, then the candidates.
+    expect(recorded).toHaveLength(2);
+    expect(recorded[1].rendered).toContain('"seller_account_id" = ');
+    expect(recorded[1].rendered).toContain('"publish_state" = ');
+  });
+
+  /**
+   * The scope, and the three ways it can be got wrong.
+   *
+   * The unscoped run this replaced took every published offer ordered by title
+   * and kept the first 500, with no cursor — so it returned the same 500 on
+   * every run and everything past the 500th product alphabetically had never
+   * been repriceable. On a catalogue heading for millions of listings the fix
+   * is not a larger cap; it is a run bounded by the rule that changed.
+   */
+  it('covers the category and its subtree, not the node alone', async () => {
+    // `findNearestActiveCategoryPolicy` walks upward, so a markup on a
+    // department prices everything under it. A run that matched only the node
+    // would leave behind exactly the products the edited rule governs.
+    const { executor, recorded } = recordingExecutor([]);
+
+    await planReprice(executor as never, SELLER_ID, SCOPE);
+
+    expect(recorded[1].rendered).toContain('"path" = ');
+    expect(recorded[1].rendered).toContain('"path" like ');
+  });
+
+  it('matches the subtree on the separator, not a bare prefix', async () => {
+    // Without the ' > ', a department named `Shoes` would also match
+    // `Shoes & Boots` — repricing a sibling the edited rule never touched.
+    const { executor, recorded } = recordingExecutor([]);
+
+    await planReprice(executor as never, SELLER_ID, SCOPE);
+
+    expect(recorded[1].params).toContain(`${CATEGORY_PATH} > %`);
+    expect(recorded[1].params).not.toContain(`${CATEGORY_PATH}%`);
+  });
+
+  it('reads the path from the code rather than trusting a caller for both', async () => {
+    // A caller allowed to supply both could send a code and a path that
+    // disagree, repricing one category under the name of another.
+    const { executor, recorded } = recordingExecutor([]);
+
+    await planReprice(executor as never, SELLER_ID, SCOPE);
+
+    expect(recorded[0].rendered).toContain('"code" = ');
+  });
+
+  it('an unknown category prices nothing rather than everything', async () => {
+    /*
+      The failure mode worth naming: an unresolved code must not fall through to
+      a query with no category filter. `sals3_categories` is reference data every
+      seller shares, so a code that does not resolve is a stale screen or a
+      crafted payload — neither is an instruction to reprice the catalogue.
+    */
+    const { executor, recorded } = recordingExecutor([candidate()], []);
+
+    const plan = await planReprice(executor as never, SELLER_ID, SCOPE);
+
+    expect(plan.lines).toEqual([]);
+    expect(plan.candidateCount).toBe(0);
+    // The candidate query was never issued at all.
     expect(recorded).toHaveLength(1);
-    expect(recorded[0].rendered).toContain('"seller_account_id" = ');
-    expect(recorded[0].rendered).toContain('"publish_state" = ');
+  });
+
+  it('reads Global as every destination with no rule of its own', async () => {
+    /*
+      `null` is not a wildcard. The Global rule prices offers into every country
+      without a column of its own, so this selects the offers that rule would
+      govern. No filter at all would let a Global run overwrite Australia's
+      prices with Global's rule.
+    */
+    const { executor, recorded } = recordingExecutor([]);
+
+    await planReprice(executor as never, SELLER_ID, {
+      categoryCode: 'CAT-GGL-1',
+      marketCode: null,
+    });
+
+    expect(recorded[1].rendered).toContain('"market_code" not in ');
+  });
+
+  it('reads a named destination as that destination alone', async () => {
+    const { executor, recorded } = recordingExecutor([]);
+
+    await planReprice(executor as never, SELLER_ID, SCOPE);
+
+    expect(recorded[1].rendered).toContain('"market_code" = ');
+    expect(recorded[1].rendered).not.toContain('not in');
   });
 
   it('marks an offer whose rules now say a different number', async () => {
     const { executor } = recordingExecutor([candidate()]);
     resolveProductPricingMock.mockResolvedValue(resolved(2999));
 
-    const plan = await planReprice(executor as never, SELLER_ID);
+    const plan = await planReprice(executor as never, SELLER_ID, SCOPE);
 
     expect(plan.counts).toMatchObject({ changed: 1, unchanged: 0 });
     expect(plan.lines[0]).toMatchObject({
@@ -114,7 +235,7 @@ describe('planReprice', () => {
     const { executor } = recordingExecutor([candidate()]);
     resolveProductPricingMock.mockResolvedValue(resolved(2399));
 
-    const plan = await planReprice(executor as never, SELLER_ID);
+    const plan = await planReprice(executor as never, SELLER_ID, SCOPE);
 
     expect(plan.counts).toMatchObject({ changed: 0, unchanged: 1 });
     expect(plan.lines[0].newPriceMinor).toBeNull();
@@ -159,7 +280,7 @@ describe('planReprice', () => {
   ])('never reprices a price a person typed ($label)', async ({ row }) => {
     const { executor } = recordingExecutor([candidate(row)]);
 
-    const plan = await planReprice(executor as never, SELLER_ID);
+    const plan = await planReprice(executor as never, SELLER_ID, SCOPE);
 
     expect(plan.counts).toMatchObject({ manual: 1, changed: 0 });
     expect(resolveProductPricingMock).not.toHaveBeenCalled();
@@ -182,7 +303,7 @@ describe('planReprice', () => {
     it('asks the resolver about them and marks them reclaimed', async () => {
       const { executor } = recordingExecutor([candidate(SELLER_ROW)]);
 
-      const plan = await planReprice(executor as never, SELLER_ID, {
+      const plan = await planReprice(executor as never, SELLER_ID, SCOPE, {
         reclaimSellerPriced: true,
       });
 
@@ -207,7 +328,7 @@ describe('planReprice', () => {
         candidate({ ...SELLER_ROW, currentPriceMinor: BigInt(4400) }),
       ]);
 
-      const plan = await planReprice(executor as never, SELLER_ID, {
+      const plan = await planReprice(executor as never, SELLER_ID, SCOPE, {
         reclaimSellerPriced: true,
       });
 
@@ -218,7 +339,7 @@ describe('planReprice', () => {
     it('leaves them alone by default', async () => {
       const { executor } = recordingExecutor([candidate(SELLER_ROW)]);
 
-      const plan = await planReprice(executor as never, SELLER_ID);
+      const plan = await planReprice(executor as never, SELLER_ID, SCOPE);
 
       expect(plan.counts).toMatchObject({ manual: 1, changed: 0 });
       expect(resolveProductPricingMock).not.toHaveBeenCalled();
@@ -229,7 +350,7 @@ describe('planReprice', () => {
       // "a person's decision was taken back". They must not blur.
       const { executor } = recordingExecutor([candidate()]);
 
-      const plan = await planReprice(executor as never, SELLER_ID, {
+      const plan = await planReprice(executor as never, SELLER_ID, SCOPE, {
         reclaimSellerPriced: true,
       });
 
@@ -246,7 +367,7 @@ describe('planReprice', () => {
       resolverVersion: 'pricing-resolver-v3',
     });
 
-    const plan = await planReprice(executor as never, SELLER_ID);
+    const plan = await planReprice(executor as never, SELLER_ID, SCOPE);
 
     expect(plan.counts).toMatchObject({ unpriceable: 1, changed: 0 });
     expect(plan.lines[0]).toMatchObject({
@@ -267,7 +388,7 @@ describe('planReprice', () => {
     ]);
     resolveProductPricingMock.mockResolvedValue(resolved(2999));
 
-    await planReprice(executor as never, SELLER_ID);
+    await planReprice(executor as never, SELLER_ID, SCOPE);
 
     expect(resolveProductPricingMock).toHaveBeenCalledWith(
       expect.anything(),
@@ -286,7 +407,7 @@ describe('planReprice', () => {
       resolverVersion: 'pricing-resolver-v3',
     });
 
-    await planReprice(executor as never, SELLER_ID);
+    await planReprice(executor as never, SELLER_ID, SCOPE);
 
     expect(resolveProductPricingMock).toHaveBeenCalledWith(
       expect.anything(),
@@ -301,7 +422,7 @@ describe('planReprice', () => {
     const { executor } = recordingExecutor(rows);
     resolveProductPricingMock.mockResolvedValue(resolved(2399));
 
-    const plan = await planReprice(executor as never, SELLER_ID);
+    const plan = await planReprice(executor as never, SELLER_ID, SCOPE);
 
     expect(plan.truncated).toBe(true);
     expect(plan.lines).toHaveLength(MAX_REPRICE_OFFERS);
@@ -314,10 +435,12 @@ describe('planReprice', () => {
       const first = await planReprice(
         recordingExecutor([candidate()]).executor as never,
         SELLER_ID,
+        SCOPE,
       );
       const second = await planReprice(
         recordingExecutor([candidate()]).executor as never,
         SELLER_ID,
+        SCOPE,
       );
 
       expect(first.fingerprint).toBe(second.fingerprint);
@@ -328,12 +451,14 @@ describe('planReprice', () => {
       const first = await planReprice(
         recordingExecutor([candidate()]).executor as never,
         SELLER_ID,
+        SCOPE,
       );
 
       resolveProductPricingMock.mockResolvedValue(resolved(3199));
       const second = await planReprice(
         recordingExecutor([candidate()]).executor as never,
         SELLER_ID,
+        SCOPE,
       );
 
       expect(first.fingerprint).not.toBe(second.fingerprint);

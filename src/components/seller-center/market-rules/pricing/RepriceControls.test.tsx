@@ -56,10 +56,43 @@ function preview(overrides: Record<string, unknown> = {}) {
 
 const REASON = 'Supplier costs rose across the department.';
 
-async function openAndCheck() {
+/** Two departments and three columns; the component's job is the wiring, not the count. */
+const CATEGORIES = [
+  { code: 'CAT-GGL-166', name: 'Apparel & Accessories' },
+  { code: 'CAT-GGL-436', name: 'Home & Garden' },
+];
+
+const SCOPES = [
+  { key: 'AU', label: 'Australia', marketCode: 'AU' },
+  { key: 'FJ', label: 'Fiji', marketCode: 'FJ' },
+  { key: 'GLOBAL', label: 'Global', marketCode: null },
+];
+
+function renderControls(canManage = true) {
+  return render(
+    <RepriceControls
+      canManage={canManage}
+      categories={CATEGORIES}
+      scopes={SCOPES}
+    />,
+  );
+}
+
+/** Opens the dialog and picks a scope, without checking anything yet. */
+function openAndScope(categoryCode = 'CAT-GGL-166', scopeKey: string = 'AU') {
   fireEvent.click(
     screen.getByRole('button', { name: /Reprice live products/ }),
   );
+  fireEvent.change(screen.getByLabelText('Department'), {
+    target: { value: categoryCode },
+  });
+  fireEvent.change(screen.getByLabelText('Destination'), {
+    target: { value: scopeKey },
+  });
+}
+
+async function openAndCheck() {
+  openAndScope();
   fireEvent.click(
     screen.getByRole('button', { name: /Check what would change/ }),
   );
@@ -81,7 +114,7 @@ describe('RepriceControls', () => {
    * because somebody opened a dialog and typed a sentence.
    */
   it('cannot apply anything before the seller has looked', () => {
-    render(<RepriceControls canManage />);
+    renderControls();
 
     fireEvent.click(
       screen.getByRole('button', { name: /Reprice live products/ }),
@@ -93,8 +126,86 @@ describe('RepriceControls', () => {
     expect(screen.queryByLabelText('Reason for change')).toBeNull();
   });
 
+  /**
+   * The defect this replaced, and the reason a scope is required rather than
+   * optional.
+   *
+   * The unscoped run selected every published offer this seller owned, ordered
+   * by title, and took the first 500 — no cursor, and no exclusion of the rows
+   * it had already found correct, so it returned the *same* 500 forever and
+   * everything past the 500th product alphabetically was unreachable. On a
+   * catalogue heading for millions of listings the repair is not a bigger cap;
+   * it is never offering "everything" in the first place.
+   */
+  it('will not check anything until a scope is chosen', () => {
+    renderControls();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Reprice live products/ }),
+    );
+
+    expect(
+      screen.getByRole('button', { name: /Check what would change/ }),
+    ).toBeDisabled();
+  });
+
+  it('still refuses with only half a scope', () => {
+    // A department with no destination would price Australia's offers with
+    // Fiji's rule as readily as its own — the half-filled state has to be as
+    // refused as the empty one.
+    renderControls();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Reprice live products/ }),
+    );
+    fireEvent.change(screen.getByLabelText('Department'), {
+      target: { value: 'CAT-GGL-166' },
+    });
+
+    expect(
+      screen.getByRole('button', { name: /Check what would change/ }),
+    ).toBeDisabled();
+  });
+
+  it('sends Global as a null market rather than its column key', async () => {
+    // `'GLOBAL'` is the name this scope has on screen and nowhere else.
+    // `market_code` is a country code or NULL, and the engine reads null as
+    // "every destination without a rule of its own".
+    renderControls();
+
+    openAndScope('CAT-GGL-436', 'GLOBAL');
+    fireEvent.click(
+      screen.getByRole('button', { name: /Check what would change/ }),
+    );
+    await screen.findByText(/1 price moves/);
+
+    expect(mocks.previewRepriceAction).toHaveBeenCalledWith(
+      { categoryCode: 'CAT-GGL-436', marketCode: null },
+      false,
+    );
+  });
+
+  it('drops a preview when the scope changes underneath it', async () => {
+    /*
+      Same discipline the reclaim checkbox already had. A list checked for
+      Apparel does not describe a run against Home & Garden, and leaving it on
+      screen would put an approved-looking table above a button that would write
+      something else. The fingerprint would refuse it, but only after the click.
+    */
+    renderControls();
+    await openAndCheck();
+
+    expect(screen.getByText('Corduroy jacket')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Department'), {
+      target: { value: 'CAT-GGL-436' },
+    });
+
+    expect(screen.queryByText('Corduroy jacket')).toBeNull();
+  });
+
   it('shows what each price is now and what it becomes', async () => {
-    render(<RepriceControls canManage />);
+    renderControls();
 
     await openAndCheck();
 
@@ -104,7 +215,7 @@ describe('RepriceControls', () => {
   });
 
   it('checking writes nothing', async () => {
-    render(<RepriceControls canManage />);
+    renderControls();
 
     await openAndCheck();
 
@@ -112,7 +223,7 @@ describe('RepriceControls', () => {
   });
 
   it('still refuses to apply until a reason is written', async () => {
-    render(<RepriceControls canManage />);
+    renderControls();
 
     await openAndCheck();
 
@@ -130,7 +241,7 @@ describe('RepriceControls', () => {
   });
 
   it('sends the digest of the plan it showed, and the reason', async () => {
-    render(<RepriceControls canManage />);
+    renderControls();
 
     await openAndCheck();
     fireEvent.change(screen.getByLabelText('Reason for change'), {
@@ -144,6 +255,9 @@ describe('RepriceControls', () => {
         reason: REASON,
         // An ordinary run leaves hand-typed prices alone.
         reclaimSellerPriced: false,
+        // Re-sent so the server can refuse an apply that names a different
+        // scope than the preview — two empty plans share a fingerprint.
+        scope: { categoryCode: 'CAT-GGL-166', marketCode: 'AU' },
       }),
     );
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
@@ -158,7 +272,7 @@ describe('RepriceControls', () => {
       ok: false,
       reason: 'stale_preview',
     });
-    render(<RepriceControls canManage />);
+    renderControls();
 
     await openAndCheck();
     fireEvent.change(screen.getByLabelText('Reason for change'), {
@@ -190,7 +304,7 @@ describe('RepriceControls', () => {
         ],
       }),
     );
-    render(<RepriceControls canManage />);
+    renderControls();
 
     await openAndCheck();
 
@@ -215,7 +329,7 @@ describe('RepriceControls', () => {
         ],
       }),
     );
-    render(<RepriceControls canManage />);
+    renderControls();
 
     await openAndCheck();
 
@@ -228,7 +342,7 @@ describe('RepriceControls', () => {
   /** A silent cap reads as "everything is up to date" when it is not. */
   it('says when the run could not cover every product', async () => {
     mocks.previewRepriceAction.mockResolvedValue(preview({ truncated: true }));
-    render(<RepriceControls canManage />);
+    renderControls();
 
     await openAndCheck();
 
@@ -238,11 +352,12 @@ describe('RepriceControls', () => {
   });
 
   it('lets a read-only caller look, but never apply', async () => {
-    render(<RepriceControls canManage={false} />);
+    renderControls(false);
 
-    fireEvent.click(
-      screen.getByRole('button', { name: /Reprice live products/ }),
-    );
+    // Scoped like any other run: looking is still scoped, and a read-only
+    // caller who could check without choosing would be running the unscoped
+    // query this change exists to remove.
+    openAndScope();
     fireEvent.click(
       screen.getByRole('button', { name: /Check what would change/ }),
     );
@@ -263,9 +378,7 @@ describe('RepriceControls', () => {
    */
   describe('taking back hand-typed prices', () => {
     async function openWithReclaim() {
-      fireEvent.click(
-        screen.getByRole('button', { name: /Reprice live products/ }),
-      );
+      openAndScope();
       fireEvent.click(
         screen.getByRole('checkbox', {
           name: /Also take back prices I typed by hand/,
@@ -278,21 +391,27 @@ describe('RepriceControls', () => {
     }
 
     it('asks the server for a plan that includes them', async () => {
-      render(<RepriceControls canManage />);
+      renderControls();
       await openWithReclaim();
 
-      expect(mocks.previewRepriceAction).toHaveBeenCalledWith(true);
+      expect(mocks.previewRepriceAction).toHaveBeenCalledWith(
+        { categoryCode: 'CAT-GGL-166', marketCode: 'AU' },
+        true,
+      );
     });
 
     it('leaves them out by default', async () => {
-      render(<RepriceControls canManage />);
+      renderControls();
       await openAndCheck();
 
-      expect(mocks.previewRepriceAction).toHaveBeenCalledWith(false);
+      expect(mocks.previewRepriceAction).toHaveBeenCalledWith(
+        { categoryCode: 'CAT-GGL-166', marketCode: 'AU' },
+        false,
+      );
     });
 
     it('refuses to apply until the count is typed back', async () => {
-      render(<RepriceControls canManage />);
+      renderControls();
       await openWithReclaim();
 
       fireEvent.change(screen.getByLabelText('Reason for change'), {
@@ -324,7 +443,7 @@ describe('RepriceControls', () => {
     it('discards a preview checked under the other setting', async () => {
       // A plan checked without the reclaim does not describe the run this would
       // perform. The fingerprint would refuse it; this says so before the click.
-      render(<RepriceControls canManage />);
+      renderControls();
       await openAndCheck();
 
       fireEvent.click(

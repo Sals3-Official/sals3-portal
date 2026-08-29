@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, like, notInArray, or, sql } from 'drizzle-orm';
 import {
   productOffers,
   productVariants,
@@ -8,6 +8,7 @@ import {
   sals3Categories,
 } from '@/lib/db/schema';
 import type { Executor } from '@/modules/catalog/candidates/repository';
+import { listPricingScopeDestinations } from './pricing-scope-destinations';
 import { MAX_REPRICE_OFFERS } from './reprice-limits';
 import { isSellerEnteredPrice } from './seller-entered-price';
 import { resolveProductPricing } from './resolver';
@@ -58,8 +59,55 @@ const SETTLEMENT_CURRENCY = 'USD';
  * they cannot check before approving. When more offers exist than this, the run
  * says so out loud (`truncated`) instead of quietly pricing a subset — a silent
  * cap reads as "everything is up to date" when it is not.
+ *
+ * It is a backstop now, not the shape of the feature. A run is scoped to one
+ * category and one destination (`RepriceScope`), so hitting this bound means a
+ * single category holds more than 500 live offers — worth being told about,
+ * rather than the ordinary state it used to be.
  */
 export { MAX_REPRICE_OFFERS } from './reprice-limits';
+
+/**
+ * Which live offers one run may touch. Required, never defaulted.
+ *
+ * ## Why there is no "everything"
+ *
+ * There was, and it could not survive the catalogue it was written for. The
+ * unscoped run selected every published offer this seller owned, ordered by
+ * product title, and took the first 500 — with no cursor and no exclusion of
+ * the rows it had already found correct. So it returned the *same* 500 on every
+ * run, and the dialog's advice to "run it again to reach the rest" was
+ * unreachable by construction: everything past the 500th product alphabetically
+ * had never been repriceable at all.
+ *
+ * Removing the cap was the obvious repair and the wrong one. Owner decision
+ * 2026-08-29, on a catalogue heading for millions of listings: one query, one
+ * preview table and one button must never stand between a seller and every
+ * price they own. A run bounded by the *rule that changed* is bounded by
+ * construction, and it matches what a seller is actually doing — they edited one
+ * category's markup, not all of them.
+ *
+ * ## The category means its subtree
+ *
+ * `findNearestActiveCategoryPolicy` walks upward, so a markup on
+ * `Apparel & Accessories` prices every product beneath it that carries no rule
+ * of its own. Repricing that category therefore has to cover the same set, or
+ * the run would leave behind exactly the products the edited rule governs.
+ */
+export type RepriceScope = {
+  /** A `sals3_categories.code`. Its whole subtree is covered — see above. */
+  categoryCode: string;
+  /**
+   * The destination this run is for, or `null` for the Global rule.
+   *
+   * `null` is **not** a wildcard. The Global rule prices offers into every
+   * country that has no column of its own, so `null` here selects offers whose
+   * `market_code` is not one of the named destinations — the same set the
+   * resolver would hand to the Global rule. Treating it as "all markets" would
+   * let a Global reprice overwrite Australia's prices with Global's rule.
+   */
+  marketCode: string | null;
+};
 
 /** How many resolver calls are in flight at once. Bounded so a preview cannot exhaust the connection pool. */
 const RESOLVE_CONCURRENCY = 8;
@@ -148,7 +196,7 @@ type CandidateRow = {
 };
 
 /**
- * Every published offer this seller owns, with the supplier evidence each one
+ * The published offers inside one scope, with the supplier evidence each one
  * needs to be priced again.
  *
  * Scoped by `publish_state`, not by product state: a published offer is what a
@@ -156,10 +204,17 @@ type CandidateRow = {
  * joins mirror `loadPublishableVariants` in `publishProduct` on purpose — the
  * two must feed the resolver the same facts or they will disagree about the
  * same product.
+ *
+ * The category filter matches the node **and its subtree**, by path prefix,
+ * because that is the set the edited rule governs — see `RepriceScope`. Path
+ * text is used for the match and never for the policy itself: `sals3Categories.code`
+ * remains the only column a commercial rule may reference.
  */
 async function loadCandidates(
   executor: Executor,
   sellerAccountId: string,
+  scope: RepriceScope,
+  categoryPath: string,
 ): Promise<CandidateRow[]> {
   return executor
     .select({
@@ -201,6 +256,30 @@ async function loadCandidates(
       and(
         eq(productOffers.sellerAccountId, sellerAccountId),
         eq(productOffers.publishState, 'PUBLISHED'),
+        /*
+          The node itself, or anything beneath it. `LIKE` with the separator
+          appended rather than a bare prefix: without the `' > '`, a category
+          named `Shoes` would also match `Shoes & Boots`, repricing a sibling
+          the edited rule never touched.
+        */
+        or(
+          eq(sals3Categories.path, categoryPath),
+          like(sals3Categories.path, `${categoryPath} > %`),
+        ),
+        /*
+          Global is every destination that has no rule of its own, matching what
+          `findNearestActiveCategoryPolicy` would hand the Global rule. An `IS
+          NULL` here would match nothing — offers always carry a real country —
+          and no filter at all would let a Global run overwrite Australia.
+        */
+        scope.marketCode === null
+          ? notInArray(
+              productOffers.marketCode,
+              listPricingScopeDestinations().map(
+                (destination) => destination.code,
+              ),
+            )
+          : eq(productOffers.marketCode, scope.marketCode),
       ),
     )
     .orderBy(asc(products.title), asc(productVariants.sals3Sku))
@@ -275,9 +354,42 @@ export type RepriceOptions = {
 export async function planReprice(
   executor: Executor,
   sellerAccountId: string,
+  scope: RepriceScope,
   options: RepriceOptions = {},
 ): Promise<RepricePlan> {
-  const loaded = await loadCandidates(executor, sellerAccountId);
+  /*
+    Resolved to a path here rather than taken from the caller. The screen knows
+    a code; the subtree match needs a path; and a caller allowed to supply both
+    could send a code and a path that disagree — repricing one category under
+    the name of another. One lookup removes the possibility.
+
+    An unknown code is an empty plan, not an error. The category table is
+    reference data every seller shares, so a code that does not resolve is a
+    stale screen or a crafted payload, and neither should be answered with a
+    price change.
+  */
+  const [category] = await executor
+    .select({ path: sals3Categories.path })
+    .from(sals3Categories)
+    .where(eq(sals3Categories.code, scope.categoryCode))
+    .limit(1);
+
+  if (category === undefined) {
+    return {
+      lines: [],
+      counts: { changed: 0, unchanged: 0, unpriceable: 0, manual: 0 },
+      truncated: false,
+      candidateCount: 0,
+      fingerprint: fingerprintOf([]),
+    };
+  }
+
+  const loaded = await loadCandidates(
+    executor,
+    sellerAccountId,
+    scope,
+    category.path,
+  );
   const truncated = loaded.length > MAX_REPRICE_OFFERS;
   const candidates = truncated ? loaded.slice(0, MAX_REPRICE_OFFERS) : loaded;
 

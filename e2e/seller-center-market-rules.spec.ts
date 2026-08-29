@@ -73,7 +73,22 @@ test.describe('Seller Center market rules', () => {
     await expect(
       dialog.getByRole('heading', { name: 'Reprice published products' }),
     ).toBeVisible();
-    await expect(dialog.getByText('1. Check what would change')).toBeVisible();
+    await expect(dialog.getByText('1. Choose what to reprice')).toBeVisible();
+    await expect(dialog.getByText('2. Check what would change')).toBeVisible();
+    /*
+      Scope first, and nothing runs without it.
+
+      The unscoped run this replaced selected every published offer ordered by
+      title and kept the first 500, with no cursor — so it returned the same 500
+      forever, and everything past the 500th product alphabetically had never
+      been repriceable. Owner decision 2026-08-29, on a catalogue heading for
+      millions of listings: the fix is not a larger cap, it is never offering
+      "everything". This asserts the door is shut on arrival, before any
+      selection is made.
+    */
+    await expect(
+      dialog.getByRole('button', { name: /Check what would change/ }),
+    ).toBeDisabled();
     await expect(
       dialog.getByRole('button', { name: 'Apply new prices' }),
     ).toBeDisabled();

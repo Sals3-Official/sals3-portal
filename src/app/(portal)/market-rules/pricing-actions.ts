@@ -1494,6 +1494,24 @@ export async function getFundingBufferHistoryAction(): Promise<
 
 // --- Repricing live offers --------------------------------------------------
 
+/**
+ * The category and destination one reprice run covers. Required on both halves.
+ *
+ * Shape-checked here as well as in the engine, so a crafted payload cannot ask
+ * for a scope the screen never offered. `marketCode` accepts a named
+ * destination or `null` for Global, exactly like every other pricing write on
+ * this page — see `saveCategoryPolicyInputSchema`.
+ */
+const repriceScopeSchema = z.object({
+  categoryCode: z.string().trim().min(1).max(64),
+  marketCode: z
+    .string()
+    .refine(isPricingScopeDestination, {
+      message: 'Not a destination this account can price for.',
+    })
+    .nullable(),
+});
+
 const applyRepriceInputSchema = z.object({
   /**
    * The digest of the plan the seller actually looked at.
@@ -1513,6 +1531,14 @@ const applyRepriceInputSchema = z.object({
    * whole guard — this field cannot widen a run on its own.
    */
   reclaimSellerPriced: z.boolean().default(false),
+  /**
+   * Re-sent on the apply, and compared the same way the reclaim flag is.
+   *
+   * A fingerprint alone would not be enough: two scopes can produce the same
+   * digest when both plans are empty, so an apply that named a different
+   * category than the preview could otherwise slip through as "not stale".
+   */
+  scope: repriceScopeSchema,
 });
 
 /** One row of the preview, already shaped for the screen. */
@@ -1570,8 +1596,18 @@ function toPreviewLine(line: RepriceLine): RepricePreviewLine {
  * them tell those apart.
  */
 export async function previewRepriceAction(
+  input: unknown,
   reclaimSellerPriced = false,
 ): Promise<ActionResult<RepricePreview>> {
+  const parsedScope = repriceScopeSchema.safeParse(input);
+  if (!parsedScope.success) {
+    return {
+      ok: false,
+      reason: 'invalid_input',
+      fieldErrors: toFieldErrors(parsedScope.error),
+    };
+  }
+
   const auth = await authorize(
     'pricing_policy:manage',
     'pricing:preview-reprice',
@@ -1580,9 +1616,14 @@ export async function previewRepriceAction(
   if (!auth.ok) return auth;
 
   try {
-    const plan = await planReprice(getDb(), auth.sellerAccountId, {
-      reclaimSellerPriced,
-    });
+    const plan = await planReprice(
+      getDb(),
+      auth.sellerAccountId,
+      parsedScope.data,
+      {
+        reclaimSellerPriced,
+      },
+    );
 
     return {
       ok: true,
@@ -1668,9 +1709,12 @@ export async function applyRepriceAction(input: unknown): Promise<
       update is what makes the short write safe, not the length of the
       transaction.
     */
-    const plan = await planReprice(getDb(), auth.sellerAccountId, {
-      reclaimSellerPriced: parsedInput.data.reclaimSellerPriced,
-    });
+    const plan = await planReprice(
+      getDb(),
+      auth.sellerAccountId,
+      parsedInput.data.scope,
+      { reclaimSellerPriced: parsedInput.data.reclaimSellerPriced },
+    );
 
     if (plan.fingerprint !== parsedInput.data.fingerprint) {
       return { ok: false, reason: 'stale_preview' };

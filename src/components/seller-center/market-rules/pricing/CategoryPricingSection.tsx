@@ -244,7 +244,24 @@ export default async function CategoryPricingSection({
             this header implies a scope it does not have, so the icon is what
             keeps the placement honest. Do not ship one without the other.
           */}
-          <RepriceControls canManage={canManage} />
+          {/*
+            Departments and destinations, so a run is bounded by the rule that
+            changed. `roots` is already computed above for the coverage banner;
+            it is the same set for the same reason — every product sits under a
+            department, so the roots reach the whole tree.
+          */}
+          <RepriceControls
+            canManage={canManage}
+            categories={roots.map((row) => ({
+              code: row.code,
+              name: row.path,
+            }))}
+            scopes={scopes.map((scope) => ({
+              key: scope.key,
+              label: scope.label,
+              marketCode: scope.marketCode,
+            }))}
+          />
           <Tooltip>
             <TooltipTrigger
               render={
