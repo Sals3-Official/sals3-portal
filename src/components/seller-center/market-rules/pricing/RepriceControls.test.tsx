@@ -289,7 +289,16 @@ describe('RepriceControls', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Apply new prices' }));
 
-    await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
+    /*
+      Waited on the SCREEN, not on the refresh mock.
+
+      `refresh` having been called says the apply reached its success path; it
+      says nothing about the new position having been flushed into the render
+      the next click reads. Waiting for the notice is waiting for the state
+      itself, and it is the difference between this case passing reliably and
+      passing whenever the scheduler happens to cooperate.
+    */
+    await screen.findByText(/Continuing from where the last run stopped/);
 
     await checkAgain();
 
@@ -314,7 +323,8 @@ describe('RepriceControls', () => {
       target: { value: REASON },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Apply new prices' }));
-    await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
+    // Same reason as above: the notice is the position, the mock is only the call.
+    await screen.findByText(/Continuing from where the last run stopped/);
 
     fireEvent.change(screen.getByLabelText('Category'), {
       target: { value: 'CAT-GGL-436' },
