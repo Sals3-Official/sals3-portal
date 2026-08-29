@@ -471,3 +471,35 @@ describe('storefrontFeedQuerySchema', () => {
     ).toEqual({ section: 'for-you', page: 1, limit: 14 });
   });
 });
+
+describe('units sold on the card', () => {
+  it('omits the key entirely until something has sold', () => {
+    const [product] = toStorefrontProductFeed(
+      { rows: [row()], total: 1 },
+      { section: 'for-you', page: 1, limit: 20 },
+    ).products;
+
+    // Absent, not zero. A card cannot render "0 sold" from a key that is not
+    // there, and on a young catalogue a wall of zeroes reads as "nobody buys
+    // here" - a verdict the absence of sales does not support.
+    expect(product).not.toHaveProperty('soldUnits');
+  });
+
+  it('carries the count once there is one', () => {
+    const [product] = toStorefrontProductFeed(
+      { rows: [row({ soldUnits: 142 })], total: 1 },
+      { section: 'for-you', page: 1, limit: 20 },
+    ).products;
+
+    expect(product?.soldUnits).toBe(142);
+  });
+
+  it('treats a zero as nothing to say rather than passing it through', () => {
+    const [product] = toStorefrontProductFeed(
+      { rows: [row({ soldUnits: 0 })], total: 1 },
+      { section: 'for-you', page: 1, limit: 20 },
+    ).products;
+
+    expect(product).not.toHaveProperty('soldUnits');
+  });
+});

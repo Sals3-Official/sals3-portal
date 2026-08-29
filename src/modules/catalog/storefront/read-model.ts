@@ -15,6 +15,7 @@ import {
 } from 'drizzle-orm';
 import getDb, { type DbExecutor } from '@/lib/db/client';
 import type { RatingSummary } from '@/modules/reviews/contracts';
+import { readSoldUnitsForProducts } from '@/modules/orders/seller-sold-read';
 import { readRatingSummaries } from '@/modules/reviews/repository';
 import SALS3_TAXONOMY_DEPARTMENTS from '@/modules/catalog/taxonomy/departments';
 import {
@@ -109,6 +110,13 @@ export type StorefrontListRow = {
    * while an absent key cannot be mistaken for a verdict.
    */
   rating?: RatingSummary;
+  /**
+   * Units sold, absent until at least one has. Absent rather than zero for the
+   * same reason `rating` is: a card that announces "0 sold" on a young
+   * catalogue reads as "nobody buys here", which is a verdict the data does not
+   * support. The consumer decides what an absent key renders as.
+   */
+  soldUnits?: number;
 };
 
 export type StorefrontPage = {
@@ -551,30 +559,66 @@ async function safeRatingSummaries(
   }
 }
 
-async function withRatings(
+/**
+ * Units sold, under the same failure rule as the ratings above.
+ *
+ * The order tables reach a deployed database through a break-glass workflow
+ * rather than through the deploy, so a catalogue read must survive their
+ * absence. A sold count is decorative in exactly the sense a rating is: a card
+ * without one is still a card, and a shop that answers 503 because an optional
+ * aggregate could not be counted is the PR #102 failure again.
+ */
+async function safeSoldUnits(
+  productIds: string[],
+  executor: DbExecutor,
+): Promise<Map<string, number>> {
+  try {
+    return await readSoldUnitsForProducts(productIds, executor);
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[storefront] sold counts unavailable', {
+      error: error instanceof Error ? error.message : 'unknown',
+    });
+
+    return new Map();
+  }
+}
+
+/**
+ * Attaches both card aggregates - rating and units sold - in two grouped
+ * lookups, neither of which can fail the read.
+ *
+ * Both are omitted rather than zeroed when there is nothing to say, so a
+ * consumer cannot mistake "we have no figure" for "the figure is nought".
+ */
+async function withCardAggregates(
   rows: StorefrontListRow[],
   executor: DbExecutor,
 ): Promise<StorefrontListRow[]> {
   if (rows.length === 0) return rows;
 
-  const summaries = await safeRatingSummaries(
-    rows.map((row) => row.id),
-    executor,
-  );
+  const productIds = rows.map((row) => row.id);
+  const [summaries, soldUnits] = await Promise.all([
+    safeRatingSummaries(productIds, executor),
+    safeSoldUnits(productIds, executor),
+  ]);
 
   return rows.map((row) => {
     const rating = summaries.get(row.id);
+    const sold = soldUnits.get(row.id) ?? 0;
 
-    return rating === undefined || rating.count === 0
-      ? row
-      : { ...row, rating };
+    return {
+      ...row,
+      ...(rating === undefined || rating.count === 0 ? {} : { rating }),
+      ...(sold > 0 ? { soldUnits: sold } : {}),
+    };
   });
 }
 
 /**
  * One product's rating, for the detail path.
  *
- * Kept separate from `withRatings` so it can ride the detail loader's existing
+ * Kept separate from `withCardAggregates` so it can ride the detail loader's existing
  * `Promise.all` rather than adding a serial round trip before it — and so it
  * cannot shift the query order `read-model.published-scope.test.ts` reads by
  * index. That test's own note says a loader appended to that list is safe;
@@ -619,7 +663,7 @@ export async function listPublishedProducts(
   ]);
 
   return {
-    rows: await withRatings(
+    rows: await withCardAggregates(
       rows
         .map(toListRow)
         .filter((row): row is StorefrontListRow => row !== null),
@@ -723,7 +767,7 @@ async function countGroupedProducts(
  * by index in `read-model.published-scope.test.ts`. Adding a grouped `HAVING`
  * and a subquery count to it would rewrite the shape those assertions describe,
  * to make a browse surface work. The two share `listBase`, `publishedScope`,
- * `toListRow` and `withRatings` — everything that decides what is public — and
+ * `toListRow` and `withCardAggregates` — everything that decides what is public — and
  * differ only in how they narrow and order it.
  */
 export async function listPublishedProductsInDepartment(
@@ -753,7 +797,7 @@ export async function listPublishedProductsInDepartment(
   ]);
 
   return {
-    rows: await withRatings(
+    rows: await withCardAggregates(
       rows
         .map(toListRow)
         .filter((row): row is StorefrontListRow => row !== null),
@@ -809,7 +853,7 @@ function escapeLikePattern(term: string): string {
  * done now — that is a migration, and prod migrations here are applied by hand.
  *
  * Everything that decides what is *public* is shared with the rest of this
- * module: `publishedScope`, `listBase`, `toListRow`, `withRatings`. Only the
+ * module: `publishedScope`, `listBase`, `toListRow`, `withCardAggregates`. Only the
  * narrowing differs.
  */
 export async function searchPublishedProducts(
@@ -837,7 +881,7 @@ export async function searchPublishedProducts(
   ]);
 
   return {
-    rows: await withRatings(
+    rows: await withCardAggregates(
       rows
         .map(toListRow)
         .filter((row): row is StorefrontListRow => row !== null),

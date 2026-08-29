@@ -1,31 +1,40 @@
 import type { Metadata } from 'next';
 import PageHeader from '@/components/portal/PageHeader';
 import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
-import ReviewFilterBar from '@/components/reviews/ReviewFilterBar';
-import ReviewList from '@/components/reviews/ReviewList';
-import ReviewSummaryBand from '@/components/reviews/ReviewSummaryBand';
+import ReviewsTabPanel from '@/components/reviews/ReviewsTabPanel';
+import ReviewsPageTabs from '@/components/sales/ReviewsPageTabs';
+import SoldTabPanel from '@/components/sales/SoldTabPanel';
 import { requireDropshipperAccount } from '@/lib/auth/seller-guard';
 import { readOrUnavailable } from '@/lib/db/availability';
 import getDb, { isDatabaseConfigured } from '@/lib/db/client';
 import {
+  parseReviewsTab,
   parseReviewView,
   REVIEWS_PAGE_SIZE,
   type ReviewSearchParams,
 } from '@/lib/portal/review-params';
-import { REVIEW_WINDOW_DAYS } from '@/modules/reviews/contracts';
+import {
+  readSellerSoldRows,
+  readSellerSoldSummary,
+  type SellerSoldRow,
+  type SellerSoldSummary,
+} from '@/modules/orders/seller-sold-read';
+import { orderTablesExist } from '@/modules/orders/table-presence';
 import {
   listSellerReviews,
   readSellerReviewSummary,
 } from '@/modules/reviews/seller-read';
 
 export const metadata: Metadata = {
-  title: 'Product Reviews · Sals3 Portal',
+  title: 'Reviews and Sales · Sals3 Portal',
   robots: { index: false, follow: false },
 };
 
 export const dynamic = 'force-dynamic';
 
-const DESCRIPTION = 'What customers wrote about the items you sold them.';
+const TITLE = 'Reviews & Sales';
+const DESCRIPTION =
+  'What customers wrote about the items you sold them, and how many of each you have sold.';
 
 /**
  * Distinguishes "not migrated yet" from "the database is down".
@@ -54,44 +63,88 @@ async function reviewTablesExist(): Promise<boolean> {
 }
 
 /**
- * Product Reviews.
+ * The Sold tab, or an explanation of why it cannot run.
  *
- * Composition and data orchestration only — the band, the filters and the list
- * are their own components, and every filter lives in the URL so a view is
- * shareable and the back button behaves.
+ * Split out so the route's own return stays a single ternary between two tabs.
+ * A null summary means the order tables are absent, which is a migration gap
+ * and is named as one — not an empty table, which would read as "you have sold
+ * nothing" and be a lie.
+ */
+function SoldTab({
+  summary,
+  rows,
+}: {
+  summary: SellerSoldSummary | null;
+  rows: SellerSoldRow[] | null;
+}) {
+  if (summary === null || rows === null) {
+    return (
+      <SourcingEmptyState
+        title="Sales are not set up in this environment yet"
+        description="The order tables have not been created in this database, so nothing has been sold through it and there is nothing to count. Apply the order migration through the break-glass workflow, then reload. Reviews on the other tab are unaffected."
+      />
+    );
+  }
+
+  return <SoldTabPanel summary={summary} rows={rows} />;
+}
+
+function Frame({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <PageHeader title={TITLE} description={DESCRIPTION} />
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Reviews & Sales.
+ *
+ * Composition and data orchestration only — both tabs, the bands, the filters
+ * and the tables are their own components, and every filter lives in the URL so
+ * a view is shareable and the back button behaves.
  *
  * Reads real rows. There is no fixture path: an empty database renders the
  * empty state, which says *why* it is empty rather than implying a problem.
+ *
+ * The order tables are checked separately from the review tables and their
+ * absence does not take the page down. On a selectively-migrated database the
+ * Reviews tab is genuinely usable while the Sold tab has nothing to read, and
+ * failing both would be a worse answer than failing the one that cannot work.
  */
-export default async function ProductReviewsPage({
+export default async function ReviewsAndSalesPage({
   searchParams,
 }: {
   searchParams: Promise<ReviewSearchParams>;
 }) {
   if (!isDatabaseConfigured()) {
     return (
-      <div className="flex flex-col gap-4">
-        <PageHeader title="Product Reviews" description={DESCRIPTION} />
+      <Frame>
         <SourcingEmptyState
           title="No database configured in this environment"
-          description="DATABASE_URL is not set here, so reviews cannot be read."
+          description="DATABASE_URL is not set here, so reviews and sales cannot be read."
         />
-      </div>
+      </Frame>
     );
   }
 
-  const view = parseReviewView(await searchParams);
+  const params = await searchParams;
+  const tab = parseReviewsTab(params);
+  const view = parseReviewView(params);
 
-  const resolved = await readOrUnavailable('product reviews', async () => {
+  const resolved = await readOrUnavailable('reviews and sales', async () => {
     const { sellerAccount } = await requireDropshipperAccount();
 
     if (!(await reviewTablesExist())) return NOT_MIGRATED;
+
+    const hasOrderTables = await orderTablesExist(getDb());
 
     // Both reads are scoped to this session's seller account. The summary is
     // not derived from the filtered page: the headline numbers must describe
     // the whole account, or "31 need a reply" would silently mean "31 on this
     // page of this filter".
-    const [summary, page] = await Promise.all([
+    const [summary, page, soldSummary, soldRows] = await Promise.all([
       readSellerReviewSummary(sellerAccount.id),
       listSellerReviews({
         sellerAccountId: sellerAccount.id,
@@ -99,122 +152,57 @@ export default async function ProductReviewsPage({
         page: view.page,
         limit: REVIEWS_PAGE_SIZE,
       }),
+      hasOrderTables ? readSellerSoldSummary(sellerAccount.id) : null,
+      hasOrderTables ? readSellerSoldRows(sellerAccount.id) : null,
     ]);
 
-    return { summary, page };
+    return { summary, page, soldSummary, soldRows };
   });
 
   if (!resolved.ok) {
     return (
-      <div className="flex flex-col gap-4">
-        <PageHeader title="Product Reviews" description={DESCRIPTION} />
+      <Frame>
         <SourcingEmptyState
           title="Cannot reach the database right now"
-          description="Reviews could not be loaded because the database did not respond. Nothing was changed."
+          description="This page could not be loaded because the database did not respond. Nothing was changed."
         />
-      </div>
+      </Frame>
     );
   }
 
   if (resolved.data === NOT_MIGRATED) {
     return (
-      <div className="flex flex-col gap-4">
-        <PageHeader title="Product Reviews" description={DESCRIPTION} />
+      <Frame>
         <SourcingEmptyState
           title="Reviews are not set up in this environment yet"
           description="The review tables have not been created in this database. Run the Reviews Migrate Product Reviews workflow, then reload. No review can exist until it has run, so there is nothing to see here and nothing was changed."
         />
-      </div>
+      </Frame>
     );
   }
 
-  const { summary, page } = resolved.data;
-  const filtered =
-    view.filter.replyState !== null ||
-    view.filter.ratings.length > 0 ||
-    view.filter.query !== '';
+  const { summary, page, soldSummary, soldRows } = resolved.data;
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title="Product Reviews" description={DESCRIPTION} />
+      <PageHeader title={TITLE} description={DESCRIPTION} />
 
-      <div className="flex gap-2.5 rounded-lg border border-border bg-card p-3.5">
-        <svg
-          viewBox="0 0 16 16"
-          aria-hidden="true"
-          className="mt-px size-4 shrink-0 text-brand-600"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.4"
-        >
-          <circle cx="8" cy="8" r="6.2" />
-          <path d="M8 7.2v4M8 4.9v.1" />
-        </svg>
-        <p className="text-[0.8125rem] leading-relaxed text-ink-muted">
-          A customer can write a review only after the parcel that carried the
-          item is <strong className="font-semibold text-ink">Delivered</strong>,
-          and only for {REVIEW_WINDOW_DAYS} days after that. One review for each
-          item in the order. You can answer a review one time, and you can
-          change your answer later. You cannot delete a customer&rsquo;s review.
-        </p>
-      </div>
+      <ReviewsPageTabs
+        active={tab}
+        reviewCount={summary.count}
+        soldUnits={soldSummary?.totalUnits ?? null}
+      />
 
-      <ReviewSummaryBand summary={summary} />
-
-      <div className="rounded-lg border border-border bg-card">
-        <ReviewFilterBar
-          counts={{
-            all: summary.count,
-            needsReply: summary.needsReply,
-            replied: summary.count - summary.needsReply,
-          }}
-          breakdown={summary.breakdown}
-          activeTab={view.filter.replyState}
-          activeStars={view.filter.ratings}
-          query={view.filter.query}
+      {tab === 'sold' ? (
+        <SoldTab summary={soldSummary} rows={soldRows} />
+      ) : (
+        <ReviewsTabPanel
+          summary={summary}
+          rows={page.rows}
+          total={page.total}
+          filter={view.filter}
         />
-
-        {page.rows.length === 0 ? (
-          <div className="flex flex-col items-center gap-2.5 px-6 py-14 text-center">
-            <svg
-              viewBox="0 0 16 16"
-              aria-hidden="true"
-              className="size-8 text-border-strong"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.1"
-            >
-              <path d="M8 1.6l1.9 3.9 4.3.6-3.1 3 .8 4.3L8 11.4l-3.9 2 .8-4.3-3.1-3 4.3-.6z" />
-            </svg>
-            <span className="font-display text-base font-semibold text-ink">
-              {filtered ? 'No reviews match these filters' : 'No reviews yet'}
-            </span>
-            <p className="max-w-[46ch] text-[0.8125rem] leading-relaxed text-ink-subtle">
-              {filtered
-                ? 'Clear a filter to see the rest.'
-                : `A customer can write a review after their parcel is marked Delivered. You have ${summary.deliveredLines} delivered ${summary.deliveredLines === 1 ? 'item' : 'items'} that nobody has reviewed. Nothing to do here yet.`}
-            </p>
-          </div>
-        ) : (
-          <>
-            <div className="hidden gap-4 border-b border-border bg-background px-4 py-2.5 md:grid md:grid-cols-[18.75rem_1fr_12.5rem]">
-              <span className="text-xs font-medium text-ink-subtle">
-                Item as it was ordered
-              </span>
-              <span className="text-xs font-medium text-ink-subtle">
-                Rating and review
-              </span>
-              <span className="text-xs font-medium text-ink-subtle">
-                Your reply
-              </span>
-            </div>
-            <ReviewList reviews={page.rows} />
-            <p className="px-4 py-3.5 text-xs text-ink-subtle">
-              Showing {page.rows.length} of {page.total}
-            </p>
-          </>
-        )}
-      </div>
+      )}
     </div>
   );
 }
