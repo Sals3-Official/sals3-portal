@@ -29,7 +29,7 @@ import type { CandidateFilters } from './queries';
  * observation, in either direction — it never claims the product is in stock.
  */
 export default function resolvePipelineFilters(
-  query: Pick<PipelinePageQuery, 'cat' | 'stock' | 'seen'>,
+  query: Pick<PipelinePageQuery, 'cat' | 'stock' | 'seen' | 'added'>,
   index: CjCategoryIndex,
   now: Date,
 ): CandidateFilters | undefined {
@@ -49,6 +49,10 @@ export default function resolvePipelineFilters(
 
   if (query.stock === 'unchecked') {
     filters.stockReviewStates = ['STOCK_NOT_CHECKED'];
+  }
+
+  if (query.added !== undefined) {
+    filters.catalogued = query.added === 'yes';
   }
 
   if (query.seen !== undefined) {

@@ -11,7 +11,12 @@ const INDEX = indexCategorySnapshot([
   { categoryId: 'cj-3', path: ['Home & Garden'] },
 ]);
 
-const NONE = { cat: '', stock: undefined, seen: undefined } as const;
+const NONE = {
+  cat: '',
+  stock: undefined,
+  seen: undefined,
+  added: undefined,
+} as const;
 
 describe('resolvePipelineFilters', () => {
   it('is undefined when nothing is filtered, so the tab keeps its cached count', () => {
@@ -98,6 +103,28 @@ describe('resolvePipelineFilters', () => {
     expect(fresh?.seenSince).toEqual(stale?.seenBefore);
     expect(fresh?.seenBefore).toBeUndefined();
     expect(stale?.seenSince).toBeUndefined();
+  });
+
+  it('maps "not added" to the absence of a Sals3 product', () => {
+    // The one a seller sourcing new products actually wants: everything they
+    // have not taken yet.
+    expect(
+      resolvePipelineFilters({ ...NONE, added: 'no' }, INDEX, NOW)?.catalogued,
+    ).toBe(false);
+  });
+
+  it('maps "added" to its presence', () => {
+    expect(
+      resolvePipelineFilters({ ...NONE, added: 'yes' }, INDEX, NOW)?.catalogued,
+    ).toBe(true);
+  });
+
+  it('leaves the predicate off entirely when the facet is unset', () => {
+    // `false` and "no filter" are different questions, and conflating them
+    // would silently hide every product already in the catalogue.
+    expect(
+      resolvePipelineFilters(NONE, INDEX, NOW)?.catalogued,
+    ).toBeUndefined();
   });
 
   it('combines every facet into one predicate set', () => {

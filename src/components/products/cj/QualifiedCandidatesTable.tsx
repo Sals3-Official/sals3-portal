@@ -357,7 +357,30 @@ export default function QualifiedCandidatesTable({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex justify-end">
+      {/*
+        The bulk action sits WITH the selection it acts on rather than floating
+        above the table on its own: a button whose enablement depends on
+        checkboxes it is nowhere near reads as broken until you happen to tick
+        one. It also states the count, because "Add" over an invisible
+        selection is a question, and names the cap before the click rather than
+        after it.
+      */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2">
+        <span className="text-sm text-ink-muted">
+          {selectedIds.size === 0 ? (
+            'Select products to add several at once'
+          ) : (
+            <>
+              <span className="font-semibold text-foreground tabular-nums">
+                {selectedIds.size}
+              </span>{' '}
+              selected
+              {selectedIds.size > MAX_ADD_BATCH
+                ? ` — ${MAX_ADD_BATCH} is the most that can be added in one go`
+                : ''}
+            </>
+          )}
+        </span>
         <Button
           type="button"
           size="sm"
@@ -365,7 +388,9 @@ export default function QualifiedCandidatesTable({
           onClick={addSelectedToCatalogue}
         >
           <Plus aria-hidden="true" />
-          {isPending ? 'Adding...' : 'Add to Product Catalogue'}
+          {isPending
+            ? 'Adding...'
+            : `Add & Customize${selectedIds.size === 0 ? '' : ` (${selectedIds.size})`}`}
         </Button>
       </div>
 

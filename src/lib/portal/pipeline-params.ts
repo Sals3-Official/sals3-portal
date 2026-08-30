@@ -27,9 +27,12 @@ export const PIPELINE_PATH = '/products/pipeline';
 export const PIPELINE_STALE_AFTER_DAYS = 7;
 
 export const PIPELINE_STOCK_FILTERS = ['checked', 'unchecked'] as const;
+/** Whether the candidate already has a Sals3 product built from it. */
+export const PIPELINE_ADDED_FILTERS = ['yes', 'no'] as const;
 export const PIPELINE_SEEN_FILTERS = ['fresh', 'stale'] as const;
 
 export type PipelineStockFilter = (typeof PIPELINE_STOCK_FILTERS)[number];
+export type PipelineAddedFilter = (typeof PIPELINE_ADDED_FILTERS)[number];
 export type PipelineSeenFilter = (typeof PIPELINE_SEEN_FILTERS)[number];
 
 export const pipelinePageQuerySchema = z.object({
@@ -48,6 +51,12 @@ export const pipelinePageQuerySchema = z.object({
   stock: z.enum(PIPELINE_STOCK_FILTERS).catch('checked').optional(),
   /** Provider feed freshness, against `PIPELINE_STALE_AFTER_DAYS`. */
   seen: z.enum(PIPELINE_SEEN_FILTERS).catch('fresh').optional(),
+  /**
+   * Whether a Sals3 product already exists for this candidate. `no` is the one
+   * a seller sourcing new products actually wants — everything they have not
+   * taken yet — and it is the reason this filter exists at all.
+   */
+  added: z.enum(PIPELINE_ADDED_FILTERS).catch('no').optional(),
   /**
    * Candidate UUID whose read-only detail drawer is open. Rejecting a non-UUID
    * here keeps a hand-typed value harmless instead of passing it into a UUID
@@ -72,17 +81,21 @@ export function pipelineCurrentParams(
     ...(query.cat === '' ? {} : { cat: query.cat }),
     ...(query.stock === undefined ? {} : { stock: query.stock }),
     ...(query.seen === undefined ? {} : { seen: query.seen }),
+    ...(query.added === undefined ? {} : { added: query.added }),
     ...(query.candidate === '' ? {} : { candidate: query.candidate }),
   };
 }
 
 /** Filter keys only — what a "clear filters" control has to remove. */
-export const PIPELINE_FILTER_KEYS = ['cat', 'stock', 'seen'] as const;
+export const PIPELINE_FILTER_KEYS = ['cat', 'stock', 'seen', 'added'] as const;
 
 /** True when at least one filter is applied, i.e. the count is a subset. */
 export function hasPipelineFilters(query: PipelinePageQuery): boolean {
   return (
-    query.cat !== '' || query.stock !== undefined || query.seen !== undefined
+    query.cat !== '' ||
+    query.stock !== undefined ||
+    query.seen !== undefined ||
+    query.added !== undefined
   );
 }
 

@@ -63,7 +63,7 @@ export default function CustomizeAndListButton({
         });
       }}
     >
-      {isPending ? 'Fetching from CJ...' : 'Customize & List'}
+      {isPending ? 'Fetching from CJ...' : 'Add & Customize'}
     </Button>
   );
 }
