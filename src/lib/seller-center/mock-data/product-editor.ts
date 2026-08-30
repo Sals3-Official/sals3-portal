@@ -413,6 +413,11 @@ const BASE: ProductEditorFixture = {
     // behind them, so nothing could be recovered and the section must not offer
     // a button that would find nothing.
     unlabelledVariantCount: 0,
+    // Empty for the same reason `proposal` is: these variants carry
+    // Sals3-authored labels, not a supplier's string, so there is nothing here a
+    // person could reinterpret into axes. The by-hand mapper stays unoffered
+    // rather than listing rows with no supplier label to read.
+    labelledVariants: [],
   },
   specifications: BASE_SPECIFICATIONS,
   // Design-preview fixtures carry no real category-attribute extraction -

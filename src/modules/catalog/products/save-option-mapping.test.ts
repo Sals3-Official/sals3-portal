@@ -530,6 +530,69 @@ describe('saveOptionMapping', () => {
     });
   });
 
+  /**
+   * The tactical-pants shape, trimmed: a sparse 4 x 4 grid holding 12 of its 16
+   * combinations. `deriveOptionSplit` admits it now, so this path has to write
+   * it — and the write has to reach every variant, because the linking loop walks
+   * each variant's own tokens rather than the cross-product.
+   *
+   * The four absent combinations must produce no rows at all. A variant that does
+   * not exist has nothing to link, and inventing a row for it would give a buyer
+   * a combination they can select and not buy.
+   */
+  function sparseGridVariants() {
+    const labels = [
+      ...['Black Men', 'Gray Male'].flatMap((group) =>
+        ['L', 'XL', '5XL'].map((size) => `${group}-${size}`),
+      ),
+      ...['Black Female', 'Khaki Women'].flatMap((group) =>
+        ['M', 'L', 'XL'].map((size) => `${group}-${size}`),
+      ),
+    ];
+
+    return labels.map((label, index) => ({
+      variantId: `variant-${index + 1}`,
+      label,
+    }));
+  }
+
+  const SPARSE_AXES = [
+    {
+      name: 'Colour and fit',
+      values: ['Black Men', 'Gray Male', 'Black Female', 'Khaki Women'].map(
+        (raw) => ({ raw, label: raw }),
+      ),
+    },
+    {
+      name: 'Size',
+      values: ['L', 'XL', '5XL', 'M'].map((raw) => ({ raw, label: raw })),
+    },
+  ];
+
+  it('maps a sparse grid and links every variant that exists', async () => {
+    const variants = sparseGridVariants();
+    const { db, writes } = transactionalDb({ variants });
+
+    const result = await save(db, SPARSE_AXES);
+
+    expect(result).toEqual({
+      ok: true,
+      axisCount: 2,
+      mappedVariantCount: variants.length,
+    });
+
+    // One pair per axis per real variant, and not one more: 12 variants x 2
+    // axes. The 4 missing combinations contribute nothing.
+    const pairs = writes.filter(
+      (write) => write.table === productVariantOptionValues,
+    );
+
+    expect(pairs).toHaveLength(variants.length * 2);
+    expect(new Set(pairs.map((write) => write.values.variantId)).size).toBe(
+      variants.length,
+    );
+  });
+
   it('refuses when the supplier labels do not form a complete grid', async () => {
     const { db } = transactionalDb({
       variants: [

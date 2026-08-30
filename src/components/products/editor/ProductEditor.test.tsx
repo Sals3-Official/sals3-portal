@@ -42,6 +42,8 @@ vi.mock('@/app/(portal)/listings/option-mapping-actions', () => ({
   // one arrives as `undefined` and fails the render rather than the assertion.
   recoverSupplierLabelsAction: vi.fn(),
   renameOptionMappingAction: vi.fn(),
+  saveManualOptionMappingAction: vi.fn(),
+  unmapOptionMappingAction: vi.fn(),
 }));
 
 // Same reasoning: `decide-category.ts` reaches the server-only db client too.

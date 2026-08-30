@@ -28,10 +28,42 @@
  *
  * Splitting is only safe when the result is provably complete. Ten variants
  * yielding token sets of 2 and 5 means 2 × 5 = 10 — every combination present
- * exactly once, nothing left to infer. Anything less (ragged token counts, a
- * missing combination, or a duplicate) means the label is not a clean encoding,
- * and the seller must map it by hand. A single un-delimited token is *not* a
- * failure — see the width check below.
+ * exactly once, nothing left to infer. A ragged token count or a duplicate label
+ * means the label is not a clean encoding, and the seller must map it by hand. A
+ * single un-delimited token is *not* a failure — see the width check below.
+ *
+ * ## A missing combination is not a missing encoding
+ *
+ * Requiring the cross-product to equal the variant count *exactly* was the
+ * original rule, and it refused a shape that is ordinary in apparel: a sparse
+ * grid. The live `Three-proof Casual Sports Mountaineering Tactical Pants` sells
+ * 52 variants over 8 colour-and-gender values by 8 sizes — 64 combinations, of
+ * which 12 do not exist, and systematically so: the four `Male`/`Men` values
+ * carry `5XL` and `6XL` and no `M`, the four `Female`/`Women` values carry `M`
+ * and stop at `4XL`. Womenswear ending its size run earlier than menswear is not
+ * a broken label.
+ *
+ * Sparsity does not make the split ambiguous. The tokens still come from the
+ * supplier's own delimiter, and a hole in the grid is a fact about stock, not a
+ * gap that has to be inferred: `byCombination` simply has no entry, and both
+ * this module's consumers already read a miss as "that combination cannot be
+ * bought". So the exactness test was stricter than anything downstream needed —
+ * the storefront's own token-row renderer draws an absent combination as a
+ * disabled `Unavailable` chip and always has.
+ *
+ * ## What replaces it, and why it is not a tuned threshold
+ *
+ * Pure relaxation would make some products *worse*. Three variants labelled
+ * `A-1`, `B-2`, `C-3` describe a 3 × 3 grid holding its diagonal: a buyer would
+ * be offered six chips to reach three products, four of them dead. So a sparse
+ * grid is proposed only when it is a genuine compression of the flat list —
+ * when the chips a buyer scans (the sum of the position sizes) is fewer than one
+ * chip per variant.
+ *
+ * That is the reason the Variant Matrix exists rather than a number chosen to
+ * fit: 16 chips instead of 52 is the whole point, and 6 chips instead of 3 is
+ * not. A complete grid is unaffected and still proposed on the exactness test
+ * alone, so a full 2 × 2 — where the sums are equal — keeps working.
  *
  * ## A position that never varies is dropped, not disqualifying
  *
@@ -43,9 +75,11 @@
  * dropped from what is offered as an axis — nothing invents a one-choice
  * "Colour" dropdown, which was always the actual concern — and the remaining
  * positions are proposed as before. A product where *every* position is
- * constant cannot reach this branch at all: the exactness check below already
- * requires the cross-product of bucket sizes to equal the variant count, and
- * with two or more variants that is impossible if every bucket has size one.
+ * constant cannot reach this branch at all, though no longer for the reason it
+ * once could not: every bucket holding one value means every label is the same
+ * string, which the duplicate check below refuses before the filter runs. The
+ * exactness test used to carry that argument and no longer can, now that a
+ * sparse grid is admitted.
  *
  * Costs nothing at the supplier: the labels are already stored. No CJ call.
  */
@@ -68,7 +102,14 @@ export type OptionSplitPosition = {
 
 export type OptionSplitProposal = {
   positions: OptionSplitPosition[];
-  /** Variant id per full combination, keyed by its tokens rejoined. */
+  /**
+   * Variant id per full combination, keyed by its tokens rejoined.
+   *
+   * **Not every combination of the proposed values has an entry.** A sparse grid
+   * is admitted now, so a lookup can miss, and a miss means that combination is
+   * not purchasable rather than that something went wrong. `size` is therefore
+   * the number of real variants, never the size of the cross-product.
+   */
   byCombination: Map<string, string>;
   /**
    * How many positions the supplier's label actually encodes, before constant
@@ -159,8 +200,21 @@ export function deriveOptionSplit(
   });
 
   const expected = values.reduce((total, bucket) => total * bucket.length, 1);
+  // What a buyer would scan if this were offered as rows of chips: one row per
+  // position, one chip per value. Against `variants.length`, which is what the
+  // flat fallback costs them — one chip per variant.
+  const chipCount = values.reduce((total, bucket) => total + bucket.length, 0);
 
-  if (expected !== variants.length) return undefined;
+  // A complete grid passes on exactness alone, exactly as before — including a
+  // full 2 x 2, where the two counts are equal and the compression test below
+  // would refuse it.
+  //
+  // A sparse grid passes only when it genuinely compresses. `>=` rather than `>`
+  // keeps the break-even case flat: offering the same number of chips while
+  // making some of them dead ends is a loss, not a tie.
+  if (expected !== variants.length && chipCount >= variants.length) {
+    return undefined;
+  }
 
   const byCombination = new Map<string, string>();
 

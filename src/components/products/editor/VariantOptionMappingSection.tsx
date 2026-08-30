@@ -3,6 +3,16 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Pencil } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -14,6 +24,7 @@ import type {
 import EditorStatusPill from './EditorStatusPill';
 import VariantMatrixAxisCard from './VariantMatrixAxisCard';
 import VariantMatrixValueRow from './VariantMatrixValueRow';
+import ManualOptionMappingPanel from './ManualOptionMappingPanel';
 import VariantValuePhotoStrip from './VariantValuePhotoStrip';
 import useVariantValueDrag from './use-variant-value-drag';
 import { sectionBadge } from './presentation';
@@ -130,6 +141,24 @@ export type VariantOptionMappingSectionProps = {
   /** Offered only where those labels can actually be recovered. */
   onRecoverLabels?: () => Promise<{ ok: boolean; message: string }>;
   /**
+   * Every variant carrying a supplier label, for the by-hand mapper.
+   *
+   * Only the by-hand path needs these: the derived path submits names alone
+   * because the server re-derives the structure from the same column, while a
+   * manual mapping is a per-variant decision and the seller has to read the
+   * string they are reinterpreting.
+   */
+  labelledVariants?: { variantId: string; label: string }[];
+  /**
+   * Boundary for a mapping a person builds. Withheld in fixture mode and wherever
+   * the action does not exist, so the button is never a control that cannot
+   * write.
+   */
+  onSaveManual?: (
+    axes: { name: string; values: string[] }[],
+    assignments: { variantId: string; values: string[] }[],
+  ) => Promise<{ ok: boolean; message?: string }>;
+  /**
    * The photo standing against each saved option value, keyed by `valueId`.
    *
    * Present only for a mapped product: option values are written by
@@ -140,6 +169,15 @@ export type VariantOptionMappingSectionProps = {
   valuePhotos?: Record<string, VariantMatrixValuePhoto>;
   /** Opens the photo picker for one variant. Omitted in fixture mode. */
   onPickValuePhoto?: (variantId: string) => void;
+  /**
+   * Removal boundary for a saved matrix.
+   *
+   * A separate capability from every other write here — `product:publish` rather
+   * than `product:edit` — because it degrades a live PDP with no publish step,
+   * which is the same shape as Pause. Withheld in fixture mode and wherever the
+   * action is absent, so the control is never one that cannot write.
+   */
+  onUnmap?: () => Promise<{ ok: boolean; message: string }>;
 };
 
 type ValueDraft = { raw: string; label: string };
@@ -275,6 +313,8 @@ function MappedMatrixSummary({
   onPickValuePhoto,
   onRename,
   onRenamed,
+  onUnmap,
+  variantCount,
 }: {
   axisNames: string[];
   mappedAxes: MappedOptionAxis[];
@@ -288,8 +328,14 @@ function MappedMatrixSummary({
     }[],
   ) => Promise<{ ok: boolean; message: string }>;
   onRenamed: (axisNames: string[]) => void;
+  /** Removal boundary. Withheld where the action does not exist. */
+  onUnmap?: () => Promise<{ ok: boolean; message: string }>;
+  variantCount: number;
 }) {
   const [isEditing, setIsEditing] = useState(false);
+  const [unmapOpen, setUnmapOpen] = useState(false);
+  const [unmapState, setUnmapState] = useState<'IDLE' | 'REMOVING'>('IDLE');
+  const [unmapMessage, setUnmapMessage] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<MappedOptionAxis[]>(mappedAxes);
   const [state, setState] = useState<'IDLE' | 'SAVING' | 'FAILED'>('IDLE');
   const [message, setMessage] = useState<string | null>(null);
@@ -374,11 +420,91 @@ function MappedMatrixSummary({
               Edit names
             </Button>
             <span className="text-xs text-muted-foreground">
-              Names and order only. The number of options, and which supplier
-              value sits where, cannot change once variants exist.
+              Names and order only. To change the number of options, or which
+              supplier value sits where, remove the matrix and build it again.
             </span>
           </div>
         ) : null}
+        {/*
+          The sentence above used to end "cannot change once variants exist",
+          which stopped being true the moment removal shipped. A control that
+          contradicts the copy beside it is worse than either alone.
+        */}
+        {onUnmap !== undefined ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={unmapState === 'REMOVING'}
+              onClick={() => {
+                setUnmapMessage(null);
+                setUnmapOpen(true);
+              }}
+            >
+              {unmapState === 'REMOVING' ? 'Removing…' : 'Remove matrix'}
+            </Button>
+            <p aria-live="polite" className="text-xs text-muted-foreground">
+              {unmapMessage}
+            </p>
+          </div>
+        ) : null}
+        <AlertDialog open={unmapOpen} onOpenChange={setUnmapOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                Remove the Variant Matrix from this product?
+              </AlertDialogTitle>
+              {/*
+                Every consequence, stated before the press. The first is
+                buyer-facing and immediate — there is no publish step between
+                this and the live page — and the third is the one a seller would
+                otherwise discover only when a later update is refused.
+              */}
+              <AlertDialogDescription>
+                Buyers go back to reading the supplier&rsquo;s own labels on{' '}
+                {variantCount} {variantCount === 1 ? 'variant' : 'variants'},
+                right away, on the live page.
+              </AlertDialogDescription>
+              {/*
+                A list rather than more sentences inside the description:
+                `AlertDialogDescription` renders a `<p>`, so the block elements
+                this needs cannot legally live inside it.
+              */}
+              <ul className="flex list-disc flex-col gap-1 pl-5 text-sm text-muted-foreground">
+                <li>
+                  Orders already placed keep the option names they were bought
+                  with. Nothing in a customer&rsquo;s history changes.
+                </li>
+                <li>
+                  If these labels form a grid Sals3 can read, publishing an
+                  update will be blocked until the matrix is built again.
+                </li>
+                <li>
+                  What is removed is recorded, so it can be rebuilt by hand.
+                </li>
+              </ul>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Keep it</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={async () => {
+                  if (onUnmap === undefined) return;
+
+                  setUnmapState('REMOVING');
+                  setUnmapMessage(null);
+
+                  const result = await onUnmap();
+
+                  setUnmapState('IDLE');
+                  setUnmapMessage(result.message);
+                }}
+              >
+                Remove matrix
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         {message === null ? null : (
           <p className="text-sm text-ink-muted">{message}</p>
         )}
@@ -519,6 +645,9 @@ export default function VariantOptionMappingSection({
   onSave,
   unlabelledVariantCount = 0,
   onRecoverLabels,
+  labelledVariants = [],
+  onSaveManual,
+  onUnmap,
   mappedAxes = [],
   onRename,
   valuePhotos = {},
@@ -575,6 +704,38 @@ export default function VariantOptionMappingSection({
     'IDLE' | 'RECOVERING' | 'DONE'
   >('IDLE');
   const [recoverMessage, setRecoverMessage] = useState<string | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
+
+  /**
+   * Whether a by-hand mapping is offerable at all.
+   *
+   * Needs both halves: an action to write through, and at least one supplier
+   * label for a person to read. With no labels the recovery branch is the right
+   * answer instead — a mapper listing blank rows would ask for a decision with
+   * nothing to base it on.
+   */
+  const manualMappingAvailable =
+    onSaveManual !== undefined &&
+    labelledVariants.length > 0 &&
+    /**
+     * Every variant, not merely one.
+     *
+     * `saveManualOptionMapping` requires the assignment to cover **exactly** the
+     * variants the product has, because a partial mapping is the shape that
+     * produces colliding combination keys. The panel is fed `labelledVariants`,
+     * which omits any variant with no supplier string — so on a product with a
+     * mix, the seller would fill every row it showed them, press save, and be
+     * told some variants have no values, with nothing on screen to fix. That is
+     * the dead end this whole panel exists to remove, rebuilt one layer up.
+     *
+     * Unreachable today: the enclosing branch only renders this where
+     * `unlabelledVariantCount === 0`, so the two counts already agree. That is an
+     * *incidental* guard in another expression, and this file has been bitten
+     * before by a rule that held only because of where it happened to sit.
+     * Stated here so the panel cannot be mounted into the broken state by a later
+     * edit, with a test holding it.
+     */
+    labelledVariants.length === variantCount;
 
   async function recover() {
     if (onRecoverLabels === undefined) return;
@@ -596,6 +757,8 @@ export default function VariantOptionMappingSection({
   ) {
     return (
       <MappedMatrixSummary
+        onUnmap={onUnmap}
+        variantCount={variantCount}
         axisNames={effectiveMappedAxisNames}
         mappedAxes={mappedAxes}
         valuePhotos={valuePhotos}
@@ -658,12 +821,40 @@ export default function VariantOptionMappingSection({
             </div>
           </>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            The supplier labels on this product do not form a complete grid, so
-            no Variant Matrix could be proposed. Nothing is guessed here —
-            mapping stays empty and the storefront shows each supplier label
-            whole.
-          </p>
+          <>
+            <p className="text-sm text-muted-foreground">
+              The supplier labels on this product don&rsquo;t form a grid Sals3
+              can read, so nothing was proposed &mdash; nothing here is guessed.
+              Until these options are named, buyers see all {variantCount}{' '}
+              supplier labels whole instead of choosing an option at a time.
+            </p>
+            {/*
+              The escape hatch `option-split.ts` has promised since it was
+              written. Offered only where a person actually has something to read:
+              with no labels, the recovery branch above is the answer instead.
+            */}
+            {manualMappingAvailable && !manualOpen ? (
+              <div>
+                <Button type="button" onClick={() => setManualOpen(true)}>
+                  Map these options by hand
+                </Button>
+              </div>
+            ) : null}
+            {manualMappingAvailable && manualOpen && onSaveManual ? (
+              <ManualOptionMappingPanel
+                variants={labelledVariants}
+                /*
+                  Flattened and deduped: the derived matrix aligns suggestions to
+                  proposal positions, and here there are no positions — a person
+                  is inventing the axes, so every name the workbook offers for
+                  this category is offered for any of them.
+                */
+                suggestedAxisNames={[...new Set(suggestedAxisNames.flat())]}
+                onSave={onSaveManual}
+                onCancel={() => setManualOpen(false)}
+              />
+            ) : null}
+          </>
         )}
       </div>
     );
@@ -719,6 +910,23 @@ export default function VariantOptionMappingSection({
   /** Ordering is only an instruction when some axis has more than one value. */
   const hasValuesToOrder = axes.some((axis) => axis.values.length > 1);
 
+  /**
+   * How many combinations these axes describe, against how many the supplier
+   * actually stocks.
+   *
+   * Sparse grids are proposed now, so the two numbers can differ — 8 × 8 = 64
+   * against 52 real variants on the tactical pants. Saying so is what stops the
+   * seller reading the gap as data loss: the missing combinations were never
+   * stocked, and a buyer meets them as disabled chips rather than as choices that
+   * fail. Silent is the wrong default here, because the matrix visibly claims
+   * more than the pricing table below it lists.
+   */
+  const combinationCount = proposal.reduce(
+    (total, axis) => total * axis.values.length,
+    1,
+  );
+  const missingCombinations = combinationCount - variantCount;
+
   return (
     <div className="flex flex-col gap-4 border-b border-border pb-5">
       <VariantMatrixHeader
@@ -743,6 +951,15 @@ export default function VariantOptionMappingSection({
         . Supplier values are locked: renaming a buyer label changes the
         storefront only, and CJ still fulfils by its own value.
       </p>
+
+      {missingCombinations > 0 ? (
+        <p className="text-sm text-muted-foreground">
+          These options describe {combinationCount} combinations and the
+          supplier stocks {variantCount}. The {missingCombinations} it does not
+          stock stay out of the pricing table below, and buyers see them greyed
+          out as unavailable rather than as choices.
+        </p>
+      ) : null}
 
       <div className="flex flex-col gap-4">
         {axes.map((axis, axisIndex) => {

@@ -479,6 +479,21 @@ export type ProductEditorFixture = {
      * second of which can be repaired.
      */
     unlabelledVariantCount: number;
+    /**
+     * Every variant that carries a supplier label, for the by-hand mapper.
+     *
+     * Free — the column is already on each variant here — and only the by-hand
+     * path needs it: the derived path sends names alone because the server
+     * re-derives the structure from this same column, while a manual mapping is a
+     * per-variant decision and the seller has to read the string they are
+     * reinterpreting.
+     *
+     * Unlabelled variants are omitted rather than carried as `null`. A variant
+     * with no supplier string is the `Recover supplier labels` case, and a blank
+     * row in a table whose whole purpose is reading the label would ask for a
+     * decision with nothing to base it on.
+     */
+    labelledVariants: { variantId: string; label: string }[];
   };
   variants: VariantFixture[];
   markets: MarketEvidenceFixture[];

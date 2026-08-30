@@ -13,6 +13,8 @@ import saveShowSupplierPhotoAction from '@/app/(portal)/listings/show-supplier-p
 import saveOptionMappingAction, {
   recoverSupplierLabelsAction,
   renameOptionMappingAction,
+  saveManualOptionMappingAction,
+  unmapOptionMappingAction,
 } from '@/app/(portal)/listings/option-mapping-actions';
 import uploadDescriptionImageAction from '@/app/(portal)/listings/description-image-actions';
 import {
@@ -117,6 +119,12 @@ export default function ProductEditor({
         publishAction={isDatabaseBacked ? publishProductAction : undefined}
         optionMappingAction={
           isDatabaseBacked ? saveOptionMappingAction : undefined
+        }
+        manualOptionMappingAction={
+          isDatabaseBacked ? saveManualOptionMappingAction : undefined
+        }
+        unmapOptionMappingAction={
+          isDatabaseBacked ? unmapOptionMappingAction : undefined
         }
         recoverLabelsAction={
           isDatabaseBacked ? recoverSupplierLabelsAction : undefined

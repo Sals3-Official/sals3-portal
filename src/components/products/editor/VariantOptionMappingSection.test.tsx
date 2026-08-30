@@ -12,6 +12,12 @@ const PROPOSAL = [
  * named, and ordering values no algorithm can order. Focus behaviour is asserted
  * because reordering is the one flow here that must work without a mouse.
  */
+/** The tactical pants' size, so the copy under test names a real number. */
+const FIFTY_TWO_LABELLED = Array.from({ length: 52 }, (_row, index) => ({
+  variantId: `v${index}`,
+  label: `Colour${index}-XL`,
+}));
+
 describe('VariantOptionMappingSection', () => {
   it('shows the supplier token as text, not a field, and defaults each buyer label to it', () => {
     render(
@@ -29,6 +35,30 @@ describe('VariantOptionMappingSection', () => {
     ).toHaveValue('Army Green');
   });
 
+  it('names the combinations the supplier does not stock, rather than leaving the gap unexplained', () => {
+    // 2 x 3 = 6 combinations against 4 real variants: the sparse shape the
+    // tactical pants made reachable. The matrix visibly claims more rows than
+    // the pricing table below lists, so the gap has to be stated.
+    render(
+      <VariantOptionMappingSection proposal={PROPOSAL} variantCount={4} />,
+    );
+
+    expect(
+      screen.getByText(/describe 6 combinations and the supplier stocks 4/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/The 2 it does not stock/)).toBeInTheDocument();
+  });
+
+  it('stays silent about missing combinations when the grid is complete', () => {
+    render(
+      <VariantOptionMappingSection proposal={PROPOSAL} variantCount={6} />,
+    );
+
+    // A sentence true of every complete grid is noise under a number that
+    // changes — the same reason the reserve explanation was dropped.
+    expect(screen.queryByText(/does not stock/)).not.toBeInTheDocument();
+  });
+
   it('reports rather than edits once the axes are already named', () => {
     render(
       <VariantOptionMappingSection
@@ -44,14 +74,206 @@ describe('VariantOptionMappingSection', () => {
     ).not.toBeInTheDocument();
   });
 
+  /**
+   * Removal is the answer to the one thing renaming never covered: a wrong
+   * *assignment*. Both save paths are insert-only, so before this a variant given
+   * the wrong colour was wrong permanently.
+   */
+  it('offers removal on a mapped product and names every consequence before the press', async () => {
+    const onUnmap = vi
+      .fn()
+      .mockResolvedValue({ ok: true, message: 'Removed.' });
+
+    render(
+      <VariantOptionMappingSection
+        proposal={PROPOSAL}
+        mappedAxisNames={['Colour', 'Size']}
+        variantCount={6}
+        onUnmap={onUnmap}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove matrix' }));
+
+    // Buyer-facing and immediate, because there is no publish step in between.
+    expect(
+      await screen.findByText(/supplier’s own labels on 6 variants/),
+    ).toBeInTheDocument();
+    // The reassurance that matters most, and the one a seller would not assume.
+    expect(
+      screen.getByText(/Orders already placed keep the option names/),
+    ).toBeInTheDocument();
+    // The consequence they would otherwise meet only when an update is refused.
+    expect(
+      screen.getByText(/publishing an update will be blocked/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/recorded, so it can be rebuilt by hand/),
+    ).toBeInTheDocument();
+
+    // Nothing has happened yet — the dialog is a gate, not a notice.
+    expect(onUnmap).not.toHaveBeenCalled();
+  });
+
+  it('removes only on the confirming press, and reports what happened', async () => {
+    const onUnmap = vi.fn().mockResolvedValue({
+      ok: true,
+      message: "Removed. Buyers now read the supplier's own labels.",
+    });
+
+    render(
+      <VariantOptionMappingSection
+        proposal={PROPOSAL}
+        mappedAxisNames={['Colour', 'Size']}
+        variantCount={6}
+        onUnmap={onUnmap}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove matrix' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Remove matrix' }),
+    );
+
+    await waitFor(() => expect(onUnmap).toHaveBeenCalledTimes(1));
+    expect(
+      await screen.findByText(/Buyers now read the supplier's own labels/),
+    ).toBeInTheDocument();
+  });
+
+  it('stops promising the matrix cannot change, now that it can', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={PROPOSAL}
+        mappedAxes={[
+          {
+            optionId: 'o1',
+            name: 'Colour',
+            values: [{ valueId: 'v1', label: 'Black', supplierValue: 'Black' }],
+          },
+        ]}
+        mappedAxisNames={['Colour']}
+        variantCount={6}
+        onRename={async () => ({ ok: true, message: 'Saved.' })}
+      />,
+    );
+
+    // The old sentence said the number of options "cannot change once variants
+    // exist". Removal made that false, and copy contradicting a control beside
+    // it is worse than either alone.
+    expect(screen.queryByText(/cannot change once variants exist/)).toBeNull();
+    expect(
+      screen.getByText(/remove the matrix and build it again/),
+    ).toBeInTheDocument();
+  });
+
+  it('withholds removal where the action is absent', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={PROPOSAL}
+        mappedAxisNames={['Colour', 'Size']}
+        variantCount={6}
+      />,
+    );
+
+    expect(
+      screen.queryByRole('button', { name: 'Remove matrix' }),
+    ).not.toBeInTheDocument();
+  });
+
   it('says nothing was guessed when the labels form no clean grid', () => {
     render(<VariantOptionMappingSection proposal={[]} variantCount={1} />);
 
-    expect(screen.getByText(/do not form a complete grid/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/don’t form a grid Sals3 can read/),
+    ).toBeInTheDocument();
     // No recovery is offered for a product whose labels are present and simply
     // do not form a grid — there is nothing to recover.
     expect(
       screen.queryByRole('button', { name: 'Recover supplier labels' }),
+    ).not.toBeInTheDocument();
+  });
+
+  /**
+   * The dead end this branch used to be. A seller could read that buyers would
+   * see 52 raw supplier strings and had nothing to press, while
+   * `option-split.ts` had promised a by-hand path since the day it was written.
+   */
+  it('offers a by-hand mapping where the labels cannot be split', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[]}
+        variantCount={52}
+        // All 52, because the panel may only open where every variant carries a
+        // label — see the mixed-state case below.
+        labelledVariants={FIFTY_TWO_LABELLED}
+        onSaveManual={async () => ({ ok: true })}
+      />,
+    );
+
+    // The consequence is stated in the seller's terms before the offer.
+    expect(
+      screen.getByText(/buyers see all 52 supplier labels whole/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Map these options by hand' }),
+    );
+
+    expect(screen.getByLabelText('Option 1 name')).toBeInTheDocument();
+  });
+
+  it('withholds the by-hand offer when there is no action to write through', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[]}
+        variantCount={52}
+        labelledVariants={FIFTY_TWO_LABELLED}
+      />,
+    );
+
+    // Same rule the photo chips follow: a control that cannot write is not
+    // rendered at all.
+    expect(
+      screen.queryByRole('button', { name: 'Map these options by hand' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('withholds it when only some variants carry a label, which the server would refuse', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[]}
+        variantCount={3}
+        // Two of three. The panel would show two rows, the seller would fill
+        // both, and `saveManualOptionMapping` would refuse the whole thing for
+        // covering 2 of 3 variants — a dead end with nothing on screen to fix.
+        labelledVariants={[
+          { variantId: 'v1', label: 'Black-L' },
+          { variantId: 'v2', label: 'Black-XL' },
+        ]}
+        onSaveManual={async () => ({ ok: true })}
+      />,
+    );
+
+    expect(
+      screen.queryByRole('button', { name: 'Map these options by hand' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('withholds it when no variant carries a label, where recovery is the answer', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[]}
+        variantCount={52}
+        labelledVariants={[]}
+        onSaveManual={async () => ({ ok: true })}
+      />,
+    );
+
+    // Nothing to read means nothing to reinterpret; a mapper listing blank rows
+    // would ask for a decision with no basis.
+    expect(
+      screen.queryByRole('button', { name: 'Map these options by hand' }),
     ).not.toBeInTheDocument();
   });
 
