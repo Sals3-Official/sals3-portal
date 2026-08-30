@@ -9,10 +9,12 @@ import {
   inArray,
   isNotNull,
   isNull,
+  like,
   lte,
   ne,
   or,
   sql,
+  type SQL,
 } from 'drizzle-orm';
 import getDb, { type DbExecutor } from '@/lib/db/client';
 import type { RatingSummary } from '@/modules/reviews/contracts';
@@ -676,13 +678,26 @@ export async function listPublishedProducts(
 
 export type StorefrontDepartmentSort = 'newest' | 'price-asc' | 'price-desc';
 
-export type StorefrontDepartmentQuery = {
-  /**
-   * The exact `sals3_categories.l1` value, resolved from a slug by
-   * `departmentNameForSlug`. Never a raw path segment — see that function for
-   * why the allow-list is the security boundary here.
-   */
-  departmentName: string;
+/**
+ * Which slice of the taxonomy a browse covers.
+ *
+ * Two shapes because two different things are safe to interpolate, and both are
+ * resolved from a URL segment by an allow-list rather than taken from it:
+ *
+ * - `departmentName` is an exact `sals3_categories.l1` value from
+ *   `departmentNameForSlug` — the 21-entry whitelist.
+ * - `categoryPath` is the full `sals3_categories.path` of a node the taxonomy
+ *   extract actually contains, from `taxonomyCodeFromSlug` +
+ *   `taxonomyPathForCode`. A path that is not in the extract never becomes one.
+ *
+ * Never a raw path segment in either case: that is the security boundary, and it
+ * is why an unknown slug 404s rather than reaching a query.
+ */
+export type StorefrontCategoryScope =
+  | { departmentName: string; categoryPath?: undefined }
+  | { categoryPath: string; departmentName?: undefined };
+
+export type StorefrontDepartmentQuery = StorefrontCategoryScope & {
   sort: StorefrontDepartmentSort;
   page: number;
   limit: number;
@@ -737,6 +752,37 @@ async function countGroupedProducts(
 }
 
 /**
+ * The taxonomy predicate for one browse scope.
+ *
+ * ## A department matches `l1`; a deeper node matches its subtree
+ *
+ * `l1` carries the department name verbatim and `sals3_categories_l1_idx`
+ * indexes it, so a department stays the cheap equality it always was.
+ *
+ * A deeper node has no column of its own past `l5` and needs its descendants
+ * anyway — browsing `Paper Products` should list what is filed under
+ * `Notebooks & Notepads` too, or a category page shows nothing on a taxonomy
+ * where products sit at the leaves. So it matches the node **or anything beneath
+ * it** by path.
+ *
+ * `LIKE` with the separator appended rather than a bare prefix. Without the
+ * `' > '`, a category named `Shoes` would also match `Shoes & Boots` — a
+ * different branch of the tree. That is the same trap `reprice.ts` documents,
+ * and it is the reason this is a shared helper rather than a second copy of the
+ * expression.
+ */
+function categoryScopeCondition(scope: StorefrontCategoryScope): SQL {
+  if (scope.categoryPath === undefined) {
+    return eq(sals3Categories.l1, scope.departmentName) as SQL;
+  }
+
+  return or(
+    eq(sals3Categories.path, scope.categoryPath),
+    like(sals3Categories.path, `${scope.categoryPath} > %`),
+  ) as SQL;
+}
+
+/**
  * Published products filed under one L1 department, filtered and paged.
  *
  * ## Why the price bound is a `HAVING`, not a `WHERE`
@@ -775,10 +821,7 @@ export async function listPublishedProductsInDepartment(
   input: StorefrontDepartmentQuery,
   executor: DbExecutor = getDb(),
 ): Promise<StorefrontPage> {
-  const scope = and(
-    publishedScope(),
-    eq(sals3Categories.l1, input.departmentName),
-  );
+  const scope = and(publishedScope(), categoryScopeCondition(input));
   const priceBound = listingPriceBound(input);
 
   const ordered = listBase(executor)

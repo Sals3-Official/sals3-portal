@@ -113,7 +113,11 @@ const readProductAcrossRequests = unstable_cache(
   // Bumped to 'v6' on 2026-08-24: each variant gained `imageUrl`. The feed key
   // stays on 'v2' — a card row has no variants, so busting it would discard
   // warm entries for nothing.
-  ['storefront-catalog-product', 'v6'],
+  // Bumped to 'v7' on 2026-08-31: the detail row gained `categoryTrail`, so a
+  // warm 'v6' entry keeps serving a PDP whose breadcrumb cannot link past the
+  // department — which reads as "the feature did not ship". The feed key stays
+  // on 'v3': a card row has no breadcrumb.
+  ['storefront-catalog-product', 'v7'],
   { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
 );
 
@@ -133,7 +137,16 @@ const readProductAcrossRequests = unstable_cache(
  */
 const readDepartmentFeedAcrossRequests = unstable_cache(
   async (
-    departmentName: string,
+    /**
+     * Exactly one of these is set, and the route decides which.
+     *
+     * Two positional arguments rather than one scope object for the reason the
+     * note above gives: `unstable_cache` keys on the serialised argument list, so
+     * an object would key on property order as well as value. `null` for the
+     * unused half keeps both positions present in every key.
+     */
+    departmentName: string | null,
+    categoryPath: string | null,
     sort: StorefrontDepartmentQuery['sort'],
     page: number,
     limit: number,
@@ -141,14 +154,18 @@ const readDepartmentFeedAcrossRequests = unstable_cache(
     maxPriceMinor: number | undefined,
   ): Promise<StorefrontPage> =>
     listPublishedProductsInDepartment({
-      departmentName,
+      ...(categoryPath === null
+        ? { departmentName: departmentName ?? '' }
+        : { categoryPath }),
       sort,
       page,
       limit,
       minPriceMinor,
       maxPriceMinor,
     }),
-  ['storefront-catalog-department-feed', 'v1'],
+  // 'v2': the argument list gained a scope, so entries keyed on the old arity
+  // must not be reused.
+  ['storefront-catalog-department-feed', 'v2'],
   { revalidate: REVALIDATE_SECONDS, tags: [STOREFRONT_CATALOG_TAG] },
 );
 
@@ -214,7 +231,8 @@ export const readStorefrontProduct: (
 ) => Promise<StorefrontDetailRow | null> = cache(readProductAcrossRequests);
 
 export const readStorefrontDepartmentFeed: (
-  departmentName: string,
+  departmentName: string | null,
+  categoryPath: string | null,
   sort: StorefrontDepartmentQuery['sort'],
   page: number,
   limit: number,

@@ -4,6 +4,11 @@ import {
   storefrontDepartmentQuerySchema,
   toStorefrontProductFeed,
 } from '@/lib/storefront/catalog-feed';
+import {
+  categoryTrailForPath,
+  taxonomyCodeFromSlug,
+  taxonomyPathForCode,
+} from '@/modules/catalog/taxonomy/category-trail';
 import { departmentNameForSlug } from '@/modules/catalog/taxonomy/departments';
 import {
   notFoundResponse,
@@ -73,9 +78,24 @@ export async function GET(
 
   try {
     const { slug } = await params;
+    /**
+     * A department by name, or any deeper taxonomy node by its Google id.
+     *
+     * Departments first: `/c/office-supplies` is already live and linked from
+     * four surfaces, and a bare department slug carries no trailing id for
+     * `taxonomyCodeFromSlug` to read anyway.
+     *
+     * Both halves are allow-lists. A slug that is neither a department nor a
+     * seeded taxonomy code 404s here, so nothing a buyer types reaches a query —
+     * see the note above for why that is a 404 rather than an empty 200.
+     */
     const departmentName = departmentNameForSlug(slug);
+    const categoryCode =
+      departmentName === null ? taxonomyCodeFromSlug(slug) : null;
+    const categoryPath =
+      categoryCode === null ? null : taxonomyPathForCode(categoryCode);
 
-    if (departmentName === null) {
+    if (departmentName === null && categoryPath === null) {
       return notFoundResponse();
     }
 
@@ -89,6 +109,7 @@ export async function GET(
     });
     const page = await readStorefrontDepartmentFeed(
       departmentName,
+      categoryPath,
       query.sort,
       query.page,
       query.limit,
@@ -96,9 +117,50 @@ export async function GET(
       query.maxPriceMinor,
     );
 
-    return Response.json(toStorefrontProductFeed(page, query), {
-      headers: STOREFRONT_HEADERS,
-    });
+    /**
+     * The scope's own display name, so a consumer can title the page.
+     *
+     * The storefront has the 21 department names and no taxonomy beyond them, so
+     * without this it could only de-slugify `paper-products-956` and guess at the
+     * capitalisation. The name is the last segment of the path the id resolved
+     * to — read from the extract, never derived from the URL.
+     *
+     * Added here rather than to `toStorefrontProductFeed`, which the whole-catalogue
+     * feed and search also return: neither has a category to name, and widening
+     * their payload for this one would put a field on two responses that can never
+     * fill it.
+     */
+    const categoryName =
+      departmentName ?? categoryPath?.split(' > ').at(-1)?.trim() ?? null;
+    /**
+     * The scope's own ancestry, so a deeper browse page can offer a way up.
+     *
+     * Without it, `/c/paper-products-956` would render a breadcrumb with no
+     * parents — a buyer could reach the level and not climb out of it, which is
+     * a hole in the very feature this endpoint exists for. A department needs
+     * none: its ancestry is `Home / All categories` and the consumer already has
+     * that.
+     */
+    const categoryTrail =
+      categoryPath === null ? undefined : categoryTrailForPath(categoryPath);
+
+    return Response.json(
+      {
+        ...toStorefrontProductFeed(page, query),
+        ...(categoryName === null
+          ? {}
+          : {
+              category: {
+                name: categoryName,
+                slug,
+                ...(categoryTrail === undefined
+                  ? {}
+                  : { trail: categoryTrail }),
+              },
+            }),
+      },
+      { headers: STOREFRONT_HEADERS },
+    );
   } catch (error) {
     return storefrontErrorResponse('categories/[slug]/products', error);
   }

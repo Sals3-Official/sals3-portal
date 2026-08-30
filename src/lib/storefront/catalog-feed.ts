@@ -1,3 +1,4 @@
+import { categoryTrailForPath } from '@/modules/catalog/taxonomy/category-trail';
 import { z } from 'zod';
 import type { DescriptionBlock } from '@/modules/catalog/products/description-document';
 import { slugBaseFromTitle } from '@/modules/catalog/products/slug';
@@ -245,6 +246,24 @@ export type StorefrontProductDetail = StorefrontProduct & {
   publishedAt: string;
   /** Full taxonomy path, for a breadcrumb. Omitted when unmapped. */
   categoryPath?: string;
+  /**
+   * The same path, one entry per level, with each level's own `/c/[slug]`
+   * segment where it has one.
+   *
+   * `categoryPath` is a display string and stays: it is what a consumer with no
+   * interest in links reads, and dropping it would be a breaking change for one
+   * that already does. This carries what a display string cannot — an address
+   * per level — so a breadcrumb can link `Paper Products` as well as
+   * `Office Supplies`.
+   *
+   * A level's `slug` is absent where it is not addressable: a CJ-mirrored path,
+   * or a level the seeded taxonomy does not contain. Absent rather than guessed,
+   * so a consumer renders text rather than pointing a buyer at a 404.
+   *
+   * Omitted entirely when `categoryPath` is, so the two cannot disagree about
+   * whether this product has a category at all.
+   */
+  categoryTrail?: { name: string; slug?: string }[];
   /** At least the card's image when one exists; more once evidence is captured. */
   images: { url: string; alt: string }[];
   description?: { blocks: DescriptionBlock[] };
@@ -463,7 +482,12 @@ export function toStorefrontProductDetail(
   return {
     ...base,
     publishedAt: row.publishedAt,
-    ...(row.categoryPath === null ? {} : { categoryPath: row.categoryPath }),
+    ...(row.categoryPath === null
+      ? {}
+      : {
+          categoryPath: row.categoryPath,
+          categoryTrail: categoryTrailForPath(row.categoryPath),
+        }),
     ...(row.rating === undefined
       ? {}
       : { ratingBreakdown: row.rating.breakdown }),

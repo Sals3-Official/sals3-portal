@@ -86,6 +86,8 @@ describe('storefront department products API', () => {
     });
     expect(mocks.readStorefrontDepartmentFeed).toHaveBeenCalledWith(
       'Animals & Pet Supplies',
+      // A department scopes on `l1`, so it carries no category path.
+      null,
       'newest',
       1,
       30,
@@ -127,6 +129,8 @@ describe('storefront department products API', () => {
 
     expect(mocks.readStorefrontDepartmentFeed).toHaveBeenCalledWith(
       'Apparel & Accessories',
+      // A department scopes on `l1`, so it carries no category path.
+      null,
       'price-asc',
       2,
       10,
@@ -155,12 +159,121 @@ describe('storefront department products API', () => {
 
     expect(mocks.readStorefrontDepartmentFeed).toHaveBeenCalledWith(
       'Animals & Pet Supplies',
+      // A department scopes on `l1`, so it carries no category path.
+      null,
       'newest',
       1,
       30,
       undefined,
       undefined,
     );
+  });
+
+  /**
+   * Owner decision 2026-08-31: every category level a breadcrumb shows must be
+   * clickable, not only the department. `/c/clothing` and `/c/pants` both
+   * answered 404 before this — real taxonomy levels with no address.
+   */
+  it('serves a deeper taxonomy level by its Google id, as a subtree', async () => {
+    vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
+    mocks.readStorefrontDepartmentFeed.mockResolvedValue({
+      rows: [],
+      total: 0,
+    });
+
+    const response = await call('secret', 'paper-products-956');
+
+    expect(response.status).toBe(200);
+    expect(mocks.readStorefrontDepartmentFeed).toHaveBeenCalledWith(
+      // No department: a deeper node scopes on its path, not on `l1`.
+      null,
+      'Office Supplies > General Office Supplies > Paper Products',
+      'newest',
+      1,
+      30,
+      undefined,
+      undefined,
+    );
+  });
+
+  it('reads only the id, so the words in front of it are decoration', async () => {
+    vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
+    mocks.readStorefrontDepartmentFeed.mockResolvedValue({
+      rows: [],
+      total: 0,
+    });
+
+    // A renamed category, or a hand-typed link with the wrong words, still
+    // resolves — which is the whole reason the id is in the slug.
+    await call('secret', 'totally-wrong-words-956');
+
+    expect(mocks.readStorefrontDepartmentFeed).toHaveBeenCalledWith(
+      null,
+      'Office Supplies > General Office Supplies > Paper Products',
+      'newest',
+      1,
+      30,
+      undefined,
+      undefined,
+    );
+  });
+
+  it('names the scope so a consumer can title the page', async () => {
+    vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
+    mocks.readStorefrontDepartmentFeed.mockResolvedValue({
+      rows: [],
+      total: 0,
+    });
+
+    const deep = await (await call('secret', 'paper-products-956')).json();
+    const department = await (
+      await call('secret', 'animals-pet-supplies')
+    ).json();
+
+    // Read from the extract, never de-slugified from the URL — the storefront
+    // has no taxonomy past the 21 department names and would have to guess at
+    // the capitalisation.
+    expect(deep.category).toEqual({
+      name: 'Paper Products',
+      slug: 'paper-products-956',
+      // Its ancestry too, or a buyer could reach this level and not climb out.
+      trail: [
+        { name: 'Office Supplies', slug: 'office-supplies' },
+        {
+          name: 'General Office Supplies',
+          slug: 'general-office-supplies-932',
+        },
+        { name: 'Paper Products', slug: 'paper-products-956' },
+      ],
+    });
+    // A department needs no trail: its ancestry is Home / All categories, which
+    // the consumer already has.
+    expect(department.category).toEqual({
+      name: 'Animals & Pet Supplies',
+      slug: 'animals-pet-supplies',
+    });
+  });
+
+  it('404s an id the taxonomy does not carry, without querying', async () => {
+    vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
+
+    const response = await call('secret', 'invented-99999999');
+
+    // The allow-list is the security boundary: nothing a buyer types reaches a
+    // query, and answering 200 with an empty page would claim a category exists.
+    expect(response.status).toBe(404);
+    expect(mocks.readStorefrontDepartmentFeed).not.toHaveBeenCalled();
+  });
+
+  it('404s a slug that is neither a department nor an id', async () => {
+    vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
+
+    // `clothing` is a real taxonomy level, and this is why it needs its id: a
+    // bare name cannot be resolved back to one row.
+    const response = await call('secret', 'clothing');
+
+    expect(response.status).toBe(404);
+    expect(mocks.readStorefrontDepartmentFeed).not.toHaveBeenCalled();
   });
 
   it('returns an empty department rather than an error', async () => {
@@ -180,6 +293,9 @@ describe('storefront department products API', () => {
       page: 1,
       limit: 30,
       totalPages: 1,
+      // Named even when empty: the page still has a heading to render, and an
+      // empty department is a real department.
+      category: { name: 'Software', slug: 'software' },
     });
   });
 

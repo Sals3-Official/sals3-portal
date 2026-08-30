@@ -70,12 +70,30 @@ const SALS3_TAXONOMY_DEPARTMENTS = [
  *
  * Built once at module load: 21 entries, and the list is a frozen constant.
  */
+const DEPARTMENT_SLUG_BY_NAME = new Map<string, string>(
+  SALS3_TAXONOMY_DEPARTMENTS.map((name) => [name, slugBaseFromTitle(name)]),
+);
+
 const DEPARTMENT_NAME_BY_SLUG = new Map<string, string>(
   SALS3_TAXONOMY_DEPARTMENTS.map((name) => [slugBaseFromTitle(name), name]),
 );
 
 export function departmentNameForSlug(slug: string): string | null {
   return DEPARTMENT_NAME_BY_SLUG.get(slug) ?? null;
+}
+
+/**
+ * The other direction: `Apparel & Accessories` → `apparel-accessories`.
+ *
+ * Derived from the same 21-name list, so a taxonomy reseed moves both directions
+ * in one commit or neither — the property the note above exists to protect.
+ *
+ * Used by `category-trail.ts` to keep an L1 breadcrumb entry on the bare
+ * department URL that is already live and already linked from four surfaces,
+ * rather than minting a second address for it.
+ */
+export function departmentSlugForName(name: string): string | null {
+  return DEPARTMENT_SLUG_BY_NAME.get(name.trim()) ?? null;
 }
 
 export default SALS3_TAXONOMY_DEPARTMENTS;
