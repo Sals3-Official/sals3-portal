@@ -108,13 +108,17 @@ describe('searchCondition', () => {
     expect(query.sql).not.toContain('drop table');
     // The `_` comes back escaped - it is a LIKE wildcard, and a seller typing
     // one means the character, not "any character".
+    // Five fields per word, and this term is four words.
     expect(query.params).toEqual(
-      Array(4).fill("%acme'; drop table supplier\\_candidates;--%"),
+      // Split on whitespace only, so punctuation stays inside its word.
+      ["%acme';%", '%drop%', '%table%', '%supplier\\_candidates;--%'].flatMap(
+        (token) => Array(5).fill(token),
+      ),
     );
   });
 
-  it('matches the CJ id, evidence name, evidence SKU, and feed-snapshot name', () => {
-    const query = renderSql(searchCondition('phone case'));
+  it('matches the CJ id, both names, and BOTH SKU fields', () => {
+    const query = renderSql(searchCondition('phonecase'));
 
     expect(query.sql).toContain('"external_product_id" ilike');
     expect(query.sql).toContain(`"evidence"->>'name' ILIKE`);
@@ -122,7 +126,41 @@ describe('searchCondition', () => {
     // The only name a screening-blocked candidate has: those rows are decided
     // before any CJ evidence call, so `evidence` is null for every one of them.
     expect(query.sql).toContain(`"feed_snapshot"->>'name' ILIKE`);
-    expect(query.params).toEqual(Array(4).fill('%phone case%'));
+    // The regression this closes: `evidence` exists on a tiny fraction of
+    // candidates (19 of 87,966 when last measured), so searching only its SKU
+    // meant the SKU printed on the row could not be typed back into the box.
+    expect(query.sql).toContain(`"feed_snapshot"->>'sku' ILIKE`);
+    expect(query.params).toEqual(Array(5).fill('%phonecase%'));
+  });
+
+  it('requires every word, in any order, so a remembered pair still matches', () => {
+    // "Men's Casual Loose Straight Pants" was findable by "casual loose" and
+    // not by "pants mens" - a seller typing the two words they remember got an
+    // empty table on a tab holding 432,654 products.
+    const query = renderSql(searchCondition('pants mens'));
+
+    expect(query.params).toEqual([
+      ...Array(5).fill('%pants%'),
+      ...Array(5).fill('%mens%'),
+    ]);
+    expect(query.sql).toContain(' and ');
+  });
+
+  it('collapses runs of whitespace rather than searching for an empty word', () => {
+    expect(renderSql(searchCondition('pants    mens')).params).toEqual([
+      ...Array(5).fill('%pants%'),
+      ...Array(5).fill('%mens%'),
+    ]);
+  });
+
+  it('bounds how many words one box can turn into predicates', () => {
+    // Each word is its own five-way OR group, so an unbounded term would let a
+    // pasted paragraph build an arbitrarily large predicate.
+    const query = renderSql(
+      searchCondition('one two three four five six seven eight'),
+    );
+
+    expect(query.params).toHaveLength(6 * 5);
   });
 
   it('escapes LIKE wildcards so a typed % or _ matches itself', () => {
