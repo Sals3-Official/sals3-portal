@@ -43,7 +43,9 @@ test.describe('Product Catalogue preview', () => {
     await expect(
       tabs.getByRole('tab', { name: /Live · Needs Attention/ }),
     ).toBeVisible();
-    await expect(tabs.getByRole('tab', { name: /Auto-paused/ })).toBeVisible();
+    // "Paused", not "Auto-paused": one status covers a seller pausing a listing
+    // and the system doing it, and `pauseReason` is what says which.
+    await expect(tabs.getByRole('tab', { name: /^Paused/ })).toBeVisible();
     await expect(tabs.getByRole('tab', { name: /Archived/ })).toBeVisible();
 
     await expect(tabs.getByRole('tab', { name: 'Pending QC' })).toHaveCount(0);

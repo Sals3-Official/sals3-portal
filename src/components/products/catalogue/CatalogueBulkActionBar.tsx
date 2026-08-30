@@ -40,6 +40,15 @@ type CatalogueBulkActionBarProps = {
    * overwritten. A count could not carry either.
    */
   selectedProducts: CatalogueProductFixture[];
+  /**
+   * Whether this tab is one where publishing means anything.
+   *
+   * `false` on Live and Live · Needs Attention: everything there is already on
+   * the storefront, so a Publish button is an action with no subject. Hidden
+   * rather than disabled — a greyed control invites a seller to work out what
+   * would enable it, and nothing on those tabs ever would.
+   */
+  canPublish: boolean;
   onBulkPause: () => void;
   onBulkArchive: () => void;
   /** Called after a run that published at least one listing, to refetch. */
@@ -73,6 +82,7 @@ type CatalogueBulkActionBarProps = {
  */
 export default function CatalogueBulkActionBar({
   selectedProducts,
+  canPublish,
   onBulkPause,
   onBulkArchive,
   onPublished,
@@ -88,7 +98,13 @@ export default function CatalogueBulkActionBar({
   // nothing to set against, so those are excluded from the count rather than
   // sent and refused as `invalid_input`.
   const publishable = selectedProducts.filter(
-    (product) => product.productVersion !== undefined,
+    (product) =>
+      product.productVersion !== undefined &&
+      // Already on the storefront. Selecting a mix on All and pressing Publish
+      // should get the drafts live and leave the rest alone, rather than
+      // re-running a publish that has nothing to change.
+      product.status !== 'LIVE' &&
+      product.status !== 'LIVE_NEEDS_ATTENTION',
   );
 
   const runPublish = () => {
@@ -145,24 +161,17 @@ export default function CatalogueBulkActionBar({
           {selectedCount} {selectedCount === 1 ? 'listing' : 'listings'}{' '}
           selected
         </span>
-        <Button
-          type="button"
-          size="sm"
-          disabled={disabled || isPublishing || publishable.length === 0}
-          onClick={() => setPublishConfirmOpen(true)}
-        >
-          <Upload aria-hidden="true" className="size-4" />
-          {isPublishing ? 'Publishing…' : 'Publish'}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={disabled}
-          onClick={() => announceUnbuilt('Edit Special Price')}
-        >
-          Edit Special Price
-        </Button>
+        {canPublish ? (
+          <Button
+            type="button"
+            size="sm"
+            disabled={disabled || isPublishing || publishable.length === 0}
+            onClick={() => setPublishConfirmOpen(true)}
+          >
+            <Upload aria-hidden="true" className="size-4" />
+            {isPublishing ? 'Publishing…' : 'Publish'}
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="outline"

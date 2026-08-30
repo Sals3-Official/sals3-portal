@@ -62,7 +62,20 @@ export const LISTING_STATUS_LABELS: Record<ListingStatus, string> = {
   DRAFT: 'Draft',
   LIVE: 'Live',
   LIVE_NEEDS_ATTENTION: 'Live · Needs Attention',
-  AUTO_PAUSED: 'Auto-paused',
+  /*
+    "Paused", not "Auto-paused".
+
+    One status covers both ways a listing stops selling — a seller pausing it
+    themselves and the system pausing it — and `pauseReason` is what says which,
+    on every row that carries it. Labelling the tab "Auto-paused" told a seller
+    who had just paused something by hand that the system had done it, which is
+    the one thing the reason line exists to prevent.
+
+    The stored code stays `AUTO_PAUSED`: it is a persisted value with rows and
+    filters behind it, and renaming it to fix a label would be a migration to
+    fix a word.
+  */
+  AUTO_PAUSED: 'Paused',
   ARCHIVED: 'Archived',
 };
 

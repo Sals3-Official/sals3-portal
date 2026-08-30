@@ -67,6 +67,28 @@ export default function ProductCatalogueWorkspace({
   initialProducts,
 }: ProductCatalogueWorkspaceProps) {
   const [products, setProducts] = useState(initialProducts);
+  /*
+    Server truth replaces the local copy when it changes.
+
+    This screen keeps its rows in state so the preview-only bulk actions can
+    move them, and `useState` ignores its argument on every render after the
+    first. So a real write — pausing a listing from the row menu, or a bulk
+    publish — reached the database, revalidated `/listings`, arrived back as new
+    props, and was thrown away: the toast said the listing was paused while the
+    row it named still read Live until a hard reload.
+
+    React's documented shape for this, rather than an effect: compare during
+    render and adjust, which re-renders immediately with no extra commit and no
+    flash of the stale list. Local preview edits are discarded on purpose when
+    this fires — what the server says outranks what this tab was pretending.
+  */
+  const [lastServerProducts, setLastServerProducts] = useState(initialProducts);
+
+  if (lastServerProducts !== initialProducts) {
+    setLastServerProducts(initialProducts);
+    setProducts(initialProducts);
+  }
+
   /**
    * Opens on **Live**, not `All` — owner decision 2026-08-22. The screen's
    * everyday job is the listings a buyer can currently see; drafts are one
@@ -229,6 +251,9 @@ export default function ProductCatalogueWorkspace({
       />
       <CatalogueBulkActionBar
         selectedProducts={selectedProducts}
+        canPublish={
+          activeTab !== 'LIVE' && activeTab !== 'LIVE_NEEDS_ATTENTION'
+        }
         onBulkPause={handleBulkPause}
         onBulkArchive={handleBulkArchive}
         onPublished={() => {
@@ -246,6 +271,20 @@ export default function ProductCatalogueWorkspace({
         expandedIds={expandedIds}
         onToggleSelected={(id) => toggleSet(selectedIds, setSelectedIds, id)}
         onToggleExpanded={(id) => toggleSet(expandedIds, setExpandedIds, id)}
+        onToggleSelectAll={() => {
+          // `visibleProducts`, not `products`: the box sits above the rows a
+          // seller can see, and selecting rows hidden by the tab or a filter
+          // would arm the bulk actions against listings they never looked at.
+          const allShown = visibleProducts.every((product) =>
+            selectedIds.has(product.id),
+          );
+
+          setSelectedIds(
+            allShown
+              ? new Set()
+              : new Set(visibleProducts.map((product) => product.id)),
+          );
+        }}
         onPauseListing={handlePauseListing}
         onArchive={setArchiveTargetId}
         onToggleVariantPaused={toggleVariantPaused}
