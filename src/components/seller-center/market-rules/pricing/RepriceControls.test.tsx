@@ -98,11 +98,32 @@ function openAndScope(categoryCode = 'CAT-GGL-166', scopeKey: string = 'AU') {
  * `openAndCheck` waits for the preview text, which appears while the
  * `useTransition` is still pending — the button still reads "Checking…" at that
  * moment, so a second press aimed at its idle label finds nothing.
+ *
+ * ## Waiting for the label was not enough
+ *
+ * The button is `disabled={!canCheck || isApplying}` but labelled from
+ * `isChecking`, so the two are not the same condition. After an apply, React
+ * commits `setAfterSku` — which is what puts the "Continuing from…" notice on
+ * screen — before the transition settles and `isApplying` goes false. In that
+ * window the button reads "Check what would change" and is still disabled, and
+ * `fireEvent.click` on a disabled button does nothing **silently**: no call, no
+ * error, and the following `toHaveBeenLastCalledWith` waits out its timeout
+ * against the *first* check's arguments.
+ *
+ * That window is one commit wide when the machine is idle and wider under a
+ * full suite, which is exactly the shape this failed with: green on its own,
+ * red about once in four full runs.
+ *
+ * So this waits for the button to be usable rather than merely to look idle.
+ * Re-queried inside `waitFor` rather than captured once, because the node is
+ * re-rendered while the transition settles.
  */
 async function checkAgain() {
-  fireEvent.click(
-    await screen.findByRole('button', { name: /Check what would change/ }),
-  );
+  const checkButton = () =>
+    screen.getByRole('button', { name: /Check what would change/ });
+
+  await waitFor(() => expect(checkButton()).toBeEnabled());
+  fireEvent.click(checkButton());
 }
 
 async function openAndCheck() {
@@ -275,6 +296,58 @@ describe('RepriceControls', () => {
         false,
       ),
     );
+  });
+
+  /**
+   * The trap `checkAgain` exists to avoid, pinned deterministically.
+   *
+   * The Check button is disabled from `isApplying` but labelled from
+   * `isChecking`, so while an apply is in flight it reads "Check what would
+   * change" and refuses the click. A helper that waited for that label — which
+   * is what this file used to do — could click a disabled button, get no call
+   * and no error, and leave the next assertion waiting out its timeout against
+   * the previous check's arguments. That is the flake this replaced: green
+   * alone, red about once in four full suite runs.
+   *
+   * Written against a held-open apply rather than a real one, so the window is
+   * the whole test instead of one commit.
+   */
+  it('refuses a fresh check while an apply is still in flight', async () => {
+    let finishApply: (result: unknown) => void = () => {};
+
+    // Truncated, so the dialog stays open once the apply lands and the button
+    // is still mounted to be re-checked. A last page closes the dialog, which
+    // would leave a detached node that is disabled for a different reason.
+    mocks.previewRepriceAction.mockResolvedValue(
+      preview({ truncated: true, nextAfterSku: 'SKU-0499' }),
+    );
+    mocks.applyRepriceAction.mockReturnValue(
+      new Promise((resolve) => {
+        finishApply = resolve;
+      }),
+    );
+    renderControls();
+
+    await openAndCheck();
+    fireEvent.change(screen.getByLabelText('Reason for change'), {
+      target: { value: REASON },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply new prices' }));
+
+    const checkButton = await screen.findByRole('button', {
+      name: /Check what would change/,
+    });
+
+    // Both halves matter: the idle label is what made the old wait look
+    // satisfied, and the disabled state is what made the click do nothing.
+    await waitFor(() => expect(checkButton).toBeDisabled());
+    expect(checkButton).toHaveTextContent('Check what would change');
+
+    finishApply({
+      ok: true,
+      data: { written: 1, unchanged: 4, unpriceable: 0, manual: 0 },
+    });
+    await waitFor(() => expect(checkButton).toBeEnabled());
   });
 
   it('continues from where an applied page ended', async () => {
