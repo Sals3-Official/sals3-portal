@@ -1,0 +1,98 @@
+# One-time, idempotent DDL — no schedule, manual trigger only.
+#
+# Adds the composite index the sourcing pipeline's own ORDER BY has always
+# needed: candidate_evaluations has indexes on candidate_id, status,
+# next_retry_at and next_refresh_at, and NONE on updated_at — while every
+# pipeline tab orders by it. So the Ready tab finds its 432,654 PASS rows, sorts
+# every one of them, and returns the first hundred, on every page load, every
+# tab switch, and every drawer open and close.
+#
+# NO ORDERING HAZARD WITH ANY DEPLOYMENT. Nothing in the application reads this
+# index by name. It changes how an existing query is planned and nothing else,
+# so it is safe before, during and after a deploy — unlike the trigram work,
+# which the search had to wait for.
+#
+# WHY THIS LOOPS. Built CONCURRENTLY, because candidate_evaluations has fourteen
+# write paths that discovery drives continuously and a plain CREATE INDEX would
+# hold a lock for the whole build. CONCURRENTLY cannot run inside a transaction,
+# takes longer, and can outlast the route's maxDuration; an interrupted build
+# leaves an INVALID index the planner ignores while every write still maintains
+# it. The endpoint drops an invalid index before rebuilding, so calling it again
+# converges.
+#
+# A TIMEOUT HERE IS A RETRY, NOT A FAILURE. Done means the database reports
+# ready, never that one call returned 200.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin.
+
+name: Catalog Migrate Pipeline Order Index
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Build the pipeline order index until the database reports ready
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/catalog/migrate-pipeline-order-index"
+
+          # Read-only first, so the log records the state this run started from.
+          echo "--- state before ---"
+          curl -sS "$endpoint" -H "Authorization: Bearer $CRON_SECRET"
+          echo
+
+          attempt=0
+          ready=false
+
+          while [ "$attempt" -lt 8 ]; do
+            attempt=$((attempt + 1))
+            echo "--- attempt $attempt: applying ---"
+
+            # A non-2xx or a cut connection is expected here: the build can
+            # outlast the route. The state read below is what decides.
+            curl -sS --max-time 600 -o /tmp/order-index-apply.json -w 'http %{http_code}\n' \
+              -X POST "$endpoint" \
+              -H "Authorization: Bearer $CRON_SECRET" || echo "call interrupted — will re-read state"
+
+            [ -f /tmp/order-index-apply.json ] && cat /tmp/order-index-apply.json && echo
+
+            state=$(curl -sS "$endpoint" -H "Authorization: Bearer $CRON_SECRET")
+            echo "state: $state"
+
+            if echo "$state" | grep -q '"ready":true'; then
+              ready=true
+              break
+            fi
+
+            echo "not ready yet; retrying"
+            sleep 20
+          done
+
+          if [ "$ready" != "true" ]; then
+            echo >&2
+            echo "The database still does not report ready after $attempt attempts." >&2
+            echo "Nothing is half-applied in a way that breaks reads: an invalid" >&2
+            echo "index is ignored by the planner and dropped by the next run." >&2
+            echo "DO NOT deploy the trigram search until this reports ready." >&2
+            exit 1
+          fi
+
+          echo
+          echo "--- ready ---"
+          echo "candidate_evaluations_status_updated_idx is present and valid."
