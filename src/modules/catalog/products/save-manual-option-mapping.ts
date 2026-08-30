@@ -209,6 +209,78 @@ export function validateManualMappingShape(
   return undefined;
 }
 
+/**
+ * Everything checkable only once the product's real variants are in hand.
+ *
+ * Shared with `remapOptionMapping`, which validates the identical way — the two
+ * differ solely in whether a mapping must already exist. Keeping one copy is what
+ * stops a rule being tightened on one path and forgotten on the other.
+ *
+ * `variantIds` comes from the database, never the payload. That is what makes the
+ * coverage and foreign-id checks mean anything.
+ */
+export function validateAssignmentsAgainstVariants(
+  assignments: ManualOptionMappingAssignmentInput[],
+  variantIds: string[],
+): SaveManualOptionMappingResult | undefined {
+  const realVariantIds = new Set(variantIds);
+  const submittedIds = assignments.map((assignment) => assignment.variantId);
+  const uniqueSubmitted = new Set(submittedIds);
+
+  if (uniqueSubmitted.size !== submittedIds.length) {
+    return refuse(
+      'UNKNOWN_VARIANT',
+      'The same variant was assigned more than once.',
+    );
+  }
+
+  const foreign = submittedIds.find((id) => !realVariantIds.has(id));
+
+  if (foreign !== undefined) {
+    return refuse(
+      'UNKNOWN_VARIANT',
+      'An assignment named a variant this product does not have.',
+    );
+  }
+
+  if (uniqueSubmitted.size !== realVariantIds.size) {
+    return refuse(
+      'INCOMPLETE_ASSIGNMENT',
+      `${realVariantIds.size - uniqueSubmitted.size} of this product's ${realVariantIds.size} variants have no option values yet.`,
+    );
+  }
+
+  /**
+   * The check the buyer is actually protected by, and it is on its own.
+   *
+   * Two variants on one combination means a selection can be honoured by either.
+   * `buildOptionCombinationKey` sorts its pairs, so comparing the normalized
+   * values in axis order is the same comparison the stored key makes.
+   *
+   * > [!WARNING] The database index everyone reaches for here does not fire.
+   * > `product_variants_active_combination_key` is unique on
+   * > `(product_id, option_combination_key)` **`WHERE status = 'ACTIVE'`**, and
+   * > nothing in this codebase ever sets a variant to `ACTIVE` —
+   * > `insertDraftVariant` writes `DRAFT` and there is no other writer, which is
+   * > also why `product_variants_active_requires_combination` never fires. So the
+   * > partial index covers zero rows and is inert. It was cited as the backstop
+   * > under this check in three places before anyone checked whether it applies.
+   * > Treat this comparison as the whole guard until a writer for `ACTIVE` exists.
+   */
+  const combinationKeys = assignments.map((assignment) =>
+    assignment.values.map((value) => normalizeOptionToken(value)).join(' '),
+  );
+
+  if (new Set(combinationKeys).size !== combinationKeys.length) {
+    return refuse(
+      'COMBINATION_COLLISION',
+      'Two variants were given the same combination of values, so a buyer could not tell them apart.',
+    );
+  }
+
+  return undefined;
+}
+
 export default async function saveManualOptionMapping(input: {
   productId: string;
   sellerAccountId: string;
@@ -272,64 +344,12 @@ export default async function saveManualOptionMapping(input: {
       )
       .where(eq(productVariants.productId, input.productId));
 
-    const realVariantIds = new Set(variantRows.map((row) => row.variantId));
-    const submittedIds = input.assignments.map(
-      (assignment) => assignment.variantId,
-    );
-    const uniqueSubmitted = new Set(submittedIds);
-
-    if (uniqueSubmitted.size !== submittedIds.length) {
-      return refuse(
-        'UNKNOWN_VARIANT',
-        'The same variant was assigned more than once.',
-      );
-    }
-
-    const foreign = submittedIds.find((id) => !realVariantIds.has(id));
-
-    if (foreign !== undefined) {
-      return refuse(
-        'UNKNOWN_VARIANT',
-        'An assignment named a variant this product does not have.',
-      );
-    }
-
-    if (uniqueSubmitted.size !== realVariantIds.size) {
-      return refuse(
-        'INCOMPLETE_ASSIGNMENT',
-        `${realVariantIds.size - uniqueSubmitted.size} of this product's ${realVariantIds.size} variants have no option values yet.`,
-      );
-    }
-
-    /**
-     * The check the buyer is actually protected by, and it is on its own.
-     *
-     * Two variants on one combination means a selection can be honoured by
-     * either. `buildOptionCombinationKey` sorts its pairs, so comparing the
-     * normalized values in axis order is the same comparison the stored key
-     * makes.
-     *
-     * > [!WARNING] The database index everyone reaches for here does not fire.
-     * > `product_variants_active_combination_key` is unique on
-     * > `(product_id, option_combination_key)` **`WHERE status = 'ACTIVE'`**, and
-     * > nothing in this codebase ever sets a variant to `ACTIVE` —
-     * > `insertDraftVariant` writes `DRAFT` and there is no other writer, which
-     * > is also why `product_variants_active_requires_combination` never fires.
-     * > So the partial index covers zero rows and is inert. It was cited as the
-     * > backstop under this check in three places before anyone checked whether
-     * > it applies. Treat this comparison as the whole guard until a writer for
-     * > `ACTIVE` exists.
-     */
-    const combinationKeys = input.assignments.map((assignment) =>
-      assignment.values.map((value) => normalizeOptionToken(value)).join(' '),
+    const assignmentRefusal = validateAssignmentsAgainstVariants(
+      input.assignments,
+      variantRows.map((row) => row.variantId),
     );
 
-    if (new Set(combinationKeys).size !== combinationKeys.length) {
-      return refuse(
-        'COMBINATION_COLLISION',
-        'Two variants were given the same combination of values, so a buyer could not tell them apart.',
-      );
-    }
+    if (assignmentRefusal !== undefined) return assignmentRefusal;
 
     const written = await writeOptionMapping(
       tx,

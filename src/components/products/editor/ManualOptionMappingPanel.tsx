@@ -60,6 +60,20 @@ export type ManualOptionMappingPanelProps = {
     assignments: { variantId: string; values: string[] }[],
   ) => Promise<{ ok: boolean; message?: string }>;
   onCancel: () => void;
+  /**
+   * The current mapping, when this panel is replacing one rather than building a
+   * first.
+   *
+   * Pre-filling is right here where pre-filling axis *names* was refused for the
+   * derived matrix: there, a name would have been Sals3's guess at what a supplier
+   * position means. These are the seller's own previous decisions, and starting a
+   * replacement from a blank form would mean retyping 52 assignments to change
+   * one.
+   */
+  initialAxes?: { name: string; valuesText: string }[];
+  initialAssignments?: SuggestedAssignments;
+  /** `Save` for a first mapping, `Replace` for one that overwrites. */
+  submitLabel?: string;
 };
 
 /**
@@ -80,13 +94,22 @@ export default function ManualOptionMappingPanel({
   suggestedAxisNames = [],
   onSave,
   onCancel,
+  initialAxes,
+  initialAssignments,
+  submitLabel = 'Save Variant Matrix',
 }: ManualOptionMappingPanelProps) {
-  const nextAxisId = useRef(2);
-  const [drafts, setDrafts] = useState<AxisDraft[]>([
-    { id: 'axis-0', name: '', valuesText: '' },
-    { id: 'axis-1', name: '', valuesText: '' },
-  ]);
-  const [assignments, setAssignments] = useState<SuggestedAssignments>({});
+  const nextAxisId = useRef(initialAxes?.length ?? 2);
+  const [drafts, setDrafts] = useState<AxisDraft[]>(() =>
+    initialAxes === undefined
+      ? [
+          { id: 'axis-0', name: '', valuesText: '' },
+          { id: 'axis-1', name: '', valuesText: '' },
+        ]
+      : initialAxes.map((axis, index) => ({ id: `axis-${index}`, ...axis })),
+  );
+  const [assignments, setAssignments] = useState<SuggestedAssignments>(
+    initialAssignments ?? {},
+  );
   const [state, setState] = useState<'IDLE' | 'SAVING' | 'FAILED'>('IDLE');
   const [message, setMessage] = useState<string | null>(null);
 
@@ -156,9 +179,12 @@ export default function ManualOptionMappingPanel({
     /*
       Editing an axis can remove a value a row already holds, which would submit
       a value the server refuses as UNKNOWN_VALUE. Rather than reconcile every
-      row on every keystroke, the assignments are dropped and re-offered: the
-      seller is still in the "define the axes" step here, and silently keeping a
+      row on every keystroke, the assignments are dropped: silently keeping a
       stale pick is the shape that produces an unexplained refusal later.
+
+      Cleared to empty even when replacing. Falling back to `initialAssignments`
+      would restore values the edited axis may no longer offer, which is the same
+      defect one step removed — and `Fill from labels` is one press away.
     */
     setAssignments({});
   }
@@ -400,7 +426,7 @@ export default function ManualOptionMappingPanel({
           disabled={!complete || state === 'SAVING'}
           onClick={() => save()}
         >
-          {state === 'SAVING' ? 'Saving…' : 'Save Variant Matrix'}
+          {state === 'SAVING' ? 'Saving…' : submitLabel}
         </Button>
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel

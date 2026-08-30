@@ -494,6 +494,16 @@ export type ProductEditorFixture = {
      * decision with nothing to base it on.
      */
     labelledVariants: { variantId: string; label: string }[];
+    /**
+     * Whether a previous Variant Matrix is on record for this product.
+     *
+     * Set from `audit_events` by `findProductEditorFixtureForSeller`, and only
+     * where the product is currently unmapped. It exists so the editor never
+     * offers a restore that would refuse for having nothing to restore — it is
+     * not a promise the restore will succeed, since the variants may have changed
+     * since it was recorded.
+     */
+    hasRestorableMapping: boolean;
   };
   variants: VariantFixture[];
   markets: MarketEvidenceFixture[];

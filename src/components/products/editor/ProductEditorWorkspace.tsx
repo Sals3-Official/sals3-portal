@@ -195,6 +195,24 @@ type ProductEditorWorkspaceProps = {
     | { ok: false; reason: string; message: string }
   >;
   /**
+   * Replacement boundary — the by-hand payload applied over an existing mapping
+   * in one transaction. `product:edit` server-side, because a replacement never
+   * leaves a buyer reading raw supplier tokens.
+   */
+  remapOptionMappingAction?: (
+    input: unknown,
+  ) => Promise<
+    | { ok: true; axisCount: number; mappedVariantCount: number }
+    | { ok: false; reason: string; message: string }
+  >;
+  /** Puts back the last recorded matrix, from the audit trail. */
+  restoreOptionMappingAction?: (
+    input: unknown,
+  ) => Promise<
+    | { ok: true; axisCount: number; mappedVariantCount: number }
+    | { ok: false; reason: string; message: string }
+  >;
+  /**
    * Removal boundary for a saved Variant Matrix. Omitted for fixture mode.
    *
    * Gated on `product:publish` server-side rather than `product:edit`, because
@@ -558,6 +576,8 @@ export default function ProductEditorWorkspace({
   publishAction,
   optionMappingAction,
   manualOptionMappingAction,
+  remapOptionMappingAction,
+  restoreOptionMappingAction,
   unmapOptionMappingAction,
   recoverLabelsAction,
   sals3CategoryOptions = [],
@@ -1580,6 +1600,52 @@ export default function ProductEditorWorkspace({
         };
 
   /**
+   * Replacing the saved matrix. Same payload as the by-hand save, so the same
+   * closure shape — what differs is which action it reaches and that the section
+   * has to re-read afterwards to pick up the new axes.
+   */
+  const handleRemapOptionMapping =
+    remapOptionMappingAction === undefined || optionMappingTarget === null
+      ? undefined
+      : async (
+          axes: { name: string; values: string[] }[],
+          assignments: { variantId: string; values: string[] }[],
+        ) => {
+          const result = await remapOptionMappingAction({
+            productId: optionMappingTarget.productId,
+            expectedProductVersion: optionMappingTarget.expectedProductVersion,
+            axes,
+            assignments,
+          });
+
+          if (result.ok) router.refresh();
+
+          return result.ok
+            ? { ok: true }
+            : { ok: false, message: result.message };
+        };
+
+  /** Putting the last recorded matrix back. */
+  const handleRestoreOptionMapping =
+    restoreOptionMappingAction === undefined || optionMappingTarget === null
+      ? undefined
+      : async () => {
+          const result = await restoreOptionMappingAction({
+            productId: optionMappingTarget.productId,
+            expectedProductVersion: optionMappingTarget.expectedProductVersion,
+          });
+
+          if (result.ok) router.refresh();
+
+          return result.ok
+            ? {
+                ok: true,
+                message: `Put back ${result.axisCount} ${result.axisCount === 1 ? 'option' : 'options'} across ${result.mappedVariantCount} ${result.mappedVariantCount === 1 ? 'variant' : 'variants'}.`,
+              }
+            : { ok: false, message: result.message };
+        };
+
+  /**
    * Removing the saved matrix. Always followed by a refresh, and unlike the
    * renames there is nothing to mirror locally: the section has to fall back to
    * the unmapped branch, which it reads from the read-model.
@@ -2395,6 +2461,11 @@ export default function ProductEditorWorkspace({
                 labelledVariants={fixture.optionMapping.labelledVariants}
                 onSaveManual={handleManualOptionMappingSave}
                 onUnmap={handleUnmapOptionMapping}
+                onRemap={handleRemapOptionMapping}
+                hasRestorableMapping={
+                  fixture.optionMapping.hasRestorableMapping
+                }
+                onRestore={handleRestoreOptionMapping}
                 onRecoverLabels={handleRecoverLabels}
                 mappedAxes={fixture.mappedAxes}
                 onRename={handleOptionMappingRename}

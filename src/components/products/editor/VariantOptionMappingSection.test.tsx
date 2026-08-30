@@ -181,6 +181,158 @@ describe('VariantOptionMappingSection', () => {
     ).not.toBeInTheDocument();
   });
 
+  const MAPPED_AXES = [
+    {
+      optionId: 'o1',
+      name: 'Colour & fit',
+      values: [
+        {
+          valueId: 'v1',
+          label: 'Black Men',
+          supplierValue: 'black men',
+          variantIds: ['var-1'],
+        },
+        {
+          valueId: 'v2',
+          label: 'Black Women',
+          supplierValue: 'black women',
+          variantIds: ['var-2'],
+        },
+      ],
+    },
+  ];
+
+  const TWO_LABELLED = [
+    { variantId: 'var-1', label: 'Black Men-L' },
+    { variantId: 'var-2', label: 'Black Women-L' },
+  ];
+
+  /**
+   * The gap renaming never covered. Removing then rebuilding leaves the live PDP
+   * on raw supplier labels for as long as the rebuild takes, so a replacement is
+   * one transaction and the seller starts from what they already decided.
+   */
+  it('offers changing the options on a mapped product, pre-filled from the current mapping', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[]}
+        mappedAxes={MAPPED_AXES}
+        mappedAxisNames={['Colour & fit']}
+        labelledVariants={TWO_LABELLED}
+        variantCount={2}
+        onRename={async () => ({ ok: true, message: 'Saved.' })}
+        onRemap={async () => ({ ok: true })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change options' }));
+
+    // The existing axis name and values arrive filled in — a replacement should
+    // not mean retyping what is already decided.
+    expect(screen.getByLabelText('Option 1 name')).toHaveValue('Colour & fit');
+    expect(
+      screen.getByText('2 values: Black Men · Black Women'),
+    ).toBeInTheDocument();
+    // And every variant already carries its current value, inverted out of the
+    // stored `variantIds` links rather than fetched again.
+    expect(screen.getByLabelText('Colour & fit for Black Men-L')).toHaveValue(
+      'Black Men',
+    );
+    // The button says what it does. This one overwrites.
+    expect(
+      screen.getByRole('button', { name: 'Replace Variant Matrix' }),
+    ).toBeEnabled();
+  });
+
+  it('explains that names and options are different edits', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[]}
+        mappedAxes={MAPPED_AXES}
+        mappedAxisNames={['Colour & fit']}
+        labelledVariants={TWO_LABELLED}
+        variantCount={2}
+        onRename={async () => ({ ok: true, message: 'Saved.' })}
+        onRemap={async () => ({ ok: true })}
+      />,
+    );
+
+    // The old copy said the structure could not change at all. It can now, so the
+    // sentence names both edits rather than denying one.
+    expect(
+      screen.getByText(
+        /Changing options rebuilds which supplier value sits where/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/remove the matrix and build it again/),
+    ).toBeNull();
+  });
+
+  it('withholds changing the options when some variant carries no label', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[]}
+        mappedAxes={MAPPED_AXES}
+        mappedAxisNames={['Colour & fit']}
+        // Two of three: the server refuses a partial assignment, so the panel
+        // must not be opened onto one.
+        labelledVariants={TWO_LABELLED}
+        variantCount={3}
+        onRemap={async () => ({ ok: true })}
+        onRename={async () => ({ ok: true, message: 'Saved.' })}
+      />,
+    );
+
+    expect(
+      screen.queryByRole('button', { name: 'Change options' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/remove the matrix and build it again/),
+    ).toBeInTheDocument();
+  });
+
+  it('offers putting the previous options back, only where one is on record', async () => {
+    const onRestore = vi
+      .fn()
+      .mockResolvedValue({ ok: true, message: 'Put back 2 options.' });
+
+    render(
+      <VariantOptionMappingSection
+        proposal={[]}
+        variantCount={52}
+        labelledVariants={FIFTY_TWO_LABELLED}
+        hasRestorableMapping
+        onRestore={onRestore}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Put back the previous options' }),
+    );
+
+    await waitFor(() => expect(onRestore).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Put back 2 options.')).toBeInTheDocument();
+  });
+
+  it('withholds the restore where nothing was recorded', () => {
+    render(
+      <VariantOptionMappingSection
+        proposal={[]}
+        variantCount={52}
+        labelledVariants={FIFTY_TWO_LABELLED}
+        hasRestorableMapping={false}
+        onRestore={async () => ({ ok: true, message: 'Put back.' })}
+      />,
+    );
+
+    // A control that would refuse for having nothing to do is not offered — the
+    // flag is what makes that knowable before the press.
+    expect(
+      screen.queryByRole('button', { name: 'Put back the previous options' }),
+    ).not.toBeInTheDocument();
+  });
+
   it('says nothing was guessed when the labels form no clean grid', () => {
     render(<VariantOptionMappingSection proposal={[]} variantCount={1} />);
 

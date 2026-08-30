@@ -64,6 +64,8 @@ vi.mock('@/app/(portal)/listings/option-mapping-actions', () => ({
   renameOptionMappingAction: vi.fn(),
   saveManualOptionMappingAction: vi.fn(),
   unmapOptionMappingAction: vi.fn(),
+  remapOptionMappingAction: vi.fn(),
+  restoreOptionMappingAction: vi.fn(),
 }));
 
 // Same reasoning: `decide-category.ts` reaches the server-only db client too.

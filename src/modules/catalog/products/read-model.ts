@@ -11,6 +11,7 @@ import {
 } from '@/lib/products/description-blocks';
 import { r2PublicImageUrl } from '@/lib/storage/r2-url';
 import {
+  auditEvents,
   candidateEvaluations,
   categoryAttributeControls,
   offerSupplierBindings,
@@ -1960,6 +1961,11 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
       ).length,
       // Same source as `proposal` and as the server's own re-derivation, so the
       // by-hand mapper can never show a label the writer would not recognise.
+      // Overwritten by `findProductEditorFixtureForSeller`, which is the only
+      // caller with a database to ask. False here rather than optional, so a
+      // fixture built without that lookup offers no restore instead of an
+      // undefined one.
+      hasRestorableMapping: false,
       labelledVariants: product.variants.flatMap((variant) =>
         variant.supplierOptionLabel === null
           ? []
@@ -2187,6 +2193,53 @@ export async function findProductEditorFixtureForSeller(
   if (product === undefined) return null;
 
   const base = productToEditorFixture(product);
+
+  /**
+   * Whether a previous Variant Matrix is on record for this product.
+   *
+   * One indexed `limit 1` against `audit_events_entity_type_entity_id_idx`, and
+   * only where the product currently has no mapping — a mapped product cannot be
+   * restored onto anyway (`restoreOptionMapping` refuses it), so the query is
+   * skipped rather than run and discarded.
+   *
+   * The flag exists so the editor never offers a control that would refuse. It is
+   * *not* a promise the restore will succeed: the variants may have changed since,
+   * which the module checks and this cannot.
+   *
+   * Wrapped like the pricing read below, and for the same reason: a seller who
+   * cannot open their own product is a worse outcome than one who is not offered a
+   * restore they may not need.
+   */
+  let hasRestorableMapping = false;
+
+  if (base.fixture.optionMapping.mappedAxisNames.length === 0) {
+    try {
+      const restorable = await executor
+        .select({ id: auditEvents.id })
+        .from(auditEvents)
+        .where(
+          and(
+            eq(auditEvents.entityType, 'product'),
+            eq(auditEvents.entityId, productId),
+            inArray(auditEvents.action, [
+              'catalog_product.options_unmapped',
+              'catalog_product.options_remapped',
+            ]),
+          ),
+        )
+        .limit(1);
+
+      hasRestorableMapping = restorable.length > 0;
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[portal] restorable mapping lookup failed', {
+        productId,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    }
+  }
+
+  base.fixture.optionMapping.hasRestorableMapping = hasRestorableMapping;
 
   /*
     A pricing read must never take the editor down with it. The rules live in

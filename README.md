@@ -1110,9 +1110,47 @@ everything that never touches a real database — the failure
 `product_options` has no history table, and neither mapping action records the
 per-value labels or which variant took which, so
 `catalog_product.options_unmapped` carries every pair. `audit_events` is
-append-only, which makes that copy the record: a seller who removes a 52-variant
-matrix to fix one row can rebuild the other 51 from it by hand. There is still no
-automatic restore.
+append-only, which makes that copy the record.
+
+**A saved matrix can also be replaced in place, and a removed one put back.**
+Two things the earlier shape left open, both closed on 2026-08-31.
+
+`remapOptionMapping` replaces a mapping in **one transaction** — the deletes and
+the new inserts commit together or neither does. Remove-then-rebuild left a
+window, minutes wide at 52 variants, in which the live PDP had degraded to raw
+supplier labels, `OPTIONS_UNMAPPED` blocked publishing anything else, and a
+closed tab left the product unmapped. None of that was a risk anybody chose; it
+was the shape of doing two writes where one was meant. Every guard the by-hand
+save applies applies here, through the _same_ two functions rather than a copy;
+one condition is inverted, so this refuses a product that has no mapping and the
+by-hand save refuses one that does.
+
+It takes **`product:edit`**, not `product:publish`, and the line is whether a
+buyer ends up worse off: a replacement leaves the page with a named matrix
+either way, which is the kind of change `renameOptionMappingAction` already makes
+under the same capability. Removal is the one that degrades. In the editor it is
+`Change options`, pre-filled from the current mapping — `variantIds` on each
+stored value already holds which variants carry it, so the pre-fill needs no
+extra query and no new column.
+
+`restoreOptionMapping` rebuilds from the `removed` / `replaced` snapshot on the
+last `options_unmapped` or `options_remapped` event. **The payload is parsed with
+Zod before it is trusted**, because `payload` is `jsonb` with no shape enforced by
+the database and this turns it into what buyers read — a hand-edited row lands as
+`SNAPSHOT_UNREADABLE` rather than a half-built mapping. It **refuses rather than
+partially restores**: a variant named in the snapshot that is gone, or a variant
+the snapshot never covered, answers `VARIANTS_CHANGED`, because an unmapped
+variant inside a grid the others share makes a buyer's selection unanswerable.
+A mapped product is refused outright — replacing one is `remapOptionMapping`'s
+job. `audit_events` stays append-only: the restore writes a new
+`options_restored` event naming the one it read, so the trail is a chain rather
+than a set of unrelated states.
+
+The editor offers it only where a record exists. `findProductEditorFixtureForSeller`
+runs one indexed `limit 1` for that flag, and only where the product is currently
+unmapped — a control that would refuse for having nothing to do is not shown. The
+flag is not a promise the restore will succeed; the variants may have changed,
+which only the module can check.
 
 **Variant setup redesigned as a "Variant Matrix" inside `Variants & Pricing`
 (2026-08-17).** The old `Option groups` screen rendered its own card and sat
