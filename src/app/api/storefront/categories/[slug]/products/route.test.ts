@@ -236,7 +236,18 @@ describe('storefront department products API', () => {
     expect(deep.category).toEqual({
       name: 'Paper Products',
       slug: 'paper-products-956',
+      // Its ancestry too, or a buyer could reach this level and not climb out.
+      trail: [
+        { name: 'Office Supplies', slug: 'office-supplies' },
+        {
+          name: 'General Office Supplies',
+          slug: 'general-office-supplies-932',
+        },
+        { name: 'Paper Products', slug: 'paper-products-956' },
+      ],
     });
+    // A department needs no trail: its ancestry is Home / All categories, which
+    // the consumer already has.
     expect(department.category).toEqual({
       name: 'Animals & Pet Supplies',
       slug: 'animals-pet-supplies',

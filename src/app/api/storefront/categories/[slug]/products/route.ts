@@ -5,6 +5,7 @@ import {
   toStorefrontProductFeed,
 } from '@/lib/storefront/catalog-feed';
 import {
+  categoryTrailForPath,
   taxonomyCodeFromSlug,
   taxonomyPathForCode,
 } from '@/modules/catalog/taxonomy/category-trail';
@@ -131,13 +132,32 @@ export async function GET(
      */
     const categoryName =
       departmentName ?? categoryPath?.split(' > ').at(-1)?.trim() ?? null;
+    /**
+     * The scope's own ancestry, so a deeper browse page can offer a way up.
+     *
+     * Without it, `/c/paper-products-956` would render a breadcrumb with no
+     * parents — a buyer could reach the level and not climb out of it, which is
+     * a hole in the very feature this endpoint exists for. A department needs
+     * none: its ancestry is `Home / All categories` and the consumer already has
+     * that.
+     */
+    const categoryTrail =
+      categoryPath === null ? undefined : categoryTrailForPath(categoryPath);
 
     return Response.json(
       {
         ...toStorefrontProductFeed(page, query),
         ...(categoryName === null
           ? {}
-          : { category: { name: categoryName, slug } }),
+          : {
+              category: {
+                name: categoryName,
+                slug,
+                ...(categoryTrail === undefined
+                  ? {}
+                  : { trail: categoryTrail }),
+              },
+            }),
       },
       { headers: STOREFRONT_HEADERS },
     );
