@@ -9,6 +9,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import type { CatalogueProductFixture } from '@/lib/seller-center/product-catalogue/types';
+import { Checkbox } from '@/components/ui/checkbox';
 import CatalogueProductRow from './CatalogueProductRow';
 
 type CatalogueProductTableProps = {
@@ -17,6 +18,12 @@ type CatalogueProductTableProps = {
   expandedIds: Set<string>;
   onToggleSelected: (id: string) => void;
   onToggleExpanded: (id: string) => void;
+  /**
+   * Selects every row currently shown, or clears the selection when they are
+   * all already selected. Scoped to the visible list on purpose — see the
+   * header cell.
+   */
+  onToggleSelectAll: () => void;
   onPauseListing: (id: string) => void;
   onArchive: (id: string) => void;
   onToggleVariantPaused: (productId: string, variantId: string) => void;
@@ -28,16 +35,42 @@ export default function CatalogueProductTable({
   expandedIds,
   onToggleSelected,
   onToggleExpanded,
+  onToggleSelectAll,
   onPauseListing,
   onArchive,
   onToggleVariantPaused,
 }: CatalogueProductTableProps) {
+  const someVisibleSelected = products.some((product) =>
+    selectedIds.has(product.id),
+  );
+  const allVisibleSelected =
+    products.length > 0 &&
+    products.every((product) => selectedIds.has(product.id));
+
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-card">
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-10" />
+            <TableHead className="w-10">
+              {/*
+                Selects every row the current tab and filters are showing, not
+                every row in the catalogue. Acting on rows a seller cannot see
+                is the way a bulk action becomes something nobody trusts —
+                especially this one, where the neighbouring button publishes.
+              */}
+              <Checkbox
+                checked={allVisibleSelected}
+                indeterminate={someVisibleSelected && !allVisibleSelected}
+                disabled={products.length === 0}
+                onCheckedChange={() => onToggleSelectAll()}
+                aria-label={
+                  allVisibleSelected
+                    ? 'Clear selection'
+                    : `Select all ${products.length} listings shown`
+                }
+              />
+            </TableHead>
             <TableHead>Product</TableHead>
             <TableHead>Listing Status</TableHead>
             <TableHead>Selling Price</TableHead>

@@ -113,12 +113,6 @@ export default function CatalogueRowActions({
 
   return (
     <div className="flex items-center gap-3">
-      <Link
-        href={editHref}
-        className="text-sm font-medium text-primary hover:underline"
-      >
-        Edit
-      </Link>
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
@@ -134,6 +128,19 @@ export default function CatalogueRowActions({
           }
         />
         <DropdownMenuContent align="end">
+          {/*
+            Edit leads, because it is what this menu is opened for.
+
+            It used to sit outside as its own link, which made the Actions
+            column two controls wide on every row for one action a seller takes
+            and one they mostly do not. Rendered as a `Link` rather than an item
+            with an onClick so it keeps middle-click, open-in-new-tab and the
+            status bar showing where it goes — a menu item that navigates by
+            handler looks like a link and behaves like a button.
+          */}
+          <DropdownMenuItem render={<Link href={editHref} />}>
+            Edit
+          </DropdownMenuItem>
           {isLive ? (
             <DropdownMenuItem onClick={runPause}>
               Pause listing
