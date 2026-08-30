@@ -156,3 +156,104 @@ export function formatUsd(value: number | null): string {
 export function formatStock(value: number | null): string {
   return value === null ? '—' : String(value);
 }
+
+/**
+ * CJ's own SKU for one candidate row, from the discovery feed snapshot.
+ *
+ * `sku` is one of the display fields added on 2026-08-12 as `nullish` with no
+ * backfill, so a row discovered before that date carries `null` and there is
+ * nothing to render. That is why this returns `null` rather than a placeholder
+ * string: the caller shows the identifier it does have (the provider product
+ * id) instead of a dash standing in for a value that was never captured.
+ */
+export function cjSku(candidate: {
+  evaluation: { feedSnapshot: unknown };
+}): string | null {
+  // `feed_snapshot` is `jsonb`, so it reaches here untyped - parse, never cast.
+  const feed = feedSnapshotSchema.safeParse(candidate.evaluation.feedSnapshot);
+
+  if (!feed.success) return null;
+
+  const sku = feed.data.sku?.trim() ?? '';
+
+  return sku === '' ? null : sku;
+}
+
+/**
+ * How many other sellers the feed says list this product.
+ *
+ * Shown, never used to rank. ADR-012 treats `listedNum` as a gated ranking
+ * input that needs category normalisation before it can order anything; a
+ * seller reading one row's number is a different and much smaller claim.
+ */
+export function listedCount(candidate: {
+  evaluation: { feedSnapshot: unknown };
+}): number | null {
+  const feed = feedSnapshotSchema.safeParse(candidate.evaluation.feedSnapshot);
+
+  return feed.success ? (feed.data.listedCount ?? null) : null;
+}
+
+/**
+ * The origins the discovery feed reported for this product.
+ *
+ * Deliberately NOT `stockedOrigins`, which reads `evidence` — present on a tiny
+ * fraction of candidates — and answers a stronger question (CJ observed stock
+ * there). This is the feed's own shipping-origin list, which every row has, and
+ * it asserts only where the product ships from. Neither one proves a freight
+ * route to a buyer destination exists.
+ */
+export function feedOrigins(candidate: {
+  evaluation: { feedSnapshot: unknown };
+}): string[] {
+  const feed = feedSnapshotSchema.safeParse(candidate.evaluation.feedSnapshot);
+
+  if (!feed.success) return [];
+
+  return feed.data.shipsFrom
+    .map((origin) => origin.trim())
+    .filter((o) => o !== '');
+}
+
+/** Whether the feed flagged this product as free shipping. Absent reads as false. */
+export function feedFreeShipping(candidate: {
+  evaluation: { feedSnapshot: unknown };
+}): boolean {
+  const feed = feedSnapshotSchema.safeParse(candidate.evaluation.feedSnapshot);
+
+  return feed.success && feed.data.freeShipping === true;
+}
+
+/**
+ * How a provider-feed sighting reads on a row, and whether it is stale.
+ *
+ * A raw timestamp is what the pipeline shipped with, and it hid the problem it
+ * was meant to expose: every row of a 30 August screen read `8/20`, which is a
+ * date rather than a judgement. Relative age plus an explicit stale flag says
+ * the thing the date was carrying silently.
+ *
+ * `now` is an argument rather than read inside, so a test states the instant it
+ * is asserting against instead of racing the clock.
+ */
+export function feedSighting(
+  lastSeenAt: Date | string | null,
+  now: Date,
+  staleAfterDays: number,
+): { label: string; stale: boolean } {
+  if (lastSeenAt === null) return { label: 'Never seen', stale: true };
+
+  const seen = lastSeenAt instanceof Date ? lastSeenAt : new Date(lastSeenAt);
+
+  if (Number.isNaN(seen.getTime())) return { label: 'Never seen', stale: true };
+
+  const days = Math.floor(
+    (now.getTime() - seen.getTime()) / (24 * 60 * 60 * 1000),
+  );
+
+  if (days <= 0) return { label: 'Today', stale: false };
+
+  return {
+    label: days === 1 ? '1 day ago' : `${days} days ago`,
+    stale: days > staleAfterDays,
+  };
+}

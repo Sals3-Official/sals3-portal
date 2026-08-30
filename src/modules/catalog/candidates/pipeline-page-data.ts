@@ -9,6 +9,7 @@ import {
   listEvaluatingCandidates,
   oldestQueuedAgeMs,
   PIPELINE_PAGE_SIZE,
+  type CandidateFilters,
   type CandidateStatusCounts,
   type EvaluatedCandidateRow,
 } from './queries';
@@ -49,11 +50,24 @@ function safeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Unknown error';
 }
 
+/**
+ * Filters apply to the two tabs that share `listCandidatesByStatus` — Ready
+ * and Needs Attention, the screens a seller actually sources from. The other
+ * three tabs are served by their own queries with their own scopes, so handing
+ * them a filter would either be ignored (a control that does nothing) or need
+ * a second implementation of the same predicate. The filter bar renders only
+ * where the filter is real; this is the server half of that same rule.
+ */
+function tabAcceptsFilters(tab: PipelineTab): boolean {
+  return tab === 'ready' || tab === 'needs-attention';
+}
+
 function listTabRows(
   sellerAccountId: string,
   tab: PipelineTab,
   window: PageWindow,
   search: string,
+  filters: CandidateFilters | undefined,
 ): Promise<EvaluatedCandidateRow[]> {
   const options = {
     limit: window.pageSize,
@@ -71,11 +85,10 @@ function listTabRows(
     case 'exception':
       return listDeadLetteredEvaluations(sellerAccountId, options);
     default:
-      return listCandidatesByStatus(
-        sellerAccountId,
-        [...TAB_STATUSES[tab]],
-        options,
-      );
+      return listCandidatesByStatus(sellerAccountId, [...TAB_STATUSES[tab]], {
+        ...options,
+        filters: tabAcceptsFilters(tab) ? filters : undefined,
+      });
   }
 }
 
@@ -89,6 +102,7 @@ function countTabRows(
   sellerAccountId: string,
   tab: PipelineTab,
   search: string,
+  filters: CandidateFilters | undefined,
 ): Promise<number> {
   switch (tab) {
     case 'evaluating':
@@ -100,6 +114,7 @@ function countTabRows(
         sellerAccountId,
         [...TAB_STATUSES[tab]],
         search,
+        tabAcceptsFilters(tab) ? filters : undefined,
       );
   }
 }
@@ -124,27 +139,43 @@ function emptyPage(): PipelinePageData {
 export default async function resolvePipelinePageData(
   sellerAccountId: string,
   tab: PipelineTab,
-  input: { search: string; requestedPage: number },
+  input: {
+    search: string;
+    requestedPage: number;
+    /** Applied in SQL for Ready and Needs Attention — see `tabAcceptsFilters`. */
+    filters?: CandidateFilters;
+  },
 ): Promise<PipelinePageData> {
   const { search, requestedPage } = input;
+  const filters = tabAcceptsFilters(tab) ? input.filters : undefined;
+  /*
+    A filtered tab's total is NOT the tab's own count. `countForTab` reads the
+    cached status summary, which knows nothing about a category or a freshness
+    predicate — using it would page a 12-row filtered result as if it held
+    432,654, and every page past the first would render empty under a paginator
+    claiming thousands. Filters therefore cost the same extra count query that
+    a search already does, and for the same reason.
+  */
+  const needsCount = search !== '' || filters !== undefined;
 
   try {
     // Page 1 needs no clamping - its offset is 0 whatever the total turns
     // out to be - so the default view fetches its rows in parallel with the
     // counts instead of waiting for them, keeping today's single round trip.
     const firstPage = resolvePageWindow(0, 1, PIPELINE_PAGE_SIZE);
-    const [counts, searchTotal, firstPageRows] = await Promise.all([
+    const [counts, scopedTotal, firstPageRows] = await Promise.all([
       readCandidateStatusCounts(sellerAccountId),
-      search === '' ? null : countTabRows(sellerAccountId, tab, search),
+      needsCount ? countTabRows(sellerAccountId, tab, search, filters) : null,
       requestedPage === 1
-        ? listTabRows(sellerAccountId, tab, firstPage, search)
+        ? listTabRows(sellerAccountId, tab, firstPage, search, filters)
         : null,
     ]);
 
-    const total = searchTotal ?? countForTab(tab, counts);
+    const total = scopedTotal ?? countForTab(tab, counts);
     const window = resolvePageWindow(total, requestedPage, PIPELINE_PAGE_SIZE);
     const [candidates, queueAgeMs] = await Promise.all([
-      firstPageRows ?? listTabRows(sellerAccountId, tab, window, search),
+      firstPageRows ??
+        listTabRows(sellerAccountId, tab, window, search, filters),
       tab === 'exception' ? oldestQueuedAgeMs(sellerAccountId) : null,
     ]);
 

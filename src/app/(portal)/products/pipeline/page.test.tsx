@@ -261,15 +261,20 @@ describe('ProductSourcingPipelinePage', () => {
       }),
     );
 
+    // The fourth argument is the filter set, and `undefined` here is the
+    // assertion that matters: Blocked is not one of the two tabs that accept
+    // filters, so it must reach the query with no predicate rather than with
+    // one the tab's own scope would ignore.
     expect(countCandidatesByStatusMock).toHaveBeenCalledWith(
       'seller-1',
       ['BLOCKED', 'TEMPORARILY_INELIGIBLE'],
       'phone case',
+      undefined,
     );
     expect(listCandidatesByStatusMock).toHaveBeenCalledWith(
       'seller-1',
       ['BLOCKED', 'TEMPORARILY_INELIGIBLE'],
-      { limit: 100, offset: 0, search: 'phone case' },
+      { limit: 100, offset: 0, search: 'phone case', filters: undefined },
     );
     expect(
       screen.getByText('3 candidates matching "phone case"'),

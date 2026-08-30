@@ -7,6 +7,7 @@ import {
   gte,
   ilike,
   inArray,
+  isNull,
   lt,
   max,
   or,
@@ -20,6 +21,7 @@ import {
   supplierConnections,
   supplierSnapshots,
   type CandidateEvaluationRow,
+  type StockReviewState,
 } from '@/lib/db/schema';
 import type { CandidateEvidence } from '@/lib/cj/evidence';
 import type { EvaluationStatus } from './rules/contracts';
@@ -43,6 +45,18 @@ const SELECTION = {
   externalProductId: supplierCandidates.externalProductId,
   intendedMarketCodes: supplierCandidates.intendedMarketCodes,
   createdAt: supplierCandidates.createdAt,
+  /**
+   * CJ's own category identity and label, captured at discovery. Real columns
+   * rather than only `feed_snapshot` fields, which is what lets the pipeline
+   * Category filter be an indexed read
+   * (`supplier_candidates_connection_category_idx`) instead of a jsonb scan.
+   */
+  providerCategoryId: supplierCandidates.providerCategoryId,
+  providerCategoryName: supplierCandidates.providerCategoryName,
+  /** Manual stock review — an honest unknown by default, never "in stock". */
+  stockReviewState: supplierCandidates.stockReviewState,
+  /** When the provider feed last carried this product, i.e. how stale the row is. */
+  providerLastSeenAt: supplierCandidates.providerLastSeenAt,
   evaluation: candidateEvaluations,
   evidence: supplierSnapshots.evidence,
 } as const;
@@ -52,9 +66,37 @@ export type EvaluatedCandidateRow = {
   externalProductId: string;
   intendedMarketCodes: string[];
   createdAt: Date;
+  /** CJ's category id — the identity the Level 1 lookup keys on. */
+  providerCategoryId: string | null;
+  /** CJ's own label for that category, shown under the Level 1. */
+  providerCategoryName: string | null;
+  stockReviewState: StockReviewState;
+  providerLastSeenAt: Date | null;
   evaluation: CandidateEvaluationRow;
   /** Null when no CJ evidence has been captured yet (e.g. screening-blocked). */
   evidence: CandidateEvidence | null;
+};
+
+/**
+ * The filters `/products/pipeline` applies in SQL.
+ *
+ * Every one of these is backed by a real index — `provider_category_id` and
+ * `stock_review_state` by their connection-scoped composites,
+ * `provider_last_seen_at` by the freshness index. **That is the entry
+ * requirement, not a coincidence.** A cost band or a ships-from filter would
+ * have to read `candidate_evaluations.feed_snapshot`, which is jsonb with no
+ * index behind it: on a tab holding 432,654 rows that turns the fastest screen
+ * in the Portal into a sequential scan. Those two filters are deliberately not
+ * here until a column or an expression index exists to serve them.
+ */
+export type CandidateFilters = {
+  /** Provider category ids under the chosen CJ Level 1. Empty means no filter. */
+  providerCategoryIds?: string[];
+  stockReviewStates?: StockReviewState[];
+  /** Rows whose provider feed sighting is at or after this instant. */
+  seenSince?: Date;
+  /** Rows whose provider feed sighting is before this instant, or never recorded. */
+  seenBefore?: Date;
 };
 
 function baseQuery() {
@@ -170,15 +212,75 @@ export function searchCondition(search: string | undefined): SQL | undefined {
  * tab's list and count queries so the table and its page count can never
  * disagree about which rows belong to the tab.
  */
+/**
+ * The filter half of a tab's `WHERE`, built separately so the list and the
+ * count share one definition and can never disagree about which rows match.
+ *
+ * An EMPTY `providerCategoryIds` array is a filter that matches nothing, and
+ * that is deliberate: it means the chosen Level 1 resolved to no provider
+ * categories, and answering with the unfiltered tab would silently show the
+ * seller everything under a label they had narrowed. `undefined` is the
+ * absence of the filter; `[]` is a filter with no members.
+ */
+export function filterCondition(
+  filters: CandidateFilters | undefined,
+): SQL | undefined {
+  if (filters === undefined) return undefined;
+
+  const clauses: (SQL | undefined)[] = [];
+
+  if (filters.providerCategoryIds !== undefined) {
+    clauses.push(
+      filters.providerCategoryIds.length === 0
+        ? sql`false`
+        : inArray(
+            supplierCandidates.providerCategoryId,
+            filters.providerCategoryIds,
+          ),
+    );
+  }
+
+  if (filters.stockReviewStates !== undefined) {
+    clauses.push(
+      filters.stockReviewStates.length === 0
+        ? sql`false`
+        : inArray(
+            supplierCandidates.stockReviewState,
+            filters.stockReviewStates,
+          ),
+    );
+  }
+
+  if (filters.seenSince !== undefined) {
+    clauses.push(gte(supplierCandidates.providerLastSeenAt, filters.seenSince));
+  }
+
+  if (filters.seenBefore !== undefined) {
+    // A row the feed has never carried is stale by every reading of the word,
+    // so `NULL` belongs on this side rather than being silently excluded by a
+    // bare `<` comparison.
+    clauses.push(
+      or(
+        lt(supplierCandidates.providerLastSeenAt, filters.seenBefore),
+        isNull(supplierCandidates.providerLastSeenAt),
+      ),
+    );
+  }
+
+  return clauses.length === 0 ? undefined : and(...clauses);
+}
+
 function statusScope(
   sellerAccountId: string,
   statuses: EvaluationStatus[],
   search: string | undefined,
+  filters?: CandidateFilters,
 ) {
   return and(
     eq(supplierConnections.sellerAccountId, sellerAccountId),
     inArray(candidateEvaluations.status, statuses),
     searchCondition(search),
+    filterCondition(filters),
   );
 }
 
@@ -200,6 +302,8 @@ export type CandidatePageOptions = {
   offset?: number;
   /** Matched in SQL against the whole tab - see `matchesSearchTerm`. */
   search?: string;
+  /** Applied in the same `WHERE` as the tab, so the count cannot disagree with the page. */
+  filters?: CandidateFilters;
 };
 
 function asEvidence(value: unknown): CandidateEvidence | null {
@@ -265,7 +369,9 @@ export async function listCandidatesByStatus(
   options: CandidatePageOptions = {},
 ): Promise<EvaluatedCandidateRow[]> {
   const rows = await baseQuery()
-    .where(statusScope(sellerAccountId, statuses, options.search))
+    .where(
+      statusScope(sellerAccountId, statuses, options.search, options.filters),
+    )
     .orderBy(...PAGE_ORDER)
     .limit(boundedLimit(options.limit))
     .offset(boundedOffset(options.offset));
@@ -278,9 +384,10 @@ export async function countCandidatesByStatus(
   sellerAccountId: string,
   statuses: EvaluationStatus[],
   search?: string,
+  filters?: CandidateFilters,
 ): Promise<number> {
   const rows = await countQuery().where(
-    statusScope(sellerAccountId, statuses, search),
+    statusScope(sellerAccountId, statuses, search, filters),
   );
 
   return Number(rows[0]?.total ?? 0);
