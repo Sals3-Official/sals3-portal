@@ -218,6 +218,31 @@ describe('storefront department products API', () => {
     );
   });
 
+  it('names the scope so a consumer can title the page', async () => {
+    vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
+    mocks.readStorefrontDepartmentFeed.mockResolvedValue({
+      rows: [],
+      total: 0,
+    });
+
+    const deep = await (await call('secret', 'paper-products-956')).json();
+    const department = await (
+      await call('secret', 'animals-pet-supplies')
+    ).json();
+
+    // Read from the extract, never de-slugified from the URL — the storefront
+    // has no taxonomy past the 21 department names and would have to guess at
+    // the capitalisation.
+    expect(deep.category).toEqual({
+      name: 'Paper Products',
+      slug: 'paper-products-956',
+    });
+    expect(department.category).toEqual({
+      name: 'Animals & Pet Supplies',
+      slug: 'animals-pet-supplies',
+    });
+  });
+
   it('404s an id the taxonomy does not carry, without querying', async () => {
     vi.stubEnv('SALS3_STOREFRONT_API_TOKEN', 'secret');
 
@@ -257,6 +282,9 @@ describe('storefront department products API', () => {
       page: 1,
       limit: 30,
       totalPages: 1,
+      // Named even when empty: the page still has a heading to render, and an
+      // empty department is a real department.
+      category: { name: 'Software', slug: 'software' },
     });
   });
 

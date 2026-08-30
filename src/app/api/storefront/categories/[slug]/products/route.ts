@@ -116,9 +116,31 @@ export async function GET(
       query.maxPriceMinor,
     );
 
-    return Response.json(toStorefrontProductFeed(page, query), {
-      headers: STOREFRONT_HEADERS,
-    });
+    /**
+     * The scope's own display name, so a consumer can title the page.
+     *
+     * The storefront has the 21 department names and no taxonomy beyond them, so
+     * without this it could only de-slugify `paper-products-956` and guess at the
+     * capitalisation. The name is the last segment of the path the id resolved
+     * to — read from the extract, never derived from the URL.
+     *
+     * Added here rather than to `toStorefrontProductFeed`, which the whole-catalogue
+     * feed and search also return: neither has a category to name, and widening
+     * their payload for this one would put a field on two responses that can never
+     * fill it.
+     */
+    const categoryName =
+      departmentName ?? categoryPath?.split(' > ').at(-1)?.trim() ?? null;
+
+    return Response.json(
+      {
+        ...toStorefrontProductFeed(page, query),
+        ...(categoryName === null
+          ? {}
+          : { category: { name: categoryName, slug } }),
+      },
+      { headers: STOREFRONT_HEADERS },
+    );
   } catch (error) {
     return storefrontErrorResponse('categories/[slug]/products', error);
   }
