@@ -540,6 +540,10 @@ function moneyOf(
       Number(order.amountMinor),
       order.currency,
     ),
+    // The items on this parcel and nothing else. Printed twice on the screen —
+    // once footing the contents card, once as the money row's "Goods" line —
+    // and derived here once so the two cannot drift apart.
+    goodsTotalLabel: formatParcelMoney(parcelPaidMinor, order.currency),
     // Rail A. No ledger exists, so there is no number to put here and none is
     // derived from the buyer payment — see this module's header.
     commissionLabel: null,
@@ -575,11 +579,15 @@ function lineOf(
   arrivalWindow: string | null,
   publishedSlugs: Map<string, string>,
 ): ParcelLine {
+  const unitMinor = Number(row.unitAmountMinor);
+
   return {
     id: row.id,
     title: row.title,
     variation: row.variantLabel,
     quantity: row.quantity,
+    unitPriceLabel: formatParcelMoney(unitMinor, row.currency),
+    lineTotalLabel: formatParcelMoney(unitMinor * row.quantity, row.currency),
     imageUrl: row.imageUrl,
     acceptedOnLabel: `as ordered on ${formatDate(row.createdAt)}`,
     sku: row.sals3Sku,

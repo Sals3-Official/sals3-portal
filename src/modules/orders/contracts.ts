@@ -244,6 +244,23 @@ export type ParcelLine = {
   title: string;
   variation: string | null;
   quantity: number;
+  /**
+   * What one of these cost the buyer, and what the line came to — both frozen
+   * at the price charged when the order was placed (ADR-007), never today's.
+   *
+   * Pre-formatted here for the same reason every other money label on this
+   * screen is: `formatParcelMoney` resolves against the currency stored on the
+   * order row, so a market-settings change today cannot restate what a buyer
+   * paid last month. Handing the component minor units would put that decision
+   * in a client component.
+   *
+   * These exist so the contents card can be *reconciled*. Without them a seller
+   * looking at five lines and one "Goods" figure has no way to tell which line
+   * is wrong when the figure surprises them — which is exactly the question
+   * this screen gets asked.
+   */
+  unitPriceLabel: string;
+  lineTotalLabel: string;
   imageUrl: string | null;
   acceptedOnLabel: string;
   sku: string;
@@ -277,6 +294,8 @@ export type ParcelLine = {
 export type ParcelMoney = {
   /** Rail A - what the buyer paid Sals3. */
   buyerPaidLabel: string;
+  /** The parcel's items only, formatted. Foots the contents card. */
+  goodsTotalLabel: string;
   /** Rail A - Sals3's commission on that sale. */
   commissionLabel: string | null;
   /**

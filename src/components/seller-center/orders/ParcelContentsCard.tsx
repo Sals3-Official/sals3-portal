@@ -6,6 +6,16 @@ type ParcelContentsCardProps = {
   lines: ParcelLine[];
   /** Read-only until a write path exists. `null` renders the empty state. */
   sellerNote: string | null;
+  /**
+   * The same figure the money row prints as "Goods", passed in already
+   * formatted rather than summed here.
+   *
+   * Summing the lines in this component would make the footer agree with itself
+   * by construction, which is the one thing it must not do: its whole job is to
+   * show that the goods total and these lines are the same money. Both now come
+   * from `parcelPaidMinor`, so a disagreement is a real disagreement.
+   */
+  goodsTotalLabel: string;
 };
 
 /**
@@ -19,10 +29,23 @@ type ParcelContentsCardProps = {
  * Every field here is the accepted snapshot (ADR-004 §7). The delivery window
  * is absent on own-stock parcels because only a supplier gives us one; see
  * `ParcelLine.deliveryRangeLabel`.
+ *
+ * ## Prices, added 2026-08-31
+ *
+ * The lines used to carry a quantity and no money, so the only figure on the
+ * page was "Goods" in the money row, three sections down and unreconcilable
+ * against anything. A seller who thought a total looked wrong had no way to
+ * find the line that made it wrong — and that is the question this screen is
+ * actually opened to answer.
+ *
+ * Each line now shows its own total, with the unit price beneath it whenever
+ * more than one was ordered, and the card foots to the same goods figure the
+ * money row prints.
  */
 export default function ParcelContentsCard({
   lines,
   sellerNote,
+  goodsTotalLabel,
 }: ParcelContentsCardProps) {
   const unitCount = lines.reduce((sum, line) => sum + line.quantity, 0);
 
@@ -51,9 +74,16 @@ export default function ParcelContentsCard({
                 line={line}
                 typographyClassName="text-[14px] font-semibold"
               />
-              <span className="text-[13px] font-medium text-ink-muted">
-                ×{line.quantity}
-              </span>
+              <div className="flex shrink-0 flex-col items-end">
+                <span className="text-[13.5px] font-semibold text-ink tabular-nums">
+                  {line.lineTotalLabel}
+                </span>
+                <span className="text-[11.5px] text-ink-subtle tabular-nums">
+                  {line.quantity === 1
+                    ? '×1'
+                    : `${line.unitPriceLabel} × ${line.quantity}`}
+                </span>
+              </div>
             </div>
             {line.variation === null ? null : (
               <span className="text-[12.5px] text-ink-subtle">
@@ -81,6 +111,26 @@ export default function ParcelContentsCard({
           </div>
         </div>
       ))}
+
+      <div className="flex items-baseline justify-between gap-4 border-t border-border px-4 py-3">
+        <span className="text-[12.5px] text-ink-subtle">
+          Goods on this parcel
+        </span>
+        <span className="text-[14px] font-semibold text-ink tabular-nums">
+          {goodsTotalLabel}
+        </span>
+      </div>
+      {/*
+        Named rather than left to be inferred. This figure is the items only,
+        and the money row below carries shipping, the Sals3 settlement and the
+        supplier spend as three separate totals that are deliberately never
+        added together — so a footer that looked like an order total would
+        contradict the section under it.
+      */}
+      <p className="px-4 pb-3 text-[11.5px] text-ink-faint">
+        Items only, at the prices charged when the order was placed. Shipping
+        and everything else are in Money on this parcel.
+      </p>
 
       <div className="flex flex-col gap-2 px-4 pb-4">
         <span className="text-[11.5px] font-semibold tracking-[0.05em] text-ink-faint uppercase">

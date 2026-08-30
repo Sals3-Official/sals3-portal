@@ -25,6 +25,8 @@ const PARCEL: OrderParcel = {
       title: 'Straight Color Matching Casual All-matching Pants',
       variation: 'Light Gray-L',
       quantity: 1,
+      unitPriceLabel: '$10.00',
+      lineTotalLabel: '$10.00',
       imageUrl: null,
       acceptedOnLabel: 'as ordered on 28 Aug 2026',
       sku: 'S3V-6B18FBBBA77D',
@@ -34,6 +36,7 @@ const PARCEL: OrderParcel = {
   ],
   money: {
     buyerPaidLabel: '$13.51',
+    goodsTotalLabel: '$10.00',
     commissionLabel: null,
     supplierCostLabel: null,
     supplierCostNote: 'Not configured.',

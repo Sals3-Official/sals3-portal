@@ -8,6 +8,8 @@ const LINE: ParcelLine = {
   title: 'Straight Color Matching Casual All-matching Pants',
   variation: 'Light Gray-L',
   quantity: 1,
+  unitPriceLabel: '$10.00',
+  lineTotalLabel: '$10.00',
   imageUrl: null,
   acceptedOnLabel: 'as ordered on 28 Aug 2026',
   sku: 'S3V-6B18FBBBA77D',
@@ -23,6 +25,7 @@ describe('ParcelContentsCard product link', () => {
           { ...LINE, storefrontUrl: 'https://storefront.test/p/grey-pants' },
         ]}
         sellerNote={null}
+        goodsTotalLabel="$10.00"
       />,
     );
 
@@ -43,7 +46,13 @@ describe('ParcelContentsCard product link', () => {
    * render a link that 404s.
    */
   it('renders plain text when there is no product page to open', () => {
-    render(<ParcelContentsCard lines={[LINE]} sellerNote={null} />);
+    render(
+      <ParcelContentsCard
+        lines={[LINE]}
+        sellerNote={null}
+        goodsTotalLabel="$10.00"
+      />,
+    );
 
     expect(screen.queryByRole('link', { name: LINE.title })).toBeNull();
     expect(screen.getByText(LINE.title)).toBeTruthy();
