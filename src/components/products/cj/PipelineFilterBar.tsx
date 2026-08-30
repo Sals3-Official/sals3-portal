@@ -3,10 +3,12 @@ import { cn } from '@/lib/utils';
 import {
   pipelineClearFiltersHref,
   pipelineFilterHref,
+  PIPELINE_PATH,
   PIPELINE_STALE_AFTER_DAYS,
   type PipelineSeenFilter,
   type PipelineStockFilter,
 } from '@/lib/portal/pipeline-params';
+import FilterSelect from '../FilterSelect';
 
 /**
  * Filters for Ready and Needs Attention.
@@ -23,6 +25,15 @@ import {
  * So this renders `<a>` elements that change the URL, the Server Component
  * re-queries, and every filtered view is shareable and bookmarkable by
  * construction.
+ *
+ * ## Why the category is a select and the other two are chips
+ *
+ * CJ's tree carries fifteen top-level categories on this account. Laid out as
+ * chips they wrapped to three lines and pushed the table below the fold — the
+ * exact failure the design predicted and shipped anyway. A facet past roughly
+ * five values belongs in a native `<select>`, which is also the only shape that
+ * survives a phone. Stock and Feed seen have three values each and stay chips,
+ * where the whole choice is readable without opening anything.
  *
  * ## Why there are three facets and not seven
  *
@@ -113,21 +124,19 @@ export default function PipelineFilterBar({
     <div className="mb-3 rounded-lg border border-border bg-card p-3">
       <div className="flex flex-wrap items-center gap-2">
         {categoryLabels.length === 0 ? null : (
-          <FacetGroup label="CJ category" active={applied.cat !== ''}>
-            <FilterChip
-              href={pipelineFilterHref(currentParams, 'cat', null)}
-              label="All"
-              active={applied.cat === ''}
-            />
-            {categoryLabels.map((label) => (
-              <FilterChip
-                key={label}
-                href={pipelineFilterHref(currentParams, 'cat', label)}
-                label={label}
-                active={applied.cat === label}
-              />
-            ))}
-          </FacetGroup>
+          <FilterSelect
+            id="pipeline-cj-category"
+            label="CJ category"
+            value={applied.cat}
+            options={[
+              { value: '', label: 'All categories' },
+              ...categoryLabels.map((label) => ({ value: label, label })),
+            ]}
+            path={PIPELINE_PATH}
+            param="cat"
+            clearedValue=""
+            className="w-full sm:w-64"
+          />
         )}
 
         <FacetGroup label="Stock" active={applied.stock !== undefined}>

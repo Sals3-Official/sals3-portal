@@ -185,13 +185,61 @@ function escapeLikePattern(term: string) {
  * them and a name search would otherwise match nothing at all on the
  * Blocked / Rejected tab.
  */
-function matchesSearchTerm(term: string): SQL {
-  const pattern = `%${escapeLikePattern(term)}%`;
+/**
+ * At most this many words are honoured from one search box.
+ *
+ * Each word becomes its own four-way `OR` group, so an unbounded term would
+ * let a pasted paragraph build an arbitrarily large predicate. Six is well past
+ * any real product search and is a bound rather than a judgement.
+ */
+const MAX_SEARCH_TOKENS = 6;
+
+/**
+ * One search word, matched against every identifier a seller might type.
+ *
+ * ## The field that was missing
+ *
+ * `evidence->>'supplierSku'` was the only SKU this searched, and `evidence`
+ * exists on a tiny fraction of candidates — 19 of 87,966 when it was last
+ * measured. The SKU a seller can actually SEE on the row comes from
+ * `feed_snapshot.sku`, which every discovered row carries, and nothing looked
+ * there. So the placeholder said "SKU", the row showed one, and typing it
+ * found nothing. Both are searched now; the evidence fields stay because on
+ * the rows that have them they are the richer source.
+ */
+function matchesSearchToken(token: string): SQL {
+  const pattern = `%${escapeLikePattern(token)}%`;
 
   return sql`(${ilike(supplierCandidates.externalProductId, pattern)}
     OR ${supplierSnapshots.evidence}->>'name' ILIKE ${pattern}
     OR ${supplierSnapshots.evidence}->>'supplierSku' ILIKE ${pattern}
-    OR ${candidateEvaluations.feedSnapshot}->>'name' ILIKE ${pattern})`;
+    OR ${candidateEvaluations.feedSnapshot}->>'name' ILIKE ${pattern}
+    OR ${candidateEvaluations.feedSnapshot}->>'sku' ILIKE ${pattern})`;
+}
+
+/**
+ * Every word must match something, in any order.
+ *
+ * The old predicate matched the whole term as one substring, so a product
+ * titled "Men's Casual Loose Straight Pants" was found by "casual loose" and
+ * NOT by "pants mens" or "mens pants" — a seller typing the two words they
+ * remember, in the order they remember them, got an empty table on a tab
+ * holding 432,654 products. Splitting on whitespace and requiring each word
+ * somewhere fixes word order, missing middle words, and partial words
+ * ("trous" still finds "Trousers").
+ *
+ * It does NOT fix a misspelling: "pnats" contains no substring of "Pants".
+ * That needs trigram similarity and an index to serve it, which is its own
+ * change with its own DDL.
+ */
+function matchesSearchTerm(term: string): SQL {
+  const tokens = term.split(/\s+/).filter((token) => token !== '');
+
+  if (tokens.length <= 1) return matchesSearchToken(term);
+
+  return and(
+    ...tokens.slice(0, MAX_SEARCH_TOKENS).map(matchesSearchToken),
+  ) as SQL;
 }
 
 /**
@@ -207,11 +255,6 @@ export function searchCondition(search: string | undefined): SQL | undefined {
   return term === '' ? undefined : matchesSearchTerm(term);
 }
 
-/**
- * The `WHERE` clause of one pipeline tab, built once and shared by that
- * tab's list and count queries so the table and its page count can never
- * disagree about which rows belong to the tab.
- */
 /**
  * The filter half of a tab's `WHERE`, built separately so the list and the
  * count share one definition and can never disagree about which rows match.
@@ -270,6 +313,11 @@ export function filterCondition(
   return clauses.length === 0 ? undefined : and(...clauses);
 }
 
+/**
+ * The `WHERE` clause of one pipeline tab, built once and shared by that tab's
+ * list and count queries so the table and its page count can never disagree
+ * about which rows belong to the tab.
+ */
 function statusScope(
   sellerAccountId: string,
   statuses: EvaluationStatus[],
