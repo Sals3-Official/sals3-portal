@@ -1,20 +1,17 @@
 // @vitest-environment node
-import { describe, expect, it, vi } from 'vitest';
-
-// `category-trail.ts` is `server-only`, which throws on import outside a Server
-// Component — it carries the 5,595-row taxonomy extract that must never reach a
-// browser bundle. The guard is doing its job; these are pure functions inside
-// that module, so this test stands the guard down rather than weakening it.
-// Same convention as `variation-families.test.ts`.
-vi.mock('server-only', () => ({}));
-
-/* eslint-disable import/first */
+import { describe, expect, it } from 'vitest';
 import {
   categoryTrailForPath,
   taxonomyCodeFromSlug,
   taxonomyPathForCode,
 } from './category-trail';
-/* eslint-enable import/first */
+
+// This file carried `vi.mock('server-only', () => ({}))` and a comment saying the
+// module under test is `server-only`. Neither was true by the time it shipped:
+// the guard was dropped from `category-trail.ts` in the same change, because it
+// put seven suites into that mock to test pure functions. The mock was then inert
+// and the comment described a module that no longer existed —
+// `category-trail.client-boundary.test.ts` is what covers the bundle risk now.
 
 /**
  * The real path from the live `Cash Savings Book` PDP, read off production on

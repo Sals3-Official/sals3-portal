@@ -65,18 +65,36 @@ function resolveSpecifier(fromFile: string, specifier: string): string | null {
   );
 }
 
-function importsOf(file: string): string[] {
-  const source = readFileSync(file, 'utf8');
+/**
+ * Memoised across the whole run, which is the difference between this test
+ * taking three seconds and timing out.
+ *
+ * There are ~50 client entries and the graph beneath them overlaps almost
+ * completely, so without this the same files are read and re-parsed once per
+ * entry. It passed alone and failed inside the full suite at 10s — a cost worth
+ * fixing rather than a timeout worth raising.
+ */
+const IMPORTS_BY_FILE = new Map<string, string[]>();
 
-  return [...source.matchAll(IMPORT_PATTERN)].flatMap((match) => {
+function importsOf(file: string): string[] {
+  const cached = IMPORTS_BY_FILE.get(file);
+
+  if (cached !== undefined) return cached;
+
+  const source = readFileSync(file, 'utf8');
+  const resolved = [...source.matchAll(IMPORT_PATTERN)].flatMap((match) => {
     const specifier = match[1];
 
     if (specifier === undefined) return [];
 
-    const resolved = resolveSpecifier(file, specifier);
+    const target = resolveSpecifier(file, specifier);
 
-    return resolved === null ? [] : [resolved];
+    return target === null ? [] : [target];
   });
+
+  IMPORTS_BY_FILE.set(file, resolved);
+
+  return resolved;
 }
 
 /** Every file reachable from `entry`, including itself. */
