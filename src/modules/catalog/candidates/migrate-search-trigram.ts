@@ -1,5 +1,11 @@
 import { sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db/client';
+import {
+  applyConcurrentIndexes,
+  readIndexState,
+  type ConcurrentIndexSpec,
+  type IndexState,
+} from './concurrent-index-migration';
 
 /**
  * One-time DDL giving the sourcing search real typo tolerance: the `pg_trgm`
@@ -60,38 +66,27 @@ import type { Database } from '@/lib/db/client';
  */
 
 /** The two indexes this creates, and the expression each one covers. */
-export const TRIGRAM_INDEXES = [
+export const TRIGRAM_INDEXES: readonly ConcurrentIndexSpec[] = [
   {
     name: 'candidate_evaluations_feed_name_trgm_idx',
-    expression: "(feed_snapshot ->> 'name')",
+    table: 'candidate_evaluations',
+    using: "gin ((feed_snapshot ->> 'name') gin_trgm_ops)",
   },
   {
     name: 'candidate_evaluations_feed_sku_trgm_idx',
-    expression: "(feed_snapshot ->> 'sku')",
+    table: 'candidate_evaluations',
+    using: "gin ((feed_snapshot ->> 'sku') gin_trgm_ops)",
   },
-] as const;
+];
 
-export type TrigramIndexState = {
-  name: string;
-  exists: boolean;
-  /** `false` for an index a previous interrupted build left behind. */
-  valid: boolean;
-};
+export type TrigramIndexState = IndexState;
 
 export type SearchTrigramState = {
   extensionInstalled: boolean;
-  indexes: TrigramIndexState[];
+  indexes: IndexState[];
   /** True only when the extension is present and every index is valid. */
   ready: boolean;
 };
-
-function createIndexStatement(index: (typeof TRIGRAM_INDEXES)[number]): string {
-  return `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${index.name} ON candidate_evaluations USING gin (${index.expression} gin_trgm_ops)`;
-}
-
-function dropIndexStatement(name: string): string {
-  return `DROP INDEX CONCURRENTLY IF EXISTS ${name}`;
-}
 
 /**
  * Reads the live state without writing anything, so a run can be confirmed
@@ -104,29 +99,13 @@ export async function readSearchTrigramState(
     sql`SELECT 1 AS present FROM pg_extension WHERE extname = 'pg_trgm'`,
   )) as unknown as Array<{ present: number }>;
 
-  const indexRows = (await db.execute(
-    sql`SELECT c.relname AS name, i.indisvalid AS valid
-        FROM pg_class c
-        JOIN pg_index i ON i.indexrelid = c.oid
-        WHERE c.relname IN (${sql.join(
-          TRIGRAM_INDEXES.map((index) => sql`${index.name}`),
-          sql`, `,
-        )})`,
-  )) as unknown as Array<{ name: string; valid: boolean }>;
-
-  const byName = new Map(indexRows.map((row) => [row.name, row.valid]));
-  const indexes = TRIGRAM_INDEXES.map((index) => ({
-    name: index.name,
-    exists: byName.has(index.name),
-    valid: byName.get(index.name) === true,
-  }));
-
+  const indexState = await readIndexState(db, TRIGRAM_INDEXES);
   const extensionInstalled = extensionRows.length > 0;
 
   return {
     extensionInstalled,
-    indexes,
-    ready: extensionInstalled && indexes.every((index) => index.valid),
+    indexes: indexState.indexes,
+    ready: extensionInstalled && indexState.ready,
   };
 }
 
@@ -142,51 +121,31 @@ export type SearchTrigramMigrationResult = {
 /**
  * Applies the DDL, dropping any invalid leftover first.
  *
- * Statements run one at a time and OUTSIDE a transaction, which `CONCURRENTLY`
- * requires. `statement_timeout` is cleared for the session first: a build over
- * half a million rows can legitimately outlast a conservative default, and
- * being killed by a timeout is precisely what leaves an invalid index behind.
+ * The extension is this module's own concern; the index building is the shared
+ * `CONCURRENTLY` runner, which is where the invalid-index recovery and the
+ * `statement_timeout` clearing live.
  */
 export async function migrateSearchTrigram(
   db: Database,
 ): Promise<SearchTrigramMigrationResult> {
   const before = await readSearchTrigramState(db);
-  const droppedInvalid: string[] = [];
   let statementsRun = 0;
-
-  await db.execute(sql.raw('SET statement_timeout = 0'));
 
   if (!before.extensionInstalled) {
     await db.execute(sql.raw('CREATE EXTENSION IF NOT EXISTS pg_trgm'));
     statementsRun += 1;
   }
 
-  // eslint-disable-next-line no-restricted-syntax -- a fixed, ordered list run one statement at a time; CONCURRENTLY forbids a transaction.
-  for (const index of TRIGRAM_INDEXES) {
-    const state = before.indexes.find((row) => row.name === index.name);
-
-    // An index that exists but is INVALID is worse than an absent one: the
-    // planner ignores it while every write still maintains it, and
-    // `IF NOT EXISTS` would leave it in place forever.
-    if (state?.exists === true && state.valid === false) {
-      // eslint-disable-next-line no-await-in-loop -- sequential by necessity
-      await db.execute(sql.raw(dropIndexStatement(index.name)));
-      droppedInvalid.push(index.name);
-      statementsRun += 1;
-    }
-
-    if (state?.valid !== true) {
-      // eslint-disable-next-line no-await-in-loop -- sequential by necessity
-      await db.execute(sql.raw(createIndexStatement(index)));
-      statementsRun += 1;
-    }
-  }
+  const applied = await applyConcurrentIndexes(db, TRIGRAM_INDEXES, {
+    indexes: before.indexes,
+    ready: before.indexes.every((index) => index.valid),
+  });
 
   return {
     ok: true,
     before,
     after: await readSearchTrigramState(db),
-    droppedInvalid,
-    statementsRun,
+    droppedInvalid: applied.droppedInvalid,
+    statementsRun: statementsRun + applied.statementsRun,
   };
 }
