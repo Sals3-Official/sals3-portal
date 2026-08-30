@@ -1,0 +1,101 @@
+# One-time, idempotent DDL — no schedule, manual trigger only.
+#
+# Installs pg_trgm and two GIN trigram indexes over the fields the sourcing
+# search reads out of candidate_evaluations.feed_snapshot, so a misspelled term
+# ("pnats") can still find "Pants". Same break-glass pattern as
+# pricing-migrate-optional-base-markup.yml — a manual workflow_dispatch calling
+# an authenticated internal route with the shared CRON_SECRET, no Vercel access
+# or raw database credential required.
+#
+# ORDER MATTERS AND THE FAILURE IS LOUD. Deploying the search that calls
+# similarity() before this has run does not make the search slow, it makes it
+# raise "function similarity(text, text) does not exist". The search ships with
+# a fallback for a database nobody has run this against; that is a safety net,
+# not licence to deploy first.
+#
+# WHY THIS ONE LOOPS. The indexes are built CONCURRENTLY, because
+# candidate_evaluations has fourteen write paths and discovery writes to it
+# continuously — a plain CREATE INDEX would hold a lock for the whole build and
+# stall discovery for minutes. CONCURRENTLY cannot run inside a transaction and
+# takes longer, and a build over 588,850 rows can outlast the route's
+# maxDuration. An interrupted build leaves an INVALID index, which the planner
+# ignores while every write still maintains it. The endpoint drops an invalid
+# index before rebuilding, so calling it again converges.
+#
+# A TIMEOUT HERE IS A RETRY, NOT A FAILURE. This loop is done when the database
+# itself reports ready — extension installed and every index valid — never when
+# a single call returns 200.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin.
+
+name: Catalog Migrate Search Trigram
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Build the trigram indexes until the database reports ready
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/catalog/migrate-search-trigram"
+
+          # Read-only first, so the log records the state this run started from.
+          echo "--- state before ---"
+          curl -sS "$endpoint" -H "Authorization: Bearer $CRON_SECRET"
+          echo
+
+          attempt=0
+          ready=false
+
+          while [ "$attempt" -lt 8 ]; do
+            attempt=$((attempt + 1))
+            echo "--- attempt $attempt: applying ---"
+
+            # A non-2xx or a cut connection is expected here: the build can
+            # outlast the route. The state read below is what decides.
+            curl -sS --max-time 600 -o /tmp/trigram-apply.json -w 'http %{http_code}\n' \
+              -X POST "$endpoint" \
+              -H "Authorization: Bearer $CRON_SECRET" || echo "call interrupted — will re-read state"
+
+            [ -f /tmp/trigram-apply.json ] && cat /tmp/trigram-apply.json && echo
+
+            state=$(curl -sS "$endpoint" -H "Authorization: Bearer $CRON_SECRET")
+            echo "state: $state"
+
+            if echo "$state" | grep -q '"ready":true'; then
+              ready=true
+              break
+            fi
+
+            echo "not ready yet; retrying"
+            sleep 20
+          done
+
+          if [ "$ready" != "true" ]; then
+            echo >&2
+            echo "The database still does not report ready after $attempt attempts." >&2
+            echo "Nothing is half-applied in a way that breaks reads: an invalid" >&2
+            echo "index is ignored by the planner and dropped by the next run." >&2
+            echo "DO NOT deploy the trigram search until this reports ready." >&2
+            exit 1
+          fi
+
+          echo
+          echo "--- ready ---"
+          echo "pg_trgm installed and every trigram index is valid."
