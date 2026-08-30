@@ -19,6 +19,8 @@ type PipelineTabTableProps = {
   search: string;
   currentParams: Record<string, string>;
   cataloguedCandidateIds?: string[];
+  /** CJ Level 1 per provider category id — only Ready and Needs Attention use it. */
+  categoryL1ById?: Record<string, string>;
 };
 
 /**
@@ -39,6 +41,7 @@ export default function PipelineTabTable({
   search,
   currentParams,
   cataloguedCandidateIds = [],
+  categoryL1ById = {},
 }: PipelineTabTableProps) {
   if (candidates.length === 0) {
     if (tabIsEmpty) {
@@ -65,6 +68,7 @@ export default function PipelineTabTable({
           currentParams={currentParams}
           showReasons={false}
           cataloguedCandidateIds={cataloguedCandidateIds}
+          categoryL1ById={categoryL1ById}
         />
       );
     case 'needs-attention':
@@ -74,6 +78,7 @@ export default function PipelineTabTable({
           currentParams={currentParams}
           showReasons
           cataloguedCandidateIds={cataloguedCandidateIds}
+          categoryL1ById={categoryL1ById}
         />
       );
     case 'evaluating':

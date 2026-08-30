@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { displayName, imageUrl, supplierPriceUsd } from './candidate-view';
+import {
+  cjSku,
+  displayName,
+  feedOrigins,
+  feedSighting,
+  imageUrl,
+  supplierPriceUsd,
+} from './candidate-view';
 
 /**
  * `displayName` is the single name resolver behind all five pipeline tables,
@@ -41,6 +48,11 @@ function feed(name: string) {
     listedCount: null,
     shipsFrom: ['CN'],
   };
+}
+
+/** The same snapshot, addressed by field rather than by name. */
+function feedWith(overrides: Record<string, unknown>) {
+  return { ...feed('Feed name'), ...overrides };
 }
 
 describe('displayName', () => {
@@ -197,5 +209,89 @@ describe('imageUrl', () => {
     expect(
       imageUrl({ evaluation: { feedSnapshot: { junk: true } } }),
     ).toBeNull();
+  });
+});
+
+describe('cjSku', () => {
+  it('reads the feed snapshot sku', () => {
+    expect(
+      cjSku({ evaluation: { feedSnapshot: feedWith({ sku: 'CJJT204871' }) } }),
+    ).toBe('CJJT204871');
+  });
+
+  it('is null for a row discovered before the field existed', () => {
+    // `sku` shipped 2026-08-12 as nullish with no backfill, so an older row
+    // carries nothing. Null rather than a dash: the caller still has the
+    // provider product id to show, and a placeholder would claim the value was
+    // captured and empty.
+    expect(cjSku({ evaluation: { feedSnapshot: feedWith({}) } })).toBeNull();
+  });
+
+  it('is null for a blank sku', () => {
+    expect(
+      cjSku({ evaluation: { feedSnapshot: feedWith({ sku: '  ' }) } }),
+    ).toBeNull();
+  });
+});
+
+describe('feedOrigins', () => {
+  it('returns the feed shipping origins', () => {
+    expect(
+      feedOrigins({
+        evaluation: {
+          feedSnapshot: feedWith({ shipsFrom: ['China', 'US-West'] }),
+        },
+      }),
+    ).toEqual(['China', 'US-West']);
+  });
+
+  it('is empty rather than throwing on an unreadable snapshot', () => {
+    expect(feedOrigins({ evaluation: { feedSnapshot: null } })).toEqual([]);
+  });
+});
+
+describe('feedSighting', () => {
+  const now = new Date('2026-08-30T12:00:00.000Z');
+
+  it('reports a same-day sighting as Today', () => {
+    expect(feedSighting(new Date('2026-08-30T01:00:00.000Z'), now, 7)).toEqual({
+      label: 'Today',
+      stale: false,
+    });
+  });
+
+  it('counts whole days and singularises one', () => {
+    expect(
+      feedSighting(new Date('2026-08-29T01:00:00.000Z'), now, 7).label,
+    ).toBe('1 day ago');
+  });
+
+  it('marks a sighting past the threshold as stale', () => {
+    // The defect this exists for: every row of a 30 August screen read 8/20,
+    // a date that never called itself late.
+    expect(feedSighting(new Date('2026-08-20T12:00:00.000Z'), now, 7)).toEqual({
+      label: '10 days ago',
+      stale: true,
+    });
+  });
+
+  it('does not mark the threshold day itself as stale', () => {
+    expect(
+      feedSighting(new Date('2026-08-23T12:00:00.000Z'), now, 7).stale,
+    ).toBe(false);
+  });
+
+  it('treats a never-seen row as stale', () => {
+    expect(feedSighting(null, now, 7)).toEqual({
+      label: 'Never seen',
+      stale: true,
+    });
+  });
+
+  it('treats an unparsable value as never seen rather than NaN days ago', () => {
+    expect(feedSighting('not a date', now, 7)).toEqual({
+      label: 'Never seen',
+      stale: true,
+    });
   });
 });

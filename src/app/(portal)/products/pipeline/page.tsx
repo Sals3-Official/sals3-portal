@@ -23,6 +23,10 @@ import {
 } from '@/lib/portal/pipeline-params';
 import { countForTab, parsePipelineTab } from '@/lib/portal/pipeline-tabs';
 import resolvePipelinePageData from '@/modules/catalog/candidates/pipeline-page-data';
+import readCjCategoryIndex from '@/modules/catalog/candidates/cj-category-l1-read';
+import { EMPTY_CJ_CATEGORY_INDEX } from '@/modules/catalog/candidates/cj-category-l1';
+import resolvePipelineFilters from '@/modules/catalog/candidates/pipeline-filters';
+import PipelineFilterBar from '@/components/products/cj/PipelineFilterBar';
 import { findCataloguedCandidateIds } from '@/modules/catalog/products/read-model';
 
 export const metadata: Metadata = { title: 'Product Sourcing · Sals3 Portal' };
@@ -63,9 +67,30 @@ export default async function ProductSourcingPipelinePage({
   // would be a second auth query per row click.
   const resolved = await readOrUnavailable('candidate pipeline', async () => {
     const { sellerAccount } = await requireDropshipperAccount();
+    /*
+      One instant for the whole render. The freshness filter and the row ages
+      must be measured against the same boundary, or a row can be listed by a
+      "stale" filter and then render as fresh two milliseconds later.
+    */
+    const now = new Date();
+    /*
+      Only Ready and Needs Attention carry the filter bar and the category
+      column, so only they pay for the snapshot read. The other four tabs
+      would spend a query on an index nothing on their screen can show.
+    */
+    const usesFilters = tab === 'ready' || tab === 'needs-attention';
+    // CJ's Level 1 index, read from the discovery snapshot this account already
+    // paid for. Never a supplier call - see `cj-category-l1.ts`.
+    const categoryIndex = usesFilters
+      ? await readCjCategoryIndex(sellerAccount.id)
+      : EMPTY_CJ_CATEGORY_INDEX;
+    const filters = usesFilters
+      ? resolvePipelineFilters(query, categoryIndex, now)
+      : undefined;
     const pageData = await resolvePipelinePageData(sellerAccount.id, tab, {
       search,
       requestedPage: parsePageParam(query.page),
+      filters,
     });
     const cataloguedCandidateIds =
       tab === 'ready' || tab === 'needs-attention'
@@ -81,6 +106,8 @@ export default async function ProductSourcingPipelinePage({
       sellerAccountId: sellerAccount.id,
       pageData,
       cataloguedCandidateIds,
+      categoryIndex,
+      filtered: filters !== undefined,
     };
   });
 
@@ -88,7 +115,13 @@ export default async function ProductSourcingPipelinePage({
     return <PipelineUnavailable reason="unreachable" tab={tab} />;
   }
 
-  const { sellerAccountId, pageData, cataloguedCandidateIds } = resolved.data;
+  const {
+    sellerAccountId,
+    pageData,
+    cataloguedCandidateIds,
+    categoryIndex,
+    filtered,
+  } = resolved.data;
   const { counts, candidates, queueAgeMs, window } = pageData;
   const isStale =
     tab === 'exception' &&
@@ -133,6 +166,15 @@ export default async function ProductSourcingPipelinePage({
         />
       ) : null}
       {tab === 'evaluating' ? <EvaluatingBreakdown counts={counts} /> : null}
+      {tab === 'ready' || tab === 'needs-attention' ? (
+        <PipelineFilterBar
+          currentParams={currentParams}
+          categoryLabels={categoryIndex.l1Labels}
+          applied={{ cat: query.cat, stock: query.stock, seen: query.seen }}
+          filtered={filtered}
+          total={window.total}
+        />
+      ) : null}
       <PipelineTabTable
         tab={tab}
         candidates={candidates}
@@ -140,6 +182,7 @@ export default async function ProductSourcingPipelinePage({
         search={search}
         currentParams={currentParams}
         cataloguedCandidateIds={cataloguedCandidateIds}
+        categoryL1ById={categoryIndex.l1ById}
       />
       {window.totalPages > 1 ? (
         <PipelinePagination

@@ -17,7 +17,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { candidateDrawerHref } from '@/lib/portal/pipeline-params';
+import {
+  candidateDrawerHref,
+  PIPELINE_STALE_AFTER_DAYS,
+} from '@/lib/portal/pipeline-params';
 import { cn } from '@/lib/utils';
 import type { EvaluatedCandidateRow } from '@/modules/catalog/candidates/queries';
 import type { ReasonCode } from '@/modules/catalog/candidates/rules/contracts';
@@ -27,6 +30,11 @@ import {
   formatUsd,
   imageUrl,
   supplierPriceUsd,
+  cjSku,
+  feedFreeShipping,
+  feedOrigins,
+  feedSighting,
+  listedCount,
 } from './candidate-view';
 import CustomizeAndListButton from './CustomizeAndListButton';
 
@@ -40,9 +48,21 @@ type QualifiedCandidatesTableProps = {
   /** Whether to show the "Attention reasons" column (Needs Attention only). */
   showReasons: boolean;
   cataloguedCandidateIds?: string[];
+  /**
+   * CJ's Level 1 label per provider category id, resolved from the discovery
+   * snapshot the cycle already paid for. A row whose category is absent from
+   * the map renders CJ's leaf label alone rather than a guessed ancestor.
+   */
+  categoryL1ById?: Record<string, string>;
 };
 
-const SHARED_COLUMNS = ['Select', 'Product', 'CJ product ID', 'Supplier price'];
+const SHARED_COLUMNS = [
+  'Select',
+  'Product',
+  'CJ category',
+  'Supplier cost',
+  'Origin & stock',
+];
 const MAX_ADD_BATCH = 5;
 
 const ITEM_FAILURE_MESSAGES: Record<string, string> = {
@@ -64,6 +84,8 @@ type QualifiedCandidateRowProps = {
   candidate: EvaluatedCandidateRow;
   currentParams: Record<string, string>;
   showReasons: boolean;
+  categoryL1: string | null;
+  now: Date;
   alreadyInCatalogue: boolean;
   selected: boolean;
   isPending: boolean;
@@ -74,6 +96,8 @@ function QualifiedCandidateRow({
   candidate,
   currentParams,
   showReasons,
+  categoryL1,
+  now,
   alreadyInCatalogue,
   selected,
   isPending,
@@ -82,6 +106,15 @@ function QualifiedCandidateRow({
   const name = displayName(candidate);
   const image = imageUrl(candidate);
   const reasonCodes = candidate.evaluation.reasonCodes as ReasonCode[];
+  const sku = cjSku(candidate);
+  const origins = feedOrigins(candidate);
+  const listed = listedCount(candidate);
+  const stockChecked = candidate.stockReviewState !== 'STOCK_NOT_CHECKED';
+  const sighting = feedSighting(
+    candidate.providerLastSeenAt,
+    now,
+    PIPELINE_STALE_AFTER_DAYS,
+  );
   const handleToggleSelected = useCallback(() => {
     onToggleSelected(candidate.candidateId);
   }, [candidate.candidateId, onToggleSelected]);
@@ -122,16 +155,62 @@ function QualifiedCandidateRow({
               className="size-10 shrink-0 rounded-md border border-border object-cover"
             />
           )}
-          <span className="min-w-0 truncate" title={name}>
-            {name}
-          </span>
+          <div className="min-w-0">
+            <div className="truncate" title={name}>
+              {name}
+            </div>
+            <div className="flex items-center gap-2 font-mono text-[11px] leading-4 font-normal">
+              {sku === null ? null : (
+                <span className="rounded bg-muted px-1 text-ink-muted">
+                  {sku}
+                </span>
+              )}
+              <span className="truncate text-ink-faint">
+                {candidate.externalProductId}
+              </span>
+            </div>
+          </div>
         </div>
       </TableCell>
-      <TableCell className="font-mono text-xs">
-        {candidate.externalProductId}
+      <TableCell>
+        <div className="text-ink-muted">{categoryL1 ?? '—'}</div>
+        {candidate.providerCategoryName === null ? null : (
+          <div className="text-[11px] leading-4 text-ink-faint">
+            {candidate.providerCategoryName}
+          </div>
+        )}
       </TableCell>
       <TableCell className="tabular-nums">
         {formatUsd(supplierPriceUsd(candidate))}
+        {listed === null ? null : (
+          <div className="text-[11px] leading-4 text-ink-faint">
+            {listed.toLocaleString()} sellers list it
+          </div>
+        )}
+      </TableCell>
+      <TableCell>
+        <div className="flex flex-wrap items-center gap-1">
+          {origins.length === 0 ? (
+            <span className="text-ink-faint">—</span>
+          ) : (
+            origins.map((origin) => (
+              <span
+                key={origin}
+                className="rounded-full bg-accent px-2 py-0.5 text-[11px] leading-4 text-accent-foreground"
+              >
+                {origin}
+              </span>
+            ))
+          )}
+          {feedFreeShipping(candidate) ? (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] leading-4 text-ink-muted">
+              Free ship
+            </span>
+          ) : null}
+        </div>
+        <div className="text-[11px] leading-4 text-ink-faint">
+          {stockChecked ? 'Stock reviewed' : 'Stock not checked'}
+        </div>
       </TableCell>
       {showReasons ? (
         <TableCell>
@@ -155,10 +234,10 @@ function QualifiedCandidateRow({
           />
         </TableCell>
       )}
-      <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-        {candidate.evaluation.evaluatedAt
-          ? new Date(candidate.evaluation.evaluatedAt).toLocaleString()
-          : '—'}
+      <TableCell className="text-xs whitespace-nowrap">
+        <span className={sighting.stale ? 'text-amber-700' : 'text-ink-muted'}>
+          {sighting.label}
+        </span>
       </TableCell>
       <TableCell>
         <CustomizeAndListButton
@@ -181,6 +260,7 @@ export default function QualifiedCandidatesTable({
   currentParams,
   showReasons,
   cataloguedCandidateIds = [],
+  categoryL1ById = {},
 }: QualifiedCandidatesTableProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -192,9 +272,15 @@ export default function QualifiedCandidatesTable({
   const columns = [
     ...SHARED_COLUMNS,
     showReasons ? 'Attention reasons' : 'Status',
-    'Last checked',
+    'Feed seen',
     'Action',
   ];
+  /*
+    One instant for the whole table, taken once per render. Calling `new Date()`
+    inside each row would let a long list straddle midnight and report two
+    different ages for two rows the feed saw at the same moment.
+  */
+  const now = useMemo(() => new Date(), []);
   const selectableIds = useMemo(
     () =>
       candidates
@@ -310,6 +396,12 @@ export default function QualifiedCandidatesTable({
                 candidate={candidate}
                 currentParams={currentParams}
                 showReasons={showReasons}
+                categoryL1={
+                  candidate.providerCategoryId === null
+                    ? null
+                    : (categoryL1ById[candidate.providerCategoryId] ?? null)
+                }
+                now={now}
                 alreadyInCatalogue={cataloguedIds.has(candidate.candidateId)}
                 selected={selectedIds.has(candidate.candidateId)}
                 isPending={isPending}
