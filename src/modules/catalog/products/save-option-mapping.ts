@@ -1,9 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import getDb, { type Database } from '@/lib/db/client';
 import {
-  productOptionValues,
   productOptions,
-  productVariantOptionValues,
   productVariants,
   products,
   providerVariantReferences,
@@ -12,8 +10,9 @@ import {
   appendAuditEvent,
   type Executor,
 } from '@/modules/catalog/candidates/repository';
-import { buildOptionCombinationKey, normalizeOptionToken } from './identity';
+import { normalizeOptionToken } from './identity';
 import { deriveOptionSplit, splitLabelTokens } from './option-split';
+import writeOptionMapping from './write-option-mapping';
 
 /**
  * Persisting a seller's option mapping — the first writer these three tables
@@ -64,7 +63,13 @@ export type SaveOptionMappingRefusal =
   | 'version_conflict'
   | 'ALREADY_MAPPED'
   | 'SPLIT_NOT_DERIVABLE'
-  | 'SHAPE_MISMATCH';
+  | 'SHAPE_MISMATCH'
+  /**
+   * Two names or two values that a unique index cannot tell apart once
+   * normalized. Previously this aborted the transaction with no seller-facing
+   * reason at all — see the check in the writes section.
+   */
+  | 'VALUE_COLLISION';
 
 export type SaveOptionMappingResult =
   | { ok: true; axisCount: number; mappedVariantCount: number }
@@ -183,130 +188,84 @@ export default async function saveOptionMapping(input: {
     }
 
     // ---- writes ----------------------------------------------------------
-    // Keyed by the token's position in the SUPPLIER'S label
-    // (`split.positions[i].index`), never by the axis's position in
-    // `input.axes`. The two agree only when nothing was dropped. Once
-    // `deriveOptionSplit` drops a constant position, the seller's one
-    // submitted axis can sit at label position 1 (a `Colour` at position 0
-    // was never offered because it never varied) - array position 0 and
-    // label position 0 are then different things, and the variant-linking
-    // loop below walks label positions. Keying this map on array position
-    // silently mapped every variant to zero pairs the first time this ran
-    // against a product with a dropped axis: both lookups missed, nothing
-    // threw, and the mapping "succeeded" with every variant left unmapped.
-    const valueIdByPositionAndRaw = new Map<string, string>();
+    // Normalization has to be injective before anything is inserted.
+    //
+    // `product_option_values_option_normalized_key` is unique on
+    // (option, normalized_value), so two distinct supplier tokens that normalize
+    // to one string — `Black` beside `black` — abort the transaction on the
+    // second insert. That was always true and reached nobody as an explanation:
+    // the seller saw a failed save with no reason. The same applies to axis
+    // names through `product_options_product_normalized_name_key`.
+    const axisNameCollision =
+      new Set(input.axes.map((axis) => normalizeOptionToken(axis.name)))
+        .size !== input.axes.length;
 
-    // Ordered, not parallel: `product_options_product_position_key` is unique on
-    // (product, position), so the rows must land one at a time in a known order.
-    // eslint-disable-next-line no-restricted-syntax
-    for (const [arrayIndex, axis] of input.axes.entries()) {
-      // Same length and same order as `input.axes` - checked above - so
-      // this is never `undefined` in practice. Guarded anyway because a
-      // `Map` keyed on the wrong position from an unchecked assumption is
-      // exactly the bug this rewrite removes.
-      const position = split.positions[arrayIndex];
-
-      if (position === undefined) {
-        throw new Error(
-          `No derived position at array index ${arrayIndex} for a shape already validated against it.`,
-        );
-      }
-
-      const labelIndex = position.index;
-      // eslint-disable-next-line no-await-in-loop
-      const [option] = await tx
-        .insert(productOptions)
-        .values({
-          productId: input.productId,
-          name: axis.name.trim(),
-          normalizedName: normalizeOptionToken(axis.name),
-          // The seller's own display order, not the supplier's label
-          // position - a dropped constant position must not leave a gap
-          // in this sequence.
-          position: arrayIndex,
-        })
-        .returning({ id: productOptions.id });
-
-      // An insert-returning that yields no row is a broken invariant, not a case
-      // to skip past: skipping would leave the values orphaned and the variants
-      // half-mapped. Throwing rolls the whole transaction back.
-      if (option === undefined) {
-        throw new Error(`Option insert returned no row for "${axis.name}".`);
-      }
-
-      // eslint-disable-next-line no-restricted-syntax
-      for (const [valueIndex, value] of axis.values.entries()) {
-        // eslint-disable-next-line no-await-in-loop
-        const [stored] = await tx
-          .insert(productOptionValues)
-          .values({
-            optionId: option.id,
-            label: value.label.trim(),
-            // Normalized from the SUPPLIER token, not the display label: it is
-            // the join key, and the seller may rename the label freely without
-            // silently repointing a variant.
-            normalizedValue: normalizeOptionToken(value.raw),
-            position: valueIndex,
-          })
-          .returning({ id: productOptionValues.id });
-
-        if (stored !== undefined) {
-          valueIdByPositionAndRaw.set(
-            `${labelIndex}\u0000${value.raw}`,
-            stored.id,
-          );
-        }
-      }
-
-      valueIdByPositionAndRaw.set(`option\u0000${labelIndex}`, option.id);
+    if (axisNameCollision) {
+      return {
+        ok: false,
+        reason: 'VALUE_COLLISION',
+        detail: 'Two option groups would end up with the same name.',
+      };
     }
 
-    let mappedVariantCount = 0;
+    const collidingAxis = input.axes.find(
+      (axis) =>
+        new Set(axis.values.map((value) => normalizeOptionToken(value.raw)))
+          .size !== axis.values.length,
+    );
 
-    // eslint-disable-next-line no-restricted-syntax
-    for (const variant of variants) {
+    if (collidingAxis !== undefined) {
+      return {
+        ok: false,
+        reason: 'VALUE_COLLISION',
+        detail: `Two supplier values in "${collidingAxis.name.trim()}" cannot be told apart once normalized.`,
+      };
+    }
+
+    /**
+     * Which value each variant takes on each axis, read off the supplier's own
+     * tokens.
+     *
+     * `position.index` is the token's place in the SUPPLIER's label, which is not
+     * the axis's place in `plan.axes` once `deriveOptionSplit` has dropped a
+     * constant position: a product whose colour never varies has one axis, and it
+     * sits at label position 1. Reading the token by array index instead mapped
+     * every variant to zero pairs the first time this ran against such a product
+     * — nothing threw, and the mapping "succeeded" with every variant unmapped.
+     */
+    const assignments = variants.flatMap((variant) => {
       const tokens = splitLabelTokens(variant.label ?? '');
-      const pairs: { optionId: string; normalizedValue: string }[] = [];
+      const normalizedValues = split.positions.map((position) =>
+        normalizeOptionToken(tokens[position.index] ?? ''),
+      );
 
-      // `index` here is the supplier's own label position, matching the
-      // keys above. A dropped constant position has no entry in the map
-      // at all, so both lookups miss and it is silently excluded from
-      // `pairs` - which is correct: there is no axis to link it to.
-      // eslint-disable-next-line no-restricted-syntax
-      for (const [index, token] of tokens.entries()) {
-        const optionId = valueIdByPositionAndRaw.get(`option\u0000${index}`);
-        const valueId = valueIdByPositionAndRaw.get(`${index}\u0000${token}`);
+      // A variant missing a token at any surviving position cannot be placed on
+      // the grid. Shape validation above makes this unreachable; it stays because
+      // a partial assignment is the one shape that can collide with another.
+      if (normalizedValues.some((value) => value === '')) return [];
 
-        if (optionId !== undefined && valueId !== undefined) {
-          // eslint-disable-next-line no-await-in-loop
-          await tx.insert(productVariantOptionValues).values({
-            variantId: variant.variantId,
-            optionId,
-            optionValueId: valueId,
-          });
+      return [{ variantId: variant.variantId, normalizedValues }];
+    });
 
-          pairs.push({
-            optionId,
-            normalizedValue: normalizeOptionToken(token),
-          });
-        }
-      }
-
-      const combinationKey = buildOptionCombinationKey(pairs);
-
-      // `null` means this variant produced no pairs at all, so it stays unmapped
-      // rather than being given a combination key it did not earn. The check
-      // constraint depends on exactly that: no key, never `ACTIVE`.
-      if (combinationKey !== null) {
-        // eslint-disable-next-line no-await-in-loop
-        await tx
-          .update(productVariants)
-          .set({ optionCombinationKey: combinationKey, updatedAt: now })
-          .where(eq(productVariants.id, variant.variantId));
-
-        mappedVariantCount += 1;
-      }
-    }
+    const written = await writeOptionMapping(
+      tx,
+      {
+        productId: input.productId,
+        axes: input.axes.map((axis) => ({
+          name: axis.name.trim(),
+          values: axis.values.map((value) => ({
+            // Normalized from the SUPPLIER token, never the display label: it is
+            // the join key, and the seller may rename the label freely without
+            // silently repointing a variant at another variant's price.
+            normalizedValue: normalizeOptionToken(value.raw),
+            label: value.label.trim(),
+          })),
+        })),
+        assignments,
+      },
+      now,
+    );
+    const { mappedVariantCount } = written;
 
     await tx
       .update(products)

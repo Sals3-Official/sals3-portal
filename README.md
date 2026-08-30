@@ -1022,6 +1022,98 @@ so the readiness and preview panels fold into drawers when the portal rail
 is expanded and there is no longer room for three columns. This route never
 collapses or overrides the seller's sidebar.
 
+**A sparse grid is now a Variant Matrix, and labels that split into nothing can
+be mapped by hand (2026-08-31).** Two changes to the same complaint: the live
+`Three-proof Casual Sports Mountaineering Tactical Pants` showed buyers all 52 of
+its supplier labels as one flat wall of chips, and the editor said "Not detected"
+with nothing to press.
+
+`deriveOptionSplit` had required the cross-product of the position sizes to equal
+the variant count _exactly_. That product is 8 colour-and-gender values by 8 sizes
+= 64 against 52 real variants, because the four `Male`/`Men` values carry `5XL`
+and `6XL` and no `M` while the four `Female`/`Women` values carry `M` and stop at
+`4XL` — womenswear sizing, not a broken label. A sparse grid is now proposed,
+**but only when it compresses**: the chips a buyer scans (the sum of the position
+sizes) must be fewer than one chip per variant, so 16-instead-of-52 is offered and
+a 3 x 3 grid holding its diagonal — six chips to reach three products — is not. A
+complete grid still passes on exactness alone, which is what keeps a full 2 x 2
+working. `sals3-ecommerce`'s `deriveVariantLabelStructure` carries the identical
+rule, and its renderer already drew an absent combination as a disabled
+`Unavailable` chip, so the old test was stricter than its own consumer needed.
+
+**One consequence worth knowing before you edit a product:** `publish.ts`'s
+`OPTIONS_UNMAPPED` gate fires wherever a split _is_ derivable and unmapped, so a
+sparse-grid product that used to publish freely now has to name its axes first.
+The listing stays live; an update cannot be published over it until the matrix is
+saved. Exactly one product in the catalogue was in that state when this shipped.
+
+Where the labels genuinely encode no grid — a ragged token count, a duplicate
+label, or a grid too thin to compress — `Map these options by hand` opens
+`ManualOptionMappingPanel`: name each axis, list its values (one per line or
+comma-separated), then pick a value per axis for every variant beside its supplier
+label. `Fill from labels` matches values against each label **longest candidate
+first**, so `Women` beats the `Men` inside it, and leaves what it cannot find
+empty — the save stays disabled until a person closes every gap. This is also the
+only way to split one token holding two attributes: `Black Female` becomes
+`Colour: Black` + `Fit: Women`, which no delimiter split can do however clean the
+arithmetic.
+
+`saveManualOptionMapping` is deliberately available even where a split _is_
+derivable, so the derived 2-axis reading is not the only one on offer. It accepts
+structure where `saveOptionMapping` refuses to, and what replaces the
+re-derivation is: the variant set comes from the database (an id from elsewhere is
+refused), every variant must be assigned on every axis, and two variants may not
+land on the same combination.
+
+**That last check has no database backstop, contrary to what this README said for
+one afternoon.** `product_variants_active_combination_key` is unique on
+`(product_id, option_combination_key)` **`WHERE status = 'ACTIVE'`**, and nothing
+in the codebase ever sets a variant to `ACTIVE` — `insertDraftVariant` writes
+`DRAFT` and there is no other writer. So the index covers zero rows and is inert,
+as is the `product_variants_active_requires_combination` CHECK beside it. The
+application-level comparison is the whole guard. A cited constraint is not a
+verified one. It audits as
+`catalog_product.options_mapped_manually`, never as the derived action, so a
+dispute can tell a checked mapping from a judged one years later. Both paths now
+write through one `writeOptionMapping`, because the same rule in two files is the
+most repeated defect in this codebase.
+
+**A saved matrix can now be removed**, which closes the one gap renaming never
+covered: a wrong _assignment_. Both saves are still insert-only, so correcting one
+means `Remove matrix` and building it again.
+
+`unmapOptionMapping` is gated on **`product:publish`**, not `product:edit` — it
+degrades a live PDP with no publish step in between, the same shape as Pause, so it
+takes the same capability. Three fears recorded in the old doc comments each turned
+out to have an answer already sitting in the schema:
+
+- **Carts.** The storefront cart is browser-local and holds variant ids; no variant
+  is deleted, so every line still resolves. `checkout_intents` and
+  `sals3_order_lines.listing_snapshot` freeze their own copies (ADR-007), so a past
+  order keeps reading `Colour: Black · Size: L` forever.
+- **Re-publish.** The storefront joins the three option tables **left** and falls
+  back to `provider_variant_references.source_option_label`, so removal degrades the
+  page rather than breaking it. `updateTag(STOREFRONT_CATALOG_TAG)` is not optional
+  though — without it a live PDP keeps serving axes whose rows are gone.
+- **Delisting.** `product_variants_active_requires_combination` looked like it
+  forced every variant out of `ACTIVE` before the keys could be cleared. Nothing
+  ever sets a variant `ACTIVE`, so it cannot fire — see the warning above.
+
+**The delete order is load-bearing, not stylistic.**
+`product_variant_option_values` references both option tables with
+`ON DELETE restrict`, so the pairs go first and `product_options` second (cascading
+to `product_option_values`). A test pins the order, because the wrong one passes
+everything that never touches a real database — the failure
+`purge-catalogue-products.mts` was broken by.
+
+**The whole mapping is copied into the audit event before it is destroyed.**
+`product_options` has no history table, and neither mapping action records the
+per-value labels or which variant took which, so
+`catalog_product.options_unmapped` carries every pair. `audit_events` is
+append-only, which makes that copy the record: a seller who removes a 52-variant
+matrix to fix one row can rebuild the other 51 from it by hand. There is still no
+automatic restore.
+
 **Variant setup redesigned as a "Variant Matrix" inside `Variants & Pricing`
 (2026-08-17).** The old `Option groups` screen rendered its own card and sat
 as a sibling immediately above the variant table — a nav-unreachable

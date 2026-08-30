@@ -3,6 +3,7 @@
 import { updateTag } from 'next/cache';
 import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
+import { MANUAL_MAPPING_MAX_VARIANTS } from '@/lib/seller-center/product-editor/manual-mapping-assist';
 import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import uniqueViolationConstraint from '@/lib/db/constraint-errors';
@@ -10,6 +11,8 @@ import { checkRateLimit } from '@/lib/rate-limit';
 import { STOREFRONT_CATALOG_TAG } from '@/lib/storefront/catalog-cache';
 import { recoverSupplierLabels } from '@/modules/catalog/products/recover-supplier-labels';
 import renameOptionMapping from '@/modules/catalog/products/rename-option-mapping';
+import saveManualOptionMapping from '@/modules/catalog/products/save-manual-option-mapping';
+import unmapOptionMapping from '@/modules/catalog/products/unmap-option-mapping';
 import saveOptionMapping from '@/modules/catalog/products/save-option-mapping';
 import revalidateListingViews from './revalidate-listing-views';
 
@@ -165,6 +168,21 @@ const REFUSAL_MESSAGES: Record<string, string> = {
     'The option values submitted no longer match the supplier labels on this product. Reload the editor to pick up the current labels.',
   duplicate_combination:
     'Two variants would end up with the same combination of option values, so the mapping was not saved. This means the supplier labels themselves repeat a combination.',
+  NO_AXES: 'Add at least one option group before saving.',
+  EMPTY_NAME: 'Give every option group a name.',
+  EMPTY_VALUE:
+    'Every option group needs at least one value, and none of them may be blank.',
+  VALUE_COLLISION:
+    'Two option groups, or two values inside one group, cannot be told apart. Give each its own wording.',
+  INCOMPLETE_ASSIGNMENT:
+    'Every variant needs one value from every option group before this can be saved.',
+  UNKNOWN_VARIANT:
+    'The variants on this product changed while you were mapping them. Reload the editor and try again.',
+  UNKNOWN_VALUE:
+    'A variant was given a value that is not in its option group. Reload the editor and try again.',
+  COMBINATION_COLLISION:
+    'Two variants were given the same combination of values, so a buyer could not tell them apart. Change one of them.',
+  NOT_MAPPED_TO_REMOVE: 'This product has no saved Variant Matrix to remove.',
   failed: 'The Variant Matrix could not be saved.',
 };
 
@@ -185,7 +203,19 @@ type AuthorizationFailure = {
   reason: 'denied' | 'rate_limited' | 'not_configured';
 };
 
-async function authorize(): Promise<Authorized | AuthorizationFailure> {
+/**
+ * @param permission which capability the caller must hold.
+ *
+ * Every mapping write takes `product:edit`, because naming what a buyer reads is
+ * editing the product. **Unmapping takes `product:publish`**, the same capability
+ * Pause takes, and for the same reason: it changes a live PDP with no publish
+ * step in between, degrading it to the supplier's own labels. A parameter rather
+ * than a second copy of this function — the rate limit, the DROPSHIPPER rule and
+ * the session-derived tenant must not be able to differ between the two.
+ */
+async function authorize(
+  permission: 'product:edit' | 'product:publish' = 'product:edit',
+): Promise<Authorized | AuthorizationFailure> {
   if (!isDatabaseConfigured()) {
     return { ok: false, reason: 'not_configured' };
   }
@@ -193,7 +223,7 @@ async function authorize(): Promise<Authorized | AuthorizationFailure> {
   let session;
 
   try {
-    session = await requirePermission('product:edit');
+    session = await requirePermission(permission);
   } catch (error) {
     if (error instanceof PermissionError)
       return { ok: false, reason: 'denied' };
@@ -286,6 +316,210 @@ export default async function saveOptionMappingAction(
     ok: true,
     axisCount: result.axisCount,
     mappedVariantCount: result.mappedVariantCount,
+  };
+}
+
+/**
+ * The boundary for a Variant Matrix a person builds, where the supplier's labels
+ * encode no grid to check against.
+ *
+ * ## This one *does* accept structure, and that is the whole point
+ *
+ * The note at the top of this file says the client sends names and never
+ * structure. That rule belongs to `saveOptionMappingAction`, whose payload can be
+ * checked against a re-derived split. Here there is nothing to re-derive: the
+ * labels are ragged, or one token holds two attributes, and only a person can say
+ * which. So the assignment crosses this boundary as data.
+ *
+ * What replaces the re-derivation, in `saveManualOptionMapping` itself:
+ *
+ * - the variant set comes from the database, so an id from elsewhere is refused
+ *   rather than written;
+ * - every variant must be assigned on every axis, because a partial mapping is
+ *   the shape that produces colliding keys;
+ * - two variants may not land on the same combination, which is the one outcome
+ *   that could hand a buyer the wrong goods.
+ *
+ * Tenant and actor still come from the session, and it is still gated on
+ * `product:edit` for a `DROPSHIPPER` — a seller reinterpreting their own supplier
+ * labels is editing their own product, not exercising a new authority.
+ *
+ * `position` is array order on both axes and values, for the reason the derived
+ * action gives: an explicit client index would be a second source of truth for
+ * something the server already knows.
+ *
+ * Costs nothing at the supplier. No CJ call, no points (ADR-017).
+ */
+const manualMappingInputSchema = z.object({
+  productId: z.string().uuid(),
+  expectedProductVersion: z.number().int().positive(),
+  axes: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(60),
+        // Seller-typed, so `max` matches the display-label cap on the derived
+        // path rather than the supplier token's looser one.
+        values: z.array(z.string().trim().min(1).max(120)).min(1),
+      }),
+    )
+    .min(1)
+    /**
+     * Three axes covers colour, fit and size, which is the shape that made this
+     * path necessary. The cap is a payload bound rather than a product opinion —
+     * `product_options` has no such limit — and a fourth axis is a request to
+     * raise it, not a defect.
+     */
+    .max(4),
+  assignments: z
+    .array(
+      z.object({
+        variantId: z.string().uuid(),
+        values: z.array(z.string().trim().min(1).max(120)).min(1).max(4),
+      }),
+    )
+    .min(1)
+    // The panel refuses to offer a save past this too, so a seller reads the real
+    // reason rather than `invalid_input`'s wording about option groups.
+    .max(MANUAL_MAPPING_MAX_VARIANTS),
+});
+
+export async function saveManualOptionMappingAction(
+  input: unknown,
+): Promise<OptionMappingActionResult> {
+  const parsed = manualMappingInputSchema.safeParse(input);
+
+  if (!parsed.success) return refuse('invalid_input');
+
+  const authorization = await authorize();
+
+  if (!authorization.ok) return refuse(authorization.reason);
+
+  let result;
+
+  try {
+    result = await saveManualOptionMapping({
+      productId: parsed.data.productId,
+      sellerAccountId: authorization.sellerAccountId,
+      actorId: authorization.actorId,
+      expectedProductVersion: parsed.data.expectedProductVersion,
+      axes: parsed.data.axes,
+      assignments: parsed.data.assignments,
+    });
+  } catch (error) {
+    /*
+      Kept for symmetry with the derived path, and honestly labelled: this cannot
+      currently fire. `product_variants_active_combination_key` is partial on
+      `status = 'ACTIVE'` and nothing ever sets a variant `ACTIVE`, so the index
+      covers no rows. The application-level collision check in
+      `saveManualOptionMapping` is the real guard. Left in place because it costs
+      nothing and becomes live the day an `ACTIVE` writer exists — removing it
+      would leave that day's unique violation as an unhandled action error.
+    */
+    if (uniqueViolationConstraint(error) === COMBINATION_CONSTRAINT) {
+      return refuse('duplicate_combination');
+    }
+
+    throw error;
+  }
+
+  if (!result.ok) return refuse(result.reason);
+
+  revalidateListingViews();
+  // A live product can be mapped — the publish gate only guards publish — so
+  // without this the PDP keeps serving the 52 opaque labels after a successful
+  // save, which reads as the save having failed.
+  updateTag(STOREFRONT_CATALOG_TAG);
+
+  return {
+    ok: true,
+    axisCount: result.axisCount,
+    mappedVariantCount: result.mappedVariantCount,
+  };
+}
+
+const unmapInputSchema = z.object({
+  productId: z.string().uuid(),
+  expectedProductVersion: z.number().int().positive(),
+  /**
+   * Optional wording, recorded on the audit event.
+   *
+   * Not required: demanding a sentence before letting a seller correct their own
+   * mistake is a tax on the fix, and an unmap is already fully described by the
+   * mapping the event carries. Capped because it is free text on an append-only
+   * table.
+   */
+  reason: z.string().trim().max(500).optional(),
+});
+
+export type UnmapOptionMappingActionResult =
+  | {
+      ok: true;
+      removedAxisCount: number;
+      removedValueCount: number;
+      unmappedVariantCount: number;
+    }
+  | { ok: false; reason: string; message: string };
+
+/**
+ * Removing a saved Variant Matrix.
+ *
+ * Gated on **`product:publish`**, not `product:edit`. Mapping and renaming take
+ * the editing capability because they add or improve what a buyer reads; this
+ * takes it away, immediately, on a page that may be live — the same shape as
+ * Pause, which takes the same capability. A seller who may edit copy should not
+ * be able to degrade a live listing on their own.
+ *
+ * The buyer-facing consequence is not a defect and is worth being explicit
+ * about: the PDP falls back to the supplier's own concatenated labels, because
+ * the storefront joins the option tables `left` and reads
+ * `provider_variant_references.source_option_label` when they are absent. Past
+ * orders are untouched — `sals3_order_lines.listing_snapshot` froze the axes at
+ * intent creation (ADR-007).
+ *
+ * No CJ call, no points (ADR-017).
+ */
+export async function unmapOptionMappingAction(
+  input: unknown,
+): Promise<UnmapOptionMappingActionResult> {
+  const parsed = unmapInputSchema.safeParse(input);
+
+  if (!parsed.success) return refuse('invalid_input');
+
+  const authorization = await authorize('product:publish');
+
+  if (!authorization.ok) return refuse(authorization.reason);
+
+  const result = await unmapOptionMapping({
+    productId: parsed.data.productId,
+    sellerAccountId: authorization.sellerAccountId,
+    actorId: authorization.actorId,
+    expectedProductVersion: parsed.data.expectedProductVersion,
+    reason: parsed.data.reason ?? null,
+  });
+
+  if (!result.ok) {
+    // `NOT_MAPPED` already means something else on the rename path ("nothing to
+    // rename yet"), and reusing that sentence here would tell a seller their
+    // product is unmapped in the middle of them removing its mapping.
+    return refuse(
+      result.reason === 'NOT_MAPPED' ? 'NOT_MAPPED_TO_REMOVE' : result.reason,
+    );
+  }
+
+  revalidateListingViews();
+  /*
+    Not optional. The storefront folds the option tables into named axes and
+    caches the result, so without this a live PDP keeps serving axes whose rows
+    no longer exist — the removal would look like it failed while having fully
+    committed.
+  */
+  updateTag(STOREFRONT_CATALOG_TAG);
+
+  return {
+    ok: true,
+    removedAxisCount: result.removedAxisCount,
+    removedValueCount: result.removedValueCount,
+    unmappedVariantCount: result.unmappedVariantCount,
   };
 }
 

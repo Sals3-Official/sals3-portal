@@ -1958,6 +1958,13 @@ export function productToEditorFixture(product: CatalogueProductFixture): {
       unlabelledVariantCount: product.variants.filter(
         (variant) => variant.supplierOptionLabel === null,
       ).length,
+      // Same source as `proposal` and as the server's own re-derivation, so the
+      // by-hand mapper can never show a label the writer would not recognise.
+      labelledVariants: product.variants.flatMap((variant) =>
+        variant.supplierOptionLabel === null
+          ? []
+          : [{ variantId: variant.id, label: variant.supplierOptionLabel }],
+      ),
     },
     specifications: editorSpecifications(product),
     categoryAttributes: categoryAttributesResult.fields,

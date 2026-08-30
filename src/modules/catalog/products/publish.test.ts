@@ -567,6 +567,45 @@ describe('publishProduct', () => {
     expect(await publish(db)).toMatchObject({ ok: true });
   });
 
+  /**
+   * The tactical pants, live on 2026-08-31: a sparse 8 x 8 grid holding 52 of its
+   * 64 combinations. `deriveOptionSplit` admits this shape now, which flips this
+   * gate for it — the product published freely while the split was refused, and
+   * from here it must name its axes first.
+   *
+   * That is the intended consequence and the reason it is pinned: the listing
+   * stays live either way, but an edit cannot be published over it until the
+   * matrix is named. Exactly one product in the catalogue was in this state when
+   * the rule changed.
+   */
+  function sparseGridVariants() {
+    const labels = [
+      ...['Black Men', 'Gray Male'].flatMap((group) =>
+        ['L', 'XL', '5XL'].map((size) => `${group}-${size}`),
+      ),
+      ...['Black Female', 'Khaki Women'].flatMap((group) =>
+        ['M', 'L', 'XL'].map((size) => `${group}-${size}`),
+      ),
+    ];
+
+    return labels.map((label, index) =>
+      variantRow({ variantId: `variant-${index + 1}`, label }),
+    );
+  }
+
+  it('refuses a sparse grid that nobody has named, which it used to publish', async () => {
+    const { db } = transactionalDb({
+      variants: sparseGridVariants(),
+      options: [],
+    });
+
+    expect(await publish(db)).toEqual({
+      ok: false,
+      reason: 'OPTIONS_UNMAPPED',
+    });
+    expect(mocks.resolveProductPricing).not.toHaveBeenCalled();
+  });
+
   it('publishes when supplier labels do not form a complete grid', async () => {
     const { db } = transactionalDb({
       // Ragged: two tokens then one. Not an encoding, so nothing to name.

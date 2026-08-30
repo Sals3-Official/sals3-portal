@@ -28,6 +28,8 @@ vi.mock('@/app/(portal)/listings/option-mapping-actions', () => ({
   default: vi.fn(),
   recoverSupplierLabelsAction: vi.fn(),
   renameOptionMappingAction: vi.fn(),
+  saveManualOptionMappingAction: vi.fn(),
+  unmapOptionMappingAction: vi.fn(),
 }));
 
 vi.mock('@/app/(portal)/listings/category-mapping-actions', () => ({
@@ -252,13 +254,20 @@ describe('Variant Matrix - renaming a saved mapping', () => {
     expect(screen.getByRole('button', { name: 'Edit names' })).toBeEnabled();
   });
 
-  it('says plainly what still cannot change', () => {
+  /**
+   * This used to assert the sentence "the number of options, and which supplier
+   * value sits where, cannot change once variants exist". Removal made that
+   * false, so the copy now says how to change it instead of that you cannot —
+   * and the assertion had to move with it rather than be relaxed.
+   */
+  it('says how to change what renaming cannot, rather than that it is fixed', () => {
     renderEditor(mappedFixture());
 
     expect(
-      screen.getByText(
-        /number of options, and which supplier value sits where/,
-      ),
+      screen.getByText(/number of options, or which supplier value sits where/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/remove the matrix and build it again/),
     ).toBeInTheDocument();
   });
 

@@ -180,6 +180,36 @@ type ProductEditorWorkspaceProps = {
     | { ok: false; reason: string; message: string }
   >;
   /**
+   * By-hand option-mapping boundary, for products whose supplier labels encode no
+   * grid to check a submission against. Omitted for fixture mode.
+   *
+   * Separate from `optionMappingAction` on purpose: that one accepts names only
+   * because the server re-derives the structure, and this one accepts the
+   * structure itself. Two boundaries keep the two warrants apart — and they audit
+   * under different actions, so a dispute can tell them apart later.
+   */
+  manualOptionMappingAction?: (
+    input: unknown,
+  ) => Promise<
+    | { ok: true; axisCount: number; mappedVariantCount: number }
+    | { ok: false; reason: string; message: string }
+  >;
+  /**
+   * Removal boundary for a saved Variant Matrix. Omitted for fixture mode.
+   *
+   * Gated on `product:publish` server-side rather than `product:edit`, because
+   * it changes a live PDP with no publish step — see `unmap-option-mapping.ts`.
+   */
+  unmapOptionMappingAction?: (input: unknown) => Promise<
+    | {
+        ok: true;
+        removedAxisCount: number;
+        removedValueCount: number;
+        unmappedVariantCount: number;
+      }
+    | { ok: false; reason: string; message: string }
+  >;
+  /**
    * Rename boundary for an already-saved Variant Matrix. Display words only —
    * see `rename-option-mapping.ts` for why that is safe where a re-split is
    * not.
@@ -527,6 +557,8 @@ export default function ProductEditorWorkspace({
   saveDescriptionAction,
   publishAction,
   optionMappingAction,
+  manualOptionMappingAction,
+  unmapOptionMappingAction,
   recoverLabelsAction,
   sals3CategoryOptions = [],
   decideCategoryAction,
@@ -1519,6 +1551,59 @@ export default function ProductEditorWorkspace({
         };
 
   /**
+   * The by-hand save. Same compare-and-set token and the same
+   * absent-action-or-absent-target rule as the derived one above; what differs is
+   * that the assignment travels with it, because there is no split to check
+   * against.
+   */
+  const handleManualOptionMappingSave =
+    manualOptionMappingAction === undefined || optionMappingTarget === null
+      ? undefined
+      : async (
+          axes: { name: string; values: string[] }[],
+          assignments: { variantId: string; values: string[] }[],
+        ) => {
+          const result = await manualOptionMappingAction({
+            productId: optionMappingTarget.productId,
+            expectedProductVersion: optionMappingTarget.expectedProductVersion,
+            axes,
+            assignments,
+          });
+
+          // The section reads its report-only state from the read-model, not from
+          // local state, so a committed mapping has to be re-read.
+          if (result.ok) router.refresh();
+
+          return result.ok
+            ? { ok: true }
+            : { ok: false, message: result.message };
+        };
+
+  /**
+   * Removing the saved matrix. Always followed by a refresh, and unlike the
+   * renames there is nothing to mirror locally: the section has to fall back to
+   * the unmapped branch, which it reads from the read-model.
+   */
+  const handleUnmapOptionMapping =
+    unmapOptionMappingAction === undefined || optionMappingTarget === null
+      ? undefined
+      : async () => {
+          const result = await unmapOptionMappingAction({
+            productId: optionMappingTarget.productId,
+            expectedProductVersion: optionMappingTarget.expectedProductVersion,
+          });
+
+          if (result.ok) router.refresh();
+
+          return result.ok
+            ? {
+                ok: true,
+                message: `Removed. Buyers now read the supplier's own labels on ${result.unmappedVariantCount} ${result.unmappedVariantCount === 1 ? 'variant' : 'variants'}.`,
+              }
+            : { ok: false, message: result.message };
+        };
+
+  /**
    * Renaming the saved matrix. Display words only, so it needs no refresh of
    * the proposal — but it does bump the product version, and the section
    * mirrors the new names locally until the refreshed fixture confirms them.
@@ -2307,6 +2392,9 @@ export default function ProductEditorWorkspace({
                   fixture.optionMapping.unlabelledVariantCount
                 }
                 onSave={handleOptionMappingSave}
+                labelledVariants={fixture.optionMapping.labelledVariants}
+                onSaveManual={handleManualOptionMappingSave}
+                onUnmap={handleUnmapOptionMapping}
                 onRecoverLabels={handleRecoverLabels}
                 mappedAxes={fixture.mappedAxes}
                 onRename={handleOptionMappingRename}
