@@ -68,6 +68,7 @@ function listTabRows(
   window: PageWindow,
   search: string,
   filters: CandidateFilters | undefined,
+  fuzzy: boolean,
 ): Promise<EvaluatedCandidateRow[]> {
   const options = {
     limit: window.pageSize,
@@ -88,6 +89,7 @@ function listTabRows(
       return listCandidatesByStatus(sellerAccountId, [...TAB_STATUSES[tab]], {
         ...options,
         filters: tabAcceptsFilters(tab) ? filters : undefined,
+        fuzzy,
       });
   }
 }
@@ -103,6 +105,7 @@ function countTabRows(
   tab: PipelineTab,
   search: string,
   filters: CandidateFilters | undefined,
+  fuzzy: boolean,
 ): Promise<number> {
   switch (tab) {
     case 'evaluating':
@@ -115,6 +118,7 @@ function countTabRows(
         [...TAB_STATUSES[tab]],
         search,
         tabAcceptsFilters(tab) ? filters : undefined,
+        fuzzy,
       );
   }
 }
@@ -144,10 +148,13 @@ export default async function resolvePipelinePageData(
     requestedPage: number;
     /** Applied in SQL for Ready and Needs Attention — see `tabAcceptsFilters`. */
     filters?: CandidateFilters;
+    /** Whether this database has `pg_trgm`, so the search may match a typo. */
+    fuzzy?: boolean;
   },
 ): Promise<PipelinePageData> {
   const { search, requestedPage } = input;
   const filters = tabAcceptsFilters(tab) ? input.filters : undefined;
+  const fuzzy = input.fuzzy ?? false;
   /*
     A filtered tab's total is NOT the tab's own count. `countForTab` reads the
     cached status summary, which knows nothing about a category or a freshness
@@ -165,9 +172,11 @@ export default async function resolvePipelinePageData(
     const firstPage = resolvePageWindow(0, 1, PIPELINE_PAGE_SIZE);
     const [counts, scopedTotal, firstPageRows] = await Promise.all([
       readCandidateStatusCounts(sellerAccountId),
-      needsCount ? countTabRows(sellerAccountId, tab, search, filters) : null,
+      needsCount
+        ? countTabRows(sellerAccountId, tab, search, filters, fuzzy)
+        : null,
       requestedPage === 1
-        ? listTabRows(sellerAccountId, tab, firstPage, search, filters)
+        ? listTabRows(sellerAccountId, tab, firstPage, search, filters, fuzzy)
         : null,
     ]);
 
@@ -175,7 +184,7 @@ export default async function resolvePipelinePageData(
     const window = resolvePageWindow(total, requestedPage, PIPELINE_PAGE_SIZE);
     const [candidates, queueAgeMs] = await Promise.all([
       firstPageRows ??
-        listTabRows(sellerAccountId, tab, window, search, filters),
+        listTabRows(sellerAccountId, tab, window, search, filters, fuzzy),
       tab === 'exception' ? oldestQueuedAgeMs(sellerAccountId) : null,
     ]);
 

@@ -202,7 +202,7 @@ describe('ProductSourcingPipelinePage', () => {
     expect(listCandidatesByStatusMock).toHaveBeenCalledWith(
       'seller-1',
       ['BLOCKED', 'TEMPORARILY_INELIGIBLE'],
-      { limit: 100, offset: 0, search: '' },
+      { limit: 100, offset: 0, search: '', filters: undefined, fuzzy: false },
     );
   });
 
@@ -225,7 +225,13 @@ describe('ProductSourcingPipelinePage', () => {
     expect(listCandidatesByStatusMock).toHaveBeenCalledWith(
       'seller-1',
       ['BLOCKED', 'TEMPORARILY_INELIGIBLE'],
-      { limit: 100, offset: 200, search: '' },
+      {
+        limit: 100,
+        offset: 200,
+        search: '',
+        filters: undefined,
+        fuzzy: false,
+      },
     );
     expect(screen.getByTestId('pipeline-pagination')).toHaveTextContent(
       'page:3/3 total:250',
@@ -265,16 +271,27 @@ describe('ProductSourcingPipelinePage', () => {
     // assertion that matters: Blocked is not one of the two tabs that accept
     // filters, so it must reach the query with no predicate rather than with
     // one the tab's own scope would ignore.
+    // The trailing two are the assertion that matters: Blocked is not one of
+    // the two tabs that accept filters, and this database has no `pg_trgm`, so
+    // the query must carry neither a predicate the tab would ignore nor a
+    // fuzzy arm that would raise `operator does not exist`.
     expect(countCandidatesByStatusMock).toHaveBeenCalledWith(
       'seller-1',
       ['BLOCKED', 'TEMPORARILY_INELIGIBLE'],
       'phone case',
       undefined,
+      false,
     );
     expect(listCandidatesByStatusMock).toHaveBeenCalledWith(
       'seller-1',
       ['BLOCKED', 'TEMPORARILY_INELIGIBLE'],
-      { limit: 100, offset: 0, search: 'phone case', filters: undefined },
+      {
+        limit: 100,
+        offset: 0,
+        search: 'phone case',
+        filters: undefined,
+        fuzzy: false,
+      },
     );
     expect(
       screen.getByText('3 candidates matching "phone case"'),
