@@ -13,6 +13,17 @@
     "category": "cat-app-100412",
     "categoryName": "Men's Jackets",
     "categoryPath": "Apparel > Outerwear > Men's Jackets",
+    "categoryTrail": [
+      {
+        "name": "Apparel"
+      },
+      {
+        "name": "Outerwear"
+      },
+      {
+        "name": "Men's Jackets"
+      }
+    ],
     "availability": "AVAILABLE",
     "publishedAt": "2026-08-13T01:02:03.000Z",
     "images": [
@@ -27,7 +38,11 @@
     ],
     "description": {
       "blocks": [
-        { "type": "heading", "level": 2, "text": "Built for cold mornings" },
+        {
+          "type": "heading",
+          "level": 2,
+          "text": "Built for cold mornings"
+        },
         {
           "type": "paragraph",
           "text": "A short-cut shell jacket with a fleece lining."
@@ -39,8 +54,14 @@
         {
           "type": "keyValueList",
           "entries": [
-            { "label": "Material", "value": "Polyester shell, fleece lining" },
-            { "label": "Care", "value": "Machine wash cold" }
+            {
+              "label": "Material",
+              "value": "Polyester shell, fleece lining"
+            },
+            {
+              "label": "Care",
+              "value": "Machine wash cold"
+            }
           ]
         },
         {
@@ -59,8 +80,14 @@
         "currency": "USD",
         "availability": "AVAILABLE",
         "options": [
-          { "name": "Colour", "value": "Black" },
-          { "name": "Size", "value": "XL" }
+          {
+            "name": "Colour",
+            "value": "Black"
+          },
+          {
+            "name": "Size",
+            "value": "XL"
+          }
         ],
         "label": "Black-XL",
         "imageUrl": "https://media.example.com/seller-media/p/black.webp"
@@ -72,8 +99,14 @@
         "currency": "USD",
         "availability": "UNKNOWN",
         "options": [
-          { "name": "Colour", "value": "Navy" },
-          { "name": "Size", "value": "XL" }
+          {
+            "name": "Colour",
+            "value": "Navy"
+          },
+          {
+            "name": "Size",
+            "value": "XL"
+          }
         ],
         "label": "Navy-XL"
       }
@@ -90,9 +123,18 @@
       "condition": "NEW"
     },
     "specification": [
-      { "label": "Material", "value": "Polyester shell, fleece lining" },
-      { "label": "Season", "value": "Autumn, Winter" },
-      { "label": "Country of Origin", "value": "China" }
+      {
+        "label": "Material",
+        "value": "Polyester shell, fleece lining"
+      },
+      {
+        "label": "Season",
+        "value": "Autumn, Winter"
+      },
+      {
+        "label": "Country of Origin",
+        "value": "China"
+      }
     ],
     "metaDescription": "A short-cut waterproof shell jacket with a fleece lining, in black and navy."
   }

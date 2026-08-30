@@ -4,6 +4,10 @@ import {
   storefrontDepartmentQuerySchema,
   toStorefrontProductFeed,
 } from '@/lib/storefront/catalog-feed';
+import {
+  taxonomyCodeFromSlug,
+  taxonomyPathForCode,
+} from '@/modules/catalog/taxonomy/category-trail';
 import { departmentNameForSlug } from '@/modules/catalog/taxonomy/departments';
 import {
   notFoundResponse,
@@ -73,9 +77,24 @@ export async function GET(
 
   try {
     const { slug } = await params;
+    /**
+     * A department by name, or any deeper taxonomy node by its Google id.
+     *
+     * Departments first: `/c/office-supplies` is already live and linked from
+     * four surfaces, and a bare department slug carries no trailing id for
+     * `taxonomyCodeFromSlug` to read anyway.
+     *
+     * Both halves are allow-lists. A slug that is neither a department nor a
+     * seeded taxonomy code 404s here, so nothing a buyer types reaches a query —
+     * see the note above for why that is a 404 rather than an empty 200.
+     */
     const departmentName = departmentNameForSlug(slug);
+    const categoryCode =
+      departmentName === null ? taxonomyCodeFromSlug(slug) : null;
+    const categoryPath =
+      categoryCode === null ? null : taxonomyPathForCode(categoryCode);
 
-    if (departmentName === null) {
+    if (departmentName === null && categoryPath === null) {
       return notFoundResponse();
     }
 
@@ -89,6 +108,7 @@ export async function GET(
     });
     const page = await readStorefrontDepartmentFeed(
       departmentName,
+      categoryPath,
       query.sort,
       query.page,
       query.limit,

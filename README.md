@@ -3715,6 +3715,64 @@ MCP token in `CJ_MCP_TOKEN` is stored but unused by this REST integration.
 
 ## Storefront product feed
 
+### Every category level is addressable (2026-08-31)
+
+Owner decision: every level a PDP breadcrumb shows must be clickable, not only
+the department. Before this, `/c/[slug]` resolved the 21 L1 departments and
+nothing else — `/c/clothing` and `/c/pants` both answered **404**, so on the live
+`Cash Savings Book` page three of four levels were plain text.
+
+**The blocker was never the filter.** A URL has to resolve back to exactly one
+taxonomy row, and `slugBaseFromTitle` lower-cases, collapses and truncates —
+`departments.ts` says plainly that no expression inverts it. A bare slug cannot
+identify a level.
+
+**Every level already had a unique key.** Each is its own `sals3_categories` row
+with its own `CAT-GGL-<Google numeric id>` code: `Paper Products` is
+`CAT-GGL-956`, `Notebooks & Notepads` is `CAT-GGL-961`. So a deeper level is
+addressed as `<slug>-<id>` — owner decision, chosen over a nested path that would
+have needed a new `slug` column and therefore a production DDL run.
+
+**The id is authoritative and the slug is decoration.** `taxonomyCodeFromSlug`
+reads only the trailing digits, so `/c/totally-wrong-words-956` resolves exactly
+like `/c/paper-products-956`. A renamed category keeps working and nothing has to
+stay in sync. An id the seeded extract does not contain 404s **before** any query
+— the allow-list is the security boundary, unchanged.
+
+**L1 keeps its bare slug.** `/c/office-supplies` is live and linked from the home
+tiles, the all-departments list, the footer and the browse sidebar, and the 21
+departments have a curated name list on both sides of the wire. The two URL
+shapes are not an inconsistency to tidy: 21 curated departments are addressable
+by name, 5,574 taxonomy rows are not.
+
+**A deeper node matches its subtree.** `categoryScopeCondition` keeps the
+department on its indexed `l1` equality and matches a deeper node by
+`path = x OR path LIKE 'x > %'` — the node **or anything beneath it**, because a
+taxonomy files products at the leaves and browsing `Paper Products` must list
+what sits under `Notebooks & Notepads`. `LIKE` with the separator appended, not a
+bare prefix: without the `' > '` a category named `Shoes` also matches
+`Shoes & Boots`. Same trap `reprice.ts` documents, which is why the expression is
+one shared helper rather than a second copy.
+
+**The wire gained `categoryTrail`.** One entry per level, each with its own
+`/c/[slug]` where it has one, so a consumer can link every level instead of
+re-deriving addresses from a display string. `categoryPath` stays — a consumer
+with no interest in links reads it, and dropping it would be a breaking change.
+A level with no address has no `slug`: absent rather than guessed, so a
+CJ-mirrored path renders as text rather than pointing at a 404. Product cache key
+bumped `v6` → `v7`; the feed key stays on `v3`, because a card row has no
+breadcrumb.
+
+**No `import 'server-only'` on `category-trail.ts`, deliberately.** It reads the
+5,595-row extract and is reached through `catalog-feed.ts`, which six
+`/api/storefront/*` routes import — the guard put **seven** test files into
+`vi.mock('server-only')` to test pure functions, and `read-model.ts` refused it
+for the same reason at nine. The risk is covered by
+`category-trail.client-boundary.test.ts` instead, which walks the import graph
+from every `'use client'` module and fails if any path reaches the extract. That
+asserts the property rather than mocking a proxy for it, and it carries its own
+non-vacuity check.
+
 `sals3-ecommerce` reads products from the protected storefront API:
 
 ```text

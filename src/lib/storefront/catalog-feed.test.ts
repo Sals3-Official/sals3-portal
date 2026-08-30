@@ -267,6 +267,43 @@ describe('toStorefrontProductDetail', () => {
       null,
     );
   });
+  /**
+   * The shared contract fixture's `categoryPath` is `Apparel > Outerwear > Men's
+   * Jackets`, which is not a seeded taxonomy path — `Apparel` is not one of the 21
+   * departments — so every level of it is correctly name-only. These pin the
+   * addressable side, which that fixture cannot show.
+   */
+  describe('categoryTrail', () => {
+    it('carries an address per level for a real taxonomy path', () => {
+      const payload = toStorefrontProductDetail(
+        detail({
+          categoryPath:
+            'Office Supplies > General Office Supplies > Paper Products > Notebooks & Notepads',
+        }),
+      );
+
+      expect(payload?.categoryTrail).toEqual([
+        // L1 keeps its bare department slug: already live, already linked.
+        { name: 'Office Supplies', slug: 'office-supplies' },
+        {
+          name: 'General Office Supplies',
+          slug: 'general-office-supplies-932',
+        },
+        { name: 'Paper Products', slug: 'paper-products-956' },
+        { name: 'Notebooks & Notepads', slug: 'notebooks-notepads-961' },
+      ]);
+      // The display string stays: a consumer with no interest in links reads it,
+      // and dropping it would break one that already does.
+      expect(payload?.categoryPath).toContain('Notebooks & Notepads');
+    });
+
+    it('omits the trail with the path, so the two cannot disagree', () => {
+      const payload = toStorefrontProductDetail(detail({ categoryPath: null }));
+
+      expect(payload?.categoryPath).toBe(undefined);
+      expect(payload?.categoryTrail).toBe(undefined);
+    });
+  });
 });
 
 describe('toStorefrontProductFeed', () => {
