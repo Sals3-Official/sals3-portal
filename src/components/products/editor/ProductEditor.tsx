@@ -14,6 +14,8 @@ import saveOptionMappingAction, {
   recoverSupplierLabelsAction,
   renameOptionMappingAction,
   saveManualOptionMappingAction,
+  remapOptionMappingAction,
+  restoreOptionMappingAction,
   unmapOptionMappingAction,
 } from '@/app/(portal)/listings/option-mapping-actions';
 import uploadDescriptionImageAction from '@/app/(portal)/listings/description-image-actions';
@@ -125,6 +127,12 @@ export default function ProductEditor({
         }
         unmapOptionMappingAction={
           isDatabaseBacked ? unmapOptionMappingAction : undefined
+        }
+        remapOptionMappingAction={
+          isDatabaseBacked ? remapOptionMappingAction : undefined
+        }
+        restoreOptionMappingAction={
+          isDatabaseBacked ? restoreOptionMappingAction : undefined
         }
         recoverLabelsAction={
           isDatabaseBacked ? recoverSupplierLabelsAction : undefined

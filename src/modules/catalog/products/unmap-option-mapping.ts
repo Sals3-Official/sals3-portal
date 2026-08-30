@@ -1,13 +1,13 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import getDb, { type Database } from '@/lib/db/client';
-import {
-  productOptionValues,
-  productOptions,
-  productVariantOptionValues,
-  productVariants,
-  products,
-} from '@/lib/db/schema';
+import { products } from '@/lib/db/schema';
 import { appendAuditEvent } from '@/modules/catalog/candidates/repository';
+import {
+  deleteOptionMappingRows,
+  readOptionMappingRows,
+  readProductVariantIds,
+  toMappingSnapshot,
+} from './option-mapping-rows';
 
 /**
  * Taking a Variant Matrix back off a product.
@@ -40,14 +40,11 @@ import { appendAuditEvent } from '@/modules/catalog/candidates/repository';
  *   cannot fire and the keys can simply be cleared. See the warning below about
  *   what else that fact invalidates.
  *
- * ## The delete order is not a preference
+ * ## The deletes live in `option-mapping-rows.ts`
  *
- * `product_variant_option_values` references both `product_options` and
- * `product_option_values` with **`ON DELETE restrict`**, so the pairs must go
- * first or the option delete is refused. Deleting `product_options` then cascades
- * to `product_option_values` on its own. This is the same "every RESTRICT edge,
- * innermost first" ordering `purge-catalogue-products.mts` documents, and the
- * reason a FK is a change to every delete path that touches the referenced table.
+ * Their order is a correctness property — `product_variant_option_values`
+ * references both option tables `ON DELETE restrict` — and three paths now
+ * perform it, so it has one home rather than three copies. See that module.
  *
  * ## The mapping is copied into the audit event before it is destroyed
  *
@@ -111,35 +108,10 @@ export default async function unmapOptionMapping(input: {
     }
 
     /**
-     * The whole mapping, read before anything is deleted.
-     *
-     * One row per variant × option, which is the shape the storefront's own read
-     * model folds, so what lands in the audit event is what a buyer was being
-     * shown rather than a reconstruction of it.
+     * The whole mapping, read before anything is deleted — the only copy that
+     * will exist afterwards.
      */
-    const mapping = await tx
-      .select({
-        optionId: productOptions.id,
-        optionName: productOptions.name,
-        optionPosition: productOptions.position,
-        valueId: productOptionValues.id,
-        valueLabel: productOptionValues.label,
-        valueNormalized: productOptionValues.normalizedValue,
-        valuePosition: productOptionValues.position,
-        variantId: productVariantOptionValues.variantId,
-      })
-      .from(productOptions)
-      .leftJoin(
-        productOptionValues,
-        eq(productOptionValues.optionId, productOptions.id),
-      )
-      // `left`, so an axis whose values were somehow lost still appears in the
-      // record of what was removed rather than vanishing from it.
-      .leftJoin(
-        productVariantOptionValues,
-        eq(productVariantOptionValues.optionValueId, productOptionValues.id),
-      )
-      .where(eq(productOptions.productId, input.productId));
+    const mapping = await readOptionMappingRows(tx, input.productId);
 
     if (mapping.length === 0) return { ok: false, reason: 'NOT_MAPPED' };
 
@@ -149,35 +121,9 @@ export default async function unmapOptionMapping(input: {
         mapping.flatMap((row) => (row.valueId === null ? [] : [row.valueId])),
       ),
     ];
+    const variantIds = await readProductVariantIds(tx, input.productId);
 
-    // Every variant of the product, not only the mapped ones: the key is being
-    // cleared on all of them, and a variant that was never linked has a null key
-    // already, so the UPDATE is idempotent for it.
-    const variantRows = await tx
-      .select({ id: productVariants.id })
-      .from(productVariants)
-      .where(eq(productVariants.productId, input.productId));
-    const variantIds = variantRows.map((row) => row.id);
-
-    // ---- deletes, innermost RESTRICT edge first --------------------------
-    if (variantIds.length > 0) {
-      await tx
-        .delete(productVariantOptionValues)
-        .where(inArray(productVariantOptionValues.variantId, variantIds));
-    }
-
-    // Cascades to `product_option_values`. Deleting the options is only legal
-    // once the pairs above are gone.
-    await tx
-      .delete(productOptions)
-      .where(inArray(productOptions.id, optionIds));
-
-    if (variantIds.length > 0) {
-      await tx
-        .update(productVariants)
-        .set({ optionCombinationKey: null, updatedAt: now })
-        .where(inArray(productVariants.id, variantIds));
-    }
+    await deleteOptionMappingRows(tx, { optionIds, variantIds, now });
 
     await tx
       .update(products)
@@ -211,14 +157,9 @@ export default async function unmapOptionMapping(input: {
          * which value — `product_options` has no history table, and neither
          * mapping action records them.
          */
-        removed: mapping.map((row) => ({
-          optionName: row.optionName,
-          optionPosition: row.optionPosition,
-          valueLabel: row.valueLabel,
-          valueNormalized: row.valueNormalized,
-          valuePosition: row.valuePosition,
-          variantId: row.variantId,
-        })),
+        // The shape `restoreOptionMapping` reads back, so the two cannot drift
+        // apart into a snapshot nothing can rebuild.
+        removed: toMappingSnapshot(mapping),
       },
     });
 

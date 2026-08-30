@@ -21,6 +21,7 @@ import type {
   IssueSeverity,
   VariantMatrixValuePhoto,
 } from '@/lib/seller-center/product-editor/types';
+import { assignmentsFromMappedAxes } from '@/lib/seller-center/product-editor/manual-mapping-assist';
 import EditorStatusPill from './EditorStatusPill';
 import VariantMatrixAxisCard from './VariantMatrixAxisCard';
 import VariantMatrixValueRow from './VariantMatrixValueRow';
@@ -178,6 +179,23 @@ export type VariantOptionMappingSectionProps = {
    * action is absent, so the control is never one that cannot write.
    */
   onUnmap?: () => Promise<{ ok: boolean; message: string }>;
+  /**
+   * Replacement boundary — the same payload the by-hand save takes, applied over
+   * an existing mapping in one transaction.
+   *
+   * `product:edit` server-side rather than `product:publish`: a replacement leaves
+   * the page with a named matrix either way, so no buyer ends up reading raw
+   * supplier tokens. Removal is the one that degrades, and takes the stronger
+   * capability.
+   */
+  onRemap?: (
+    axes: { name: string; values: string[] }[],
+    assignments: { variantId: string; values: string[] }[],
+  ) => Promise<{ ok: boolean; message?: string }>;
+  /** Whether a previous matrix is on record, so the offer is never empty. */
+  hasRestorableMapping?: boolean;
+  /** Puts back the last recorded matrix. Withheld with no action or no record. */
+  onRestore?: () => Promise<{ ok: boolean; message: string }>;
 };
 
 type ValueDraft = { raw: string; label: string };
@@ -314,6 +332,9 @@ function MappedMatrixSummary({
   onRename,
   onRenamed,
   onUnmap,
+  onRemap,
+  labelledVariants,
+  suggestedAxisNames,
   variantCount,
 }: {
   axisNames: string[];
@@ -330,12 +351,31 @@ function MappedMatrixSummary({
   onRenamed: (axisNames: string[]) => void;
   /** Removal boundary. Withheld where the action does not exist. */
   onUnmap?: () => Promise<{ ok: boolean; message: string }>;
+  /** Replacement boundary. Withheld where the action does not exist. */
+  onRemap?: (
+    axes: { name: string; values: string[] }[],
+    assignments: { variantId: string; values: string[] }[],
+  ) => Promise<{ ok: boolean; message?: string }>;
+  labelledVariants: { variantId: string; label: string }[];
+  suggestedAxisNames: string[];
   variantCount: number;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [unmapOpen, setUnmapOpen] = useState(false);
   const [unmapState, setUnmapState] = useState<'IDLE' | 'REMOVING'>('IDLE');
   const [unmapMessage, setUnmapMessage] = useState<string | null>(null);
+  const [remapOpen, setRemapOpen] = useState(false);
+
+  /**
+   * Replacing needs the current mapping as a starting point and the variants to
+   * assign, so it is offered only where both exist. `variantIds` on each stored
+   * value is what makes the pre-fill possible with no extra query.
+   */
+  const canRemap =
+    onRemap !== undefined &&
+    mappedAxes.length > 0 &&
+    labelledVariants.length === variantCount &&
+    labelledVariants.length > 0;
   const [drafts, setDrafts] = useState<MappedOptionAxis[]>(mappedAxes);
   const [state, setState] = useState<'IDLE' | 'SAVING' | 'FAILED'>('IDLE');
   const [message, setMessage] = useState<string | null>(null);
@@ -419,11 +459,44 @@ function MappedMatrixSummary({
               <Pencil aria-hidden="true" />
               Edit names
             </Button>
+            {canRemap ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setRemapOpen(true)}
+              >
+                Change options
+              </Button>
+            ) : null}
             <span className="text-xs text-muted-foreground">
-              Names and order only. To change the number of options, or which
-              supplier value sits where, remove the matrix and build it again.
+              {canRemap
+                ? 'Editing names changes only the words. Changing options rebuilds which supplier value sits where.'
+                : 'Names and order only. To change the number of options, or which supplier value sits where, remove the matrix and build it again.'}
             </span>
           </div>
+        ) : null}
+        {/*
+          One transaction, so the live page never falls back to raw supplier
+          labels in between — which is the whole reason this exists beside the
+          remove-and-rebuild it replaces.
+        */}
+        {canRemap && remapOpen && onRemap !== undefined ? (
+          <ManualOptionMappingPanel
+            variants={labelledVariants}
+            suggestedAxisNames={suggestedAxisNames}
+            initialAxes={mappedAxes.map((axis) => ({
+              name: axis.name,
+              valuesText: axis.values.map((value) => value.label).join('\n'),
+            }))}
+            initialAssignments={assignmentsFromMappedAxes(
+              labelledVariants.map((variant) => variant.variantId),
+              mappedAxes,
+            )}
+            submitLabel="Replace Variant Matrix"
+            onSave={onRemap}
+            onCancel={() => setRemapOpen(false)}
+          />
         ) : null}
         {/*
           The sentence above used to end "cannot change once variants exist",
@@ -648,6 +721,9 @@ export default function VariantOptionMappingSection({
   labelledVariants = [],
   onSaveManual,
   onUnmap,
+  onRemap,
+  hasRestorableMapping = false,
+  onRestore,
   mappedAxes = [],
   onRename,
   valuePhotos = {},
@@ -705,6 +781,10 @@ export default function VariantOptionMappingSection({
   >('IDLE');
   const [recoverMessage, setRecoverMessage] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
+  const [restoreState, setRestoreState] = useState<'IDLE' | 'RESTORING'>(
+    'IDLE',
+  );
+  const [restoreMessage, setRestoreMessage] = useState<string | null>(null);
 
   /**
    * Whether a by-hand mapping is offerable at all.
@@ -758,6 +838,9 @@ export default function VariantOptionMappingSection({
     return (
       <MappedMatrixSummary
         onUnmap={onUnmap}
+        onRemap={onRemap}
+        labelledVariants={labelledVariants}
+        suggestedAxisNames={[...new Set(suggestedAxisNames.flat())]}
         variantCount={variantCount}
         axisNames={effectiveMappedAxisNames}
         mappedAxes={mappedAxes}
@@ -833,6 +916,37 @@ export default function VariantOptionMappingSection({
               written. Offered only where a person actually has something to read:
               with no labels, the recovery branch above is the answer instead.
             */}
+            {/*
+              Offered before the by-hand mapper, because putting back a matrix
+              that already existed is less work than building one — and the
+              flag means this never appears with nothing behind it.
+            */}
+            {hasRestorableMapping && onRestore !== undefined && !manualOpen ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={restoreState === 'RESTORING'}
+                  onClick={async () => {
+                    setRestoreState('RESTORING');
+                    setRestoreMessage(null);
+
+                    const result = await onRestore();
+
+                    setRestoreState('IDLE');
+                    setRestoreMessage(result.message);
+                  }}
+                >
+                  {restoreState === 'RESTORING'
+                    ? 'Putting it back…'
+                    : 'Put back the previous options'}
+                </Button>
+                <p aria-live="polite" className="text-sm text-muted-foreground">
+                  {restoreMessage ??
+                    'This product had a Variant Matrix before. It was recorded when it was removed.'}
+                </p>
+              </div>
+            ) : null}
             {manualMappingAvailable && !manualOpen ? (
               <div>
                 <Button type="button" onClick={() => setManualOpen(true)}>

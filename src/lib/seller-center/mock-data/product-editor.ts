@@ -418,6 +418,8 @@ const BASE: ProductEditorFixture = {
     // person could reinterpret into axes. The by-hand mapper stays unoffered
     // rather than listing rows with no supplier label to read.
     labelledVariants: [],
+    // No audit trail behind these, so nothing could be restored.
+    hasRestorableMapping: false,
   },
   specifications: BASE_SPECIFICATIONS,
   // Design-preview fixtures carry no real category-attribute extraction -

@@ -111,6 +111,36 @@ export function suggestAssignments(
   return suggestions;
 }
 
+/**
+ * A saved mapping back into the by-hand editor's own shape, for replacing it.
+ *
+ * `MappedOptionAxis.values[].variantIds` already holds every variant carrying
+ * each value — it exists so a value's photo can be found — which is exactly the
+ * assignment, inverted. So pre-filling the editor with the current mapping needs
+ * no new query and no new column.
+ *
+ * A value with no `variantIds` (the illustrative fixtures carry none) yields no
+ * assignment for it, and the panel then shows those cells empty rather than
+ * guessing — the same rule `suggestAssignments` follows.
+ */
+export function assignmentsFromMappedAxes(
+  variantIds: string[],
+  axes: { values: { label: string; variantIds?: string[] }[] }[],
+): SuggestedAssignments {
+  const assignments: SuggestedAssignments = {};
+
+  variantIds.forEach((variantId) => {
+    assignments[variantId] = axes.map(
+      (axis) =>
+        axis.values.find((value) =>
+          (value.variantIds ?? []).includes(variantId),
+        )?.label,
+    );
+  });
+
+  return assignments;
+}
+
 /** How many axis cells across the whole table still have no value. */
 export function countUnassigned(
   variants: { variantId: string }[],

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assignmentsFromMappedAxes,
   countUnassigned,
   matchAxisValue,
   parseAxisValues,
@@ -131,5 +132,40 @@ describe('countUnassigned', () => {
         1,
       ),
     ).toBe(0);
+  });
+});
+
+describe('assignmentsFromMappedAxes', () => {
+  const AXES = [
+    {
+      values: [
+        { label: 'Black', variantIds: ['v1', 'v2'] },
+        { label: 'Gray', variantIds: ['v3'] },
+      ],
+    },
+    {
+      values: [
+        { label: 'L', variantIds: ['v1', 'v3'] },
+        { label: 'XL', variantIds: ['v2'] },
+      ],
+    },
+  ];
+
+  it('inverts the stored value-to-variant links into one row per variant', () => {
+    // `variantIds` exists so a value's photo can be found. It is the assignment
+    // already, inverted — so pre-filling the editor needs no new query.
+    expect(assignmentsFromMappedAxes(['v1', 'v2', 'v3'], AXES)).toEqual({
+      v1: ['Black', 'L'],
+      v2: ['Black', 'XL'],
+      v3: ['Gray', 'L'],
+    });
+  });
+
+  it('leaves a cell empty rather than guessing when no value claims the variant', () => {
+    // The illustrative fixtures carry no stored links at all, and a mapping that
+    // somehow missed a variant must not be filled in on its behalf.
+    expect(assignmentsFromMappedAxes(['v9'], AXES)).toEqual({
+      v9: [undefined, undefined],
+    });
   });
 });

@@ -12,6 +12,8 @@ import { STOREFRONT_CATALOG_TAG } from '@/lib/storefront/catalog-cache';
 import { recoverSupplierLabels } from '@/modules/catalog/products/recover-supplier-labels';
 import renameOptionMapping from '@/modules/catalog/products/rename-option-mapping';
 import saveManualOptionMapping from '@/modules/catalog/products/save-manual-option-mapping';
+import remapOptionMapping from '@/modules/catalog/products/remap-option-mapping';
+import restoreOptionMapping from '@/modules/catalog/products/restore-option-mapping';
 import unmapOptionMapping from '@/modules/catalog/products/unmap-option-mapping';
 import saveOptionMapping from '@/modules/catalog/products/save-option-mapping';
 import revalidateListingViews from './revalidate-listing-views';
@@ -183,6 +185,16 @@ const REFUSAL_MESSAGES: Record<string, string> = {
   COMBINATION_COLLISION:
     'Two variants were given the same combination of values, so a buyer could not tell them apart. Change one of them.',
   NOT_MAPPED_TO_REMOVE: 'This product has no saved Variant Matrix to remove.',
+  NOT_MAPPED_TO_REPLACE:
+    'This product has no saved Variant Matrix to replace. Build one first.',
+  NOTHING_TO_RESTORE:
+    'No previous Variant Matrix was recorded for this product, so there is nothing to put back.',
+  SNAPSHOT_UNREADABLE:
+    'The recorded Variant Matrix could not be read well enough to rebuild. It has to be built by hand.',
+  VARIANTS_CHANGED:
+    'This product’s variants have changed since that Variant Matrix was recorded, so it cannot be put back as it was.',
+  ALREADY_MAPPED_RESTORE:
+    'This product already has a Variant Matrix. Change it instead of restoring an older one.',
   failed: 'The Variant Matrix could not be saved.',
 };
 
@@ -520,6 +532,132 @@ export async function unmapOptionMappingAction(
     removedAxisCount: result.removedAxisCount,
     removedValueCount: result.removedValueCount,
     unmappedVariantCount: result.unmappedVariantCount,
+  };
+}
+
+/**
+ * Replacing a saved Variant Matrix in one step.
+ *
+ * ## Why this takes `product:edit` where removal takes `product:publish`
+ *
+ * The line is whether a buyer ends up worse off. Removal degrades a live PDP to
+ * the supplier's own concatenated labels with no publish step in between, which
+ * is why it borrows Pause's capability. A replacement leaves the page with a
+ * named matrix either way — different words, never raw tokens — which is the same
+ * kind of change `renameOptionMappingAction` already makes under `product:edit`.
+ *
+ * A wrong replacement is still wrong, and so is a wrong rename; neither is a
+ * degradation, and both are the seller's own product data to get wrong.
+ *
+ * Everything else is the by-hand save's boundary exactly: the structure crosses
+ * as data, and `remapOptionMapping` re-checks it against the database's own
+ * variant set. No CJ call, no points (ADR-017).
+ */
+export async function remapOptionMappingAction(
+  input: unknown,
+): Promise<OptionMappingActionResult> {
+  const parsed = manualMappingInputSchema.safeParse(input);
+
+  if (!parsed.success) return refuse('invalid_input');
+
+  const authorization = await authorize();
+
+  if (!authorization.ok) return refuse(authorization.reason);
+
+  let result;
+
+  try {
+    result = await remapOptionMapping({
+      productId: parsed.data.productId,
+      sellerAccountId: authorization.sellerAccountId,
+      actorId: authorization.actorId,
+      expectedProductVersion: parsed.data.expectedProductVersion,
+      axes: parsed.data.axes,
+      assignments: parsed.data.assignments,
+    });
+  } catch (error) {
+    if (uniqueViolationConstraint(error) === COMBINATION_CONSTRAINT) {
+      return refuse('duplicate_combination');
+    }
+
+    throw error;
+  }
+
+  if (!result.ok) {
+    // `NOT_MAPPED` means "nothing to rename" on the rename path. Here it means
+    // "nothing to replace", and telling a seller their product is unmapped while
+    // they are replacing its mapping would be the wrong sentence entirely.
+    return refuse(
+      result.reason === 'NOT_MAPPED' ? 'NOT_MAPPED_TO_REPLACE' : result.reason,
+    );
+  }
+
+  revalidateListingViews();
+  updateTag(STOREFRONT_CATALOG_TAG);
+
+  return {
+    ok: true,
+    axisCount: result.axisCount,
+    mappedVariantCount: result.mappedVariantCount,
+  };
+}
+
+const restoreInputSchema = z.object({
+  productId: z.string().uuid(),
+  expectedProductVersion: z.number().int().positive(),
+});
+
+export type RestoreOptionMappingActionResult =
+  | { ok: true; axisCount: number; mappedVariantCount: number }
+  | { ok: false; reason: string; message: string };
+
+/**
+ * Putting back the Variant Matrix a product used to have.
+ *
+ * `product:edit`: it adds a mapping and can never remove one — a product that
+ * still has its matrix is refused rather than overwritten, so the worst outcome
+ * is a named matrix where there was none.
+ *
+ * The mapping comes from the `removed` / `replaced` snapshot on the last
+ * `options_unmapped` or `options_remapped` audit event, which is the only place
+ * the buyer-facing labels survive. `audit_events` stays append-only — the restore
+ * writes a new event naming the one it read. No CJ call, no points (ADR-017).
+ */
+export async function restoreOptionMappingAction(
+  input: unknown,
+): Promise<RestoreOptionMappingActionResult> {
+  const parsed = restoreInputSchema.safeParse(input);
+
+  if (!parsed.success) return refuse('invalid_input');
+
+  const authorization = await authorize();
+
+  if (!authorization.ok) return refuse(authorization.reason);
+
+  const result = await restoreOptionMapping({
+    productId: parsed.data.productId,
+    sellerAccountId: authorization.sellerAccountId,
+    actorId: authorization.actorId,
+    expectedProductVersion: parsed.data.expectedProductVersion,
+  });
+
+  if (!result.ok) {
+    // The mapping path's `ALREADY_MAPPED` sentence offers renaming, which is not
+    // the useful next step when somebody is trying to restore an older one.
+    return refuse(
+      result.reason === 'ALREADY_MAPPED'
+        ? 'ALREADY_MAPPED_RESTORE'
+        : result.reason,
+    );
+  }
+
+  revalidateListingViews();
+  updateTag(STOREFRONT_CATALOG_TAG);
+
+  return {
+    ok: true,
+    axisCount: result.axisCount,
+    mappedVariantCount: result.mappedVariantCount,
   };
 }
 
