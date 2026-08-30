@@ -1,3 +1,5 @@
+import { resolve } from 'path';
+import { createHash } from 'crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -10,14 +12,28 @@ import { toStorefrontProductDetail } from './catalog-feed';
  * `test/fixtures/storefront-product-detail.json` is committed **identically** in
  * this repository and in `sals3-ecommerce`, which parses it with its own Zod
  * schema. This test asserts that this repository's serializer actually produces
- * it. So a contract change that lands on only one side fails a test in whichever
- * repository moved — which matters more here than in most contracts, because
- * every field added on 2026-08-13 is optional, so real drift would otherwise
- * show up as a silently missing section on a product page rather than as an
- * error.
+ * it. That matters more here than in most contracts, because every field added
+ * on 2026-08-13 is optional, so real drift shows up as a silently missing
+ * section on a product page rather than as an error.
  *
- * Keep the two files byte-identical. If this test fails, the question is which
- * side is right, not which file to edit.
+ * ## What this pair does *not* do, corrected 2026-08-31
+ *
+ * This note used to claim that "a contract change that lands on only one side
+ * fails a test in whichever repository moved". **It does not, and it did not.**
+ * This test compares this repository's copy against this repository's serializer;
+ * the sibling compares its copy against its own schema. Both pass while the two
+ * copies describe *different documents*, and for eight days they did — the
+ * sibling's carried the paragraph `runs` field and this one did not, so the pair
+ * was asserting agreement that was not there.
+ *
+ * The two are byte-identical again, and `FIXTURE_SHA256` below makes each copy
+ * tamper-evident. That is genuinely weaker than the old claim: nothing here can
+ * read the sibling repository, so **a fixture change is a two-repository change
+ * and both hashes move in the same pair of commits.** The hash turns a silent
+ * divergence into a failing test on the side that moved and a literal a reviewer
+ * can compare in seconds.
+ *
+ * If this test fails, the question is which side is right, not which file to edit.
  */
 
 const FIXTURE_PATH = 'test/fixtures/storefront-product-detail.json';
@@ -48,6 +64,18 @@ const ROW: StorefrontDetailRow = {
       {
         type: 'paragraph',
         text: 'A short-cut shell jacket with a fleece lining.',
+        /*
+          The emphasis a seller applied, as marks rather than markup. It belongs
+          in this row because `sals3-ecommerce`'s own contract test asserts the
+          fixture carries it — "a fixture that carried it while the schema
+          dropped it would read as shipped when nothing reached the page" — and
+          for eight days this row did not, so the two committed copies described
+          different documents while each repo's test only ever compared its own.
+        */
+        runs: [
+          { text: 'A short-cut shell jacket' },
+          { text: ' with a fleece lining.', marks: ['strong' as const] },
+        ],
       },
       {
         type: 'bulletList',
@@ -129,5 +157,39 @@ describe('the committed contract fixture', () => {
     // receives is the serialized form, so an `undefined` that never reaches the
     // wire must not count as a difference either way.
     expect(JSON.parse(JSON.stringify({ product }))).toEqual(fixture);
+  });
+});
+
+/**
+ * The fingerprint of the committed fixture, asserted **identically in
+ * `sals3-ecommerce`**.
+ *
+ * ## Why a hash, and what it does and does not catch
+ *
+ * The two copies are documented as committed identically and drifted anyway: this
+ * one gained the paragraph `runs` field and the other did not, for eight days,
+ * because each repository's test only ever compared its own copy against its own
+ * side of the contract. Neither could see the other.
+ *
+ * A hash cannot fix that on its own — nothing here can read the sibling
+ * repository. What it does is make each copy **tamper-evident**: editing the
+ * fixture without updating this literal fails immediately, and the literal is
+ * then visibly different from the sibling's, which is a two-second check in
+ * review instead of a diff nobody runs.
+ *
+ * So changing the fixture is a **two-repository change, and both hashes move in
+ * the same pair of commits**. If you are reading this because the assertion
+ * failed and you only meant to edit one side, that is the answer.
+ */
+const FIXTURE_SHA256 =
+  'e7600cac48870be3d8978dac239847bb4c1605f7dab06229ef21e0cecd605f19';
+
+describe('the committed fixture is the same bytes in both repositories', () => {
+  it('has the fingerprint sals3-ecommerce asserts too', () => {
+    const bytes = readFileSync(resolve(process.cwd(), FIXTURE_PATH));
+
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(
+      FIXTURE_SHA256,
+    );
   });
 });

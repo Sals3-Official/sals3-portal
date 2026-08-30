@@ -45,7 +45,16 @@
         },
         {
           "type": "paragraph",
-          "text": "A short-cut shell jacket with a fleece lining."
+          "text": "A short-cut shell jacket with a fleece lining.",
+          "runs": [
+            {
+              "text": "A short-cut shell jacket"
+            },
+            {
+              "text": " with a fleece lining.",
+              "marks": ["strong"]
+            }
+          ]
         },
         {
           "type": "bulletList",
