@@ -451,6 +451,15 @@ export type CatalogueProductFixture = {
   /** Seller-managed customer-facing price for a single-offer product. */
   sellingPrice: MoneyValue | null;
   /**
+   * Why the rules could not price this listing, when they could not.
+   *
+   * A raw resolver code (`SUPPLIER_COST_UNAVAILABLE`, …) rather than a
+   * sentence: `pricing-unavailable-messages.ts` turns it into the glance words
+   * the cell shows, so the code stays a stable key and the copy stays in one
+   * place. `null` whenever a price resolved, and on the illustrative fixtures.
+   */
+  sellingPriceUnavailableReason?: string | null;
+  /**
    * Fallback source-health facts for a single-offer product with no
    * variant list. When `variants.length > 0`, the product's real
    * availability/freshness is always derived from those variants

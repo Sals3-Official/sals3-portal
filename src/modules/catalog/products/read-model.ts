@@ -1155,6 +1155,14 @@ function buildCatalogueProducts(
           firstOffer?.priceAmountMinor ?? null,
           firstOffer?.priceCurrency ?? null,
         ),
+        // The resolver's own verdict, already on the row: a check constraint
+        // makes it non-null whenever the offer's pricing state is UNRESOLVED.
+        // The catalogue printed "Not available" and discarded it, which meant
+        // the one cell a seller checks before publishing could not tell them
+        // why publishing would be refused. No extra query — the offers select
+        // is unqualified.
+        sellingPriceUnavailableReason:
+          firstOffer?.pricingUnavailableReason ?? null,
         availability: productAvailability,
         offeredMarketCodes,
         stockEvidence: stockEvidence(

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   AlertDialog,
@@ -78,6 +79,14 @@ export default function ProductCatalogueWorkspace({
   const [activeTab, setActiveTab] = useState<ListingStatus | 'ALL'>('LIVE');
   const [filters, setFilters] = useState<CatalogueFilters>(DEFAULT_FILTERS);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const router = useRouter();
+  // Resolved from `products`, not from a second piece of state: the ids are the
+  // selection and the rows are the data, so deriving keeps them from drifting
+  // when a row is archived or paused out from under a stale selection.
+  const selectedProducts = useMemo(
+    () => products.filter((product) => selectedIds.has(product.id)),
+    [products, selectedIds],
+  );
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [archiveTargetId, setArchiveTargetId] = useState<string | null>(null);
 
@@ -219,9 +228,17 @@ export default function ProductCatalogueWorkspace({
         needsAttentionCount={needsAttentionCount}
       />
       <CatalogueBulkActionBar
-        selectedCount={selectedIds.size}
+        selectedProducts={selectedProducts}
         onBulkPause={handleBulkPause}
         onBulkArchive={handleBulkArchive}
+        onPublished={() => {
+          // The rows this screen holds came from a server read; a publish that
+          // succeeded has moved some of them to LIVE and minted slugs. Refresh
+          // rather than patching the local copy, so what is on screen is what
+          // was stored and not this component's guess at it.
+          setSelectedIds(new Set());
+          router.refresh();
+        }}
       />
       <CatalogueProductTable
         products={visibleProducts}

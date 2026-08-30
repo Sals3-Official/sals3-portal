@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronDown, ChevronRight, Copy, Pencil } from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -16,6 +16,7 @@ import {
   type CatalogueProductFixture,
   type ListingStatus,
 } from '@/lib/seller-center/product-catalogue/types';
+import describePricingUnavailable from './pricing-unavailable-messages';
 import AttentionBadge from './AttentionBadge';
 import CatalogueRowActions from './CatalogueRowActions';
 import CatalogueVariantRow from './CatalogueVariantRow';
@@ -43,12 +44,6 @@ const LISTING_STATUS_TONE: Record<ListingStatus, StatusPillTone> = {
   ARCHIVED: 'neutral',
 };
 
-function announceUnbuilt(action: string, productName: string) {
-  toast(`${action} isn't built yet for "${productName}".`, {
-    description: 'This design preview has no catalogue backend.',
-  });
-}
-
 async function copyIdentity(value: string, label: string) {
   const ok = await copyToClipboard(value);
 
@@ -71,6 +66,9 @@ export default function CatalogueProductRow({
   onToggleVariantPaused,
 }: CatalogueProductRowProps) {
   const hasVariants = product.variants.length > 0;
+  const priceUnavailableReason = describePricingUnavailable(
+    product.sellingPriceUnavailableReason ?? null,
+  );
   const editHref =
     product.editorHref ?? `/listings/new?fixture=${product.editorFixtureKey}`;
 
@@ -170,19 +168,34 @@ export default function CatalogueProductRow({
             </p>
           ) : null}
         </TableCell>
+        {/*
+          The price, and — when there is none — the reason there is none.
+
+          The pencil that used to sit here only ever raised "Editing price
+          isn't built yet", and it was never going to be built: a seller does
+          not type a selling price into this cell. Market Rules resolves it
+          from observed supplier cost and the destination's margin, under a
+          floor of 2.5% above cost, so a per-row box would either contradict
+          that engine or become an override with no expiry and no audit —
+          which is what `Edit Special Price` is deliberately for, in one place.
+
+          What replaces it is the answer the row already had. "Not available"
+          named nothing; the resolver's reason is the same fact that will
+          refuse the publish, so the cell a seller checks before publishing now
+          tells them what to go and fix.
+        */}
         <TableCell>
-          <div className="flex items-center gap-1.5">
-            {product.sellingPrice === null
-              ? 'Not available'
-              : formatMoney(product.sellingPrice)}
-            <button
-              type="button"
-              onClick={() => announceUnbuilt('Editing price', product.name)}
-              aria-label={`Edit selling price for ${product.name}`}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <Pencil aria-hidden="true" className="size-3.5" />
-            </button>
+          <div className="flex flex-col gap-0.5">
+            {product.sellingPrice === null ? (
+              <span className="text-muted-foreground">Not set</span>
+            ) : (
+              formatMoney(product.sellingPrice)
+            )}
+            {priceUnavailableReason === null ? null : (
+              <span className="text-xs text-amber-700">
+                {priceUnavailableReason}
+              </span>
+            )}
           </div>
         </TableCell>
         <TableCell>
