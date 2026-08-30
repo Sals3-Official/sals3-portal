@@ -159,6 +159,7 @@ export default async function ParcelDetailPage({
           <ParcelContentsCard
             lines={parcel.lines}
             sellerNote={detail.sellerNote}
+            goodsTotalLabel={parcel.money.goodsTotalLabel}
           />
 
           <ParcelMoneyRow

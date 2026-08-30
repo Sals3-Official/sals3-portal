@@ -36,6 +36,8 @@ function parcelWith(overrides: Partial<OrderParcel>): OrderParcel {
         title: 'Kraft mailer 32cm',
         variation: null,
         quantity: 1,
+        unitPriceLabel: '$10.00',
+        lineTotalLabel: '$10.00',
         imageUrl: null,
         acceptedOnLabel: 'as ordered on 12 Aug 2026',
         sku: 'SL3-KRA-32',
@@ -45,6 +47,7 @@ function parcelWith(overrides: Partial<OrderParcel>): OrderParcel {
     ],
     money: {
       buyerPaidLabel: '₱1,284.00',
+      goodsTotalLabel: '$10.00',
       commissionLabel: '−₱128.40',
       supplierCostLabel: null,
       supplierCostNote: null,
