@@ -693,14 +693,51 @@ export async function loadPackageInputs(
       if (connectionId === undefined || externalProductId === undefined) return;
 
       const fetcher = fetcherForConnection(connectionId);
-      const detailParsed = cjProductDetailResponseSchema.safeParse(
-        await getCjJson(
+      /*
+        Both requests leave together. They ask CJ two unrelated questions about
+        one product — what it is, and how much of it exists — and neither answer
+        feeds the other, but they were awaited one after the next, so every
+        checkout quote paid for two round trips end to end where one round trip's
+        time would do.
+
+        That is on the buyer's critical path twice over: the delivery step quotes
+        to show the options, and the pay button quotes again to verify the one
+        they chose. With `CJ_REQUEST_TIMEOUT_MS` at eight seconds, the serial
+        pair is what a slow CJ turns into a sixteen-second wait on a button the
+        buyer has already pressed.
+
+        Errors are still raised one at a time below, and in the same order as
+        before, so a malformed detail response reports itself rather than
+        whichever of the two happened to fail first.
+
+        Two things this does **not** change. The number of CJ requests is
+        identical, so the daily points bill is untouched (ADR-013) — only their
+        timing moves. And the token both need is already single-flighted in
+        `CjTokenManager`, which exists because this very path fires concurrent
+        CJ calls on a cold instance; without it the parallel callers would race
+        CJ's one-request-per-second auth endpoint, which is the intermittent
+        checkout 503 that guard was written for.
+
+        Instantaneous QPS does rise: one product now asks CJ two things at once
+        instead of in turn. They are different endpoints, and CJ's per-second
+        limits are documented per endpoint, so this adds no contention that the
+        existing fan-out across products does not already create.
+      */
+      const [detailJson, inventoryJson] = await Promise.all([
+        getCjJson(
           connectionId,
           `/product/query?pid=${encodeURIComponent(externalProductId)}`,
           fetcher,
           tokenManager,
         ),
-      );
+        getCjJson(
+          connectionId,
+          `/product/stock/getInventoryByPid?pid=${encodeURIComponent(externalProductId)}`,
+          fetcher,
+          tokenManager,
+        ),
+      ]);
+      const detailParsed = cjProductDetailResponseSchema.safeParse(detailJson);
 
       if (
         !detailParsed.success ||
@@ -710,14 +747,8 @@ export async function loadPackageInputs(
         throw new CjApiError('unexpected-response');
       }
 
-      const inventoryParsed = cjInventoryResponseSchema.safeParse(
-        await getCjJson(
-          connectionId,
-          `/product/stock/getInventoryByPid?pid=${encodeURIComponent(externalProductId)}`,
-          fetcher,
-          tokenManager,
-        ),
-      );
+      const inventoryParsed =
+        cjInventoryResponseSchema.safeParse(inventoryJson);
 
       if (!inventoryParsed.success || inventoryParsed.data.code !== 200) {
         throw new CjApiError('unexpected-response');
