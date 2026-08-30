@@ -31,7 +31,7 @@ type CandidateRowProps = {
  */
 
 /**
- * Every tab already renders controls INSIDE rows - "Customize & List" on
+ * Every tab already renders controls INSIDE rows - "Add & Customize" on
  * Ready/Needs Attention, "Recheck now" on Blocked, a tooltip trigger on
  * Exception. Without this guard, clicking any of them would also open the
  * drawer. `closest` cannot match the row itself: a `<tr>` carrying

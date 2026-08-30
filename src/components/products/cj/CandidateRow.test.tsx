@@ -61,7 +61,7 @@ describe('CandidateRow', () => {
 
   /**
    * The regression that would otherwise ship. Every tab renders a control
-   * inside its rows - "Recheck now" on Blocked, "Customize & List" on Ready -
+   * inside its rows - "Recheck now" on Blocked, "Add & Customize" on Ready -
    * and a bare row handler would hijack all of them.
    */
   it('does not open when a control inside the row is clicked', () => {

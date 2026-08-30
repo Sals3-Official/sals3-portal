@@ -5,6 +5,7 @@ import {
   pipelineFilterHref,
   PIPELINE_PATH,
   PIPELINE_STALE_AFTER_DAYS,
+  type PipelineAddedFilter,
   type PipelineSeenFilter,
   type PipelineStockFilter,
 } from '@/lib/portal/pipeline-params';
@@ -60,6 +61,7 @@ type PipelineFilterBarProps = {
     cat: string;
     stock?: PipelineStockFilter;
     seen?: PipelineSeenFilter;
+    added?: PipelineAddedFilter;
   };
   /** True when the tab's total reflects the filters rather than the whole tab. */
   filtered: boolean;
@@ -103,7 +105,7 @@ function FacetGroup({
   return (
     <div
       className={cn(
-        'flex items-center gap-1 rounded-lg border px-2 py-1',
+        'flex h-9 items-center gap-1 rounded-lg border px-2',
         active ? 'border-primary/40 bg-accent/40' : 'border-border bg-card',
       )}
     >
@@ -124,19 +126,21 @@ export default function PipelineFilterBar({
     <div className="mb-3 rounded-lg border border-border bg-card p-3">
       <div className="flex flex-wrap items-center gap-2">
         {categoryLabels.length === 0 ? null : (
-          <FilterSelect
-            id="pipeline-cj-category"
-            label="CJ category"
-            value={applied.cat}
-            options={[
-              { value: '', label: 'All categories' },
-              ...categoryLabels.map((label) => ({ value: label, label })),
-            ]}
-            path={PIPELINE_PATH}
-            param="cat"
-            clearedValue=""
-            className="w-full sm:w-64"
-          />
+          <FacetGroup label="CJ category" active={applied.cat !== ''}>
+            <FilterSelect
+              id="pipeline-cj-category"
+              label="CJ category"
+              value={applied.cat}
+              options={[
+                { value: '', label: 'All categories' },
+                ...categoryLabels.map((label) => ({ value: label, label })),
+              ]}
+              path={PIPELINE_PATH}
+              param="cat"
+              clearedValue=""
+              layout="inline"
+            />
+          </FacetGroup>
         )}
 
         <FacetGroup label="Stock" active={applied.stock !== undefined}>
@@ -172,6 +176,24 @@ export default function PipelineFilterBar({
             href={pipelineFilterHref(currentParams, 'seen', 'stale')}
             label="Stale"
             active={applied.seen === 'stale'}
+          />
+        </FacetGroup>
+
+        <FacetGroup label="In catalogue" active={applied.added !== undefined}>
+          <FilterChip
+            href={pipelineFilterHref(currentParams, 'added', null)}
+            label="All"
+            active={applied.added === undefined}
+          />
+          <FilterChip
+            href={pipelineFilterHref(currentParams, 'added', 'no')}
+            label="Not added"
+            active={applied.added === 'no'}
+          />
+          <FilterChip
+            href={pipelineFilterHref(currentParams, 'added', 'yes')}
+            label="Added"
+            active={applied.added === 'yes'}
           />
         </FacetGroup>
 

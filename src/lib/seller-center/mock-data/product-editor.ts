@@ -20,7 +20,7 @@ import type {
  * database, a supplier API, or the evaluation pipeline, and no fixture
  * corresponds to a real candidate. They exist so the eight required design
  * states can be opened directly by URL and asserted in tests, without
- * wiring fictional data behind a real "Customize & List" action.
+ * wiring fictional data behind a real "Add & Customize" action.
  *
  * Same posture as the other files in this folder (`listings.ts`,
  * `orders.ts`, ...): illustrative placeholder data for interface review,

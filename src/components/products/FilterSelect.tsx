@@ -26,6 +26,14 @@ type FilterSelectProps = {
    */
   alsoClears?: string[];
   className?: string;
+  /**
+   * `stacked` puts the label above the control, which is right on a form-like
+   * filter row. `inline` renders the bare control so the caller can seat it in
+   * its own chrome beside chip groups — a stacked label there makes one facet
+   * taller than the rest, and a row of controls that do not line up reads as
+   * broken before it reads as a filter.
+   */
+  layout?: 'stacked' | 'inline';
 };
 
 /**
@@ -55,38 +63,51 @@ export default function FilterSelect({
   clearedValue,
   alsoClears = [],
   className,
+  layout = 'stacked',
 }: FilterSelectProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
+
+  const control = (
+    <select
+      id={id}
+      value={value}
+      aria-busy={pending}
+      aria-label={layout === 'inline' ? label : undefined}
+      onChange={(event) => {
+        const next = event.target.value;
+        const href = buildHref(path, searchParams, {
+          [param]: next === clearedValue ? null : next,
+          page: null,
+          ...Object.fromEntries(alsoClears.map((key) => [key, null])),
+        });
+
+        startTransition(() => router.push(href));
+      }}
+      className={cn(
+        'truncate bg-transparent text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+        layout === 'stacked'
+          ? 'h-9 w-full rounded-md border border-border bg-card px-2'
+          : 'h-5 max-w-52 border-0 px-0 text-xs font-medium',
+      )}
+    >
+      {options.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
+
+  if (layout === 'inline') return control;
 
   return (
     <div className={cn('flex w-full flex-col gap-1', className)}>
       <Label htmlFor={id} className="text-xs text-muted-foreground">
         {label}
       </Label>
-      <select
-        id={id}
-        value={value}
-        aria-busy={pending}
-        onChange={(event) => {
-          const next = event.target.value;
-          const href = buildHref(path, searchParams, {
-            [param]: next === clearedValue ? null : next,
-            page: null,
-            ...Object.fromEntries(alsoClears.map((key) => [key, null])),
-          });
-
-          startTransition(() => router.push(href));
-        }}
-        className="h-9 w-full truncate rounded-md border border-border bg-card px-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      {control}
     </div>
   );
 }

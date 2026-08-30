@@ -179,7 +179,12 @@ export default async function ProductSourcingPipelinePage({
         <PipelineFilterBar
           currentParams={currentParams}
           categoryLabels={categoryIndex.l1Labels}
-          applied={{ cat: query.cat, stock: query.stock, seen: query.seen }}
+          applied={{
+            cat: query.cat,
+            stock: query.stock,
+            seen: query.seen,
+            added: query.added,
+          }}
           filtered={filtered}
           total={window.total}
         />

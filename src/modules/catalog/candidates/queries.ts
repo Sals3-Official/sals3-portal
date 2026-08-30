@@ -20,6 +20,7 @@ import {
   supplierCandidates,
   supplierConnections,
   supplierSnapshots,
+  providerProductReferences,
   type CandidateEvaluationRow,
   type StockReviewState,
 } from '@/lib/db/schema';
@@ -92,6 +93,12 @@ export type EvaluatedCandidateRow = {
 export type CandidateFilters = {
   /** Provider category ids under the chosen CJ Level 1. Empty means no filter. */
   providerCategoryIds?: string[];
+  /**
+   * `false` keeps only candidates with no Sals3 product built from them yet —
+   * the pile a seller sourcing new products is actually looking at. `true`
+   * keeps only the ones already taken.
+   */
+  catalogued?: boolean;
   stockReviewStates?: StockReviewState[];
   /** Rows whose provider feed sighting is at or after this instant. */
   seenSince?: Date;
@@ -331,6 +338,29 @@ export function filterCondition(
             filters.stockReviewStates,
           ),
     );
+  }
+
+  if (filters.catalogued !== undefined) {
+    /*
+      The same identity `findCataloguedCandidateIds` uses — a provider
+      reference matching this candidate's provider and external product id —
+      asked as EXISTS instead of fetched for the page in hand. It has to be a
+      predicate rather than a post-filter: filtering the hundred rows already
+      selected would report "12 of 432,654" from a page that happened to hold
+      twelve, and page two would be a different twelve.
+
+      `provider_category_mappings` is not involved; this is
+      `provider_product_references_provider_external_key`, a unique index on
+      exactly the two columns matched here.
+    */
+    const exists = sql`EXISTS (
+      SELECT 1
+      FROM ${providerProductReferences}
+      WHERE ${providerProductReferences.supplierProviderId} = ${supplierConnections.providerId}
+        AND ${providerProductReferences.externalProductId} = ${supplierCandidates.externalProductId}
+    )`;
+
+    clauses.push(filters.catalogued ? exists : sql`NOT ${exists}`);
   }
 
   if (filters.seenSince !== undefined) {
