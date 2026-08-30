@@ -12,3 +12,7 @@ docs
 
 # Per-person Claude Code state - machine config, not project source
 .claude
+
+# Generated deliverables (design canvases, decks) - not project source, and
+# reformatting a seeded .dc.html would corrupt its template holes
+outputs
