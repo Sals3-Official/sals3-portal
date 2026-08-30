@@ -249,10 +249,49 @@ function matchesSearchTerm(term: string): SQL {
  * Drizzle condition cannot be evaluated without a real database, but its
  * generated SQL and params can be.
  */
-export function searchCondition(search: string | undefined): SQL | undefined {
+/**
+ * The fuzzy arm: a whole-term word-similarity match against the two fields the
+ * trigram indexes cover.
+ *
+ * `a <% b` is true when the trigrams of `a` are similar to some continuous
+ * extent of `b` — the search term on the LEFT, the product text on the right.
+ * Word similarity rather than plain similarity because a product name is long
+ * and a query is short: comparing "pnats" to the whole of "Men's Casual Loose
+ * Straight Pants" scores near zero, while comparing it to the best matching
+ * word inside that name does not.
+ *
+ * Whole-term, not per-word, so the predicate stays two `OR` arms however many
+ * words are typed. And it is deliberately ADDITIVE: it widens what the
+ * substring search already found, never replaces it, so the worst case if this
+ * matches nothing is exactly today's behaviour.
+ *
+ * No threshold is set here. `pg_trgm.word_similarity_threshold` defaults to
+ * 0.6, which is strict enough to keep junk out, and a `SET` on a POOLED
+ * connection would leak into whatever query ran next on it — a far worse
+ * outcome than a threshold that is not tuned.
+ */
+function matchesFuzzyTerm(term: string): SQL {
+  return sql`(${term} <% (${candidateEvaluations.feedSnapshot}->>'name')
+    OR ${term} <% (${candidateEvaluations.feedSnapshot}->>'sku'))`;
+}
+
+/**
+ * @param fuzzy whether this database has `pg_trgm` — see
+ * `search-capabilities.ts`. Never assume it: the extension arrives by
+ * break-glass and a fresh local database or CI does not have it, where the
+ * fuzzy operator does not run slowly, it errors.
+ */
+export function searchCondition(
+  search: string | undefined,
+  fuzzy = false,
+): SQL | undefined {
   const term = search?.trim() ?? '';
 
-  return term === '' ? undefined : matchesSearchTerm(term);
+  if (term === '') return undefined;
+
+  const substring = matchesSearchTerm(term);
+
+  return fuzzy ? (or(substring, matchesFuzzyTerm(term)) as SQL) : substring;
 }
 
 /**
@@ -323,11 +362,12 @@ function statusScope(
   statuses: EvaluationStatus[],
   search: string | undefined,
   filters?: CandidateFilters,
+  fuzzy?: boolean,
 ) {
   return and(
     eq(supplierConnections.sellerAccountId, sellerAccountId),
     inArray(candidateEvaluations.status, statuses),
-    searchCondition(search),
+    searchCondition(search, fuzzy),
     filterCondition(filters),
   );
 }
@@ -352,6 +392,8 @@ export type CandidatePageOptions = {
   search?: string;
   /** Applied in the same `WHERE` as the tab, so the count cannot disagree with the page. */
   filters?: CandidateFilters;
+  /** Whether `pg_trgm` is installed, so the search may add its fuzzy arm. */
+  fuzzy?: boolean;
 };
 
 function asEvidence(value: unknown): CandidateEvidence | null {
@@ -418,7 +460,13 @@ export async function listCandidatesByStatus(
 ): Promise<EvaluatedCandidateRow[]> {
   const rows = await baseQuery()
     .where(
-      statusScope(sellerAccountId, statuses, options.search, options.filters),
+      statusScope(
+        sellerAccountId,
+        statuses,
+        options.search,
+        options.filters,
+        options.fuzzy,
+      ),
     )
     .orderBy(...PAGE_ORDER)
     .limit(boundedLimit(options.limit))
@@ -433,9 +481,10 @@ export async function countCandidatesByStatus(
   statuses: EvaluationStatus[],
   search?: string,
   filters?: CandidateFilters,
+  fuzzy?: boolean,
 ): Promise<number> {
   const rows = await countQuery().where(
-    statusScope(sellerAccountId, statuses, search, filters),
+    statusScope(sellerAccountId, statuses, search, filters, fuzzy),
   );
 
   return Number(rows[0]?.total ?? 0);

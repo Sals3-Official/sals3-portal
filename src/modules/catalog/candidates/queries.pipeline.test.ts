@@ -169,6 +169,51 @@ describe('searchCondition', () => {
     );
   });
 
+  it('adds NO fuzzy arm when pg_trgm is absent', () => {
+    // The load-bearing one. `<%` where the extension is missing does not run
+    // slowly, it raises `operator does not exist` and takes the whole search
+    // down — so the default must leave no trace of it.
+    const query = renderSql(searchCondition('pnats'));
+
+    expect(query.sql).not.toContain('<%');
+    expect(query.params).toEqual(Array(5).fill('%pnats%'));
+  });
+
+  it('adds the fuzzy arm only when told the extension is there', () => {
+    const query = renderSql(searchCondition('pnats', true));
+
+    expect(query.sql).toContain('<%');
+    // Term on the LEFT, product text on the right: `a <% b` asks whether a's
+    // trigrams match some extent of b. Reversed, a long product name would
+    // never be found inside a short query.
+    expect(query.params).toEqual([
+      ...Array(5).fill('%pnats%'),
+      'pnats',
+      'pnats',
+    ]);
+  });
+
+  it('keeps the substring match when the fuzzy arm is added', () => {
+    // Additive, never a replacement: if the operator matches nothing the
+    // search behaves exactly as it does without it.
+    const withFuzzy = renderSql(searchCondition('pants', true));
+
+    expect(withFuzzy.sql).toContain('ilike');
+    expect(withFuzzy.sql).toContain(`"feed_snapshot"->>'sku' ILIKE`);
+    expect(withFuzzy.sql).toContain('<%');
+  });
+
+  it('matches fuzzily against the two fields the trigram indexes cover', () => {
+    const query = renderSql(searchCondition('pnats', true));
+
+    expect(query.sql).toContain(
+      `<% ("candidate_evaluations"."feed_snapshot"->>'name')`,
+    );
+    expect(query.sql).toContain(
+      `<% ("candidate_evaluations"."feed_snapshot"->>'sku')`,
+    );
+  });
+
   it('trims the term before matching', () => {
     expect(
       renderSql(searchCondition('  1399191407142506496  ')).params[0],

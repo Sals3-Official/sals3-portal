@@ -26,6 +26,7 @@ import resolvePipelinePageData from '@/modules/catalog/candidates/pipeline-page-
 import readCjCategoryIndex from '@/modules/catalog/candidates/cj-category-l1-read';
 import { EMPTY_CJ_CATEGORY_INDEX } from '@/modules/catalog/candidates/cj-category-l1';
 import resolvePipelineFilters from '@/modules/catalog/candidates/pipeline-filters';
+import isTrigramSearchAvailable from '@/modules/catalog/candidates/search-capabilities';
 import PipelineFilterBar from '@/components/products/cj/PipelineFilterBar';
 import { findCataloguedCandidateIds } from '@/modules/catalog/products/read-model';
 
@@ -87,10 +88,18 @@ export default async function ProductSourcingPipelinePage({
     const filters = usesFilters
       ? resolvePipelineFilters(query, categoryIndex, now)
       : undefined;
+    /*
+      Asked, never assumed. `pg_trgm` arrives by break-glass and has no
+      migration file, so production has it and a fresh local database or CI
+      does not — and the fuzzy operator does not degrade there, it errors. Only
+      worth asking when there is a term to match.
+    */
+    const fuzzy = search === '' ? false : await isTrigramSearchAvailable();
     const pageData = await resolvePipelinePageData(sellerAccount.id, tab, {
       search,
       requestedPage: parsePageParam(query.page),
       filters,
+      fuzzy,
     });
     const cataloguedCandidateIds =
       tab === 'ready' || tab === 'needs-attention'
