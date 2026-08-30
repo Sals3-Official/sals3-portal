@@ -98,6 +98,80 @@ describe('searchPublishedProducts scope', () => {
     expect(wheres[0]?.toLowerCase()).toContain(fragment.toLowerCase());
   });
 
+  /**
+   * The SKU branch. Rendered SQL, not a trusted call: the whole value of this
+   * harness is that it prints the predicate rather than believing it.
+   */
+  describe('a term that spells a Sals3 SKU', () => {
+    const SKU = 'S3V-463ADA8A9E11';
+
+    it('also looks for a variant carrying that exact SKU', async () => {
+      const { executor, wheres, params } = recordingExecutor(SELECTS);
+
+      await searchPublishedProducts(query({ term: SKU }), executor as never);
+
+      const sql = wheres[0] ?? '';
+
+      expect(sql.toLowerCase()).toContain('exists');
+      expect(sql).toContain('"product_variants"."sals3_sku" =');
+      expect(params[0]).toContain(SKU);
+      // Still an OR with the title match, never a replacement for it.
+      expect(sql.toLowerCase()).toContain('ilike');
+    });
+
+    it('accepts the code without its prefix, and in any case', async () => {
+      const { executor, params } = recordingExecutor(SELECTS);
+
+      await searchPublishedProducts(
+        query({ term: '  463ada8a9e11  ' }),
+        executor as never,
+      );
+
+      expect(params[0]).toContain(SKU);
+    });
+
+    /**
+     * `S3V-4` is a hash prefix, not an intent. Matching it as a substring would
+     * return whichever listings happen to collide on four characters.
+     */
+    it('does not treat a partial code as a SKU', async () => {
+      const { executor, wheres } = recordingExecutor(SELECTS);
+
+      await searchPublishedProducts(
+        query({ term: 'S3V-463ADA' }),
+        executor as never,
+      );
+
+      expect((wheres[0] ?? '').toLowerCase()).not.toContain('sals3_sku');
+    });
+
+    /** An ordinary search must not pay for a subquery it cannot match. */
+    it('leaves an ordinary term as a title search alone', async () => {
+      const { executor, wheres } = recordingExecutor(SELECTS);
+
+      await searchPublishedProducts(query({ term: 'lamp' }), executor as never);
+
+      expect((wheres[0] ?? '').toLowerCase()).not.toContain('sals3_sku');
+      expect((wheres[0] ?? '').toLowerCase()).toContain('ilike');
+    });
+
+    /**
+     * The reason this is `EXISTS` and not a join predicate: narrowing the joined
+     * variants would change the card's own `From` price to the matched
+     * variant's, so a buyer arriving by SKU would see a different figure from
+     * everyone else looking at the same product.
+     */
+    it('does not narrow the joined variants the card aggregates over', async () => {
+      const { executor, wheres } = recordingExecutor(SELECTS);
+
+      await searchPublishedProducts(query({ term: SKU }), executor as never);
+
+      const outer = (wheres[0] ?? '').replace(/EXISTS \([\s\S]*?\)/gi, '');
+
+      expect(outer).not.toContain('sals3_sku');
+    });
+  });
+
   it('counts over exactly the predicate it lists over', async () => {
     const { executor, wheres } = recordingExecutor(SELECTS);
 

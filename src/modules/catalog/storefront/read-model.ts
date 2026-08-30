@@ -11,6 +11,7 @@ import {
   isNull,
   lte,
   ne,
+  or,
   sql,
 } from 'drizzle-orm';
 import getDb, { type DbExecutor } from '@/lib/db/client';
@@ -834,16 +835,76 @@ function escapeLikePattern(term: string): string {
   return term.replace(/\\/g, '\\\\').replace(/[%_]/g, (char) => `\\${char}`);
 }
 
+/** `S3V-` and twelve hex characters, the shape `deriveSals3Sku` mints. */
+const SALS3_SKU_PATTERN = /^(?:S3V-)?([0-9A-F]{12})$/;
+
 /**
- * Published products whose title contains the term, newest first by default.
+ * The Sals3 SKU a search term spells, or `null` when it does not spell one.
  *
- * ## Title only, and substring only
+ * Folded to upper case and accepting a missing `S3V-` because the code arrives
+ * by copy and paste — out of the Portal, out of an order line, out of a message
+ * — and none of those preserve a shape reliably. Anything that is not exactly
+ * one SKU is not one: a term that merely *contains* a SKU is a sentence, and a
+ * sentence is a title search.
+ */
+function sals3SkuFromTerm(term: string): string | null {
+  const match = SALS3_SKU_PATTERN.exec(term.trim().toUpperCase());
+
+  return match === null ? null : `S3V-${match[1]}`;
+}
+
+/**
+ * Whether this product has any variant carrying that SKU.
  *
- * It matches `products.title` and nothing else. Not the category name — a
- * search for "electronics" would then return every product in the department
- * rather than the ones actually called that, and a buyer cannot tell which of
- * the two happened. Not the description either: a word buried in supplier copy
- * is not what someone searching for a product name means.
+ * Correlated rather than joined so it narrows *which products match* without
+ * touching what `listBase` aggregates over them. `product_variants_sals3_sku_key`
+ * makes it a single unique-index probe per candidate row.
+ *
+ * Deliberately not scoped to published offers: publication is already decided by
+ * `publishedScope()` on the product, and re-deciding it here would mean a SKU
+ * search silently answering "no such product" for a product that is on sale
+ * through a different variant.
+ */
+function hasVariantWithSku(sku: string) {
+  return sql`EXISTS (
+    SELECT 1 FROM ${productVariants}
+    WHERE ${productVariants.productId} = ${products.id}
+      AND ${productVariants.sals3Sku} = ${sku}
+  )`;
+}
+
+/**
+ * Published products whose title contains the term — or whose catalogue carries
+ * it as a Sals3 SKU — newest first by default.
+ *
+ * ## Title, and one exact identifier
+ *
+ * It matches `products.title` and nothing else by substring. Not the category
+ * name — a search for "electronics" would then return every product in the
+ * department rather than the ones actually called that, and a buyer cannot tell
+ * which of the two happened. Not the description either: a word buried in
+ * supplier copy is not what someone searching for a product name means.
+ *
+ * The one addition is `product_variants.sals3_sku`, and it is **exact**, never a
+ * substring. A Sals3 SKU is `S3V-` plus twelve hex characters derived from the
+ * provider's identifiers, so a partial match is a hash prefix collision rather
+ * than a shopper's intent — `S3V-4` is not a search, it is noise. A term is
+ * treated as a SKU only when the whole of it is one, with the prefix optional
+ * and case folded, because the code is copied out of the Portal and pasted here
+ * by whoever is chasing a specific listing.
+ *
+ * It is an `EXISTS` rather than a join predicate on purpose. `listBase` already
+ * joins the variants and aggregates over them, so narrowing that join to the
+ * matched variant would quietly change the card's own figures: the `From` price
+ * would become that variant's price instead of the product's floor, and the
+ * availability roll-up would be computed from a single offer. A buyer who
+ * searched a SKU should see the same card everyone else sees.
+ *
+ * Known gap, deliberate: this finds the *product*, not the variant. Search
+ * returns product rows, so pasting a SKU lands on the product page with its
+ * default option selected rather than the one the SKU names. Carrying the
+ * matched variant through to a `?variant=` deep link means widening the list row
+ * and the storefront feed, which is a larger change than this.
  *
  * `ILIKE '%term%'` is a substring match with no ranking, which is the honest
  * shape for the catalogue this serves. It is also the part to replace first:
@@ -860,9 +921,11 @@ export async function searchPublishedProducts(
   input: StorefrontSearchQuery,
   executor: DbExecutor = getDb(),
 ): Promise<StorefrontPage> {
+  const sku = sals3SkuFromTerm(input.term);
+  const byTitle = ilike(products.title, `%${escapeLikePattern(input.term)}%`);
   const scope = and(
     publishedScope(),
-    ilike(products.title, `%${escapeLikePattern(input.term)}%`),
+    sku === null ? byTitle : or(byTitle, hasVariantWithSku(sku)),
     ...(input.departmentName === undefined
       ? []
       : [eq(sals3Categories.l1, input.departmentName)]),
