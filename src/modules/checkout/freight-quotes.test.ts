@@ -440,6 +440,49 @@ describe('quoteCheckoutFreight', () => {
     },
   );
 
+  it('caps the contribution on a heavy Fiji basket instead of giving Standard away in full', async () => {
+    // A 2kg Fiji parcel really can cost $98.32 (measured on CJ's own
+    // calculator) -- with no ceiling, that entire amount was previously
+    // absorbed the instant the order qualified. With no explicit
+    // SALS3_FREE_STANDARD_SHIPPING_CEILING_FJ_USD configured, the ceiling
+    // defaults to the $55 threshold itself, so the buyer should still owe
+    // the $43.32 remainder.
+    const heavyFijiFreight = {
+      code: 200,
+      result: true,
+      data: [
+        {
+          arrivalTime: '20-60',
+          optionId: 'option-fj-heavy',
+          channelId: 'channel-fj-heavy',
+          totalPostageFee: 98.32,
+          option: { enName: 'CJPacket FJ Liquid Line', id: 'option-fj-heavy' },
+          channel: { enName: 'CJPacket FJ Channel', id: 'channel-fj-heavy' },
+          ruleTips: null,
+          allRuleTips: null,
+          recommendLogisticsTypeList: null,
+        },
+      ],
+    };
+    const { result } = await quoteForCountry(
+      'FJ',
+      [[offerRow({ marketCode: 'FJ', priceMinor: BigInt(5500) })]],
+      heavyFijiFreight,
+      true,
+    );
+
+    expect(result.freeShipping).toMatchObject({
+      thresholdAmountMinor: 5500,
+      eligible: true,
+    });
+    expect(result.quotes[0]).toMatchObject({
+      shippingTier: 'Standard',
+      regularAmountMinor: 9832,
+      // Sals3 contributes at most the $55 ceiling; the buyer owes the rest.
+      amountMinor: 9832 - 5500,
+    });
+  });
+
   it('keeps faster tiers paid after Standard becomes free', async () => {
     const { result } = await quoteForCountry(
       'PH',

@@ -28,6 +28,7 @@ import { CJ_BASE_URL, CjApiError } from '@/services/cj/config';
 import { CHECKOUT_DESTINATION_CODES } from '@/modules/market-config/checkout-destinations';
 import { classifyShippingTiers, type ShippingTier } from './shipping-tiers';
 import {
+  freeShippingContributionMinor,
   freeShippingProgress,
   type FreeShippingProgress,
 } from './free-shipping';
@@ -978,14 +979,45 @@ export async function quoteCheckoutFreight(
   const freeShipping = supportsFreeStandardShipping
     ? freeShippingProgress(input.address.country, subtotalAmountMinor)
     : undefined;
-  const quotes = quotesByPackage.flat().map((quote) => ({
-    ...quote,
-    regularAmountMinor: quote.amountMinor,
-    amountMinor:
-      quote.shippingTier === 'Standard' && freeShipping?.eligible === true
-        ? 0
-        : quote.amountMinor,
-  }));
+  /*
+   * The contribution is capped per ORDER, not per package: a split-warehouse
+   * order ships as more than one package, and summing every package's real
+   * Standard quote before capping is what stops a heavy multi-package order
+   * from being given away in full package by package. `remainingMinor` is
+   * spent down in `quotesByPackage` order, which is stable — which package
+   * "uses up" the cap first is arbitrary but deterministic, never re-ordered
+   * between an estimate and the charge.
+   */
+  const totalStandardAmountMinor = quotesByPackage
+    .flat()
+    .filter((quote) => quote.shippingTier === 'Standard')
+    .reduce((total, quote) => total + quote.amountMinor, 0);
+  const contributionMinor =
+    freeShipping?.eligible === true
+      ? freeShippingContributionMinor(
+          input.address.country,
+          totalStandardAmountMinor,
+        )
+      : 0;
+  let remainingContributionMinor = contributionMinor;
+  const quotes = quotesByPackage.flat().map((quote) => {
+    if (quote.shippingTier !== 'Standard' || freeShipping?.eligible !== true) {
+      return { ...quote, regularAmountMinor: quote.amountMinor };
+    }
+
+    const coveredMinor = Math.min(
+      quote.amountMinor,
+      remainingContributionMinor,
+    );
+
+    remainingContributionMinor -= coveredMinor;
+
+    return {
+      ...quote,
+      regularAmountMinor: quote.amountMinor,
+      amountMinor: quote.amountMinor - coveredMinor,
+    };
+  });
 
   if (
     packages.some(
