@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import getDb, { type DbExecutor } from '@/lib/db/client';
+import { isUniqueViolation } from '@/lib/db/constraint-errors';
 import { productReviewFlags, productReviews } from '@/lib/db/schema/reviews';
 import { type FlagRefusal, type FlagReviewInput } from './contracts';
 
@@ -30,11 +31,6 @@ import { type FlagRefusal, type FlagReviewInput } from './contracts';
  */
 export type FlagReviewResult =
   { ok: true; flagId: string } | { ok: false; reason: FlagRefusal };
-
-/** Postgres `unique_violation`. */
-function isUniqueViolation(error: unknown): boolean {
-  return (error as { code?: unknown } | null)?.code === '23505';
-}
 
 export default async function flagReview(
   input: FlagReviewInput & { reporterEmail: string },
