@@ -6,6 +6,9 @@ import { REVIEW_REPLY_MAX_LENGTH } from '@/modules/reviews/contracts';
 import type { SellerReviewRow } from '@/modules/reviews/seller-read';
 import StarRating from './StarRating';
 
+/** What the caller can show immediately, without waiting on a fresh server read. */
+export type SavedReply = { body: string; version: number; createdAt: string };
+
 /**
  * The reply editor, as a modal over the list.
  *
@@ -25,7 +28,13 @@ export default function ReviewReplyDialog({
   onClose,
 }: {
   review: SellerReviewRow;
-  onClose: (saved: boolean) => void;
+  /**
+   * `reply` is only ever set alongside `saved: true`, carrying exactly what
+   * `replyToReviewAction` confirmed was written — the caller uses it to show
+   * the reply before its own next server read arrives, rather than waiting on
+   * one. See `ReviewList`'s own note on why that wait is not safe to assume.
+   */
+  onClose: (saved: boolean, reply?: SavedReply) => void;
 }) {
   const [body, setBody] = useState(review.reply?.body ?? '');
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +58,16 @@ export default function ReviewReplyDialog({
       });
 
       if (result.ok) {
-        onClose(true);
+        onClose(true, {
+          body: trimmed,
+          version: result.replyVersion,
+          // An approximation of what the server just stamped, held only until
+          // the next real read replaces it (see ReviewList's version check) —
+          // versioning a reply as a new row rather than an in-place update
+          // means an edit gets a fresh `created_at` server-side, and this is
+          // never the value anything is keyed on.
+          createdAt: new Date().toISOString(),
+        });
 
         return;
       }

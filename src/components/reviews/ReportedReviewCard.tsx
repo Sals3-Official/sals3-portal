@@ -35,9 +35,12 @@ const DATE_FORMAT = new Intl.DateTimeFormat('en-AU', {
 export default function ReportedReviewCard({
   review,
   photos,
+  onDecided,
 }: {
   review: ReportedReview;
   photos: { url: string; width: number; height: number }[];
+  /** Forwarded to `ModerationDecisionButtons` — see its own note. */
+  onDecided: () => void;
 }) {
   return (
     <div className="flex flex-col gap-4 rounded-lg border border-border bg-card p-4 md:flex-row">
@@ -125,7 +128,10 @@ export default function ReportedReviewCard({
       </div>
 
       <div className="shrink-0 md:w-44">
-        <ModerationDecisionButtons reviewId={review.reviewId} />
+        <ModerationDecisionButtons
+          reviewId={review.reviewId}
+          onDecided={onDecided}
+        />
       </div>
     </div>
   );

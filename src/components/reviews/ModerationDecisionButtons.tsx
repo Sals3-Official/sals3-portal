@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import moderateReviewAction from '@/app/(portal)/reviews/reported/moderation-actions';
 
@@ -19,19 +20,38 @@ import moderateReviewAction from '@/app/(portal)/reviews/reported/moderation-act
  * mostly Keep, and an inline "Press again to hide" says the same thing without
  * moving focus out of the row.
  *
- * ## No optimistic update
+ * ## The row leaves after the server confirms, not before — but not after a
+ * second server read either
  *
- * The row leaves the queue only after the server says the reports are closed.
- * A moderation queue that visibly empties on click and quietly fails is the one
- * kind of list where a stale-looking screen is safer than a wrong-looking one —
- * a review the moderator believes they hid, still live, is exactly the failure
- * the report was raised about.
+ * `decide()` calls `onDecided()` only once `moderateReviewAction` has returned
+ * `ok: true` — never before the request resolves, and never on a refusal. That
+ * is not the same thing as trusting the click: a moderation queue that visibly
+ * empties before the server has agreed and quietly fails is the one kind of
+ * list where a stale-looking screen would be safer than a wrong-looking one, a
+ * review the moderator believes they hid, still live, being exactly the
+ * failure the report was raised about.
+ *
+ * What it does skip is waiting for a *second*, separate server read to
+ * corroborate what the first response already said. `ReportedReviewsList`'s own
+ * note explains why that wait cannot be assumed to finish before the moderator
+ * looks back at the row — `router.refresh()` below still runs, to reconcile
+ * this tab against another moderator's own decision on the same review.
  */
 export default function ModerationDecisionButtons({
   reviewId,
+  onDecided,
 }: {
   reviewId: string;
+  /**
+   * Called the instant the server confirms the decision, so the row leaves
+   * the queue on this moderator's own screen without waiting on a second,
+   * separate read to say the same thing — see `ReportedReviewsList`'s note.
+   * `router.refresh()` still follows, to keep this tab honest against another
+   * moderator's own decision on the same review.
+   */
+  onDecided: () => void;
 }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [armed, setArmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,11 +68,9 @@ export default function ModerationDecisionButtons({
         return;
       }
 
-      // No local state change on success: `revalidatePath` re-renders the queue
-      // without this row, which is the same source of truth the next moderator
-      // will load. Clearing it here as well would be a second answer able to
-      // disagree with the first.
       setArmed(false);
+      onDecided();
+      router.refresh();
     });
   }
 
