@@ -13,12 +13,17 @@ import type {
  * Types for the Product Editor ("Add Product" prefilled from a qualified
  * supplier candidate).
  *
- * Design-only for now: the fixtures in
- * `src/lib/seller-center/mock-data/product-editor.ts` are fictional and
- * nothing here reads a database, a Drizzle schema, a Supplier App adapter,
- * or the evaluation pipeline. The vocabulary deliberately reuses the *real*
- * enums already decided elsewhere in this repo - the seven evaluation
- * decision states and the reason codes from
+ * No longer design-only. `modules/catalog/products/read-model.ts`'s
+ * `findProductEditorFixtureForSeller` builds a `ProductEditorFixture` for a
+ * real, database-backed product: it loads the row through
+ * `listCatalogueProductsForSeller`, converts it via `productToEditorFixture`,
+ * and layers on live pricing guidance and option-mapping-restore checks. The
+ * fixtures in `src/lib/seller-center/mock-data/product-editor.ts` are still
+ * fictional and remain in use only for the no-`productId` preview path
+ * (`resolveProductEditorFixture` in `listings/new/page.tsx`) and for tests -
+ * they no longer describe every product this screen renders. The vocabulary
+ * deliberately reuses the *real* enums already decided elsewhere in this
+ * repo - the seven evaluation decision states and the reason codes from
  * `src/modules/catalog/candidates/rules/contracts.ts` - so this reads as
  * "the same product, a richer screen" rather than a parallel design
  * language.
