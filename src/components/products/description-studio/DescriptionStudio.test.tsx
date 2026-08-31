@@ -500,6 +500,21 @@ describe('Description studio - tables', () => {
       screen.getByText(/Tables run wider than the text measure/),
     ).toBeInTheDocument();
   });
+
+  it('bulges out symmetrically instead of only to the right', () => {
+    // With no cap at all a table group fills its container edge to edge,
+    // so every pixel it gains over the narrower text column above it lands
+    // on the right only — capped and centered is what makes it read as a
+    // deliberate wide breakout instead of a lopsided one.
+    renderStudio([
+      { type: 'table', headers: ['Size', 'Waist'], rows: [['M', '65']] },
+    ]);
+
+    const group = screen.getByRole('table').closest('div[class*="mt-"]');
+
+    expect(group?.className).toContain('max-w-[760px]');
+    expect(group?.className).toContain('mx-auto');
+  });
 });
 
 describe('the canvas preview and the product page', () => {
