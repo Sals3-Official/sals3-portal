@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import PageHeader from '@/components/portal/PageHeader';
 import SourcingEmptyState from '@/components/products/cj/SourcingEmptyState';
-import ReportedReviewCard from '@/components/reviews/ReportedReviewCard';
+import ReportedReviewsList from '@/components/reviews/ReportedReviewsList';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { readOrUnavailable } from '@/lib/db/availability';
@@ -183,13 +183,7 @@ export default async function ReportedReviewsPage() {
             {page.total} {page.total === 1 ? 'review' : 'reviews'} waiting on a
             decision.
           </p>
-          {page.rows.map((row, index) => (
-            <ReportedReviewCard
-              key={row.reviewId}
-              review={row}
-              photos={photos[index] ?? []}
-            />
-          ))}
+          <ReportedReviewsList rows={page.rows} photos={photos} />
         </div>
       )}
     </div>
