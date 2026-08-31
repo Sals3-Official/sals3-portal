@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import getDb, { type DbExecutor } from '@/lib/db/client';
+import { isUniqueViolation } from '@/lib/db/constraint-errors';
 import { products } from '@/lib/db/schema/product-catalog';
 import { sals3OrderLines } from '@/lib/db/schema/orders';
 import {
@@ -21,11 +22,6 @@ import resolveReviewableLine from './eligibility';
 
 /** Bounds one product's review list. Beyond this nobody reads. */
 const MAX_PUBLIC_REVIEWS = 50;
-
-/** Postgres `unique_violation`. */
-function isUniqueViolation(error: unknown): boolean {
-  return (error as { code?: unknown } | null)?.code === '23505';
-}
 
 export type SubmitReviewResult =
   { ok: true; reviewId: string } | { ok: false; reason: ReviewRefusal };

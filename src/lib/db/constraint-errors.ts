@@ -26,6 +26,50 @@ const UNIQUE_VIOLATION = '23505';
 /** Depth is bounded because a `cause` chain is untrusted input like any other. */
 const MAX_CAUSE_DEPTH = 5;
 
+/**
+ * The SQLSTATE Postgres actually raised, out of whatever Drizzle threw.
+ *
+ * The same walk as below and for the same reason, generalised past `23505` —
+ * and it is not theoretical. `migrate-review-extras`'s **second** production
+ * run answered `500`: its own duplicate-object check read `error.code` off the
+ * wrapped error, got `undefined`, and rethrew every `42710` it exists to
+ * tolerate. The idempotent re-run every break-glass migration promises only
+ * holds if the code is read from here.
+ *
+ * `null` when nothing in the chain carries one, which a caller must treat as
+ * "not a Postgres error" and rethrow rather than swallow.
+ */
+export function postgresErrorCode(error: unknown): string | null {
+  const seen = new Set<unknown>();
+  let current = error;
+
+  for (let depth = 0; depth <= MAX_CAUSE_DEPTH; depth += 1) {
+    if (typeof current !== 'object' || current === null) return null;
+    if (seen.has(current)) return null;
+    seen.add(current);
+
+    const { code } = current as { code?: unknown };
+
+    if (typeof code === 'string' && code !== '') return code;
+
+    current = (current as { cause?: unknown }).cause;
+  }
+
+  return null;
+}
+
+/**
+ * Whether Postgres refused this write for breaking a unique index.
+ *
+ * `uniqueViolationConstraint` below is the richer answer and is what a caller
+ * with more than one index to tell apart should use. This one is for the common
+ * case — a table whose single unique index *is* the invariant — where naming it
+ * would only be a database internal to map straight back.
+ */
+export function isUniqueViolation(error: unknown): boolean {
+  return postgresErrorCode(error) === UNIQUE_VIOLATION;
+}
+
 function readConstraintName(candidate: object): string | null {
   const { code, constraint_name: constraintName } = candidate as {
     code?: unknown;

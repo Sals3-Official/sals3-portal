@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { and, count, eq } from 'drizzle-orm';
 import getDb, { type DbExecutor } from '@/lib/db/client';
+import { isUniqueViolation } from '@/lib/db/constraint-errors';
 import { productReviewPhotos, productReviews } from '@/lib/db/schema/reviews';
 import { getR2Client, readR2Config } from '@/lib/storage/r2-client';
 import { r2PublicImageUrl, r2PublicUrlForKey } from '@/lib/storage/r2-url';
@@ -68,11 +69,6 @@ export type AttachReviewPhotoResult =
   | { ok: false; reason: 'PROCESSING_FAILED' }
   | { ok: false; reason: 'STORAGE_NOT_CONFIGURED' }
   | { ok: false; reason: 'UPLOAD_FAILED' };
-
-/** Postgres `unique_violation`. */
-function isUniqueViolation(error: unknown): boolean {
-  return (error as { code?: unknown } | null)?.code === '23505';
-}
 
 export default async function attachReviewPhoto(
   input: { reviewId: string; buyerEmail: string; fileBytes: ArrayBuffer },

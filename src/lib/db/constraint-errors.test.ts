@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import uniqueViolationConstraint from './constraint-errors';
+import uniqueViolationConstraint, {
+  isUniqueViolation,
+  postgresErrorCode,
+} from './constraint-errors';
 
 /**
  * The wrapped case is the one that matters. Drizzle does not rethrow the
@@ -71,5 +74,73 @@ describe('uniqueViolationConstraint', () => {
     }
 
     expect(uniqueViolationConstraint(deep)).toBeNull();
+  });
+});
+
+describe('postgresErrorCode', () => {
+  /**
+   * The failure this function was written for. `migrate-review-extras`'s second
+   * production run answered 500 because its own check read `error.code` off the
+   * `DrizzleQueryError` and got `undefined`, so every `duplicate_object` it
+   * exists to tolerate was rethrown.
+   */
+  it('finds the code Drizzle buried under cause', () => {
+    const wrapped = new Error('Failed query: CREATE TYPE …', {
+      cause: Object.assign(new Error('type already exists'), { code: '42710' }),
+    });
+
+    expect(postgresErrorCode(wrapped)).toBe('42710');
+  });
+
+  it('reads a code sitting on the thrown object itself', () => {
+    expect(
+      postgresErrorCode(Object.assign(new Error('x'), { code: '42P07' })),
+    ).toBe('42P07');
+  });
+
+  it.each([[null], [undefined], ['a string'], [42], [new Error('plain')]])(
+    'answers null for %p rather than guessing',
+    (value) => {
+      expect(postgresErrorCode(value)).toBeNull();
+    },
+  );
+
+  it('terminates on a self-referencing cause instead of spinning', () => {
+    const cyclic: { cause?: unknown } = {};
+    cyclic.cause = cyclic;
+
+    expect(postgresErrorCode(cyclic)).toBeNull();
+  });
+
+  it('gives up rather than walking an unbounded cause chain', () => {
+    let deep: unknown = Object.assign(new Error('pg'), { code: '23505' });
+
+    for (let i = 0; i < 20; i += 1) {
+      deep = new Error(`layer-${i}`, { cause: deep });
+    }
+
+    expect(postgresErrorCode(deep)).toBeNull();
+  });
+});
+
+describe('isUniqueViolation', () => {
+  /**
+   * The same trap, on the path that decides whether a double-submitted review
+   * answers "you already reviewed this" or a 500.
+   */
+  it('sees a unique violation Drizzle wrapped', () => {
+    const wrapped = new Error('Failed query: insert into …', {
+      cause: Object.assign(new Error('duplicate key'), { code: '23505' }),
+    });
+
+    expect(isUniqueViolation(wrapped)).toBe(true);
+  });
+
+  it('is false for any other Postgres error', () => {
+    const wrapped = new Error('Failed query', {
+      cause: Object.assign(new Error('no such table'), { code: '42P01' }),
+    });
+
+    expect(isUniqueViolation(wrapped)).toBe(false);
   });
 });

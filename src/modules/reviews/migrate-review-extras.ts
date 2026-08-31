@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db/client';
+import { postgresErrorCode } from '@/lib/db/constraint-errors';
 
 /**
  * One-time, idempotent DDL for the three things Jay's review comments need: a
@@ -145,10 +146,20 @@ const ALREADY_EXISTS_CODES = new Set([
   '42701', // duplicate_column
 ]);
 
+/**
+ * Read through `postgresErrorCode`, never off the thrown object.
+ *
+ * Drizzle wraps every driver error in a `DrizzleQueryError` and hangs the real
+ * one off `cause`, so `error.code` is `undefined` and the naive spelling never
+ * matches. The first run of this migration passed because nothing threw; the
+ * **second** answered `500`, rethrowing every `duplicate_object` it exists to
+ * tolerate. That is what an idempotency claim looks like when it has only ever
+ * been exercised once.
+ */
 function isAlreadyExistsError(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
+  const code = postgresErrorCode(error);
 
-  return typeof code === 'string' && ALREADY_EXISTS_CODES.has(code);
+  return code !== null && ALREADY_EXISTS_CODES.has(code);
 }
 
 export type ReviewExtrasPresence = {

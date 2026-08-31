@@ -40,6 +40,19 @@ function alreadyExists(code: string): Error & { code: string } {
   return Object.assign(new Error('already exists'), { code });
 }
 
+/**
+ * What the driver error actually looks like by the time it reaches us.
+ *
+ * Drizzle wraps every query error in a `DrizzleQueryError` and hangs the
+ * original off `cause`, so `error.code` on the thrown object is `undefined`.
+ * The bare shape above is what a test invents; this is what production throws.
+ */
+function wrappedAlreadyExists(code: string): Error {
+  return new Error('Failed query: CREATE TYPE …', {
+    cause: alreadyExists(code),
+  });
+}
+
 describe('DDL_STATEMENTS', () => {
   /**
    * The whole reason this migration is a separate deployment. A schema column
@@ -209,6 +222,29 @@ describe('runReviewExtrasDdl', () => {
   });
 
   /**
+   * The regression behind a real 500.
+   *
+   * The first production run of this migration passed because nothing threw.
+   * The **second** — the one that records the ledger row — answered 500: every
+   * `CREATE TYPE` and `ADD CONSTRAINT` raised `duplicate_object`, the check read
+   * `error.code` off Drizzle's wrapper, got `undefined`, and rethrew. An
+   * idempotency claim that has only ever been exercised once is not one.
+   */
+  it('tolerates a duplicate Drizzle wrapped, not just a bare one', async () => {
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(wrappedAlreadyExists('42710'))
+      .mockResolvedValue(undefined);
+    const { db } = fakeTransactionalDb(execute);
+
+    const result = await runReviewExtrasDdl(db as never);
+
+    expect(result.statementsSkippedAlreadyExists).toBe(1);
+    expect(result.statementsRun).toBe(DDL_STATEMENTS.length - 1);
+  });
+
+  /**
    * A lock timeout is not an "already there" — it means nothing was applied and
    * the operator has to decide when to retry. Swallowing it would report success
    * for a run that achieved less than it says.
@@ -217,7 +253,7 @@ describe('runReviewExtrasDdl', () => {
     const execute = vi
       .fn()
       .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(alreadyExists('55P03'));
+      .mockRejectedValueOnce(wrappedAlreadyExists('55P03'));
     const { db } = fakeTransactionalDb(execute);
 
     await expect(runReviewExtrasDdl(db as never)).rejects.toThrow();
