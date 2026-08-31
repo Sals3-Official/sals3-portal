@@ -29,6 +29,9 @@ import CatalogueBulkActionBar from './CatalogueBulkActionBar';
 import CatalogueFilterBar, {
   type CatalogueFilters,
 } from './CatalogueFilterBar';
+import CatalogueProductPagination, {
+  type CataloguePageSize,
+} from './CatalogueProductPagination';
 import CatalogueProductTable from './CatalogueProductTable';
 import CatalogueStatusTabs from './CatalogueStatusTabs';
 
@@ -50,6 +53,21 @@ const DEFAULT_FILTERS: CatalogueFilters = {
 };
 
 const MANUAL_PAUSE_REASON = 'Manually paused by seller';
+
+/**
+ * Rows per page, and the seller's choice of how many.
+ *
+ * Client-side, over the array already loaded for filtering — this screen
+ * fetches a seller's whole catalogue once and filters/sorts it in the
+ * browser, so paging it is a slice, not a second server round trip. The
+ * Candidate Pipeline's own pager (`PipelinePagination`) exists for a
+ * different scale — tens of thousands of unfiltered candidates — and is
+ * server-driven for that reason, not a pattern this screen's data shape
+ * needs. 25 is the default a seller has not yet changed; the choice itself
+ * lives in `CatalogueProductPagination`'s page-size `Select` (owner request
+ * 2026-09-01 — a fixed count gave no way to see more or fewer rows at once).
+ */
+const DEFAULT_PAGE_SIZE: CataloguePageSize = 25;
 
 /**
  * Holds every piece of state this design preview actually needs to be
@@ -126,6 +144,41 @@ export default function ProductCatalogueWorkspace({
   const visibleProducts = useMemo(
     () => filterAndSortProducts(products, activeTab, filters),
     [products, activeTab, filters],
+  );
+
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] =
+    useState<CataloguePageSize>(DEFAULT_PAGE_SIZE);
+  /*
+    Same render-time-compare shape as `lastServerProducts` above: switching
+    tab, changing a filter, or changing the page size narrows or reshapes
+    `visibleProducts`/its paging, and staying on page 6 of a scope that now
+    has one page would show nothing and look broken rather than like a
+    screen that reset itself sensibly.
+  */
+  const [lastScope, setLastScope] = useState({ activeTab, filters, pageSize });
+
+  if (
+    lastScope.activeTab !== activeTab ||
+    lastScope.filters !== filters ||
+    lastScope.pageSize !== pageSize
+  ) {
+    setLastScope({ activeTab, filters, pageSize });
+    setPage(1);
+  }
+
+  const totalPages = Math.max(1, Math.ceil(visibleProducts.length / pageSize));
+  // Clamped rather than reset via another render-time write: archiving the
+  // last row on the last page should quietly step back a page, not flash
+  // an empty one first.
+  const effectivePage = Math.min(page, totalPages);
+  const pagedProducts = useMemo(
+    () =>
+      visibleProducts.slice(
+        (effectivePage - 1) * pageSize,
+        effectivePage * pageSize,
+      ),
+    [visibleProducts, effectivePage, pageSize],
   );
 
   function toggleSet(
@@ -266,7 +319,7 @@ export default function ProductCatalogueWorkspace({
         }}
       />
       <CatalogueProductTable
-        products={visibleProducts}
+        products={pagedProducts}
         selectedIds={selectedIds}
         expandedIds={expandedIds}
         onToggleSelected={(id) => toggleSet(selectedIds, setSelectedIds, id)}
@@ -289,6 +342,17 @@ export default function ProductCatalogueWorkspace({
         onArchive={setArchiveTargetId}
         onToggleVariantPaused={toggleVariantPaused}
       />
+
+      {visibleProducts.length === 0 ? null : (
+        <CatalogueProductPagination
+          page={effectivePage}
+          totalPages={totalPages}
+          total={visibleProducts.length}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+        />
+      )}
 
       <AlertDialog
         open={archiveTargetId !== null}

@@ -173,15 +173,33 @@ export default function CatalogueRowActions({
           >
             Duplicate as new draft
           </DropdownMenuItem>
-          <DropdownMenuItem
-            disabled={!canViewLive}
-            onClick={() => {
-              if (canViewLive) announceUnbuilt('View Live Page', product.name);
-            }}
-          >
-            View Live Page
-            {canViewLive ? null : ' (not live)'}
-          </DropdownMenuItem>
+          {/*
+            A real external link once the row has a working address, not the
+            handler above — `target="_blank"` and `rel="noopener noreferrer"`
+            because this leaves the portal entirely for a separately deployed
+            app on a different origin, and the seller almost always wants the
+            portal to stay open in the tab they came from. Disabled with no
+            `href` at all when `canViewLive` is false, rather than a link to
+            `undefined` that a screen reader would still announce as one.
+          */}
+          {canViewLive ? (
+            <DropdownMenuItem
+              render={
+                // eslint-disable-next-line jsx-a11y/anchor-has-content, jsx-a11y/control-has-associated-label -- the linter checks this element in isolation and cannot see that `DropdownMenuItem` renders its own children inside it; the same `render={<Link .../>}` shape on the Edit item above has real, accessible text for the same reason.
+                <a
+                  href={product.storefrontUrl ?? undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                />
+              }
+            >
+              View Live Page
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem disabled>
+              View Live Page (not live)
+            </DropdownMenuItem>
+          )}
           {product.status !== 'ARCHIVED' ? (
             <DropdownMenuItem
               variant="destructive"

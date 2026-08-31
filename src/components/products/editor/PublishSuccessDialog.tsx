@@ -40,8 +40,12 @@ export type PublishSuccessDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   productName: string;
-  /** The storefront path, as `publishProduct` returned it. */
-  slug: string;
+  /**
+   * The full address a buyer would open, computed server-side by the publish
+   * action — never assembled here from a bare slug, so this component never
+   * has to know or guess the storefront's own origin.
+   */
+  storefrontUrl: string;
   offerCount: number;
   /** Where the Product Catalogue lives, so this component never guesses. */
   catalogueHref: string;
@@ -51,7 +55,7 @@ export default function PublishSuccessDialog({
   open,
   onOpenChange,
   productName,
-  slug,
+  storefrontUrl,
   offerCount,
   catalogueHref,
 }: PublishSuccessDialogProps) {
@@ -77,11 +81,27 @@ export default function PublishSuccessDialog({
         </DialogHeader>
 
         <dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[13px]">
-          <dt className="text-muted-foreground">Storefront path</dt>
-          {/* Text, not a link: the buyer-facing site is a separate origin this
-              screen has no confirmed address for, and a link that might 404 is
-              worse than a path a seller can read. */}
-          <dd className="m-0 truncate font-mono text-xs">/p/{slug}</dd>
+          {/*
+            "Live listing", not "Storefront path" — a bare `/p/{slug}` fragment
+            read like an engineering detail rather than something a seller
+            would recognise as their own page (owner report 2026-09-01). Now a
+            real link, because the publish action computes the full address
+            server-side: there is nothing left here to guess a host for, so
+            the earlier "text, not a link" reasoning no longer applies.
+            `target="_blank"` leaves the portal open in this tab, since the
+            storefront is a separately deployed app.
+          */}
+          <dt className="text-muted-foreground">Live listing</dt>
+          <dd className="m-0 truncate">
+            <a
+              href={storefrontUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-sals3-deep underline underline-offset-2 hover:text-sals3-deep/80"
+            >
+              {storefrontUrl}
+            </a>
+          </dd>
           <dt className="text-muted-foreground">Offers live</dt>
           <dd className="m-0 tabular-nums">{offerCount}</dd>
         </dl>

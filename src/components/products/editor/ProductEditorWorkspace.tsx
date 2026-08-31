@@ -164,6 +164,7 @@ type ProductEditorWorkspaceProps = {
     | {
         ok: true;
         slug: string;
+        storefrontUrl: string;
         offerCount: number;
         availability: 'AVAILABLE' | 'UNAVAILABLE' | 'UNKNOWN';
       }
@@ -351,6 +352,20 @@ type ProductEditorWorkspaceProps = {
 };
 
 const EXIT_HREF = '/products/pipeline?tab=ready';
+
+/**
+ * The actual Product Catalogue list, `/listings` — not `EXIT_HREF`.
+ *
+ * `PublishSuccessDialog`'s "Go to Product Catalogue" used `EXIT_HREF`, which
+ * is the Candidate Pipeline's Ready tab. That is the right destination for a
+ * discard (the seller came from sourcing, so leaving returns them there), and
+ * the wrong one for "I just published a listing and want to see the
+ * catalogue it now lives in" — a seller pressing that button landed back
+ * among unpublished candidates instead (owner report 2026-09-01). Named
+ * separately rather than repointing `EXIT_HREF` itself, since discard-and-
+ * leave is a different action with a different correct destination.
+ */
+const CATALOGUE_HREF = '/listings';
 
 /**
  * Seller-facing copy for every way a discard can be refused.
@@ -885,6 +900,7 @@ export default function ProductEditorWorkspace({
   >(null);
   const [published, setPublished] = useState<{
     slug: string;
+    storefrontUrl: string;
     offerCount: number;
   } | null>(null);
   const [bulkPricingMode, setBulkPricingMode] =
@@ -1446,7 +1462,11 @@ export default function ProductEditorWorkspace({
         // A dialog rather than a toast: this is the end of the task, it names a
         // path worth reading, and the seller most likely wants to leave for the
         // catalogue. See `PublishSuccessDialog`.
-        setPublished({ slug: result.slug, offerCount: result.offerCount });
+        setPublished({
+          slug: result.slug,
+          storefrontUrl: result.storefrontUrl,
+          offerCount: result.offerCount,
+        });
 
         return;
       }
@@ -2940,9 +2960,9 @@ export default function ProductEditorWorkspace({
             if (!open) setPublished(null);
           }}
           productName={productName}
-          slug={published.slug}
+          storefrontUrl={published.storefrontUrl}
           offerCount={published.offerCount}
-          catalogueHref={EXIT_HREF}
+          catalogueHref={CATALOGUE_HREF}
         />
       )}
     </div>

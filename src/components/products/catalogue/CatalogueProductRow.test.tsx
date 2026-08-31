@@ -116,4 +116,46 @@ describe('CatalogueProductRow', () => {
 
     expect(screen.getByText('Low')).toBeInTheDocument();
   });
+
+  /**
+   * The product's own name is the row's primary click target. What it opens
+   * is not fixed — a draft opens the editor, because there is nowhere else
+   * to send a seller; a live listing opens the real page a buyer would see.
+   */
+  it('opens the editor from a draft row, since there is no storefront page yet', () => {
+    renderRow(PRODUCT);
+
+    const link = screen.getByRole('link', { name: PRODUCT.name });
+
+    expect(link).toHaveAttribute('href', PRODUCT.editorHref);
+    expect(link).not.toHaveAttribute('target');
+  });
+
+  it('opens the real storefront listing from a live row, in a new tab', () => {
+    renderRow({
+      ...PRODUCT,
+      status: 'LIVE',
+      storefrontUrl: 'https://sals3-ecommerce.vercel.app/p/mens-fleece-jacket',
+    });
+
+    const link = screen.getByRole('link', { name: PRODUCT.name });
+
+    expect(link).toHaveAttribute(
+      'href',
+      'https://sals3-ecommerce.vercel.app/p/mens-fleece-jacket',
+    );
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
+  });
+
+  it('falls back to the editor for a live-status row with no real address yet', () => {
+    // `status` alone must not be trusted to mean "has somewhere to send the
+    // seller" — the same guard `CatalogueRowActions` applies to its own
+    // View Live Page item.
+    renderRow({ ...PRODUCT, status: 'LIVE', storefrontUrl: null });
+
+    const link = screen.getByRole('link', { name: PRODUCT.name });
+
+    expect(link).toHaveAttribute('href', PRODUCT.editorHref);
+  });
 });

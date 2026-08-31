@@ -140,6 +140,7 @@ describe('Product Editor - publication outcomes', () => {
     vi.mocked(publishProductAction).mockResolvedValue({
       ok: true,
       slug: 'aurelis-daypack',
+      storefrontUrl: 'https://sals3-ecommerce.vercel.app/p/aurelis-daypack',
       offerCount: 2,
       availability: 'AVAILABLE',
     });
@@ -298,6 +299,7 @@ describe('Product Editor - publication outcomes', () => {
     vi.mocked(publishProductAction).mockResolvedValue({
       ok: true,
       slug: 'aurelis-daypack',
+      storefrontUrl: 'https://sals3-ecommerce.vercel.app/p/aurelis-daypack',
       offerCount: 1,
       availability: 'AVAILABLE',
     });
@@ -348,6 +350,7 @@ describe('Product Editor - publication outcomes', () => {
     vi.mocked(publishProductAction).mockResolvedValue({
       ok: true,
       slug: 'aurelis-daypack',
+      storefrontUrl: 'https://sals3-ecommerce.vercel.app/p/aurelis-daypack',
       offerCount: 1,
       availability: 'AVAILABLE',
     });
@@ -1539,6 +1542,7 @@ describe('Product Editor - Publish carries unsaved specifications', () => {
     vi.mocked(publishProductAction).mockResolvedValue({
       ok: true,
       slug: 'aurelis-daypack',
+      storefrontUrl: 'https://sals3-ecommerce.vercel.app/p/aurelis-daypack',
       offerCount: 2,
       availability: 'AVAILABLE',
     });
@@ -1596,6 +1600,7 @@ describe('Product Editor - Publish carries unsaved specifications', () => {
     vi.mocked(publishProductAction).mockResolvedValue({
       ok: true,
       slug: 'aurelis-daypack',
+      storefrontUrl: 'https://sals3-ecommerce.vercel.app/p/aurelis-daypack',
       offerCount: 2,
       availability: 'AVAILABLE',
     });
@@ -1619,6 +1624,7 @@ describe('Product Editor - publish confirmation', () => {
     vi.mocked(publishProductAction).mockResolvedValue({
       ok: true,
       slug: 'aurelis-daypack',
+      storefrontUrl: 'https://sals3-ecommerce.vercel.app/p/aurelis-daypack',
       offerCount: 2,
       availability: 'AVAILABLE',
     });
@@ -1648,13 +1654,24 @@ describe('Product Editor - publish confirmation', () => {
     expect(
       await screen.findByText('Published to the storefront'),
     ).toBeInTheDocument();
-    expect(screen.getByText('/p/aurelis-daypack')).toBeInTheDocument();
+    // A real link now, not a bare `/p/{slug}` path a seller could not act on.
+    expect(
+      screen.getByRole('link', {
+        name: 'https://sals3-ecommerce.vercel.app/p/aurelis-daypack',
+      }),
+    ).toHaveAttribute(
+      'href',
+      'https://sals3-ecommerce.vercel.app/p/aurelis-daypack',
+    );
 
     const back = screen.getByRole('link', {
       name: 'Go to Product Catalogue',
     });
 
-    expect(back).toHaveAttribute('href', '/products/pipeline?tab=ready');
+    // The Product Catalogue itself, not the Candidate Pipeline a seller was
+    // never sourcing from at this point — a bug report (2026-09-01) found
+    // this button returning to unpublished candidates instead.
+    expect(back).toHaveAttribute('href', '/listings');
   });
 
   it('says nothing about publication in design-preview mode', async () => {
