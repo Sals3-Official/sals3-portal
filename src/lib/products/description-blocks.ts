@@ -309,41 +309,29 @@ function textPartsOf(block: DescriptionBlock): string[] {
  * and roughly what does it say". It is **lossy on purpose** and must never be
  * the value an editor saves back — that round trip is what silently
  * downgraded headings, bullets, and detail lists into paragraphs.
+ *
+ * `image` and `table` are both excluded here, for the same reason: neither is
+ * prose, and this projection's two real consumers both treat the result as
+ * prose. The meta-description seam runs `firstSentence()` over it, and a
+ * description that opens with a table (no caption, no lead paragraph) would
+ * otherwise hand that function `Size · Waist · Hips` as the opening
+ * "sentence" — copy no seller wrote, that a seller could then save verbatim
+ * as the live `<meta name="description">`, because nothing downstream
+ * rejects a delimiter-heavy string. A table still contributes to whether the
+ * *document* counts as non-empty (`description.blocks.length === 0` in
+ * `read-model.ts` — a block count, not this text), so excluding it from the
+ * text does not make a chart-only description register as needing content;
+ * it only keeps the chart out of a field that reads as a sentence.
  */
 export function descriptionBlocksToPlainText(
   blocks: readonly DescriptionBlock[],
 ): string {
   return blocks
-    .filter((block) => block.type !== 'image')
+    .filter((block) => block.type !== 'image' && block.type !== 'table')
     .map((block) => {
       if (block.type === 'keyValueList') {
         return block.entries
           .map((entry) => `${entry.label}: ${entry.value}`)
-          .join('\n');
-      }
-
-      /*
-        A row per line, cells separated — not one cell per line, which is what
-        `textPartsOf` would give and which reads as an unpunctuated column of
-        numbers in a meta-description suggestion. The grid is gone either way;
-        keeping the rows is what makes the remains legible.
-
-        Blank cells are dropped from the line rather than printed as empty
-        segments. Alignment is already lost in a plain-text projection, so a
-        hole has nothing left to hold open.
-      */
-      if (block.type === 'table') {
-        return [
-          ...(block.caption === undefined ? [] : [block.caption]),
-          block.headers,
-          ...block.rows,
-        ]
-          .map((line) =>
-            typeof line === 'string'
-              ? line
-              : line.filter((cell) => cell.trim() !== '').join(' · '),
-          )
-          .filter((line) => line.trim() !== '')
           .join('\n');
       }
 

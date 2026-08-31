@@ -2366,6 +2366,16 @@ column while it scrolls, so the size code stays on screen. Verified at 375 px.
 names the tables it would lose alongside headings and bullet lists; every word
 survives as `Size · Waist · Hips` lines, the columns do not.
 
+**A table never becomes the meta-description suggestion.** `descriptionBlocksToPlainText`
+excludes `table` from its output, the same way it already excludes `image` — that
+projection's two consumers (the meta-description seam's `firstSentence()` and the
+Google-preview fallback) both treat the result as prose, and a description that
+opens with a chart and nothing else would otherwise hand them `Size · Waist ·
+Hips` as the opening "sentence," saveable verbatim as the live
+`<meta name="description">`. The chart still counts toward whether the document
+is non-empty — that check reads the block count, not this text — so excluding it
+from the projection costs nothing there.
+
 **Cross-repository.** The block is on the storefront wire, so
 `sals3-ecommerce`'s `DescriptionBlockSchema`, `ProductDescriptionBlock`,
 `DescriptionBlockList` and `ProductSchema` (JSON-LD) all carry it, and
