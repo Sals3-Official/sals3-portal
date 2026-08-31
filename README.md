@@ -2412,6 +2412,18 @@ reached by scrolling sideways on a phone.
 image row does, scrolls horizontally rather than squeezing, and pins its first
 column while it scrolls, so the size code stays on screen. Verified at 375 px.
 
+**Centered, not flush-left (2026-09-01).** The table group escapes the 70ch
+measure with no cap of its own, which meant it defaulted to the full width of
+its container with its left edge flush against the same edge as the narrower
+text above it — every pixel it gained over that text landed on the right only,
+reading as lopsided rather than as a deliberate wide breakout. Both the studio
+canvas (`StudioCanvas.tsx`) and the storefront (`sals3-ecommerce`'s
+`DescriptionTable.tsx`) now cap the table group at `max-w-[760px]` and center
+it with `mx-auto` — 760px matching this same file's own `IMAGE_SIZES`
+full-width figure, a real number already meaning "as wide as this canvas ever
+draws something," not one invented for this case. Does not affect `image`
+blocks, which are meant to run the full section width and are untouched.
+
 **Switching to Simple text flattens it, and says so first.** The mode toggle
 names the tables it would lose alongside headings and bullet lists; every word
 survives as `Size · Waist · Hips` lines, the columns do not.

@@ -145,6 +145,7 @@ export default function StudioCanvas({
 
       {groups.map((group) => {
         const isImageRow = group[0]?.block.type === 'image';
+        const isTableRow = group[0]?.block.type === 'table';
         /*
           A table escapes the measure for the same reason an image does, and
           for a stronger one. 70ch is sized for prose; a size chart squeezed
@@ -154,7 +155,7 @@ export default function StudioCanvas({
           exception, so previewing anything narrower here would be a preview
           that lies.
         */
-        const isMeasuredText = !isImageRow && group[0]?.block.type !== 'table';
+        const isMeasuredText = !isImageRow && !isTableRow;
 
         return (
           <div
@@ -168,6 +169,23 @@ export default function StudioCanvas({
               // Images and tables deliberately sit outside it.
               isMeasuredText &&
                 'relative max-w-[70ch] before:absolute before:inset-y-[-8px] before:left-[-16px] before:border-l before:border-dashed before:border-sals3-bright/45 after:absolute after:inset-y-[-8px] after:right-[-16px] after:border-l after:border-dashed after:border-sals3-bright/45',
+              /*
+                Wider than the text measure (the whole point of the block),
+                but not the full 840px canvas either — with no cap and no
+                `mx-auto`, this div fills its container edge to edge, so every
+                pixel it gains over the narrower text column above lands on
+                the right only. It reads as lopsided rather than as a
+                deliberate wide breakout, which is exactly how the storefront
+                itself would render an uncapped block. 760px matches this same
+                file's own `IMAGE_SIZES` full-width figure — a real number
+                already used here for "as wide as this canvas ever draws
+                something," not a value invented for this one case. Centering
+                does not fight the table's own horizontal scroll: `TablePreview`
+                still wraps the grid in `overflow-x-auto` inside this box, so
+                an 8-column chart scrolls within a centered container instead
+                of forcing the container itself wider.
+              */
+              isTableRow && 'mx-auto max-w-[760px]',
             )}
           >
             {group.map((entry) => {
