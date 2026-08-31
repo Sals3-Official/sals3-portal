@@ -56,6 +56,7 @@ describe('storefront checkout intent route', () => {
     } as never);
     vi.mocked(orders.createCheckoutIntent).mockResolvedValue({
       checkoutIntentId: '11111111-1111-4111-8111-111111111111',
+      shippingQuotedAt: '2026-08-17T14:00:00.000Z',
     });
 
     const response = await POST(request(body));
@@ -63,6 +64,7 @@ describe('storefront checkout intent route', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       checkoutIntentId: '11111111-1111-4111-8111-111111111111',
+      shippingQuotedAt: '2026-08-17T14:00:00.000Z',
     });
     expect(orders.createCheckoutIntent).toHaveBeenCalledWith(body);
   });

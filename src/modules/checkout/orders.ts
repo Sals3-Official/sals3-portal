@@ -165,7 +165,7 @@ function makeOrderNumber(now = new Date()): string {
 export async function createCheckoutIntent(
   input: CreateCheckoutIntentInput,
   options: { executor?: DbExecutor } = {},
-): Promise<{ checkoutIntentId: string }> {
+): Promise<{ checkoutIntentId: string; shippingQuotedAt: string }> {
   const executor = options.executor ?? getDb();
   const quote = await quoteCheckoutFreight(input, { executor });
   const selected = validateSelection(quote, input);
@@ -222,7 +222,14 @@ export async function createCheckoutIntent(
     throw new CheckoutOrderError('Checkout intent could not be created.', 500);
   }
 
-  return { checkoutIntentId: row.id };
+  /*
+    `quote.quotedAt` rather than a fresh timestamp here: it is the moment this
+    call's own live CJ freight computation actually ran, which is the fact
+    worth recording. This is also the only quote the storefront needs — see
+    the note on `createCheckoutSessionAction` in `sals3-ecommerce` for why the
+    storefront no longer re-quotes freight of its own before calling this.
+  */
+  return { checkoutIntentId: row.id, shippingQuotedAt: quote.quotedAt };
 }
 
 function snapshotLines(
