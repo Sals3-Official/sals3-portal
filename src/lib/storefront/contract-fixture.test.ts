@@ -88,6 +88,23 @@ const ROW: StorefrontDetailRow = {
           { label: 'Care', value: 'Machine wash cold' },
         ],
       },
+      /*
+        A size chart, which is the content this block type exists for. The last
+        row leaves one cell blank on purpose: blank is the one thing a table
+        cell may be that no other text position in this document may, and a
+        guard that only ever carried filled cells would go green while a
+        consumer's `.min(1)` quietly dropped the whole chart.
+      */
+      {
+        type: 'table',
+        caption: 'Body measurements in centimetres. Allow 1–2 cm variance.',
+        headers: ['Size', 'Waist', 'Hips', 'Length'],
+        rows: [
+          ['M', '65', '100', '103'],
+          ['L', '69', '104', '104'],
+          ['XL', '73', '108', ''],
+        ],
+      },
       {
         type: 'image',
         url: 'https://pub-5bd4708f2c2e4597ab8bd6234faae447.r2.dev/description-media/90a329b9-56aa-4f54-abb2-ad843602aa73/size-chart.webp',
@@ -182,7 +199,7 @@ describe('the committed contract fixture', () => {
  * failed and you only meant to edit one side, that is the answer.
  */
 const FIXTURE_SHA256 =
-  'e7600cac48870be3d8978dac239847bb4c1605f7dab06229ef21e0cecd605f19';
+  '0851988670867f807ec93b3fafd28fd3483ea9136d6b69c002f64f11db0443b4';
 
 describe('the committed fixture is the same bytes in both repositories', () => {
   it('has the fingerprint sals3-ecommerce asserts too', () => {

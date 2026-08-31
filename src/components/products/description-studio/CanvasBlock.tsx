@@ -78,6 +78,85 @@ function ImageFigure({
   );
 }
 
+/**
+ * The table as the product page will draw it: a real `<table>`, outside the
+ * reading measure, in its own horizontal scroller.
+ *
+ * Deliberately close to `sals3-ecommerce`'s `DescriptionTable` rather than to
+ * the inspector's editing grid. The canvas's whole claim is that it sets
+ * content "exactly as the product page will set it", and a table is the one
+ * block where a seller can most easily build something that looks fine in a
+ * form and is unreadable on a phone — eight columns of measurements is the
+ * shape that does it. Previewing the scroller is how they find that out here
+ * instead of after publishing.
+ *
+ * The first cell of each row is a `<th scope="row">`, matching the storefront:
+ * in a size chart the leftmost column is the size, and it names every number
+ * beside it.
+ */
+function TablePreview({
+  block,
+}: {
+  block: Extract<DescriptionBlock, { type: 'table' }>;
+}) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-border">
+      <table className="w-full border-collapse text-[13.5px]">
+        {block.caption === undefined || block.caption === '' ? null : (
+          <caption className="px-3 py-2 text-left text-[12.5px] text-ink-subtle">
+            {block.caption}
+          </caption>
+        )}
+        <thead className="bg-surface-sunken">
+          <tr>
+            {block.headers.map((header, index) => (
+              <th
+                // Index keys: a column is its position, and the block is
+                // re-rendered whole on every edit.
+                key={`header-${index}`}
+                scope="col"
+                className="border-b border-border px-3 py-2 text-left font-semibold whitespace-nowrap text-ink"
+              >
+                {header === '' ? (
+                  <span className="font-normal text-ink-subtle italic">
+                    Column {index + 1}
+                  </span>
+                ) : (
+                  header
+                )}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {block.rows.map((row, rowIndex) => (
+            <tr key={`row-${rowIndex}`} className="border-t border-border">
+              {row.map((cell, columnIndex) =>
+                columnIndex === 0 ? (
+                  <th
+                    key={`cell-${columnIndex}`}
+                    scope="row"
+                    className="px-3 py-2 text-left font-medium whitespace-nowrap text-ink"
+                  >
+                    {cell}
+                  </th>
+                ) : (
+                  <td
+                    key={`cell-${columnIndex}`}
+                    className="px-3 py-2 text-ink-muted"
+                  >
+                    {cell}
+                  </td>
+                ),
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 type CanvasBlockProps = {
   block: DescriptionBlock;
   isSelected: boolean;
@@ -210,6 +289,10 @@ export default function CanvasBlock({
         ))}
       </ul>
     );
+  }
+
+  if (block.type === 'table') {
+    return <TablePreview block={block} />;
   }
 
   return (

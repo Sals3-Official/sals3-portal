@@ -334,6 +334,133 @@ describe('Description studio - save pre-flight', () => {
   });
 });
 
+/**
+ * The block a size chart has been waiting for.
+ *
+ * The interesting assertions here are about the grid staying rectangular
+ * through every editing action, because that is the property the document
+ * schema refuses without and the property a buyer reads the chart by: one
+ * missing cell puts every measurement after it under the heading to its left.
+ */
+describe('Description studio - tables', () => {
+  function addTable() {
+    // `/^Table/` rather than an exact name: the palette entry carries its hint
+    // (`Size charts · wide`) inside the button, as the image presets do.
+    fireEvent.click(screen.getByRole('button', { name: /^Table/ }));
+  }
+
+  function typeCell(label: string, value: string) {
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  }
+
+  it('adds a grid the seller can see is a grid, and saves what they typed', async () => {
+    const { onSave } = renderStudio([{ type: 'paragraph', text: 'Copy.' }]);
+
+    addTable();
+
+    // Three columns and two rows: one cell of each would read as a mislabelled
+    // text box rather than as a table.
+    typeCell('Column 1 heading', 'Size');
+    typeCell('Column 2 heading', 'Waist');
+    typeCell('Column 3 heading', 'Hips');
+    // The row's own name follows its first cell, so this one is still
+    // addressed positionally and every later cell is addressed by `M`.
+    typeCell('Size for row 1', 'M');
+    typeCell('Waist for M', '65');
+    typeCell('Hips for M', '100');
+
+    const document = await save(onSave);
+
+    expect(document.blocks[1]).toEqual({
+      type: 'table',
+      headers: ['Size', 'Waist', 'Hips'],
+      // The second seeded row was never typed into, so it is dropped — a blank
+      // row is an editing artefact, exactly as a blank bullet is.
+      rows: [['M', '65', '100']],
+    });
+  });
+
+  it('keeps every row the width of the header row when a column is added', async () => {
+    const { onSave } = renderStudio([]);
+
+    addTable();
+    fireEvent.click(screen.getByRole('button', { name: 'Add column' }));
+    typeCell('Column 1 heading', 'Size');
+    typeCell('Size for row 1', 'M');
+    typeCell('Column 4 for M', '103');
+
+    const document = await save(onSave);
+
+    // The point of the assertion is the shape, not the words: a control that
+    // widened the header row without widening the body rows would produce a
+    // document `descriptionDocumentSchema` refuses — and `save()` parses with
+    // that schema, so this case would fail rather than assert a broken grid.
+    expect(document.blocks[0]).toEqual({
+      type: 'table',
+      headers: ['Size', '', '', ''],
+      rows: [['M', '', '', '103']],
+    });
+  });
+
+  it('keeps every row the width of the header row when a column is removed', async () => {
+    const { onSave } = renderStudio([]);
+
+    addTable();
+    typeCell('Column 1 heading', 'Size');
+    typeCell('Size for row 1', 'M');
+    typeCell('Column 2 for M', '65');
+    typeCell('Column 3 for M', '100');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove column 2' }));
+
+    expect((await save(onSave)).blocks[0]).toEqual({
+      type: 'table',
+      headers: ['Size', ''],
+      // `65` went with its column. The remaining cell is still under the
+      // heading it was typed under, which is the whole reason a column is
+      // removed across every row at once rather than header-first.
+      rows: [['M', '100']],
+    });
+  });
+
+  it('saves a table holding a blank cell rather than closing the gap', async () => {
+    const { onSave } = renderStudio([]);
+
+    addTable();
+    typeCell('Column 1 heading', 'Size');
+    typeCell('Size for row 1', 'L');
+    typeCell('Column 3 for L', '104');
+
+    // A measurement that does not apply stays blank. Dropping it would shorten
+    // the row against the header row, which the server refuses — so the
+    // seller's chart would fail to save for a hole they left on purpose.
+    expect((await save(onSave)).blocks[0]).toEqual({
+      type: 'table',
+      headers: ['Size', '', ''],
+      rows: [['L', '', '104']],
+    });
+  });
+
+  it('breaks out of the reading measure, as the product page does', () => {
+    renderStudio([
+      {
+        type: 'table',
+        headers: ['Size', 'Waist'],
+        rows: [['M', '65']],
+      },
+    ]);
+
+    // 70ch is sized for prose. A six-column size chart held to it is the exact
+    // wall of text this block type exists to stop being, so the canvas must not
+    // preview one narrower than the page will draw it.
+    const group = screen.getByRole('table').closest('div[class*="mt-"]');
+
+    expect(group?.className).not.toContain('max-w-[70ch]');
+    expect(
+      screen.getByText(/Tables run wider than the text measure/),
+    ).toBeInTheDocument();
+  });
+});
+
 describe('the canvas preview and the product page', () => {
   it("keeps a paragraph's own line breaks, as the product page does", () => {
     // This canvas tells the seller it sets text "exactly as the product page

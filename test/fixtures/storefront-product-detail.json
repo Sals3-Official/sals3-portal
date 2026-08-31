@@ -74,6 +74,16 @@
           ]
         },
         {
+          "type": "table",
+          "caption": "Body measurements in centimetres. Allow 1–2 cm variance.",
+          "headers": ["Size", "Waist", "Hips", "Length"],
+          "rows": [
+            ["M", "65", "100", "103"],
+            ["L", "69", "104", "104"],
+            ["XL", "73", "108", ""]
+          ]
+        },
+        {
           "type": "image",
           "url": "https://pub-5bd4708f2c2e4597ab8bd6234faae447.r2.dev/description-media/90a329b9-56aa-4f54-abb2-ad843602aa73/size-chart.webp",
           "alt": "Size chart for the shell jacket",

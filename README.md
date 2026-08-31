@@ -2314,6 +2314,68 @@ to split a surrogate pair.
 or Slate: the editor is the existing block document plus one pure module
 (`src/lib/products/inline-runs.ts`). Bundle and cost impact is neutral.
 
+### A real table block, for size charts (2026-08-31)
+
+`table` is the sixth block type: seller-named column headings, seller-typed
+rows, every cell plain text, rendered on the product page as a real `<table>`.
+
+**What it replaces.** A CJ size chart was being written into a `keyValueList` —
+the size code as the label, and every measurement for that size joined into one
+comma-separated string (`waistline 65, hips 100, thigh 61, foot 39, pants length
+103`). The storefront then set that as prose inside the 70ch reading measure, so
+a buyer read a wall of text and counted commas to find their waist. The data was
+a grid; the block was a list of pairs.
+
+**How to use it.** Open the description studio, press **Table** in the palette
+(next to _Detail list_). A fresh table is three columns by two rows — the
+smallest grid that reads as one. The inspector holds the whole grid: the column
+headings are the header row of the same table, `Add column` / `Add row` extend
+it, and the `×` beside a heading or a row removes that column or row **across
+every row at once**. The optional caption is printed above the table and is the
+table's accessible name on the product page — name the units there.
+
+**Limits** (`src/lib/products/description-blocks.ts`): `MAX_TABLE_COLUMNS` 8,
+`MAX_TABLE_ROWS` 40, `MAX_TABLE_CELL_LENGTH` 200, and a column heading uses the
+existing `MAX_LABEL_LENGTH` 120. Eight columns is read off the content — the
+widest real CJ apparel charts are size plus seven measurements — and is
+deliberately small, because every column past the reading width has to be
+reached by scrolling sideways on a phone.
+
+**Two rules that are not cosmetic:**
+
+- **Every row holds exactly one cell per column.** Enforced by
+  `descriptionDocumentSchema`, mirrored in `describeBlockProblem`, and re-checked
+  by the storefront's mapper, which drops a ragged table rather than rendering
+  it. A missing cell does not look wrong, it _reads_ wrong: every measurement
+  after the gap sits under the heading to its left, and a buyer picks a size by
+  it. The editor changes both dimensions across the whole grid at once, so the
+  ragged shape is unreachable from the screen.
+- **A blank cell is content.** A header or a cell may be the empty string —
+  the only text position in this document that may. A grid needs holes: a
+  measurement that does not apply to one size, and the blank corner cell above a
+  column of size codes. A row that is blank all the way across is dropped on
+  save, exactly as a blank bullet is; a **column** is never dropped, because it
+  is named by its heading and removing one would silently re-point every cell to
+  its left neighbour's meaning.
+
+**On the product page** the table breaks out of the 70ch measure the way an
+image row does, scrolls horizontally rather than squeezing, and pins its first
+column while it scrolls, so the size code stays on screen. Verified at 375 px.
+
+**Switching to Simple text flattens it, and says so first.** The mode toggle
+names the tables it would lose alongside headings and bullet lists; every word
+survives as `Size · Waist · Hips` lines, the columns do not.
+
+**Cross-repository.** The block is on the storefront wire, so
+`sals3-ecommerce`'s `DescriptionBlockSchema`, `ProductDescriptionBlock`,
+`DescriptionBlockList` and `ProductSchema` (JSON-LD) all carry it, and
+`test/fixtures/storefront-product-detail.json` gained a size chart in both
+repositories. The limit numbers are hand-copied there — they must move together.
+
+**Known limitation.** `DescriptionBlockEditor` — the inline form used only for a
+fixture preview (`?fixture=`), where there is no revision to save against — has
+no table preset and shows a table read-only. Tables are authored in the studio.
+
 ### Known gap
 
 Description images do not reach buyers yet. `sals3-ecommerce`'s

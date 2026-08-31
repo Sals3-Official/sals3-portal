@@ -11,6 +11,9 @@ import {
   MAX_LABEL_LENGTH,
   MAX_ALT_LENGTH,
   MAX_LIST_ITEMS,
+  MAX_TABLE_CELL_LENGTH,
+  MAX_TABLE_COLUMNS,
+  MAX_TABLE_ROWS,
   MAX_TEXT_LENGTH,
   MAX_URL_LENGTH,
   type BulletListBlock,
@@ -19,6 +22,7 @@ import {
   type InlineRun,
   type KeyValueListBlock,
   type ParagraphBlock,
+  type TableBlock,
 } from '@/lib/products/description-blocks';
 
 /**
@@ -135,6 +139,66 @@ const keyValueListBlockSchema = z.object({
 }) satisfies z.ZodType<KeyValueListBlock>;
 
 /**
+ * A grid cell's text: the same markup and control rules as `plainText`,
+ * trimmed, but permitted to be empty.
+ *
+ * The empty string is the one thing this document allows nowhere else, and it
+ * is allowed here because a grid needs holes. A size chart has a measurement
+ * that does not apply to one size, and a blank corner cell above its column of
+ * size codes. The alternatives are both worse: refusing a blank cell makes the
+ * corner cell unwritable, and dropping one makes the row shorter than its
+ * header row, which is the ragged shape `rows` is refined against below —
+ * every cell after the gap would then report under the wrong heading.
+ *
+ * A row that is blank all the way across never reaches here;
+ * `prepareBlocksForSave` drops it, the same as a blank bullet.
+ */
+const gridText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .refine((value) => !MARKUP_OPENER.test(value), {
+      message: 'Markup is not allowed in product description content.',
+    })
+    .refine((value) => !DISALLOWED_CONTROL.test(value), {
+      message:
+        'Control characters are not allowed in product description content.',
+    });
+
+/**
+ * A real multi-column table — the block a size chart has been waiting for.
+ *
+ * Column count and row count are capped here; **rectangularity is enforced in
+ * the document-level `superRefine` below**, for the same reason the
+ * paragraph's run-join rule lives there: `z.discriminatedUnion` takes plain
+ * object schemas, and a `superRefine` wrapper around this member would have to
+ * be unwrapped for the discriminator to stay resolvable.
+ *
+ * `headers` is capped and `rows`' inner arrays are capped at the same number
+ * rather than left to the rectangularity rule alone, so an oversized payload
+ * is refused on its own terms instead of only as a mismatch.
+ */
+const tableBlockSchema = z.object({
+  type: z.literal('table'),
+  headers: z.array(gridText(MAX_LABEL_LENGTH)).min(1).max(MAX_TABLE_COLUMNS),
+  rows: z
+    .array(
+      z.array(gridText(MAX_TABLE_CELL_LENGTH)).min(1).max(MAX_TABLE_COLUMNS),
+    )
+    /**
+     * At least one row, so a stored table always reports something. A table
+     * with named columns and no rows is an editing state, not content, and
+     * `isBlockEmpty` already treats it as one — this is the server half of
+     * that agreement rather than a second opinion about it.
+     */
+    .min(1)
+    .max(MAX_TABLE_ROWS),
+  /** The table's accessible name on the storefront; it has no other one. */
+  caption: plainText(MAX_TEXT_LENGTH).optional(),
+}) satisfies z.ZodType<TableBlock>;
+
+/**
  * A description image.
  *
  * `url` is shape-checked here and **allow-listed separately at the write
@@ -157,6 +221,7 @@ export const descriptionBlockSchema = z.discriminatedUnion('type', [
   headingBlockSchema,
   bulletListBlockSchema,
   keyValueListBlockSchema,
+  tableBlockSchema,
   imageBlockSchema,
 ]);
 
@@ -210,6 +275,39 @@ export const descriptionDocumentSchema = z
   })
   .superRefine((document, context) => {
     document.blocks.forEach((block, index) => {
+      /**
+       * A table's rows must each hold exactly one cell per column.
+       *
+       * Here rather than on `tableBlockSchema` for the same structural reason
+       * the run-join rule below is here: refining the member object turns it
+       * into a `ZodEffects` the discriminated union can no longer resolve a
+       * discriminator through.
+       *
+       * The rule itself is what makes the block safe to add. A ragged row is
+       * not a layout defect — it is a **wrong number under a correct
+       * heading**. Drop one cell from the middle of a size chart and every
+       * measurement after it shifts one column left, so a buyer reads a thigh
+       * measurement labelled `Hips` and orders a size that does not fit. There
+       * is no rendering that repairs it, and padding the row would invent a
+       * cell the seller never wrote and put it exactly where the wrong one
+       * used to be. Refusing the save is the only outcome that does not
+       * mislead someone.
+       */
+      if (block.type === 'table') {
+        block.rows.forEach((row, rowIndex) => {
+          if (row.length === block.headers.length) return;
+
+          context.addIssue({
+            code: 'custom',
+            path: ['blocks', index, 'rows', rowIndex],
+            message:
+              'Every table row must hold exactly one cell for each column.',
+          });
+        });
+
+        return;
+      }
+
       if (block.type !== 'paragraph') return;
 
       const { runs } = block;

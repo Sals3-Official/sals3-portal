@@ -41,6 +41,29 @@ function groupBlocks(
   }, []);
 }
 
+/**
+ * Which blocks on this canvas run past the 70ch reading measure, named for
+ * whichever are actually here.
+ *
+ * A note about images on a description holding only a table is a note about
+ * nothing, and a seller reading it would look for a photo that is not there.
+ */
+function wideBlockNotice(
+  blocks: readonly KeyedDescriptionBlock[],
+): string | null {
+  const hasImage = blocks.some((entry) => entry.block.type === 'image');
+  const hasTable = blocks.some((entry) => entry.block.type === 'table');
+
+  if (hasImage && hasTable) {
+    return 'Images and tables run wider than the text measure';
+  }
+
+  if (hasImage) return 'Images run wider than the text measure';
+  if (hasTable) return 'Tables run wider than the text measure';
+
+  return null;
+}
+
 type StudioCanvasProps = {
   blocks: KeyedDescriptionBlock[];
   selectedKey: string | null;
@@ -107,6 +130,7 @@ export default function StudioCanvas({
   onRemove,
 }: StudioCanvasProps) {
   const groups = groupBlocks(blocks);
+  const wideNotice = wideBlockNotice(blocks);
 
   return (
     <div className="mx-auto max-w-[840px]">
@@ -121,6 +145,16 @@ export default function StudioCanvas({
 
       {groups.map((group) => {
         const isImageRow = group[0]?.block.type === 'image';
+        /*
+          A table escapes the measure for the same reason an image does, and
+          for a stronger one. 70ch is sized for prose; a size chart squeezed
+          into it is what this block type exists to stop being — the columns
+          collapse, the numbers wrap, and the grid stops being scannable
+          exactly where scanning is the point. The storefront makes the same
+          exception, so previewing anything narrower here would be a preview
+          that lies.
+        */
+        const isMeasuredText = !isImageRow && group[0]?.block.type !== 'table';
 
         return (
           <div
@@ -131,8 +165,8 @@ export default function StudioCanvas({
                 group.length > 1 &&
                 'grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fit,minmax(260px,1fr))]',
               // Text keeps the page's own measure and the guide that shows it.
-              // Images deliberately sit outside it.
-              !isImageRow &&
+              // Images and tables deliberately sit outside it.
+              isMeasuredText &&
                 'relative max-w-[70ch] before:absolute before:inset-y-[-8px] before:left-[-16px] before:border-l before:border-dashed before:border-sals3-bright/45 after:absolute after:inset-y-[-8px] after:right-[-16px] after:border-l after:border-dashed after:border-sals3-bright/45',
             )}
           >
@@ -199,12 +233,12 @@ export default function StudioCanvas({
         </div>
       ) : null}
 
-      {blocks.some((entry) => entry.block.type === 'image') ? (
+      {wideNotice === null ? null : (
         <p className="mt-6 inline-flex items-center gap-1.5 rounded-full border border-sals3-bright px-2.5 py-1 text-[11px] text-sals3-deep">
           <MoveHorizontal aria-hidden="true" className="size-3" />
-          Images run wider than the text measure
+          {wideNotice}
         </p>
-      ) : null}
+      )}
     </div>
   );
 }
