@@ -71,6 +71,20 @@ export default function CatalogueProductRow({
   );
   const editHref =
     product.editorHref ?? `/listings/new?fixture=${product.editorFixtureKey}`;
+  /**
+   * The product's own name is the row's primary click target, and what it
+   * opens depends on whether there is a live page to send a seller to.
+   *
+   * A live listing opens the real storefront address — the thing a seller
+   * clicking a product in a catalogue most often wants to check — in a new
+   * tab, so the catalogue itself is never navigated away from. A draft has no
+   * storefront page yet, so it falls back to the editor exactly as before;
+   * editing stays reachable for every row regardless, through the row's own
+   * `Edit` menu item.
+   */
+  const isLive =
+    product.status === 'LIVE' || product.status === 'LIVE_NEEDS_ATTENTION';
+  const canOpenStorefront = isLive && product.storefrontUrl !== null;
 
   return (
     <>
@@ -118,12 +132,23 @@ export default function CatalogueProductRow({
             </span>
 
             <div className="min-w-0 flex-1">
-              <Link
-                href={editHref}
-                className="font-medium text-foreground hover:underline"
-              >
-                {product.name}
-              </Link>
+              {canOpenStorefront ? (
+                <a
+                  href={product.storefrontUrl ?? undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-foreground hover:underline"
+                >
+                  {product.name}
+                </a>
+              ) : (
+                <Link
+                  href={editHref}
+                  className="font-medium text-foreground hover:underline"
+                >
+                  {product.name}
+                </Link>
+              )}
               <button
                 type="button"
                 onClick={() =>

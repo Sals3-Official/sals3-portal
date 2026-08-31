@@ -86,12 +86,16 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'Dropship Catalogue',
+    label: 'Product Catalogue',
     icon: 'package',
     items: [
       {
         href: '/listings',
-        label: 'Product Catalogue',
+        // Renamed off the group's own name (owner report 2026-09-01): a
+        // group called "Product Catalogue" containing an item also called
+        // "Product Catalogue" read as the same label repeated, with nothing
+        // beside it distinguishing the group heading from the page it opens.
+        label: 'All products',
         icon: 'package',
         permission: 'product:read',
         description:

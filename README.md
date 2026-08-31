@@ -1705,6 +1705,56 @@ changed, and no CJ request was added.
   preferred over a data-dependent landing tab that would silently change the
   first time a listing went live.
 
+### Pagination, a real "View Live Page", and the catalogue's own name (2026-09-01)
+
+Four seller-reported navigation defects, fixed together:
+
+- **The table now paginates, with a seller-chosen page size.** 25/50/100/12
+  rows per page, client-side over the array already loaded for filtering — the
+  screen fetches a seller's whole catalogue once and slices it in the browser,
+  never a second server round trip. `CatalogueProductPagination` renders the
+  Previous/Next controls and the page-size `Select`; switching tab, changing a
+  filter, or changing the page size all reset to page 1 (the same render-time
+  state-compare shape `ProductCatalogueWorkspace` already used for adopting new
+  server rows, not an effect). Archiving the last row on the last page steps
+  the view back a page rather than showing an empty one, by clamping the
+  displayed page against the current total rather than writing a correction.
+  The header "select all" checkbox still arms the bulk bar against every
+  filtered row across every page, not only the one on screen — the bulk bar's
+  own selected-count is what keeps that legible rather than surprising.
+- **"View Live Page" is a real link.** It sat in the row's "More" menu as a
+  stubbed toast ("isn't built yet") since the menu was written. `storefrontUrl`
+  on a catalogue row is now the full address
+  (`storefrontOrigin()`+`/p/{slug}`) rather than a bare slug — matching what
+  the same field name already meant on an order line — and is populated for
+  `LIVE_NEEDS_ATTENTION` as well as `LIVE`: attention reasons flag a listing,
+  they do not unpublish it, so it was a real gap that the one seller most
+  likely to want to check their live page could never open it. The product's
+  own name in the row is now the same kind of link — it opens the real
+  storefront page (new tab) for a live listing, and falls back to the editor
+  for a draft, which has no storefront page yet. Editing stays reachable
+  either way through the row's `Edit` menu item.
+- **The publish-success dialog's "Go to Product Catalogue" goes to the
+  catalogue.** It used `EXIT_HREF` (`/products/pipeline?tab=ready`, the
+  Candidate Pipeline's Ready tab) — the correct destination for discarding a
+  draft, and the wrong one for "I just published and want to see the
+  catalogue." Repointed to a new `CATALOGUE_HREF` (`/listings`) used only by
+  this dialog; `EXIT_HREF` itself is untouched, since discard-and-leave is a
+  different action with a different correct destination. The dialog's
+  "Storefront path" field is also now a real clickable link
+  (`publishProductAction` computes the full address server-side and returns
+  it as `storefrontUrl`) labelled "Live listing" rather than a bare `/p/{slug}`
+  fragment that read as an engineering detail rather than a seller's own page.
+- **The description studio returns to the product editor after a save
+  succeeds**, instead of leaving the seller stranded on the screen they just
+  saved. A ~900ms delay keeps the confirmation message readable first — which
+  matters specifically when `onSave` reports the save landed on an
+  unpublished draft, not the seller's expectation of "saved and live."
+- **The sidebar group is "Product Catalogue", not "Dropship Catalogue"**, and
+  its "Product Catalogue" child item is now "All products" — the group and
+  its own first item read as the identical label repeated, with nothing beside
+  either one distinguishing the section heading from the page it opens.
+
 ## Product reviews
 
 Buyer reviews of purchased items: `/reviews` in the Seller Center, plus the

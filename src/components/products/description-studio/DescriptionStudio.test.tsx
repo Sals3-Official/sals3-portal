@@ -15,6 +15,12 @@ import DescriptionStudio from './DescriptionStudio';
  * by the real server schema rather than merely inspected.
  */
 
+const mocks = vi.hoisted(() => ({ push: vi.fn() }));
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: mocks.push }),
+}));
+
 const IMAGE_URL = 'https://media.example.com/description-media/p/a.webp';
 
 function renderStudio(initialBlocks: DescriptionBlock[] = []) {
@@ -89,6 +95,41 @@ describe('Description studio - the default designed layout', () => {
     // reshape a description the seller had already finished.
     expect(screen.queryAllByRole('figure')).toHaveLength(0);
     expect((await save(onSave)).blocks).toEqual(stored);
+  });
+});
+
+describe('Description studio - returning to the editor after save', () => {
+  it('navigates back to the product editor once a save succeeds', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mocks.push.mockClear();
+
+    const { onSave } = renderStudio([
+      { type: 'paragraph', text: 'A packable 20L daypack.' },
+    ]);
+
+    fireEvent.click(screen.getByRole('button', { name: /Save description/i }));
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalled());
+
+    // Not yet: the seller has to be able to read the confirmation first.
+    expect(mocks.push).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(900);
+
+    expect(mocks.push).toHaveBeenCalledWith('/listings/new?productId=p1');
+
+    vi.useRealTimers();
+  });
+
+  it('does not navigate away when the save is refused', async () => {
+    mocks.push.mockClear();
+    renderStudio([{ type: 'paragraph', text: 'Wear <b>this</b>.' }]);
+
+    fireEvent.click(screen.getByRole('button', { name: /Save description/i }));
+
+    // Rendered twice on purpose (the desktop inspector and the mobile sheet's
+    // copy of it), so `findAllByText` rather than `findByText`.
+    await screen.findAllByText(/Markup is not allowed/);
+    expect(mocks.push).not.toHaveBeenCalled();
   });
 });
 

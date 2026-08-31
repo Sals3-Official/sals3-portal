@@ -10,6 +10,7 @@ import {
   type DescriptionBlock,
 } from '@/lib/products/description-blocks';
 import { r2PublicImageUrl } from '@/lib/storage/r2-url';
+import storefrontOrigin from '@/lib/storefront/origin';
 import {
   auditEvents,
   candidateEvaluations,
@@ -1185,7 +1186,27 @@ function buildCatalogueProducts(
         contentReadiness:
           description.blocks.length === 0 ? 'NEEDS_IMPROVEMENT' : 'GOOD',
         pauseReason: status === 'AUTO_PAUSED' ? 'Listing is paused.' : null,
-        storefrontUrl: status === 'LIVE' ? product.slug : null,
+        /*
+          A full absolute URL, not a bare slug — matching what `storefrontUrl`
+          already means on an order line (`modules/orders/read-model.ts`,
+          `${storefrontOrigin()}/p/${slug}`), which is rendered directly as an
+          `href`. This field used to hold just `product.slug`, the one
+          inconsistent copy of the same name in this codebase, and its only
+          consumer (`CatalogueRowActions`) only ever null-checked it — nobody
+          had tried to use it as a link yet.
+
+          `LIVE_NEEDS_ATTENTION`, not only `LIVE`: `listingStatus` above
+          derives that status from `PUBLISHED`/`PUBLISHED` exactly like
+          `LIVE` — attention reasons flag it, they do not unpublish it — so a
+          listing in that state is still genuinely live on the storefront.
+          Restricting this to `LIVE` alone would have silently disabled
+          "View Live Page" for every attention-flagged listing, the one
+          seller most likely to want to go look at it.
+        */
+        storefrontUrl:
+          status === 'LIVE' || status === 'LIVE_NEEDS_ATTENTION'
+            ? `${storefrontOrigin()}/p/${product.slug}`
+            : null,
         attentionReasons,
         editorFixtureKey: 'pass',
         editorHref: `/listings/new?productId=${product.id}`,

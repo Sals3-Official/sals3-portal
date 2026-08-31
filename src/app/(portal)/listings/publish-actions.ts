@@ -8,6 +8,7 @@ import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { STOREFRONT_CATALOG_TAG } from '@/lib/storefront/catalog-cache';
+import storefrontOrigin from '@/lib/storefront/origin';
 import publishProduct, {
   unpublishProduct,
   type PublishRefusal,
@@ -76,6 +77,13 @@ export type PublishActionResult =
   | {
       ok: true;
       slug: string;
+      /**
+       * The full address a buyer would open, not the bare `/p/{slug}` path —
+       * computed here because `storefrontOrigin()` reads `process.env` and
+       * this action is the server boundary; `PublishSuccessDialog` renders
+       * whatever string it is handed rather than assembling one itself.
+       */
+      storefrontUrl: string;
       offerCount: number;
       availability: 'UNKNOWN' | 'AVAILABLE' | 'UNAVAILABLE';
     }
@@ -231,6 +239,7 @@ export async function publishProductAction(
     return {
       ok: true,
       slug: outcome.slug,
+      storefrontUrl: `${storefrontOrigin()}/p/${outcome.slug}`,
       offerCount: outcome.publishedOfferIds.length,
       availability: outcome.availability,
     };

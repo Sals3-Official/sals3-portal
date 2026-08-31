@@ -1,17 +1,24 @@
-import type { DescriptionBlock } from '@/lib/products/description-blocks';
+import type { DescriptionBlock } from '@/lib/products/description-blocks'; // MARKER_ZZZ // PROBE_MARKER_9f3a1
 import type { MoneyValue } from '@/lib/seller-center/product-editor/types';
 
 /**
- * Types for the Product Catalogue design preview ("Product Catalogue" nav
- * item under Dropship Catalogue).
+ * Types for the Product Catalogue ("All products" nav item under Product
+ * Catalogue).
  *
- * Design-only, same posture as `product-editor/types.ts`: nothing here
- * reads a database. Sals3 has no Product/Variant/Offer table yet (see
- * [[cj-candidate-to-sals3-product-draft-implementation-spec]] and `hot.md`'s
- * "no writable Sals3 catalogue exists yet").
+ * No longer design-only. `modules/catalog/products/read-model.ts`'s
+ * `listCatalogueProductsForSeller` / `buildCatalogueProducts` populate
+ * `CatalogueProductFixture` from real `products`, `product_variants`,
+ * `product_offers`, `product_media_sources`, `product_options`, and related
+ * tables (see that file for the full query). The "Fixture" naming and the
+ * per-field "Absent on the illustrative fixtures" notes below are left over
+ * from this preview's original design-only version; a real, published
+ * catalogue row populates every field the schema supports, and the
+ * illustrative fixtures in `lib/seller-center/mock-data/product-catalogue.ts`
+ * remain only for the editor's no-`productId` preview path and for tests -
+ * they no longer describe the shape of a live row.
  *
- * Unlike the first version of this preview, every field here matches an
- * approved decision rather than an invented retail-catalogue concept:
+ * Every field here still matches an approved decision rather than an
+ * invented retail-catalogue concept:
  *
  * - `ListingStatus` is ADR-011's five-state lifecycle, not a generic
  *   Active/Inactive/Draft/Pending QC/Violation/Deleted set. There is no

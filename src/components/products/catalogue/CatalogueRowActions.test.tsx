@@ -92,4 +92,60 @@ describe('CatalogueRowActions', () => {
       screen.queryByRole('menuitem', { name: 'Pause listing' }),
     ).toBeNull();
   });
+
+  /**
+   * A real, working link once the row has a real address — not the
+   * stubbed-toast handler every other unbuilt action here still uses.
+   */
+  it('opens View Live Page at the real storefront address, in a new tab', () => {
+    renderActions({
+      status: 'LIVE',
+      storefrontUrl: 'https://sals3-ecommerce.vercel.app/p/ice-silk-trousers',
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /more actions/i }));
+
+    const link = screen.getByRole('menuitem', { name: 'View Live Page' });
+
+    expect(link).toHaveAttribute(
+      'href',
+      'https://sals3-ecommerce.vercel.app/p/ice-silk-trousers',
+    );
+    expect(link).toHaveAttribute('target', '_blank');
+    // Leaving the portal for another origin without this is a reverse
+    // tabnabbing hole, and `rel` on an `<a>` is easy to drop on a rewrite.
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
+  });
+
+  it('disables View Live Page on a listing with no storefront address, live status alone is not enough', () => {
+    // Guards against trusting `status` on its own: a live status with a null
+    // address must still refuse to link anywhere, not fall back to `#` or an
+    // `undefined` href a screen reader would still announce as a link.
+    renderActions({ status: 'LIVE', storefrontUrl: null });
+
+    fireEvent.click(screen.getByRole('button', { name: /more actions/i }));
+
+    expect(
+      screen.getByRole('menuitem', { name: /View Live Page/ }),
+    ).toHaveAttribute('data-disabled');
+  });
+
+  it('offers View Live Page for a live-needs-attention listing, not only a plain live one', () => {
+    // `LIVE_NEEDS_ATTENTION` is still genuinely published — attention reasons
+    // flag it, they do not unpublish it — so it must not be treated as if it
+    // were a draft with nowhere to send the seller.
+    renderActions({
+      status: 'LIVE_NEEDS_ATTENTION',
+      storefrontUrl: 'https://sals3-ecommerce.vercel.app/p/ice-silk-trousers',
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /more actions/i }));
+
+    expect(
+      screen.getByRole('menuitem', { name: 'View Live Page' }),
+    ).toHaveAttribute(
+      'href',
+      'https://sals3-ecommerce.vercel.app/p/ice-silk-trousers',
+    );
+  });
 });

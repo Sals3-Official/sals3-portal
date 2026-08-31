@@ -4,6 +4,7 @@
    block key it acts on, so it cannot be hoisted out of the list it renders. */
 
 import { ChevronLeft, PanelRight, Plus, TriangleAlert } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import LinkButton from '@/components/portal/LinkButton';
 import type { DescriptionImageUpload } from '@/components/products/editor/DescriptionBlockEditor';
@@ -88,6 +89,8 @@ export default function DescriptionStudio({
   uploadImage,
   uploadDisabledReason = null,
 }: DescriptionStudioProps) {
+  const router = useRouter();
+
   /**
    * A description that has never been written opens in the designed layout
    * rather than on a blank canvas.
@@ -218,11 +221,37 @@ export default function DescriptionStudio({
     });
 
     setIsSaving(false);
-    setStatus(
-      result.ok
-        ? { kind: 'saved', message: result.message ?? 'Description saved.' }
-        : { kind: 'error', message: result.message },
-    );
+
+    if (!result.ok) {
+      setStatus({ kind: 'error', message: result.message });
+
+      return;
+    }
+
+    setStatus({
+      kind: 'saved',
+      message: result.message ?? 'Description saved.',
+    });
+
+    /*
+      This screen owns the description and nothing else — the seller opened
+      it from the product editor and there is no other reason to be here once
+      the save lands. Returning automatically is what "Back to listing"
+      already did manually; leaving the seller stranded on a saved, unusable
+      form was never the destination, only the fastest path to build one.
+
+      The brief delay is so `result.message` is actually readable before the
+      page changes under it — that message is not filler: on a published
+      product it says the save landed on an unpublished draft, which
+      `router.push` must not silently carry the seller past.
+
+      No cleanup for the timer: `save` is called from a click handler, not an
+      effect, so there is no unmount hook to cancel it from. If the seller
+      manually presses "Back to listing" during the delay, this fires a second
+      `router.push` to the exact href they are already on — Next.js treats
+      that as a no-op rather than a second navigation.
+    */
+    setTimeout(() => router.push(backHref), 900);
   }
 
   const palette = (
