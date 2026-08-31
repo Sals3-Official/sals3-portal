@@ -12,6 +12,18 @@ const FREE_SHIPPING_ENV_KEYS: Record<CheckoutDestinationCode, string> = {
   FJ: 'SALS3_FREE_STANDARD_SHIPPING_FJ_USD',
 };
 
+/**
+ * Optional. Unset in every environment today — no Vercel var exists for
+ * these yet — so reading one is never allowed to throw the way a missing
+ * threshold does; see `freeShippingCeilingAmountMinor`.
+ */
+const FREE_SHIPPING_CEILING_ENV_KEYS: Record<CheckoutDestinationCode, string> =
+  {
+    AU: 'SALS3_FREE_STANDARD_SHIPPING_CEILING_AU_USD',
+    PH: 'SALS3_FREE_STANDARD_SHIPPING_CEILING_PH_USD',
+    FJ: 'SALS3_FREE_STANDARD_SHIPPING_CEILING_FJ_USD',
+  };
+
 export type FreeShippingCountry = CheckoutDestinationCode;
 
 export type FreeShippingProgress = {
@@ -51,6 +63,54 @@ export function freeShippingThresholdAmountMinor(
   const key = FREE_SHIPPING_ENV_KEYS[country];
 
   return usdMajorToMinor(environment[key], key);
+}
+
+/**
+ * The most Sals3 will contribute toward one order's Standard freight, once
+ * eligible. Unlike the threshold, this fails **open** on a missing
+ * environment variable rather than throwing: no `SALS3_FREE_STANDARD_
+ * SHIPPING_CEILING_*` var exists in production today, and this function
+ * must be safe to deploy before anyone adds one.
+ *
+ * The zero-config default is the qualifying threshold itself — Sals3 never
+ * gives away more in Standard freight than the spend that earned it. For
+ * every real quote seen so far (AU ~$8, PH ~$4, FJ ~$16 at a normal basket)
+ * that default changes nothing, because the quote is already far under the
+ * threshold. It only starts capping an unusually heavy basket, which is
+ * exactly the case with no ceiling at all today: a qualifying Fiji order
+ * whose real CJ freight reaches $49.90–$98.32 currently has nothing
+ * stopping it from being given away in full.
+ */
+export function freeShippingCeilingAmountMinor(
+  country: FreeShippingCountry,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): number {
+  const key = FREE_SHIPPING_CEILING_ENV_KEYS[country];
+  const raw = environment[key];
+
+  if (raw === undefined) {
+    return freeShippingThresholdAmountMinor(country, environment);
+  }
+
+  return usdMajorToMinor(raw, key);
+}
+
+/**
+ * Sals3's contribution toward one order's total Standard freight, capped at
+ * `freeShippingCeilingAmountMinor`. `totalStandardAmountMinor` is the sum of
+ * every package's real Standard-tier quote in the order — a split-warehouse
+ * order ships as more than one package, and the cap applies to the order,
+ * not to each package independently.
+ */
+export function freeShippingContributionMinor(
+  country: FreeShippingCountry,
+  totalStandardAmountMinor: number,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): number {
+  const ceiling = freeShippingCeilingAmountMinor(country, environment);
+  const normalizedTotal = Math.max(0, Math.trunc(totalStandardAmountMinor));
+
+  return Math.min(normalizedTotal, ceiling);
 }
 
 /**
