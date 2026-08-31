@@ -501,19 +501,30 @@ describe('Description studio - tables', () => {
     ).toBeInTheDocument();
   });
 
-  it('bulges out symmetrically instead of only to the right', () => {
-    // With no cap at all a table group fills its container edge to edge,
-    // so every pixel it gains over the narrower text column above it lands
-    // on the right only — capped and centered is what makes it read as a
-    // deliberate wide breakout instead of a lopsided one.
+  it('sizes itself from its own content and stays flush-left', () => {
+    // A fixed cap (`mx-auto max-w-[760px]`) stood here and was removed: a real
+    // chart measuring ~843px started a horizontal scrollbar inside a canvas
+    // with room to spare, and centering detached the grid from the copy above
+    // it, which starts at the canvas's left edge like every other block. The
+    // storefront's `DescriptionTable` carries the identical rule, so this
+    // preview and the product page cannot drift apart on width.
     renderStudio([
       { type: 'table', headers: ['Size', 'Waist'], rows: [['M', '65']] },
     ]);
 
-    const group = screen.getByRole('table').closest('div[class*="mt-"]');
+    const table = screen.getByRole('table');
+    const group = table.closest('div[class*="mt-"]');
+    const scroller = table.parentElement;
 
-    expect(group?.className).toContain('max-w-[760px]');
-    expect(group?.className).toContain('mx-auto');
+    expect(group?.className).not.toContain('mx-auto');
+    // No width number anywhere on the group: the columns decide, not a pixel
+    // figure the content knows nothing about.
+    expect(group?.className).not.toMatch(/max-w-\[\d/);
+    // The bordered box shrink-wraps the grid rather than filling the canvas.
+    expect(scroller?.className).toContain('w-fit');
+    expect(scroller?.className).toContain('max-w-full');
+    // `w-full` on the table would stretch it and defeat `w-fit`.
+    expect(table.className).not.toContain('w-full');
   });
 });
 

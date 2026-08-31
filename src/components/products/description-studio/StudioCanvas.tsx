@@ -170,22 +170,19 @@ export default function StudioCanvas({
               isMeasuredText &&
                 'relative max-w-[70ch] before:absolute before:inset-y-[-8px] before:left-[-16px] before:border-l before:border-dashed before:border-sals3-bright/45 after:absolute after:inset-y-[-8px] after:right-[-16px] after:border-l after:border-dashed after:border-sals3-bright/45',
               /*
-                Wider than the text measure (the whole point of the block),
-                but not the full 840px canvas either — with no cap and no
-                `mx-auto`, this div fills its container edge to edge, so every
-                pixel it gains over the narrower text column above lands on
-                the right only. It reads as lopsided rather than as a
-                deliberate wide breakout, which is exactly how the storefront
-                itself would render an uncapped block. 760px matches this same
-                file's own `IMAGE_SIZES` full-width figure — a real number
-                already used here for "as wide as this canvas ever draws
-                something," not a value invented for this one case. Centering
-                does not fight the table's own horizontal scroll: `TablePreview`
-                still wraps the grid in `overflow-x-auto` inside this box, so
-                an 8-column chart scrolls within a centered container instead
-                of forcing the container itself wider.
+                A table row gets no width class at all, and that is deliberate.
+                `TablePreview` sizes the grid from its own columns and
+                shrink-wraps the bordered box around it (`w-fit max-w-full`),
+                exactly as `sals3-ecommerce`'s `DescriptionTable` does, so the
+                width is decided by the chart's content in both places and
+                neither carries a pixel figure the content knows nothing about.
+
+                A fixed cap stood here (`mx-auto max-w-[760px]`) and was removed
+                the same day: a real chart measuring ~843px started a horizontal
+                scrollbar inside a canvas with room to spare, and the centering
+                detached the grid from the copy above it, which starts at the
+                canvas's left edge like every other block.
               */
-              isTableRow && 'mx-auto max-w-[760px]',
             )}
           >
             {group.map((entry) => {
