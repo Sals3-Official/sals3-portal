@@ -45,12 +45,18 @@ import {
 /**
  * The block editor behind the storefront's "About this product" section.
  *
- * The four block types here are exactly the four the description document
- * allows and the storefront already renders — heading, paragraph, bullet
- * list, and detail list. Until this screen existed, the seller had one
- * textarea and the save path turned it into paragraphs, so three of the four
- * were unreachable from the portal even though every layer beneath could
- * carry them.
+ * The presets here are heading, paragraph, bullet list, detail list, and the
+ * image layouts. Until this screen existed, the seller had one textarea and the
+ * save path turned it into paragraphs, so most of them were unreachable from
+ * the portal even though every layer beneath could carry them.
+ *
+ * They are **no longer the whole union**: `table` is authored in the
+ * description studio, which is where a real draft's description is edited —
+ * this form now renders only for a fixture preview, which has no revision to
+ * save against. The claim this comment used to make ("exactly the four the
+ * document allows") went stale when `image` was added and again when `table`
+ * was, which is why it now names what this screen offers rather than what the
+ * document permits.
  *
  * Still not a rich-text editor, and the reason is unchanged: there is no
  * sanitiser. Each block is a typed field whose text is placed by React, so
@@ -511,6 +517,31 @@ function BlockFields({
         canAdd={block.items.length < MAX_LIST_ITEMS}
         onAdd={() => onChange({ ...block, items: [...block.items, ''] })}
       />
+    );
+  }
+
+  /**
+   * A table is authored in the description studio, not here.
+   *
+   * This surface has no table preset, so it can never create one — but the
+   * chain below used to end in a bare `return` that assumed `entries`, and
+   * that fallthrough is the exact bug this file's own union comment records
+   * ("the chain silently handed back a detail list for any type it did not
+   * name"). Naming `keyValueList` explicitly is what makes the compiler, not a
+   * runtime crash, report the next block type added.
+   *
+   * Reachable only for a design-preview document that already holds a table.
+   * The studio is where a real draft's description is edited — `DescriptionSection`
+   * renders a read-only summary and links to it — so building a second grid
+   * editor here would be a duplicate of `DescriptionTableFields` on a surface
+   * no seller reaches with a saveable table.
+   */
+  if (block.type === 'table') {
+    return (
+      <p className="text-xs text-muted-foreground">
+        This table is edited in the description studio, where the grid has room
+        to be laid out.
+      </p>
     );
   }
 

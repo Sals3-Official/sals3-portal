@@ -150,6 +150,7 @@ function countLoss(blocks: readonly DescriptionBlock[]) {
     headings: blocks.filter((block) => block.type === 'heading').length,
     bulletLists: blocks.filter((block) => block.type === 'bulletList').length,
     detailLists: blocks.filter((block) => block.type === 'keyValueList').length,
+    tables: blocks.filter((block) => block.type === 'table').length,
     emphasised: blocks.filter(
       (block) => block.type === 'paragraph' && block.runs !== undefined,
     ).length,
@@ -186,6 +187,15 @@ export function describeSimpleModeLoss(
   if (loss.detailLists > 0) {
     parts.push(plural(loss.detailLists, 'detail list', 'detail lists'));
   }
+  /*
+    A table is the largest thing this conversion destroys and the one whose
+    loss is least obvious afterwards: the words all survive, so a seller
+    scanning the flattened text sees their measurements and not that the
+    columns are gone. Naming it here is the difference between a conversion
+    they chose and one that happened to them — the same reason every other
+    entry in this list exists.
+  */
+  if (loss.tables > 0) parts.push(plural(loss.tables, 'table', 'tables'));
   if (loss.emphasised > 0) {
     parts.push(
       `bold or italic in ${plural(loss.emphasised, 'paragraph', 'paragraphs')}`,
@@ -225,6 +235,30 @@ export function flattenToSimpleMode(
         return [
           block.entries
             .map((entry) => `${entry.label}: ${entry.value}`)
+            .join('\n'),
+        ];
+      }
+
+      /*
+        A row per line, cells separated by ` · `, exactly as
+        `descriptionBlocksToPlainText` flattens one — the two answers to "what
+        does this table say without its columns" must be the same answer.
+
+        Every word survives, which is this function's contract. What does not
+        survive is the alignment, and that is what the confirmation dialog
+        names before the seller agrees to it. Blank cells are dropped from the
+        line: there is no column left for a hole to hold open.
+      */
+      if (block.type === 'table') {
+        return [
+          [
+            ...(block.caption === undefined ? [] : [block.caption]),
+            block.headers.filter((header) => header.trim() !== '').join(' · '),
+            ...block.rows.map((row) =>
+              row.filter((cell) => cell.trim() !== '').join(' · '),
+            ),
+          ]
+            .filter((line) => line.trim() !== '')
             .join('\n'),
         ];
       }

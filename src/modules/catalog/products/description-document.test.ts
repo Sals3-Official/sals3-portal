@@ -16,7 +16,10 @@ import {
 const doc = (blocks: unknown[]) => ({ version: 1, blocks });
 
 describe('descriptionDocumentSchema', () => {
-  it('accepts the four allow-listed block types', () => {
+  // The count is left out of the name on purpose: it was already stale at five
+  // and this file has now added a sixth. A name that cannot drift is better
+  // than one that has to be maintained alongside the union.
+  it('accepts the allow-listed block types', () => {
     const parsed = descriptionDocumentSchema.safeParse(
       doc([
         { type: 'paragraph', text: 'Soft cotton crew neck.' },
@@ -234,6 +237,102 @@ describe('descriptionDocumentSchema paragraph emphasis', () => {
 
     expect(checksumOfDescriptionDocument(plain)).not.toBe(
       checksumOfDescriptionDocument(marked),
+    );
+  });
+});
+
+/**
+ * The table's rules are almost all about shape, and the shape is what a buyer
+ * reads a size chart by. A ragged row is not a layout defect — every cell after
+ * the gap reports under the heading to its left, so a buyer reads a thigh
+ * measurement labelled `Hips` and orders a size that does not fit.
+ */
+describe('descriptionDocumentSchema table blocks', () => {
+  const chart = (rows: string[][], headers = ['Size', 'Waist', 'Hips']) => ({
+    type: 'table',
+    headers,
+    rows,
+  });
+
+  it('accepts a rectangular table, blank cells included', () => {
+    const parsed = descriptionDocumentSchema.safeParse(
+      doc([
+        {
+          ...chart([
+            ['M', '65', '100'],
+            ['L', '69', ''],
+          ]),
+          caption: 'Measurements in centimetres',
+        },
+      ]),
+    );
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects a row that is short or long against the header row', () => {
+    expect(
+      descriptionDocumentSchema.safeParse(doc([chart([['M', '65']])])).success,
+    ).toBe(false);
+    expect(
+      descriptionDocumentSchema.safeParse(
+        doc([chart([['M', '65', '100', '103']])]),
+      ).success,
+    ).toBe(false);
+  });
+
+  it('rejects markup and control characters in a heading, a cell, and a caption', () => {
+    const payloads = [
+      doc([chart([['M', '65', '100']], ['<script>', 'Waist', 'Hips'])]),
+      doc([chart([['M', '<img src=x>', '100']])]),
+      doc([
+        { ...chart([['M', '65', '100']]), caption: 'Sizes <b>run small</b>' },
+      ]),
+      doc([chart([['M', '6 5', '100']])]),
+    ];
+
+    payloads.forEach((payload) => {
+      expect(descriptionDocumentSchema.safeParse(payload).success).toBe(false);
+    });
+  });
+
+  it('rejects a table with no rows, no columns, or past its caps', () => {
+    const wide = Array.from({ length: 9 }, () => 'x');
+
+    expect(descriptionDocumentSchema.safeParse(doc([chart([])])).success).toBe(
+      false,
+    );
+    expect(
+      descriptionDocumentSchema.safeParse(doc([chart([[]], [])])).success,
+    ).toBe(false);
+    expect(
+      descriptionDocumentSchema.safeParse(doc([chart([wide], wide)])).success,
+    ).toBe(false);
+    expect(
+      descriptionDocumentSchema.safeParse(
+        doc([
+          chart(
+            Array.from({ length: 41 }, () => ['x']),
+            ['Size'],
+          ),
+        ]),
+      ).success,
+    ).toBe(false);
+  });
+
+  it('checksums two tables differing only in cell order differently', () => {
+    // Canonical JSON sorts object keys, never array positions — and in a table
+    // the position *is* the meaning, so two grids holding the same cells in a
+    // different arrangement must not share a revision identity.
+    const left = descriptionDocumentSchema.parse(
+      doc([chart([['M', '65', '100']])]),
+    );
+    const right = descriptionDocumentSchema.parse(
+      doc([chart([['M', '100', '65']])]),
+    );
+
+    expect(checksumOfDescriptionDocument(left)).not.toBe(
+      checksumOfDescriptionDocument(right),
     );
   });
 });

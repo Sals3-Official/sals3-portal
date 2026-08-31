@@ -169,6 +169,26 @@ describe('describeSimpleModeLoss', () => {
     expect(message).not.toContain('photo');
     expect(message).toContain('Photos are not affected');
   });
+
+  it('names a table, whose loss is the least visible afterwards', () => {
+    /*
+      A table on its own must produce a warning. If it did not, the parts list
+      would be empty, this function would answer `null`, the toggle would switch
+      without asking — and `flattenToSimpleMode` would turn the grid into lines
+      of text whose words all survive, so nothing on screen would tell the
+      seller their columns were gone. That is the exact failure this module was
+      written to prevent, one block type later.
+    */
+    const message = describeSimpleModeLoss([
+      {
+        type: 'table',
+        headers: ['Size', 'Waist'],
+        rows: [['M', '65']],
+      },
+    ]);
+
+    expect(message).toContain('1 table');
+  });
 });
 
 describe('flattenToSimpleMode', () => {
@@ -184,6 +204,15 @@ describe('flattenToSimpleMode', () => {
       type: 'keyValueList',
       entries: [{ label: 'Care', value: 'Cold wash' }],
     },
+    {
+      type: 'table',
+      caption: 'Measurements in centimetres',
+      headers: ['Size', 'Waist'],
+      rows: [
+        ['M', '65'],
+        ['L', ''],
+      ],
+    },
     image('detail'),
   ];
 
@@ -196,6 +225,13 @@ describe('flattenToSimpleMode', () => {
       'Six pockets',
       'Cotton twill',
       'Care: Cold wash',
+      // The grid is gone, which the toggle warned about; the measurements are
+      // not, which is this function's contract. A blank cell leaves no gap
+      // behind it — there is no column left in prose for a hole to hold open.
+      'Measurements in centimetres',
+      'Size · Waist',
+      'M · 65',
+      'L',
     ].forEach((word) => expect(text).toContain(word));
   });
 

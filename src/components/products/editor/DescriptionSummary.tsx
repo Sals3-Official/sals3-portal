@@ -27,6 +27,7 @@ const COUNT_ORDER: DescriptionBlockType[] = [
   'heading',
   'bulletList',
   'keyValueList',
+  'table',
   'image',
 ];
 

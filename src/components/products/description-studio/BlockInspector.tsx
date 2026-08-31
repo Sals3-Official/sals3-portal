@@ -20,6 +20,7 @@ import {
 } from '@/lib/products/description-blocks';
 import { descriptionImageSpec } from '@/lib/products/description-blocks';
 import { IMAGE_UPLOAD_LIMITS_COPY } from '@/lib/products/image-upload-limits';
+import DescriptionTableFields from './DescriptionTableFields';
 
 /**
  * Fields for the selected block, for everything the canvas cannot edit in
@@ -395,6 +396,43 @@ export default function BlockInspector({
             <Plus aria-hidden="true" />
             Add row
           </Button>
+        </div>
+      ) : null}
+
+      {block.type === 'table' ? (
+        <div className="flex flex-col gap-4">
+          <DescriptionTableFields block={block} onChange={onChange} />
+
+          <div>
+            <Label htmlFor="table-caption" className="mb-1.5 text-[12.5px]">
+              Caption{' '}
+              <span className="font-normal text-ink-subtle">optional</span>
+            </Label>
+            <Input
+              id="table-caption"
+              value={block.caption ?? ''}
+              placeholder="Measurements in cm, taken flat"
+              onChange={(event) =>
+                onChange({
+                  ...block,
+                  caption:
+                    event.target.value === '' ? undefined : event.target.value,
+                })
+              }
+            />
+            {/*
+              Not decoration. On the product page this becomes the table's
+              `<caption>`, which is the only name a screen-reader shopper is
+              given for the grid they have just landed in — a heading block
+              above it is a sibling element, not a label. It is also where the
+              unit belongs: a size chart of bare numbers does not say whether
+              they are centimetres.
+            */}
+            <p className="mt-1 text-[11.5px] text-ink-subtle">
+              Printed above the table and read out to shoppers using a screen
+              reader. Name the units here.
+            </p>
+          </div>
         </div>
       ) : null}
 

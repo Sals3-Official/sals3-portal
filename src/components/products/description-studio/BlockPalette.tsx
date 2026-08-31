@@ -8,6 +8,7 @@ import {
   LayoutGrid,
   List,
   Rows3,
+  Table as TableIcon,
 } from 'lucide-react';
 import type { DescriptionBlockType } from '@/lib/products/description-blocks';
 
@@ -54,6 +55,22 @@ export const PALETTE_TEXT: PaletteEntry[] = [
     type: 'keyValueList',
     count: 1,
     icon: Rows3,
+  },
+  {
+    /*
+      Named for the content it exists for. A detail list answers "what is this
+      one value" and a table answers "what is this value for each size", and
+      the size chart written as a detail list — every measurement for a size
+      joined into one comma-separated string — is what this replaces. The hint
+      says the one thing that distinguishes it on the page: it is the only text
+      block that runs wider than the reading measure.
+    */
+    id: 'table',
+    label: 'Table',
+    type: 'table',
+    count: 1,
+    hint: 'Size charts · wide',
+    icon: TableIcon,
   },
 ];
 

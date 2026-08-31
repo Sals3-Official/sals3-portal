@@ -43,6 +43,51 @@ export const MAX_URL_LENGTH = 2_048;
 /** Alt text is a sentence, not an essay; the same ceiling the gallery uses. */
 export const MAX_ALT_LENGTH = 160;
 
+/**
+ * Columns in one table.
+ *
+ * Read off the motivating content, not chosen as a round number: a CJ apparel
+ * size chart is a size code plus its measurements — waistline, hips, thigh,
+ * foot, length is five, and the widest real ones add bust, shoulder, and
+ * sleeve. Eight covers those and stops well short of a spreadsheet.
+ *
+ * It is deliberately small. Every column past the reading width has to be
+ * reached by scrolling sideways on a phone, so a cap that permitted forty
+ * would be permitting a table nobody can read — the storefront cannot make
+ * twenty columns legible, and pretending otherwise in the editor is the same
+ * class of promise as an image frame that does not say it crops.
+ */
+export const MAX_TABLE_COLUMNS = 8;
+
+/**
+ * Rows in one table's body, excluding the header row.
+ *
+ * The same ceiling a bullet list and a detail list use, because it answers the
+ * same question — how many rows may one description block hold — and a seller
+ * should not have to learn a second number. Kept as its own constant rather
+ * than an alias of `MAX_LIST_ITEMS`: a table row costs up to
+ * `MAX_TABLE_COLUMNS` cells where a detail row costs two, so the two may yet
+ * need to diverge, and aliasing them now would hide that they are separate
+ * decisions that happen to agree today.
+ */
+export const MAX_TABLE_ROWS = 40;
+
+/**
+ * One table cell.
+ *
+ * Shorter than `MAX_TEXT_LENGTH` on purpose. A cell is a measurement or a
+ * short phrase — `65`, `Machine wash cold` — and one holding four thousand
+ * characters would not be a cell: it would be a paragraph that has destroyed
+ * the column widths of every row beside it. A cell that long wants to be a
+ * paragraph block, and refusing it says so.
+ *
+ * Longer than a header, though, because the two are not the same thing: a
+ * header sets its column's width and every row lives under it, so it is a
+ * label (`MAX_LABEL_LENGTH`); a cell wraps inside a width already decided and
+ * can afford a short sentence.
+ */
+export const MAX_TABLE_CELL_LENGTH = 200;
+
 /** Matches `<div`, `</p`, `<!--`, `<?xml`. Does not match `a < b` or `5 <10`. */
 export const MARKUP_OPENER = /<[a-zA-Z/!?]/;
 /** C0/C1 controls except tab (09) and newline (0A). */
@@ -103,11 +148,61 @@ export type ImageBlock = {
   caption?: string;
 };
 
+/**
+ * A real multi-column table: seller-named columns, seller-typed rows.
+ *
+ * It exists because the shape it replaces was a lie about its own content. A
+ * CJ size chart was being written into a `keyValueList`, with the size code as
+ * the label and every measurement for that size joined into one
+ * comma-separated string — `waistline 65, hips 100, thigh 61, foot 39, pants
+ * length 103` — which the storefront then set as prose inside the 70ch reading
+ * measure. The data was a grid, the block was a list of pairs, and the buyer
+ * read a wall of text and had to count commas to find their waist.
+ *
+ * ## Rectangular, always
+ *
+ * `rows[n].length === headers.length` for every row, enforced by the document
+ * schema and mirrored in `describeBlockProblem`. A ragged row is not a
+ * cosmetic defect: drop one cell from the middle of a size chart and every
+ * measurement after it shifts one column left, so a buyer reads a thigh
+ * measurement under `Hips` and orders the wrong size. There is no honest way
+ * to render that, so it is refused rather than padded — padding would invent a
+ * cell the seller never wrote and place it where the wrong one used to be.
+ *
+ * ## Blank cells are content, not emptiness
+ *
+ * A header or a cell may be the empty string, which no other text position in
+ * this document permits. A grid needs holes — a measurement that does not
+ * apply to one size, and the corner cell above a column of row names, which is
+ * blank in every size chart ever printed. Dropping a blank cell would make the
+ * row ragged, which is the failure above; refusing it would make the corner
+ * cell impossible. So blank is allowed, and a row that is blank all the way
+ * across is dropped whole by `prepareBlocksForSave`, exactly as a blank bullet
+ * or a blank detail row is.
+ *
+ * Columns are never dropped, blank or not. A column is named by its header and
+ * every row is positioned against it, so removing one silently changes what
+ * the remaining cells mean. The seller removes a column explicitly or keeps
+ * it.
+ *
+ * `caption` is optional and is the table's accessible name on the storefront.
+ * The `<table>` has no other one — a heading block above it is a sibling, not
+ * a label — so this is the only place a screen-reader shopper can be told that
+ * the grid they have landed in is a size chart in centimetres.
+ */
+export type TableBlock = {
+  type: 'table';
+  headers: string[];
+  rows: string[][];
+  caption?: string;
+};
+
 export type DescriptionBlock =
   | ParagraphBlock
   | HeadingBlock
   | BulletListBlock
   | KeyValueListBlock
+  | TableBlock
   | ImageBlock;
 
 export type DescriptionBlockType = DescriptionBlock['type'];
@@ -117,8 +212,21 @@ export const DESCRIPTION_BLOCK_LABELS: Record<DescriptionBlockType, string> = {
   heading: 'Heading',
   bulletList: 'Bullet list',
   keyValueList: 'Detail list',
+  table: 'Table',
   image: 'Image',
 };
+
+/**
+ * The grid a fresh table starts as: three columns, two rows.
+ *
+ * Not one of each, which is what every other block type starts as. A table
+ * with one column and one row does not read as a table on the canvas — it
+ * reads as a mislabelled text box, and the seller's next move is to delete it.
+ * Three by two is the smallest grid that is visibly a grid, and it is what a
+ * size chart's first three columns (size, plus two measurements) look like.
+ */
+const NEW_TABLE_COLUMNS = 3;
+const NEW_TABLE_ROWS = 2;
 
 /**
  * A switch rather than an if-chain with a fallthrough return: the chain
@@ -137,6 +245,14 @@ export function emptyBlockOfType(type: DescriptionBlockType): DescriptionBlock {
       return { type: 'bulletList', items: [''] };
     case 'keyValueList':
       return { type: 'keyValueList', entries: [{ label: '', value: '' }] };
+    case 'table':
+      return {
+        type: 'table',
+        headers: Array.from({ length: NEW_TABLE_COLUMNS }, () => ''),
+        rows: Array.from({ length: NEW_TABLE_ROWS }, () =>
+          Array.from({ length: NEW_TABLE_COLUMNS }, () => ''),
+        ),
+      };
     case 'image':
       return { type: 'image', url: '', alt: '' };
     default: {
@@ -169,6 +285,19 @@ function textPartsOf(block: DescriptionBlock): string[] {
 
   if (block.type === 'bulletList') return block.items;
 
+  // Caption first, then the grid in reading order: header row, then each body
+  // row left to right. Blanks are included rather than filtered, because every
+  // caller here either trims them itself or is asking "is any of this
+  // non-blank" — and filtering would make `prepareBlocksForSave` unable to use
+  // this to decide whether a row is empty.
+  if (block.type === 'table') {
+    return [
+      ...(block.caption === undefined ? [] : [block.caption]),
+      ...block.headers,
+      ...block.rows.flat(),
+    ];
+  }
+
   return block.entries.flatMap((entry) => [entry.label, entry.value]);
 }
 
@@ -193,6 +322,31 @@ export function descriptionBlocksToPlainText(
           .join('\n');
       }
 
+      /*
+        A row per line, cells separated — not one cell per line, which is what
+        `textPartsOf` would give and which reads as an unpunctuated column of
+        numbers in a meta-description suggestion. The grid is gone either way;
+        keeping the rows is what makes the remains legible.
+
+        Blank cells are dropped from the line rather than printed as empty
+        segments. Alignment is already lost in a plain-text projection, so a
+        hole has nothing left to hold open.
+      */
+      if (block.type === 'table') {
+        return [
+          ...(block.caption === undefined ? [] : [block.caption]),
+          block.headers,
+          ...block.rows,
+        ]
+          .map((line) =>
+            typeof line === 'string'
+              ? line
+              : line.filter((cell) => cell.trim() !== '').join(' · '),
+          )
+          .filter((line) => line.trim() !== '')
+          .join('\n');
+      }
+
       return textPartsOf(block).join('\n');
     })
     .join('\n\n');
@@ -207,6 +361,19 @@ export function descriptionBlocksToPlainText(
  */
 export function isBlockEmpty(block: DescriptionBlock): boolean {
   if (block.type === 'image') return block.url.trim() === '';
+
+  /*
+    A table is empty when its *body* is, even if the seller has named the
+    columns. Column headers with nothing under them are the same editing state
+    an image block with no file is: a shape waiting to be filled, not content.
+    Storing one would publish a header row with no rows beneath it — a table
+    that announces five measurements and reports none — and the document schema
+    requires at least one row for exactly that reason, so this is also what
+    keeps `prepareBlocksForSave` from producing a document the server refuses.
+  */
+  if (block.type === 'table') {
+    return block.rows.every((row) => row.every((cell) => cell.trim() === ''));
+  }
 
   return textPartsOf(block).every((part) => part.trim() === '');
 }
@@ -247,6 +414,47 @@ export function imageRunAt(
  * "Draft save failed" after the round trip. Returns `null` when the server
  * would accept the block.
  */
+/**
+ * The table half of `describeBlockProblem`, mirroring the document schema's
+ * own table rules so a seller reads them beside the grid rather than after a
+ * failed round trip.
+ *
+ * Named separately because a table has four independent refusals where every
+ * other block has one, and folding them into the chain below would bury them.
+ */
+function describeTableProblem(block: TableBlock): string | null {
+  if (block.headers.length > MAX_TABLE_COLUMNS) {
+    return `A table holds at most ${MAX_TABLE_COLUMNS} columns.`;
+  }
+
+  if (block.rows.length > MAX_TABLE_ROWS) {
+    return `A table holds at most ${MAX_TABLE_ROWS} rows.`;
+  }
+
+  // The editor adds and removes cells across every row at once, so this cannot
+  // come from the seller — it is what a hand-built payload or a future writer
+  // would produce, and it is the one table defect that misinforms rather than
+  // merely looking wrong: every cell after the gap reports under the wrong
+  // column heading.
+  if (block.rows.some((row) => row.length !== block.headers.length)) {
+    return 'Every row must have one cell for each column.';
+  }
+
+  if (block.headers.some((header) => header.trim().length > MAX_LABEL_LENGTH)) {
+    return `A column heading is at most ${MAX_LABEL_LENGTH} characters.`;
+  }
+
+  if (
+    block.rows.some((row) =>
+      row.some((cell) => cell.trim().length > MAX_TABLE_CELL_LENGTH),
+    )
+  ) {
+    return `A table cell is at most ${MAX_TABLE_CELL_LENGTH} characters. Longer copy belongs in a paragraph.`;
+  }
+
+  return null;
+}
+
 export function describeBlockProblem(block: DescriptionBlock): string | null {
   if (block.type === 'image') {
     if (block.url.trim() === '') return 'Upload an image for this block.';
@@ -279,6 +487,12 @@ export function describeBlockProblem(block: DescriptionBlock): string | null {
     block.entries.some((entry) => entry.label.trim().length > MAX_LABEL_LENGTH)
   ) {
     return `A detail label is at most ${MAX_LABEL_LENGTH} characters.`;
+  }
+
+  if (block.type === 'table') {
+    const problem = describeTableProblem(block);
+
+    if (problem !== null) return problem;
   }
 
   if (parts.some((part) => part.trim().length > MAX_TEXT_LENGTH)) {
@@ -358,6 +572,38 @@ export function prepareBlocksForSave(
           items: block.items
             .map((item) => item.trim())
             .filter((item) => item !== ''),
+        };
+      }
+
+      /**
+       * Trim everything, drop rows that are blank all the way across, and
+       * change no row's width.
+       *
+       * Dropping a blank *cell* is what the other list blocks do and is
+       * precisely what this one must not: it would make the row shorter than
+       * the header row, which the schema refuses and which — if it ever got
+       * through — would print the seller's numbers under the wrong headings.
+       * A hole in a grid is content, so it survives; a row with nothing in it
+       * anywhere is an editing artefact, so it does not.
+       *
+       * A blank *column* also survives, deliberately. It is named by its
+       * header and every row is positioned against it, so removing one here
+       * would silently re-point every cell to its left neighbour's meaning.
+       * The inspector's "Remove column" is how a column goes.
+       */
+      if (block.type === 'table') {
+        const caption = block.caption?.trim() ?? '';
+
+        return {
+          type: 'table',
+          headers: block.headers.map((header) => header.trim()),
+          rows: block.rows
+            .map((row) => row.map((cell) => cell.trim()))
+            .filter((row) => row.some((cell) => cell !== '')),
+          // Dropped rather than stored blank, exactly as an image's is: an
+          // empty `<caption>` is a gap above the table, and the field is
+          // optional by design.
+          ...(caption === '' ? {} : { caption }),
         };
       }
 

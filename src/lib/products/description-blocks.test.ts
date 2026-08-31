@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { descriptionDocumentSchema } from '@/modules/catalog/products/description-document';
 import {
   DESCRIPTION_DOCUMENT_VERSION,
+  MAX_TABLE_CELL_LENGTH,
+  MAX_TABLE_COLUMNS,
+  MAX_TABLE_ROWS,
   blocksMatchSaved,
   imageRunAt,
   describeBlockProblem,
@@ -353,5 +356,152 @@ describe('firstBlockProblem', () => {
 
   it('passes a complete document', () => {
     expect(firstBlockProblem(AUTHORED)).toBeNull();
+  });
+});
+
+/**
+ * The table is the one block whose *shape* is the content, so its tests are
+ * about the shape rather than about the words: a row that lost a cell puts a
+ * seller's numbers under the wrong headings, which is a defect a buyer acts on
+ * rather than one they merely notice.
+ */
+describe('the table block', () => {
+  const SIZE_CHART: DescriptionBlock = {
+    type: 'table',
+    caption: 'Measurements in centimetres',
+    headers: ['Size', 'Waist', 'Hips'],
+    rows: [
+      ['M', '65', '100'],
+      ['L', '69', ''],
+    ],
+  };
+
+  it('survives a save projection with its blank cell intact', () => {
+    // The blank `Hips` for L is content, not an omission: dropping it would
+    // make the row narrower than the header row, and the schema — rightly —
+    // refuses that.
+    expect(prepareBlocksForSave([SIZE_CHART])).toEqual([SIZE_CHART]);
+    expect(
+      descriptionDocumentSchema.safeParse({
+        version: DESCRIPTION_DOCUMENT_VERSION,
+        blocks: prepareBlocksForSave([SIZE_CHART]),
+      }).success,
+    ).toBe(true);
+  });
+
+  it('trims cells and drops rows that are blank all the way across', () => {
+    expect(
+      prepareBlocksForSave([
+        {
+          type: 'table',
+          caption: '  ',
+          headers: ['  Size  ', 'Waist'],
+          rows: [
+            ['  M  ', ' 65 '],
+            ['   ', '  '],
+            ['L', ''],
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        type: 'table',
+        headers: ['Size', 'Waist'],
+        // The all-blank row is gone; `L`'s blank waist is not, because that row
+        // still says something and its width has to match the header row.
+        rows: [
+          ['M', '65'],
+          ['L', ''],
+        ],
+      },
+    ]);
+  });
+
+  it('treats named columns with no rows under them as an editing state', () => {
+    const headersOnly: DescriptionBlock = {
+      type: 'table',
+      headers: ['Size', 'Waist'],
+      rows: [['', '']],
+    };
+
+    expect(isBlockEmpty(headersOnly)).toBe(true);
+    // Dropped rather than refused, so a seller who added a table and has not
+    // filled it in yet can still save the rest of their description — and the
+    // document never reaches the schema's `rows.min(1)` with an empty list.
+    expect(firstBlockProblem([headersOnly])).toBeNull();
+    expect(prepareBlocksForSave([headersOnly])).toEqual([]);
+  });
+
+  it('starts as a grid the seller can recognise as one', () => {
+    const fresh = emptyBlockOfType('table');
+
+    expect(fresh).toEqual({
+      type: 'table',
+      headers: ['', '', ''],
+      rows: [
+        ['', '', ''],
+        ['', '', ''],
+      ],
+    });
+    // Every row is the width of the header row from the moment it exists, so
+    // the ragged shape is unreachable from an untouched block.
+    expect(describeBlockProblem(fresh)).toBeNull();
+  });
+
+  it('refuses a row that does not have one cell per column', () => {
+    const ragged: DescriptionBlock = {
+      type: 'table',
+      headers: ['Size', 'Waist', 'Hips'],
+      rows: [['M', '65']],
+    };
+
+    expect(describeBlockProblem(ragged)).toMatch(/one cell for each column/);
+    expect(
+      descriptionDocumentSchema.safeParse({
+        version: DESCRIPTION_DOCUMENT_VERSION,
+        blocks: [ragged],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('refuses more columns, more rows, or longer cells than it allows', () => {
+    const row = (width: number) => Array.from({ length: width }, () => 'x');
+
+    expect(
+      describeBlockProblem({
+        type: 'table',
+        headers: row(MAX_TABLE_COLUMNS + 1),
+        rows: [row(MAX_TABLE_COLUMNS + 1)],
+      }),
+    ).toMatch(new RegExp(`at most ${MAX_TABLE_COLUMNS} columns`));
+
+    expect(
+      describeBlockProblem({
+        type: 'table',
+        headers: ['Size'],
+        rows: Array.from({ length: MAX_TABLE_ROWS + 1 }, () => ['x']),
+      }),
+    ).toMatch(new RegExp(`at most ${MAX_TABLE_ROWS} rows`));
+
+    expect(
+      describeBlockProblem({
+        type: 'table',
+        headers: ['Size'],
+        rows: [['x'.repeat(MAX_TABLE_CELL_LENGTH + 1)]],
+      }),
+    ).toMatch(/belongs in a paragraph/);
+  });
+
+  it('reads back as rows rather than as one cell per line', () => {
+    // The projection feeds the meta-description suggestion. One cell per line
+    // would offer the seller an unpunctuated column of numbers.
+    expect(descriptionBlocksToPlainText([SIZE_CHART])).toBe(
+      [
+        'Measurements in centimetres',
+        'Size · Waist · Hips',
+        'M · 65 · 100',
+        'L · 69',
+      ].join('\n'),
+    );
   });
 });
