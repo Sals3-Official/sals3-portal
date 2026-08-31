@@ -1,0 +1,62 @@
+# Read-only diagnostic — no schedule, manual trigger only, writes nothing.
+#
+# Calls /api/internal/checkout/diagnose-freight-quote, which reproduces the
+# same CJ reads a live freight quote makes for one product and returns their
+# raw bodies instead of the buyer-facing 503 that swallows them. Same
+# break-glass pattern as every other internal route: CRON_SECRET-authenticated
+# workflow_dispatch, no Vercel access or raw database credential required.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin.
+
+name: Checkout Diagnose Freight Quote
+
+on:
+  workflow_dispatch:
+    inputs:
+      product_slug:
+        description: 'Product slug, e.g. small-feet-autumn-and-winter-trends-all-matching-harem-pants'
+        required: true
+        type: string
+      variant_id:
+        description: 'Variant id (optional)'
+        required: false
+        type: string
+      country:
+        description: 'Destination country code (default PH)'
+        required: false
+        default: 'PH'
+        type: string
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the diagnostic endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+          PRODUCT_SLUG: ${{ inputs.product_slug }}
+          VARIANT_ID: ${{ inputs.variant_id }}
+          COUNTRY: ${{ inputs.country }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          query="productSlug=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$PRODUCT_SLUG")"
+          query="$query&country=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$COUNTRY")"
+          if [ -n "$VARIANT_ID" ]; then
+            query="$query&variantId=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$VARIANT_ID")"
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/checkout/diagnose-freight-quote?$query"
+
+          echo "--- diagnosis ---"
+          curl -sS "$endpoint" -H "Authorization: Bearer $CRON_SECRET" | tee /tmp/diagnosis.json
+          echo
