@@ -242,11 +242,89 @@ export async function runReviewExtrasDdl(
   return { statementsRun, statementsSkippedAlreadyExists };
 }
 
+/**
+ * `drizzle/meta/_journal.json`'s entry for tag `0035_icy_risque` (`when`) and
+ * the sha256 of `drizzle/0035_icy_risque.sql`'s raw file content, computed
+ * exactly the way `drizzle-orm`'s own `readMigrationFiles()` does it.
+ * Hard-coded rather than read from disk at runtime: this endpoint must never
+ * depend on the migration file being present in the deployed serverless bundle.
+ * Re-derive with:
+ *   node -e "console.log(require('crypto').createHash('sha256').update(require('fs').readFileSync('drizzle/0035_icy_risque.sql').toString()).digest('hex'))"
+ * if this migration is ever regenerated (only then). Pinned to the file by
+ * `migrate-review-extras.test.ts`.
+ */
+const MIGRATION_0035_CREATED_AT = 1788182483646;
+const MIGRATION_0035_HASH =
+  'c6621dcf81ac7a878284a9cbd0d58732600b20d79a1b925a01825ba0b6cc4471';
+
+export type MarkMigration0035AppliedResult = {
+  createdAt: number;
+  inserted: boolean;
+};
+
+/**
+ * Records `0035_icy_risque` as applied in `drizzle.__drizzle_migrations`, so a
+ * later real `npm run db:migrate` against this database does not try to run it
+ * again.
+ *
+ * ## Why this arrives a deployment after the DDL it describes
+ *
+ * The DDL shipped first, on its own, with no Drizzle schema and therefore no
+ * `drizzle/0035_icy_risque.sql` to point a ledger row at — a row naming a file
+ * that does not exist yet is worse than no row, and
+ * `migrate-order-line-snapshot.ts` documents the same split for the same
+ * reason. The file arrives with the schema change that reads the column, and
+ * this function arrives with it.
+ *
+ * So the operator runs the workflow **twice**: once before the feature merges
+ * to apply the DDL, and once after it deploys to record the ledger row. The
+ * second run's DDL is a no-op by construction — every statement is idempotent
+ * and reports itself skipped — which is exactly what makes running it twice
+ * safe rather than merely tolerable.
+ *
+ * Idempotent by construction: only inserts when no row with this exact
+ * `created_at` exists. The values are fixed constants, not request input, so
+ * the raw SQL carries no injection risk.
+ */
+export async function markMigration0035Applied(
+  db: Database,
+): Promise<MarkMigration0035AppliedResult> {
+  await db.execute(sql.raw(`CREATE SCHEMA IF NOT EXISTS "drizzle"`));
+  await db.execute(
+    sql.raw(
+      `CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations" (
+        id SERIAL PRIMARY KEY,
+        hash text NOT NULL,
+        created_at bigint
+      )`,
+    ),
+  );
+
+  const existing = (await db.execute(
+    sql.raw(
+      `SELECT id FROM "drizzle"."__drizzle_migrations" WHERE created_at = ${MIGRATION_0035_CREATED_AT} LIMIT 1`,
+    ),
+  )) as unknown as unknown[];
+
+  if (existing.length > 0) {
+    return { createdAt: MIGRATION_0035_CREATED_AT, inserted: false };
+  }
+
+  await db.execute(
+    sql.raw(
+      `INSERT INTO "drizzle"."__drizzle_migrations" ("hash", "created_at") VALUES ('${MIGRATION_0035_HASH}', ${MIGRATION_0035_CREATED_AT})`,
+    ),
+  );
+
+  return { createdAt: MIGRATION_0035_CREATED_AT, inserted: true };
+}
+
 export type MigrateReviewExtrasResult = {
   ok: true;
   /** Real state before this run. All three `true` means it was a no-op. */
   presentBefore: ReviewExtrasPresence;
   ddl: RunReviewExtrasDdlResult;
+  migrationRecord: MarkMigration0035AppliedResult;
   /**
    * Re-read from `information_schema` *after* the DDL. This is the field the
    * operator should trust: a 200 with a `false` in here would mean the run
@@ -261,7 +339,8 @@ export async function migrateReviewExtras(
 ): Promise<MigrateReviewExtrasResult> {
   const presentBefore = await readReviewExtrasPresence(db);
   const ddl = await runReviewExtrasDdl(db);
+  const migrationRecord = await markMigration0035Applied(db);
   const presentAfter = await readReviewExtrasPresence(db);
 
-  return { ok: true, presentBefore, ddl, presentAfter };
+  return { ok: true, presentBefore, ddl, migrationRecord, presentAfter };
 }

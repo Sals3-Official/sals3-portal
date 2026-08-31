@@ -43,6 +43,41 @@ function insertingExecutor(behaviour: 'ok' | 'duplicate' | 'empty') {
   return { executor: { insert: vi.fn(() => ({ values })) }, values };
 }
 
+describe('submitReview delivery rating', () => {
+  /**
+   * The one mistake this whole nullable column exists to prevent. A `0` fails
+   * `sals3_product_reviews_delivery_rating_range` outright, and if it somehow
+   * did not it would be counted as a one-star verdict on a courier by a buyer
+   * who said nothing at all.
+   */
+  it('writes null, never zero, when the buyer did not answer', async () => {
+    asMock(resolveReviewableLine).mockResolvedValue({ ok: true, line: LINE });
+
+    const { executor, values } = insertingExecutor('ok');
+
+    await submitReview(INPUT, executor as never);
+
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({ deliveryRating: null }),
+    );
+  });
+
+  it('writes the score the buyer gave when they did answer', async () => {
+    asMock(resolveReviewableLine).mockResolvedValue({ ok: true, line: LINE });
+
+    const { executor, values } = insertingExecutor('ok');
+
+    await submitReview(
+      { ...INPUT, deliveryRating: 2 as const },
+      executor as never,
+    );
+
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({ rating: 5, deliveryRating: 2 }),
+    );
+  });
+});
+
 describe('submitReview', () => {
   /** Authorisation is the resolver's job, and a refusal must not reach a write. */
   it.each(['not_eligible', 'already_reviewed'] as const)(
@@ -191,14 +226,34 @@ describe('submitReview', () => {
   });
 });
 
-function groupingExecutor(rows: unknown[]) {
+/**
+ * A grouped-rows fake.
+ *
+ * The two delivery aggregates default to zero so a fixture that says nothing
+ * about the delivery score means "nobody answered" — the state every review
+ * written before that column existed is in, and one a test about product
+ * ratings should not have to restate.
+ */
+function groupingExecutor(
+  rows: {
+    productId: string;
+    rating: number;
+    total: number;
+    deliverySum?: number;
+    deliveryCount?: number;
+  }[],
+) {
   const builder: Record<string, unknown> = {};
   const self = (): unknown => builder;
 
   ['from', 'where'].forEach((name) => {
     builder[name] = vi.fn(self);
   });
-  builder.groupBy = vi.fn(() => Promise.resolve(rows));
+  builder.groupBy = vi.fn(() =>
+    Promise.resolve(
+      rows.map((row) => ({ deliverySum: 0, deliveryCount: 0, ...row })),
+    ),
+  );
 
   return { select: vi.fn(() => builder) };
 }
@@ -228,6 +283,7 @@ describe('readRatingSummaries', () => {
       average: 4.5,
       count: 22,
       breakdown: [0, 1, 2, 3, 16],
+      delivery: null,
     });
   });
 
@@ -265,6 +321,7 @@ describe('readRatingSummaries', () => {
       average: 5,
       count: 1,
       breakdown: [0, 0, 0, 0, 1],
+      delivery: null,
     });
   });
 
@@ -274,5 +331,94 @@ describe('readRatingSummaries', () => {
     const summaries = await readRatingSummaries(['p1'], executor as never);
 
     expect(summaries.has('p1')).toBe(false);
+  });
+
+  /**
+   * The whole point of splitting the score. A buyer who waited three weeks for
+   * a good product scores the product high and the delivery low, and the two
+   * numbers have to stay apart — a folded average would tell the seller their
+   * listing is the problem.
+   */
+  it('averages the delivery score apart from the product score', async () => {
+    const executor = groupingExecutor([
+      // Four five-star products; two of those buyers scored delivery 2 and 4.
+      {
+        productId: 'p1',
+        rating: 5,
+        total: 4,
+        deliverySum: 6,
+        deliveryCount: 2,
+      },
+    ]);
+
+    const summary = (await readRatingSummaries(['p1'], executor as never)).get(
+      'p1',
+    );
+
+    expect(summary?.average).toBe(5);
+    expect(summary?.count).toBe(4);
+    expect(summary?.delivery).toEqual({ average: 3, count: 2 });
+  });
+
+  /**
+   * The failure this whole nullable column exists to prevent. Two of forty
+   * buyers answering must not read as a delivery score of 0.1, and a reader
+   * handed a zero has no way to tell "nobody answered" from "everybody said it
+   * was terrible".
+   */
+  it('divides the delivery score by who answered, not by who reviewed', async () => {
+    const executor = groupingExecutor([
+      {
+        productId: 'p1',
+        rating: 5,
+        total: 40,
+        deliverySum: 8,
+        deliveryCount: 2,
+      },
+    ]);
+
+    expect(
+      (await readRatingSummaries(['p1'], executor as never)).get('p1')
+        ?.delivery,
+    ).toEqual({ average: 4, count: 2 });
+  });
+
+  it('reports no delivery score at all when nobody answered', async () => {
+    const executor = groupingExecutor([
+      { productId: 'p1', rating: 4, total: 12 },
+    ]);
+
+    const summary = (await readRatingSummaries(['p1'], executor as never)).get(
+      'p1',
+    );
+
+    // `null`, never `{ average: 0, count: 0 }` — a nought is a verdict and no
+    // verdict was given.
+    expect(summary?.delivery).toBeNull();
+    expect(summary?.count).toBe(12);
+  });
+
+  it('sums the delivery score across every rating bucket', async () => {
+    const executor = groupingExecutor([
+      {
+        productId: 'p1',
+        rating: 5,
+        total: 2,
+        deliverySum: 10,
+        deliveryCount: 2,
+      },
+      {
+        productId: 'p1',
+        rating: 1,
+        total: 2,
+        deliverySum: 2,
+        deliveryCount: 2,
+      },
+    ]);
+
+    expect(
+      (await readRatingSummaries(['p1'], executor as never)).get('p1')
+        ?.delivery,
+    ).toEqual({ average: 3, count: 4 });
   });
 });

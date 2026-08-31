@@ -117,6 +117,21 @@ export const NAV_GROUPS: NavGroup[] = [
         description:
           'What customers wrote about items you sold them. A customer can only review an item after the parcel that carried it is delivered; you can answer each review once and change your answer later.',
       },
+      {
+        href: '/reviews/reported',
+        label: 'Reported Reviews',
+        icon: 'star',
+        // `review:moderate`, which no seller role holds — so this item does not
+        // render for a seller at all. ADR-014 names the Admin Portal as the
+        // eventual home for platform moderation, and that repository is sign-in
+        // and shell only: a queue placed there today would be a queue nobody
+        // can open, and a report button with nothing behind it is a promise the
+        // platform is not keeping. The permission is the boundary; which app
+        // serves the page is a routing question it can survive.
+        permission: 'review:moderate',
+        description:
+          'Reviews a customer has asked someone to look at. A report is a request for a look, never an automatic hide — nothing leaves the storefront until a platform decision is recorded here.',
+      },
     ],
   },
   {

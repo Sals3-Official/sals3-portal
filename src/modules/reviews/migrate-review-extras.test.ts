@@ -1,8 +1,11 @@
 // @vitest-environment node
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   DDL_LOCK_TIMEOUT,
   DDL_STATEMENTS,
+  markMigration0035Applied,
   migrateReviewExtras,
   readReviewExtrasPresence,
   runReviewExtrasDdl,
@@ -281,6 +284,9 @@ describe('migrateReviewExtras', () => {
         ddlHasRun = true;
       }
 
+      // The ledger lookup, between the DDL and the "after" reads.
+      if (text.includes('__drizzle_migrations')) return [];
+
       return undefined;
     });
     const { db } = fakeTransactionalDb(execute);
@@ -297,5 +303,47 @@ describe('migrateReviewExtras', () => {
       flagsTable: true,
       photosTable: true,
     });
+  });
+});
+
+describe('markMigration0035Applied', () => {
+  /**
+   * The one thing a hard-coded hash can get wrong. Derived from the file the
+   * same way `readMigrationFiles()` derives it, so a regenerated migration whose
+   * constant was not updated fails here rather than silently recording a ledger
+   * row for a file that no longer matches.
+   */
+  it('matches the migration file it claims to record', () => {
+    const sql = readFileSync('drizzle/0035_icy_risque.sql').toString();
+    const journal = JSON.parse(
+      readFileSync('drizzle/meta/_journal.json').toString(),
+    ) as { entries: { tag: string; when: number }[] };
+
+    const entry = journal.entries.find(
+      (candidate) => candidate.tag === '0035_icy_risque',
+    );
+
+    expect(entry?.when).toBe(1788182483646);
+    expect(createHash('sha256').update(sql).digest('hex')).toBe(
+      'c6621dcf81ac7a878284a9cbd0d58732600b20d79a1b925a01825ba0b6cc4471',
+    );
+  });
+
+  it('inserts once and never twice', async () => {
+    const execute = vi.fn(async (query: unknown) =>
+      rawStatementText(query).startsWith('SELECT id FROM')
+        ? [{ id: 7 }]
+        : undefined,
+    );
+
+    await expect(
+      markMigration0035Applied({ execute } as never),
+    ).resolves.toEqual({ createdAt: 1788182483646, inserted: false });
+
+    expect(
+      execute.mock.calls.some((call) =>
+        rawStatementText(call[0]).startsWith('INSERT INTO'),
+      ),
+    ).toBe(false);
   });
 });

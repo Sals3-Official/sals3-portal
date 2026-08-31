@@ -90,10 +90,45 @@ export const submitReviewInputSchema = z.object({
    * nothing" and "wrote and cleared it" are not two states.
    */
   body: z.string().trim().max(REVIEW_BODY_MAX_LENGTH).optional(),
+  /**
+   * How the parcel arrived, 1-5, or absent because the buyer did not answer.
+   *
+   * `.optional()` and never `.default(0)`. An absent delivery score must reach
+   * the column as `NULL`, because every read excludes `NULL` from the average
+   * and would fold a zero straight into it — saying "the courier failed" about
+   * somebody who declined to say anything. The column's own `CHECK` refuses a
+   * zero for the same reason, so a default here would fail the insert rather
+   * than merely lie.
+   */
+  deliveryRating: z
+    .number()
+    .int()
+    .min(1)
+    .max(5)
+    .transform((value) => value as ReviewRating)
+    .optional(),
   attribution: reviewAttributionSchema,
 });
 
 export type SubmitReviewInput = z.infer<typeof submitReviewInputSchema>;
+
+/**
+ * How many photos one review may carry.
+ *
+ * Bounded by `sals3_product_review_photos_position_range` as well as here — a
+ * limit that only lives in a validator is a limit that stops existing the day
+ * somebody writes a second writer. Four is enough to show a defect from two
+ * angles plus the packaging, and small enough that the upload finishes on a
+ * phone connection.
+ */
+export const MAX_REVIEW_PHOTOS = 4;
+
+/** One stored review photo, as every reader sees it. */
+export type ReviewPhoto = {
+  url: string;
+  width: number;
+  height: number;
+};
 
 /**
  * Every reason a submission is refused, and the seller/buyer-facing copy for
@@ -144,11 +179,19 @@ export type ReplyRefusal = keyof typeof REPLY_REFUSALS;
 export type PublicReview = {
   id: string;
   rating: ReviewRating;
+  /**
+   * How this buyer scored the delivery, or `null` because they did not answer.
+   * A reader must render the absence as absence — never as a nought and never
+   * as a default — for the same reason the column is nullable.
+   */
+  deliveryRating: ReviewRating | null;
   body: string | null;
   /** Already masked at write time, or `null` for an anonymous review. */
   displayName: string | null;
   /** The variant this buyer actually received, from the line's frozen snapshot. */
   variantLabel: string | null;
+  /** In the order the buyer chose. Empty when they attached none. */
+  photos: ReviewPhoto[];
   createdAt: string;
   reply: { body: string; createdAt: string } | null;
 };
@@ -168,8 +211,107 @@ export type RatingSummary = {
   count: number;
   /** Index 0 is one star. Always five entries, zeros included. */
   breakdown: [number, number, number, number, number];
+  /**
+   * How the deliveries were scored, over **its own denominator**.
+   *
+   * `null` when nobody answered the question, which is not the same fact as
+   * "nobody reviewed the product" — a product can carry forty reviews and no
+   * delivery score, and printing 0.0 there would be a courier's failing grade
+   * invented out of silence. `count` is how many of those reviews answered, so
+   * a reader can say "from 6 of 40" rather than implying all forty did.
+   */
+  delivery: { average: number; count: number } | null;
 };
 
 export function isLowRating(rating: number): boolean {
   return rating <= LOW_RATING_CEILING;
 }
+
+/**
+ * Reporting a review.
+ *
+ * ## Why this is not the same shape as a review
+ *
+ * There is no body. The reason is a closed list, and it is closed because a
+ * free-text field here would be a second unmoderated public-adjacent string
+ * reachable by anyone signed in — and the moderator's actual question is
+ * "which rule is this said to break", which the enum answers directly.
+ *
+ * ## Why there is no reporter field either
+ *
+ * Same posture as `submitReviewInputSchema`'s missing display name: the address
+ * comes from the session on the storefront's own server and travels in
+ * `X-Buyer-Email` as the authorisation itself. A body field for it would be a
+ * way to file reports as somebody else, and no amount of validation fixes a
+ * value the caller supplies.
+ */
+export const REVIEW_FLAG_REASONS = [
+  'OFF_TOPIC',
+  'OFFENSIVE',
+  'SPAM',
+  'PERSONAL_INFORMATION',
+  'NOT_A_REVIEW',
+] as const;
+
+export type ReviewFlagReason = (typeof REVIEW_FLAG_REASONS)[number];
+
+/** What each reason says to the buyer choosing it, and to the moderator reading it. */
+export const REVIEW_FLAG_REASON_COPY: Record<ReviewFlagReason, string> = {
+  OFF_TOPIC: 'Not about this product',
+  OFFENSIVE: 'Offensive or abusive',
+  SPAM: 'Spam or an advertisement',
+  PERSONAL_INFORMATION: 'Contains personal information',
+  NOT_A_REVIEW: 'Not a review of using the item',
+};
+
+export const flagReviewInputSchema = z.object({
+  reviewId: z.string().uuid(),
+  reason: z.enum(REVIEW_FLAG_REASONS),
+});
+
+export type FlagReviewInput = z.infer<typeof flagReviewInputSchema>;
+
+export const FLAG_REFUSALS = {
+  invalid_input: 'Choose a reason and try again.',
+  /**
+   * One answer over "no such review", "already hidden" and "not published",
+   * for the same reason `not_eligible` collapses three cases on submission: a
+   * distinguishable reply is a way to enumerate what exists.
+   */
+  not_found: 'That review is no longer available.',
+  already_reported: 'You have already reported this review.',
+  rate_limited: 'Too many reports. Wait a moment and try again.',
+  not_configured: 'Reporting is not available right now.',
+  failed: 'The report could not be sent.',
+} as const;
+
+export type FlagRefusal = keyof typeof FLAG_REFUSALS;
+
+/**
+ * What a moderator may decide.
+ *
+ * `hide` sets `HIDDEN_BY_PLATFORM`, which the storefront read and the aggregate
+ * both already exclude. `keep` leaves the review exactly as it is and closes
+ * the reports — a decision, recorded, rather than a queue item that quietly
+ * ages out.
+ */
+export const MODERATION_DECISIONS = ['hide', 'keep'] as const;
+
+export type ModerationDecision = (typeof MODERATION_DECISIONS)[number];
+
+export const moderateReviewInputSchema = z.object({
+  reviewId: z.string().uuid(),
+  decision: z.enum(MODERATION_DECISIONS),
+});
+
+export type ModerateReviewInput = z.infer<typeof moderateReviewInputSchema>;
+
+export const MODERATION_REFUSALS = {
+  invalid_input: 'That could not be read. Reload and try again.',
+  denied: 'Your account cannot moderate reviews.',
+  not_configured: 'The reviews database is not available right now.',
+  not_found: 'This review no longer exists.',
+  failed: 'The decision could not be saved.',
+} as const;
+
+export type ModerationRefusal = keyof typeof MODERATION_REFUSALS;
