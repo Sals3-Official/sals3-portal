@@ -1933,6 +1933,49 @@ Design decisions worth knowing before building on it:
   than updated in place — PR #80 shipped the opposite on pricing overrides, and
   the history a dispute would be settled from never recorded the replacement.
 
+### Delivery rating, flags and photos — DDL (2026-08-31)
+
+Three additions the review lead asked for: a **delivery score** kept apart from
+the product score, a way for a buyer to **report** a review, and **photos** on a
+review.
+
+They ship as raw DDL and nothing else — **no Drizzle schema column, no
+`drizzle/` file, no ledger row** — because one of the three is a column on a
+table an existing writer already inserts into. Drizzle names every column of a
+schema in an `INSERT`, so merely declaring `deliveryRating` in
+`schema/reviews.ts` would make `submitReview` emit `insert into
+sals3_product_reviews (..., "delivery_rating", ...)` and fail every buyer review
+against a database that does not have it. That is the PR #102 / PR #113
+mechanism, and it is why the schema, the migration file and the ledger row all
+travel with the change that adds the code reading them.
+
+Apply it by triggering the `Reviews Migrate Review Extras` workflow
+(`workflow_dispatch`, `CRON_SECRET`-authenticated), which calls
+`POST /api/internal/reviews/migrate-review-extras`. `GET` on the same route
+reports the objects without writing. The workflow fails the run unless the
+response proves all three exist afterwards.
+
+- **`delivery_rating` is nullable, and an absent score is never a zero.** A
+  buyer may score the item and skip the delivery. Folding a `NULL` into the
+  average as a nought would say "the courier failed" about somebody who did not
+  answer, for the same reason an unreviewed product does not render "0.0 out of
+  5". Every read excludes it; the two averages are counted separately, so a
+  three-week wait on a good product no longer costs the seller a star.
+- **A report is a request for a look, never an automatic hide.** Nothing leaves
+  the storefront until a holder of `review:moderate` decides. Otherwise a
+  competitor with four accounts deletes a rating.
+  `sals3_product_review_flags_reporter_key` is the abuse model, the same way
+  `sals3_product_reviews_line_key` is for reviews: one report per signed-in
+  buyer per review, so the count a moderator sees is a count of people.
+- **The decision is recorded on the flag, not only on the review.** The review's
+  `status` is what the storefront reads; these rows are who asked and what was
+  answered. `..._resolution_stamped` refuses a resolved flag with no date and an
+  open one carrying a decision date, so the two halves cannot drift.
+- **Photos are a table, not a `jsonb` column**, so `position` can carry a unique
+  index and a moderator can reach one photo without rewriting the review row
+  holding the rest. Four per review, enforced by a `CHECK` as well as by the
+  writer.
+
 ## Description: simple text or a designed layout
 
 The Description section offers two editors and the seller picks with a toggle.

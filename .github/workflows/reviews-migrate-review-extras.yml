@@ -1,0 +1,83 @@
+# One-time, idempotent DDL — no schedule, manual trigger only.
+#
+# Adds sals3_product_reviews.delivery_rating, and creates
+# sals3_product_review_flags and sals3_product_review_photos. Same break-glass
+# pattern as reviews-migrate-product-reviews.yml and
+# orders-migrate-line-snapshot.yml: a manual workflow_dispatch calling an
+# authenticated internal route with the shared CRON_SECRET — no Vercel access or
+# raw database credential required.
+#
+# ORDER MATTERS, and one of these three makes it matter more than usual.
+# delivery_rating is a COLUMN on a table an existing writer already inserts
+# into, and Drizzle names every column of a schema in an INSERT — so the moment
+# the schema declares it, every buyer review fails against a database that does
+# not have it. PR #102 and PR #113 both broke production exactly this way.
+# Nothing in the change that adds this workflow reads or writes any of the
+# three, so running this early is safe and running it late is not.
+#
+# The ALTER takes an ACCESS EXCLUSIVE lock on sals3_product_reviews and the
+# foreign keys take SHARE ROW EXCLUSIVE on the same table, so each statement
+# runs with a 5s lock_timeout: a lock it cannot get aborts the run instead of
+# queueing the product page behind DDL. Re-run when quieter.
+#
+# Requires, set on this repository:
+#   - Secret   CRON_SECRET      same value as the Vercel project env var.
+#   - Variable PORTAL_BASE_URL  the deployed portal's origin, e.g.
+#                                https://sals3-portal.example.com
+
+name: Reviews Migrate Review Extras
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call the review-extras migration endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTAL_BASE_URL: ${{ vars.PORTAL_BASE_URL }}
+        run: |
+          set -o pipefail
+
+          if [ -z "$PORTAL_BASE_URL" ]; then
+            echo "PORTAL_BASE_URL repository variable is not set" >&2
+            exit 1
+          fi
+
+          endpoint="$PORTAL_BASE_URL/api/internal/reviews/migrate-review-extras"
+
+          # Read-only first, so the log records the state this run started from.
+          echo "--- object state before ---"
+          curl -sS "$endpoint" -H "Authorization: Bearer $CRON_SECRET"
+          echo
+
+          echo "--- applying migration ---"
+          status=$(curl -sS -o /tmp/migrate-response.json -w '%{http_code}' \
+            -X POST "$endpoint" \
+            -H "Authorization: Bearer $CRON_SECRET")
+
+          cat /tmp/migrate-response.json
+          echo
+
+          if [ "$status" -ge 300 ]; then
+            echo "review-extras migration returned HTTP $status" >&2
+            echo "Each statement runs in its own transaction with a" >&2
+            echo "lock_timeout, so a lock it could not acquire rolled back" >&2
+            echo "cleanly and every earlier statement is idempotent." >&2
+            echo "Safe to re-run when the database is quieter." >&2
+            exit 1
+          fi
+
+          # A 200 is not proof. Assert all three objects are genuinely there, or
+          # fail the run — a migration that reports success without achieving
+          # anything is the exact failure this endpoint exists to undo.
+          echo "--- verifying the objects exist ---"
+          if ! grep -q '"presentAfter":{"deliveryRatingColumn":true,"flagsTable":true,"photosTable":true}' /tmp/migrate-response.json; then
+            echo "Migration returned HTTP $status but an object is still absent" >&2
+            exit 1
+          fi
+
+          echo "Verified: delivery_rating, sals3_product_review_flags and sals3_product_review_photos all exist."
