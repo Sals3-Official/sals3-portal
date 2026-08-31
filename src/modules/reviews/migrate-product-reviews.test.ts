@@ -42,6 +42,19 @@ function alreadyExists(code: string): Error & { code: string } {
   return Object.assign(new Error(`already exists`), { code });
 }
 
+/**
+ * What the driver error actually looks like by the time it reaches us.
+ *
+ * Drizzle wraps every query error in a `DrizzleQueryError` and hangs the
+ * original off `cause`, so `error.code` on the thrown object is `undefined`.
+ * The bare shape above is what a test invents; this is what production throws.
+ */
+function wrappedAlreadyExists(code: string): Error {
+  return new Error('Failed query: CREATE TYPE …', {
+    cause: alreadyExists(code),
+  });
+}
+
 describe('runReviewsDdl', () => {
   it('runs every statement, each in its own transaction', async () => {
     const { db } = fakeTransactionalDb();
@@ -111,6 +124,35 @@ describe('runReviewsDdl', () => {
     expect(result.statementsSkippedAlreadyExists).toBe(DDL_STATEMENTS.length);
   });
 
+  /**
+   * The shape the bare test above cannot see.
+   *
+   * `migrate-review-extras` shipped the same naive `error.code` read and its
+   * **second** production run answered 500: every `CREATE TYPE` and
+   * `ADD CONSTRAINT` raised `duplicate_object`, the check read the code off
+   * Drizzle's wrapper, got `undefined`, and rethrew. This module's DDL has two
+   * `CREATE TYPE`s and six `ADD CONSTRAINT`s — none of which Postgres lets us
+   * guard with `IF NOT EXISTS` — so its documented idempotency stands entirely
+   * on reading the code out of `cause`.
+   */
+  it.each([
+    ['42710', 'duplicate_object'],
+    ['42P07', 'duplicate_table'],
+    ['42701', 'duplicate_column'],
+  ])(
+    'skips a duplicate Drizzle wrapped, not just a bare one (%s %s)',
+    async (code) => {
+      const { db } = fakeTransactionalDb(
+        vi.fn().mockRejectedValue(wrappedAlreadyExists(code)),
+      );
+
+      const result = await runReviewsDdl(db as never);
+
+      expect(result.statementsRun).toBe(0);
+      expect(result.statementsSkippedAlreadyExists).toBe(DDL_STATEMENTS.length);
+    },
+  );
+
   it('does not swallow a real database error', async () => {
     const { db } = fakeTransactionalDb(
       vi.fn().mockRejectedValue(new Error('connection refused')),
@@ -119,6 +161,15 @@ describe('runReviewsDdl', () => {
     await expect(runReviewsDdl(db as never)).rejects.toThrow(
       'connection refused',
     );
+  });
+
+  /** Walking `cause` must widen what is tolerated, not what is swallowed. */
+  it('does not swallow a wrapped error that is not an "already exists"', async () => {
+    const { db } = fakeTransactionalDb(
+      vi.fn().mockRejectedValue(wrappedAlreadyExists('55P03')),
+    );
+
+    await expect(runReviewsDdl(db as never)).rejects.toThrow('Failed query');
   });
 
   /** A lock it cannot take must surface, not be reported as a successful migration. */

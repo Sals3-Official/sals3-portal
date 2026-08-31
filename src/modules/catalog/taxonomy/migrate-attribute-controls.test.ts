@@ -103,6 +103,34 @@ describe('runAttributeControlsDdl', () => {
     expect(result.statementsSkippedAlreadyExists).toBe(DDL_STATEMENTS.length);
   });
 
+  /**
+   * The shape the bare test above cannot see.
+   *
+   * Drizzle wraps every query error in a `DrizzleQueryError` and hangs the
+   * original off `cause`, so `error.code` on the thrown object is `undefined`.
+   * `migrate-review-extras` shipped that naive read and its **second**
+   * production run answered 500 — every `CREATE TYPE` and `ADD CONSTRAINT`
+   * raised `duplicate_object` and was rethrown by the check that exists to
+   * tolerate it. This module has six `CREATE TYPE`s and three
+   * `ADD CONSTRAINT`s, none of which Postgres lets us guard with
+   * `IF NOT EXISTS`, so its second-call safety stands entirely on reading the
+   * code out of `cause`.
+   */
+  it.each(['42710', '42P07', '42701'])(
+    'tolerates a duplicate Drizzle wrapped, not just a bare one (%s)',
+    async (code) => {
+      const wrapped = new Error('Failed query: CREATE TYPE …', {
+        cause: Object.assign(new Error('already exists'), { code }),
+      });
+      const db = { execute: vi.fn().mockRejectedValue(wrapped) };
+
+      const result = await runAttributeControlsDdl(db as never);
+
+      expect(result.statementsRun).toBe(0);
+      expect(result.statementsSkippedAlreadyExists).toBe(DDL_STATEMENTS.length);
+    },
+  );
+
   it('does not swallow an unrelated error', async () => {
     const db = {
       execute: vi.fn().mockRejectedValue(new Error('connection refused')),
@@ -110,6 +138,18 @@ describe('runAttributeControlsDdl', () => {
 
     await expect(runAttributeControlsDdl(db as never)).rejects.toThrow(
       'connection refused',
+    );
+  });
+
+  /** Walking `cause` must widen what is tolerated, not what is swallowed. */
+  it('does not swallow a wrapped error that is not an "already exists"', async () => {
+    const wrapped = new Error('Failed query: ALTER TABLE …', {
+      cause: Object.assign(new Error('deadlock detected'), { code: '40P01' }),
+    });
+    const db = { execute: vi.fn().mockRejectedValue(wrapped) };
+
+    await expect(runAttributeControlsDdl(db as never)).rejects.toThrow(
+      'Failed query',
     );
   });
 });
