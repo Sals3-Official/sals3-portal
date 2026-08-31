@@ -895,15 +895,27 @@ export async function quoteCheckoutFreight(
 
   const quotesByPackage = await Promise.all(
     packages.map(async (pkg) => {
-      const parsed = cjFreightResponseSchema.safeParse(
-        await postCjJson(
-          pkg.connectionId,
-          '/logistic/freightCalculateTip',
-          freightBodyForPackage(pkg, input.address, detailsByLine),
-          fetcherForConnection(pkg.connectionId),
-          tokenManager,
-        ),
-      );
+      const body = freightBodyForPackage(pkg, input.address, detailsByLine);
+      const fetcher = fetcherForConnection(pkg.connectionId);
+      const requestFreight = async () =>
+        cjFreightResponseSchema.safeParse(
+          await postCjJson(
+            pkg.connectionId,
+            '/logistic/freightCalculateTip',
+            body,
+            fetcher,
+            tokenManager,
+          ),
+        );
+
+      // CJ freight calculation has returned an invalid response for a valid
+      // request, then accepted the identical request immediately afterwards.
+      // Retry only that response-body failure. HTTP and network errors still
+      // throw from postCjJson without a retry.
+      let parsed = await requestFreight();
+      if (!parsed.success || parsed.data.code !== 200) {
+        parsed = await requestFreight();
+      }
 
       if (!parsed.success || parsed.data.code !== 200) {
         throw new CjApiError('unexpected-response');
