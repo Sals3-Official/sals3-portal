@@ -100,7 +100,7 @@ function TablePreview({
   block: Extract<DescriptionBlock, { type: 'table' }>;
 }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-border">
+    <div className="w-fit max-w-full overflow-x-auto rounded-xl border border-border">
       {/*
         `border-separate`/`border-spacing-0`, not `border-collapse`, and the
         first column carries `sticky left-0` on both its header and its
@@ -114,7 +114,7 @@ function TablePreview({
         still applies. A seller who never sees that risk here has no reason to
         shorten the chart before publishing it.
       */}
-      <table className="w-full border-separate border-spacing-0 text-[13.5px]">
+      <table className="border-separate border-spacing-0 text-[13.5px]">
         {block.caption === undefined || block.caption === '' ? null : (
           <caption className="px-3 py-2 text-left text-[12.5px] text-ink-subtle">
             {block.caption}
