@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db/client';
+import { postgresErrorCode } from '@/lib/db/constraint-errors';
 import {
   categoryAttributeControls,
   categoryAttributeDictionary,
@@ -127,10 +128,22 @@ const ALREADY_EXISTS_CODES = new Set([
   '42701', // duplicate_column
 ]);
 
+/**
+ * Read through `postgresErrorCode`, never off the thrown object.
+ *
+ * Drizzle wraps every driver error in a `DrizzleQueryError` and hangs the real
+ * one off `cause`, so `error.code` is `undefined` and the naive spelling never
+ * matches — every code the set above exists to tolerate gets rethrown instead.
+ * The `migrate-review-extras` sibling learned that the expensive way: its first
+ * production run passed because nothing threw, and its **second** answered
+ * `500`. The six `CREATE TYPE`s and three `ADD CONSTRAINT`s here are exactly
+ * the statements Postgres gives no `IF NOT EXISTS`, so they are exactly the
+ * ones a second run raises `duplicate_object` on.
+ */
 function isAlreadyExistsError(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
+  const code = postgresErrorCode(error);
 
-  return typeof code === 'string' && ALREADY_EXISTS_CODES.has(code);
+  return code !== null && ALREADY_EXISTS_CODES.has(code);
 }
 
 export type MigrateAttributeControlsDdlResult = {
