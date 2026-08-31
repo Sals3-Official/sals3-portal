@@ -155,7 +155,9 @@ describe('diagnoseFreightQuote', () => {
       },
     );
 
-    await expect(result).resolves.toMatchObject({
+    const resolved = await result;
+
+    expect(resolved).toMatchObject({
       ok: true,
       line: {
         connectionId: 'connection-1',
@@ -166,6 +168,8 @@ describe('diagnoseFreightQuote', () => {
       cjInventoryQuery: { status: 200, body: inventory },
       fullQuote: { ok: true },
     });
+    // A successful quote already explains itself; no need for a fourth call.
+    expect(resolved).not.toHaveProperty('cjFreightQuery');
   });
 
   /**
@@ -228,6 +232,9 @@ describe('diagnoseFreightQuote', () => {
       cjProductQuery: { status: 200 },
       cjInventoryQuery: { status: 200 },
       fullQuote: { ok: false, error: { name: 'CjApiError' } },
+      // The one thing getCjJson would have discarded: the real, malformed CJ
+      // body behind the unnamed CjApiError above.
+      cjFreightQuery: { status: 200, body: { unexpected: 'shape' } },
     });
   });
 
