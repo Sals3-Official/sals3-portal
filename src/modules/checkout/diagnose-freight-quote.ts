@@ -6,11 +6,9 @@ import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
 import { CJ_BASE_URL } from '@/services/cj/config';
 import {
   CheckoutFreightQuoteError,
-  loadPackageInputs,
   loadQuoteLines,
   quoteCheckoutFreight,
   type CheckoutFreightQuoteRequest,
-  type PackageInputs,
   type QuoteLine,
 } from './freight-quotes';
 
@@ -50,10 +48,12 @@ import {
  * anything else it throws is visible by name. And because the harem-pants
  * investigation got exactly that — an unnamed `CjApiError` with no body,
  * because `getCjJson` discards one on a non-200 `code` the same way it does
- * for the first two reads — this also rebuilds the same freight-calculate
- * request `loadPackageInputs`/`freightBodyForPackage` would send (via the
- * real, exported `loadPackageInputs`, not a second copy of its supplier-
- * binding logic) and POSTs it directly, so that raw body is visible too.
+ * for the first two reads — this also rebuilds the same
+ * `/logistic/freightCalculateTip` request `freightBodyForPackage` would send
+ * and POSTs it directly, so that raw body is visible too. It reads the
+ * product/inventory bodies already fetched above rather than asking CJ a
+ * third time (see `extractFreightInputs`), so this whole diagnosis costs
+ * exactly one CJ call more than `quoteCheckoutFreight` alone already made.
  */
 /**
  * What the real `quoteCheckoutFreight` did with the same product and
@@ -278,8 +278,9 @@ export async function diagnoseFreightQuote(
   if (!fullQuote.ok && 'error' in fullQuote) {
     // eslint-disable-next-line no-use-before-define -- defined below, so the exported entry point reads first.
     cjFreightQuery = await diagnoseFreightCalculate({
-      lines: [line],
-      destinationCountry: input.destinationCountry,
+      line,
+      productBody,
+      inventoryBody,
       address,
       fetcher,
       token,
@@ -304,77 +305,189 @@ export async function diagnoseFreightQuote(
   };
 }
 
+/** One entry of CJ's `/product/query` `data.variants[]`, read defensively. */
+type CjRawVariant = {
+  vid?: unknown;
+  variantSku?: unknown;
+  variantWeight?: unknown;
+  variantLength?: unknown;
+  variantWidth?: unknown;
+  variantHeight?: unknown;
+};
+
 /**
- * Rebuilds and sends the same `/logistic/freightCalculateTip` request
- * `freightBodyForPackage` would, using the real, exported `loadPackageInputs`
- * for the supplier-binding and origin resolution — the one part of this that
- * must not become a second copy. The request shape itself (`reqDTOS`, the
- * field names CJ expects) is duplicated because `freightBodyForPackage` is not
- * exported and building it inline for a single-line diagnostic package is
- * simpler than widening that function's contract for a caller nothing else
+ * Everything the freight-calculate request needs, read directly out of the
+ * two response bodies this module already fetched — no third CJ round trip.
+ *
+ * The earlier version of this step called `loadPackageInputs` a second time to
+ * get the same supplier-binding and origin resolution `quoteCheckoutFreight`
+ * had just performed, which meant the product and inventory endpoints were
+ * asked a **third** time in one diagnosis (once here directly, once inside
+ * `quoteCheckoutFreight`, once inside this step). That is not free — every
+ * quote through the same connection shares CJ's own points budget (ADR-013)
+ * and the one-request-per-second governed-fetch limiter — and it made the
+ * failure this step reported ambiguous: a `CjApiError` from a redundant third
+ * read is indistinguishable from one raised by the freight-calculate call
+ * this step exists to inspect.
+ *
+ * Reading the two bodies already in hand costs nothing further and removes
+ * that ambiguity: whatever this step now reports is about the
+ * freight-calculate request alone.
+ */
+function toFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function extractFreightInputs(
+  line: QuoteLine,
+  productBody: unknown,
+  inventoryBody: unknown,
+):
+  | {
+      sku: string;
+      productProps: string[];
+      originCountry: string;
+      weight: number;
+      volume: number;
+    }
+  | { error: string } {
+  const variants = (
+    productBody as { data?: { variants?: CjRawVariant[] } } | null
+  )?.data?.variants;
+  const variant = Array.isArray(variants)
+    ? variants.find((candidate) => candidate.vid === line.externalVariantId)
+    : undefined;
+
+  if (variant === undefined) {
+    return {
+      error: `No variant matching ${line.externalVariantId} in the product-query response.`,
+    };
+  }
+
+  const sku =
+    line.externalSku ??
+    (typeof variant.variantSku === 'string' ? variant.variantSku : undefined);
+
+  if (sku === undefined || sku.trim() === '') {
+    return { error: 'The matched variant has no usable SKU.' };
+  }
+
+  const productPropsRaw = (
+    productBody as { data?: { productProEnSet?: unknown } } | null
+  )?.data?.productProEnSet;
+  const productProps = (
+    Array.isArray(productPropsRaw) ? productPropsRaw : []
+  ).filter(
+    (prop): prop is string => typeof prop === 'string' && prop.trim() !== '',
+  );
+
+  if (productProps.length === 0) {
+    return {
+      error: 'The product-query response has no non-empty productProEnSet.',
+    };
+  }
+
+  // Mirrors `requireDetailVariant`: the line's own frozen dimensions win, CJ's
+  // variant-level numbers are the fallback.
+  const weight = line.weightGrams ?? toFiniteNumber(variant.variantWeight);
+  const length =
+    line.lengthMillimeters ?? toFiniteNumber(variant.variantLength);
+  const width = line.widthMillimeters ?? toFiniteNumber(variant.variantWidth);
+  const height =
+    line.heightMillimeters ?? toFiniteNumber(variant.variantHeight);
+
+  if (weight === null || length === null || width === null || height === null) {
+    return {
+      error:
+        'Missing package size or weight in both the line and the CJ variant.',
+    };
+  }
+
+  const volume = (length / 10) * (width / 10) * (height / 10);
+
+  const variantInventories = (
+    inventoryBody as {
+      data?: {
+        variantInventories?: {
+          vid?: unknown;
+          inventory?: {
+            countryCode?: unknown;
+            cjInventory?: unknown;
+            factoryInventory?: unknown;
+            totalInventory?: unknown;
+          }[];
+        }[];
+      };
+    } | null
+  )?.data?.variantInventories;
+  const inventoryEntry = Array.isArray(variantInventories)
+    ? variantInventories.find(
+        (candidate) => candidate.vid === line.externalVariantId,
+      )
+    : undefined;
+  const stocks = inventoryEntry?.inventory ?? [];
+  // Mirrors `chooseOrigin`'s priority: CJ-owned stock first, then the
+  // factory's, then any warehouse reporting stock at all.
+  const cjStock = stocks.find((stock) => Number(stock.cjInventory ?? 0) > 0);
+  const factoryStock = stocks.find(
+    (stock) => Number(stock.factoryInventory ?? 0) > 0,
+  );
+  const anyStock = stocks.find(
+    (stock) => Number(stock.totalInventory ?? 0) > 0,
+  );
+  const stocked = cjStock ?? factoryStock ?? anyStock;
+  const originCountry =
+    typeof stocked?.countryCode === 'string' ? stocked.countryCode : undefined;
+
+  if (originCountry === undefined || originCountry === '') {
+    return {
+      error: 'No stocked warehouse for this variant in the inventory response.',
+    };
+  }
+
+  return { sku, productProps, originCountry, weight, volume };
+}
+
+/**
+ * Sends the same `/logistic/freightCalculateTip` request `freightBodyForPackage`
+ * would for this one line, using only the product-query and inventory bodies
+ * this module already fetched — see `extractFreightInputs` for why a third
+ * call to CJ was removed rather than repeated. The request shape (`reqDTOS`,
+ * the field names CJ expects) is still duplicated, because
+ * `freightBodyForPackage` is not exported and building it inline for one line
+ * is simpler than widening that function's contract for a caller nothing else
  * should ever be.
  */
 async function diagnoseFreightCalculate(input: {
-  lines: QuoteLine[];
-  destinationCountry: string;
+  line: QuoteLine;
+  productBody: unknown;
+  inventoryBody: unknown;
   address: CheckoutFreightQuoteRequest['address'];
   fetcher: typeof fetch;
   token: string;
 }): Promise<{ status: number; body: unknown } | undefined> {
-  let packageInputs: PackageInputs;
-
-  try {
-    packageInputs = await loadPackageInputs(
-      input.lines,
-      input.destinationCountry,
-      () => input.fetcher,
-      { getAccessToken: async () => input.token } as never,
-    );
-  } catch (error) {
-    return {
-      status: 0,
-      body: {
-        step: 'package-assembly',
-        message: error instanceof Error ? error.message : String(error),
-      },
-    };
-  }
-
-  const pkg = packageInputs.packages[0];
-
-  if (pkg === undefined) {
-    return {
-      status: 0,
-      body: { step: 'package-assembly', message: 'No package assembled.' },
-    };
-  }
-
-  const first = pkg.lines[0];
-  const detail =
-    first === undefined
-      ? undefined
-      : packageInputs.detailsByLine.get(first.variantId);
-  const productProps = detail?.productProps ?? ['COMMON'];
-  const totalGoodsAmount = pkg.lines.reduce(
-    (total, line) => total + (Number(line.priceMinor) / 100) * line.quantity,
-    0,
+  const resolved = extractFreightInputs(
+    input.line,
+    input.productBody,
+    input.inventoryBody,
   );
-  const totalWeight = pkg.lines.reduce((total, line) => {
-    const lineDetail = packageInputs.detailsByLine.get(line.variantId);
 
-    return total + (lineDetail?.weight ?? 0) * line.quantity;
-  }, 0);
-  const totalVolume = pkg.lines.reduce((total, line) => {
-    const lineDetail = packageInputs.detailsByLine.get(line.variantId);
+  if ('error' in resolved) {
+    return {
+      status: 0,
+      body: { step: 'package-assembly', message: resolved.error },
+    };
+  }
 
-    return total + (lineDetail?.volume ?? 0) * line.quantity;
-  }, 0);
+  const { line } = input;
+  const totalWeight = resolved.weight * line.quantity;
+  const totalVolume = resolved.volume * line.quantity;
 
   const body = {
     reqDTOS: [
       {
-        srcAreaCode: pkg.originCountry,
-        destAreaCode: pkg.destinationCountry,
+        srcAreaCode: resolved.originCountry,
+        destAreaCode: input.address.country,
         zip: input.address.postalCode,
         recipientAddress: input.address.addressLine1,
         recipientAddress1: input.address.addressLine1,
@@ -384,31 +497,27 @@ async function diagnoseFreightCalculate(input: {
         recipientName: input.address.fullName,
         phone: input.address.phone,
         email: input.address.email,
-        productProp: productProps,
+        productProp: resolved.productProps,
         productTypes: ['0'],
         platforms: ['Shopify'],
-        totalGoodsAmount: Number(totalGoodsAmount.toFixed(2)),
+        totalGoodsAmount: Number(
+          ((Number(line.priceMinor) / 100) * line.quantity).toFixed(2),
+        ),
         weight: Math.max(1, Math.round(totalWeight)),
         wrapWeight: Math.max(1, Math.round(totalWeight)),
         volume: Number(totalVolume.toFixed(2)),
-        skuList: pkg.lines.map(
-          (line) =>
-            packageInputs.detailsByLine.get(line.variantId)?.sku ??
-            line.sals3Sku,
-        ),
-        freightTrialSkuList: pkg.lines.map((line) => {
-          const lineDetail = packageInputs.detailsByLine.get(line.variantId);
-
-          return {
-            sku: lineDetail?.sku ?? line.sals3Sku,
+        skuList: [resolved.sku],
+        freightTrialSkuList: [
+          {
+            sku: resolved.sku,
             vid: line.externalVariantId,
             skuQuantity: line.quantity,
-            skuWeight: lineDetail?.weight,
-            skuVolume: lineDetail?.volume,
-            productPropList: lineDetail?.productProps ?? productProps,
+            skuWeight: resolved.weight,
+            skuVolume: resolved.volume,
+            productPropList: resolved.productProps,
             productTypeList: ['0'],
-          };
-        }),
+          },
+        ],
       },
     ],
   };
