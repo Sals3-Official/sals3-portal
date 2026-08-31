@@ -101,13 +101,26 @@ function TablePreview({
 }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full border-collapse text-[13.5px]">
+      {/*
+        `border-separate`/`border-spacing-0`, not `border-collapse`, and the
+        first column carries `sticky left-0` on both its header and its
+        `<th scope="row">` cells — matching `sals3-ecommerce`'s
+        `DescriptionTable` exactly, not approximately. A collapsed border
+        belongs to the table rather than the cell, so it does not travel with
+        a sticky cell and the pinned column's edge would disappear mid-scroll;
+        and without the sticky column at all, this canvas would preview a wide
+        chart as safe to scroll when the storefront's own reason for pinning
+        it — "a buyer scrolled right and lost which row they were reading" —
+        still applies. A seller who never sees that risk here has no reason to
+        shorten the chart before publishing it.
+      */}
+      <table className="w-full border-separate border-spacing-0 text-[13.5px]">
         {block.caption === undefined || block.caption === '' ? null : (
           <caption className="px-3 py-2 text-left text-[12.5px] text-ink-subtle">
             {block.caption}
           </caption>
         )}
-        <thead className="bg-surface-sunken">
+        <thead>
           <tr>
             {block.headers.map((header, index) => (
               <th
@@ -115,7 +128,9 @@ function TablePreview({
                 // re-rendered whole on every edit.
                 key={`header-${index}`}
                 scope="col"
-                className="border-b border-border px-3 py-2 text-left font-semibold whitespace-nowrap text-ink"
+                className={`border-b border-border bg-surface-sunken px-3 py-2 text-left font-semibold whitespace-nowrap text-ink ${
+                  index === 0 ? 'sticky left-0 z-10' : ''
+                }`}
               >
                 {header === '' ? (
                   <span className="font-normal text-ink-subtle italic">
@@ -129,28 +144,34 @@ function TablePreview({
           </tr>
         </thead>
         <tbody>
-          {block.rows.map((row, rowIndex) => (
-            <tr key={`row-${rowIndex}`} className="border-t border-border">
-              {row.map((cell, columnIndex) =>
-                columnIndex === 0 ? (
-                  <th
-                    key={`cell-${columnIndex}`}
-                    scope="row"
-                    className="px-3 py-2 text-left font-medium whitespace-nowrap text-ink"
-                  >
-                    {cell}
-                  </th>
-                ) : (
-                  <td
-                    key={`cell-${columnIndex}`}
-                    className="px-3 py-2 text-ink-muted"
-                  >
-                    {cell}
-                  </td>
-                ),
-              )}
-            </tr>
-          ))}
+          {block.rows.map((row, rowIndex) => {
+            // One value per row, not per cell: every cell in a row shares the
+            // same top border (only the first row has none).
+            const rowBorder = rowIndex === 0 ? '' : 'border-t border-border';
+
+            return (
+              <tr key={`row-${rowIndex}`}>
+                {row.map((cell, columnIndex) =>
+                  columnIndex === 0 ? (
+                    <th
+                      key={`cell-${columnIndex}`}
+                      scope="row"
+                      className={`sticky left-0 z-10 bg-card px-3 py-2 text-left font-medium whitespace-nowrap text-ink ${rowBorder}`}
+                    >
+                      {cell}
+                    </th>
+                  ) : (
+                    <td
+                      key={`cell-${columnIndex}`}
+                      className={`px-3 py-2 text-ink-muted ${rowBorder}`}
+                    >
+                      {cell}
+                    </td>
+                  ),
+                )}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

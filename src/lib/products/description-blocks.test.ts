@@ -492,16 +492,30 @@ describe('the table block', () => {
     ).toMatch(/belongs in a paragraph/);
   });
 
-  it('reads back as rows rather than as one cell per line', () => {
-    // The projection feeds the meta-description suggestion. One cell per line
-    // would offer the seller an unpunctuated column of numbers.
-    expect(descriptionBlocksToPlainText([SIZE_CHART])).toBe(
-      [
-        'Measurements in centimetres',
-        'Size · Waist · Hips',
-        'M · 65 · 100',
-        'L · 69',
-      ].join('\n'),
-    );
+  it('is excluded from the plain-text projection, like an image', () => {
+    /*
+      The projection feeds `firstSentence()` in the meta-description
+      suggestion seam. A table included there hands that function
+      `Size · Waist · Hips` as the opening "sentence" of a description that
+      opens with a chart and nothing else — copy no seller wrote, saveable
+      verbatim as the live `<meta name="description">` because nothing
+      downstream rejects a delimiter-heavy string. Excluding the table is
+      what keeps a size chart from ever reaching that field, the same
+      protection an image already has here.
+    */
+    expect(
+      descriptionBlocksToPlainText([
+        { type: 'paragraph', text: 'Real copy.' },
+        SIZE_CHART,
+      ]),
+    ).toBe('Real copy.');
+  });
+
+  it('does not count as content-readiness text even though the block itself still counts', () => {
+    // A chart-only description must not register as needing content: that
+    // check reads `blocks.length`, not this text, so excluding the table from
+    // the text is safe by construction rather than by coincidence.
+    expect(descriptionBlocksToPlainText([SIZE_CHART])).toBe('');
+    expect(isBlockEmpty(SIZE_CHART)).toBe(false);
   });
 });

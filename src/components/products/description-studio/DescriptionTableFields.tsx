@@ -1,22 +1,15 @@
 'use client';
 
-/* eslint-disable react/no-array-index-key -- A column is identified by its
-   position and a row by its order; neither carries an id, and every edit
-   rebuilds the whole block, so the position *is* the identity. Storing an id
-   would put one in the document the storefront would then have to ignore. */
-/* eslint-disable react/jsx-no-bind -- Every handler closes over the row or
-   column index it acts on, so none can be hoisted out of the grid it renders. */
-
-import { Plus, X } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
-  MAX_LABEL_LENGTH,
-  MAX_TABLE_CELL_LENGTH,
   MAX_TABLE_COLUMNS,
   MAX_TABLE_ROWS,
   type TableBlock,
 } from '@/lib/products/description-blocks';
+import { createTableGridActions } from './table-grid-actions';
+import TableBodyRow from './TableBodyRow';
+import TableHeaderRow from './TableHeaderRow';
 
 /**
  * The grid, edited as a grid.
@@ -46,22 +39,14 @@ import {
  * cell, so a screen reader announces "Hips for XL" rather than "textbox". That
  * pairing is the only thing that makes a grid navigable without sight, and it
  * is the same construction `ManualAssignmentTable` uses.
+ *
+ * ## Split into three files
+ *
+ * The mutations (`createTableGridActions`) and the two row shapes
+ * (`TableHeaderRow`, `TableBodyRow`) are their own modules, so this component
+ * is left as what it names itself: the grid's layout and its add-row/add-column
+ * controls, not also six state transitions and both rows' full field markup.
  */
-
-/** A column with no heading yet still has to be nameable in an `aria-label`. */
-function columnName(headers: string[], index: number): string {
-  const header = headers[index]?.trim() ?? '';
-
-  return header === '' ? `Column ${index + 1}` : header;
-}
-
-/** A row is named by its first cell — the size code, in a size chart. */
-function rowName(row: string[] | undefined, index: number): string {
-  const first = row?.[0]?.trim() ?? '';
-
-  return first === '' ? `row ${index + 1}` : first;
-}
-
 type DescriptionTableFieldsProps = {
   block: TableBlock;
   onChange: (block: TableBlock) => void;
@@ -71,67 +56,8 @@ export default function DescriptionTableFields({
   block,
   onChange,
 }: DescriptionTableFieldsProps) {
+  const actions = createTableGridActions(block, onChange);
   const columnCount = block.headers.length;
-
-  function setHeader(index: number, value: string) {
-    onChange({
-      ...block,
-      headers: block.headers.map((header, position) =>
-        position === index ? value : header,
-      ),
-    });
-  }
-
-  function setCell(rowIndex: number, columnIndex: number, value: string) {
-    onChange({
-      ...block,
-      rows: block.rows.map((row, position) =>
-        position === rowIndex
-          ? row.map((cell, column) => (column === columnIndex ? value : cell))
-          : row,
-      ),
-    });
-  }
-
-  /*
-    Both dimensions change every row at once, in one update. That is not a
-    convenience: a document whose rows are not all the width of the header row
-    is refused by the schema, and — worse — would print a seller's numbers
-    under the wrong headings if it ever reached a buyer. Keeping the grid
-    rectangular *by construction* is what makes that refusal unreachable from
-    this screen rather than a trap waiting in it.
-  */
-  function addColumn() {
-    onChange({
-      ...block,
-      headers: [...block.headers, ''],
-      rows: block.rows.map((row) => [...row, '']),
-    });
-  }
-
-  function removeColumn(index: number) {
-    onChange({
-      ...block,
-      headers: block.headers.filter((_, position) => position !== index),
-      rows: block.rows.map((row) =>
-        row.filter((_, position) => position !== index),
-      ),
-    });
-  }
-
-  function addRow() {
-    onChange({
-      ...block,
-      rows: [...block.rows, Array.from({ length: columnCount }, () => '')],
-    });
-  }
-
-  function removeRow(index: number) {
-    onChange({
-      ...block,
-      rows: block.rows.filter((_, position) => position !== index),
-    });
-  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -142,74 +68,26 @@ export default function DescriptionTableFields({
       <div className="max-h-96 overflow-auto rounded-md border border-border">
         <table className="w-full border-collapse text-sm">
           <thead className="sticky top-0 z-10 bg-muted">
-            <tr>
-              {block.headers.map((header, columnIndex) => (
-                <th key={columnIndex} scope="col" className="p-1.5 align-top">
-                  <div className="flex items-center gap-1">
-                    <Input
-                      value={header}
-                      maxLength={MAX_LABEL_LENGTH}
-                      placeholder={`Column ${columnIndex + 1}`}
-                      aria-label={`Column ${columnIndex + 1} heading`}
-                      onChange={(event) =>
-                        setHeader(columnIndex, event.target.value)
-                      }
-                      className="h-8 min-w-28 text-[13px] font-medium"
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Remove column ${columnIndex + 1}`}
-                      // A table with no columns has nowhere to put a cell.
-                      disabled={columnCount === 1}
-                      onClick={() => removeColumn(columnIndex)}
-                      className="size-7 shrink-0 p-0"
-                    >
-                      <X aria-hidden="true" className="size-3.5" />
-                    </Button>
-                  </div>
-                </th>
-              ))}
-              {/* Head of the remove-row column. It must exist or the header row
-                  is one cell narrower than every body row — and it is named
-                  rather than left blank, because a control column with no
-                  heading is announced as an empty cell. */}
-              <th scope="col" className="w-8">
-                <span className="sr-only">Remove row</span>
-              </th>
-            </tr>
+            <TableHeaderRow
+              headers={block.headers}
+              onSetHeader={actions.setHeader}
+              onRemoveColumn={actions.removeColumn}
+            />
           </thead>
           <tbody>
             {block.rows.map((row, rowIndex) => (
-              <tr key={rowIndex} className="border-t border-border">
-                {row.map((cell, columnIndex) => (
-                  <td key={columnIndex} className="p-1.5 align-middle">
-                    <Input
-                      value={cell}
-                      maxLength={MAX_TABLE_CELL_LENGTH}
-                      aria-label={`${columnName(block.headers, columnIndex)} for ${rowName(row, rowIndex)}`}
-                      onChange={(event) =>
-                        setCell(rowIndex, columnIndex, event.target.value)
-                      }
-                      className="h-8 min-w-28 text-[13px]"
-                    />
-                  </td>
-                ))}
-                <td className="p-1.5 align-middle">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-label={`Remove row ${rowIndex + 1}`}
-                    disabled={block.rows.length === 1}
-                    onClick={() => removeRow(rowIndex)}
-                    className="size-7 p-0"
-                  >
-                    <X aria-hidden="true" className="size-3.5" />
-                  </Button>
-                </td>
-              </tr>
+              <TableBodyRow
+                // Index keys: a row is its position, and the block is
+                // re-rendered whole on every edit.
+                // eslint-disable-next-line react/no-array-index-key
+                key={rowIndex}
+                row={row}
+                rowIndex={rowIndex}
+                headers={block.headers}
+                isOnlyRow={block.rows.length === 1}
+                onSetCell={actions.setCell}
+                onRemoveRow={actions.removeRow}
+              />
             ))}
           </tbody>
         </table>
@@ -221,7 +99,7 @@ export default function DescriptionTableFields({
           variant="outline"
           size="sm"
           disabled={block.rows.length >= MAX_TABLE_ROWS}
-          onClick={addRow}
+          onClick={actions.addRow}
         >
           <Plus aria-hidden="true" />
           Add row
@@ -231,7 +109,7 @@ export default function DescriptionTableFields({
           variant="outline"
           size="sm"
           disabled={columnCount >= MAX_TABLE_COLUMNS}
-          onClick={addColumn}
+          onClick={actions.addColumn}
         >
           <Plus aria-hidden="true" />
           Add column
