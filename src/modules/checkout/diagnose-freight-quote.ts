@@ -6,9 +6,11 @@ import CjTokenManager from '@/modules/suppliers/providers/cj/cj-auth';
 import { CJ_BASE_URL } from '@/services/cj/config';
 import {
   CheckoutFreightQuoteError,
+  loadPackageInputs,
   loadQuoteLines,
   quoteCheckoutFreight,
   type CheckoutFreightQuoteRequest,
+  type PackageInputs,
   type QuoteLine,
 } from './freight-quotes';
 
@@ -41,11 +43,17 @@ import {
  * found nothing wrong with either — the failure is further in: the freight
  * calculation itself (`/logistic/freightCalculateTip`, a package-shaped
  * request the two product-level reads say nothing about) or the package
- * assembly around it. Rather than hand-build a third raw call, this step
- * calls the real, unmodified `quoteCheckoutFreight` with the caller's own
- * destination and reports whatever it throws — a `CheckoutFreightQuoteError`
- * has a buyer-facing message already; anything else is the actual defect this
- * tool exists to surface, named rather than swallowed into a 503.
+ * assembly around it.
+ *
+ * Two more steps answer that. `quoteCheckoutFreight` is called unmodified, so
+ * a `CheckoutFreightQuoteError` (a buyer-facing refusal, not a defect) or
+ * anything else it throws is visible by name. And because the harem-pants
+ * investigation got exactly that — an unnamed `CjApiError` with no body,
+ * because `getCjJson` discards one on a non-200 `code` the same way it does
+ * for the first two reads — this also rebuilds the same freight-calculate
+ * request `loadPackageInputs`/`freightBodyForPackage` would send (via the
+ * real, exported `loadPackageInputs`, not a second copy of its supplier-
+ * binding logic) and POSTs it directly, so that raw body is visible too.
  */
 /**
  * What the real `quoteCheckoutFreight` did with the same product and
@@ -74,6 +82,13 @@ export type FreightQuoteDiagnosis =
       cjProductQuery: { status: number; body: unknown };
       cjInventoryQuery: { status: number; body: unknown };
       fullQuote: FullQuoteOutcome;
+      /**
+       * Present only when `fullQuote` failed with something other than a
+       * `CheckoutFreightQuoteError` — the raw `/logistic/freightCalculateTip`
+       * response for the same package, which `getCjJson` would otherwise have
+       * discarded on the way to that same failure.
+       */
+      cjFreightQuery?: { status: number; body: unknown };
     }
   | {
       ok: false;
@@ -222,6 +237,7 @@ export async function diagnoseFreightQuote(
       parseError: error instanceof Error ? error.message : String(error),
     }));
 
+  const address = placeholderAddress(input.destinationCountry);
   let fullQuote: FullQuoteOutcome;
 
   try {
@@ -236,7 +252,7 @@ export async function diagnoseFreightQuote(
             },
           ],
         },
-        address: placeholderAddress(input.destinationCountry),
+        address,
       },
       { executor, fetcherForConnection, tokenManager },
     );
@@ -255,6 +271,21 @@ export async function diagnoseFreightQuote(
           };
   }
 
+  // Only when the real function failed unnamed — a refusal already explains
+  // itself, and a success needs no second look at the same call.
+  let cjFreightQuery: { status: number; body: unknown } | undefined;
+
+  if (!fullQuote.ok && 'error' in fullQuote) {
+    // eslint-disable-next-line no-use-before-define -- defined below, so the exported entry point reads first.
+    cjFreightQuery = await diagnoseFreightCalculate({
+      lines: [line],
+      destinationCountry: input.destinationCountry,
+      address,
+      fetcher,
+      token,
+    });
+  }
+
   return {
     ok: true,
     line: {
@@ -269,5 +300,144 @@ export async function diagnoseFreightQuote(
     cjProductQuery: { status: productResponse.status, body: productBody },
     cjInventoryQuery: { status: inventoryResponse.status, body: inventoryBody },
     fullQuote,
+    ...(cjFreightQuery === undefined ? {} : { cjFreightQuery }),
   };
+}
+
+/**
+ * Rebuilds and sends the same `/logistic/freightCalculateTip` request
+ * `freightBodyForPackage` would, using the real, exported `loadPackageInputs`
+ * for the supplier-binding and origin resolution — the one part of this that
+ * must not become a second copy. The request shape itself (`reqDTOS`, the
+ * field names CJ expects) is duplicated because `freightBodyForPackage` is not
+ * exported and building it inline for a single-line diagnostic package is
+ * simpler than widening that function's contract for a caller nothing else
+ * should ever be.
+ */
+async function diagnoseFreightCalculate(input: {
+  lines: QuoteLine[];
+  destinationCountry: string;
+  address: CheckoutFreightQuoteRequest['address'];
+  fetcher: typeof fetch;
+  token: string;
+}): Promise<{ status: number; body: unknown } | undefined> {
+  let packageInputs: PackageInputs;
+
+  try {
+    packageInputs = await loadPackageInputs(
+      input.lines,
+      input.destinationCountry,
+      () => input.fetcher,
+      { getAccessToken: async () => input.token } as never,
+    );
+  } catch (error) {
+    return {
+      status: 0,
+      body: {
+        step: 'package-assembly',
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+
+  const pkg = packageInputs.packages[0];
+
+  if (pkg === undefined) {
+    return {
+      status: 0,
+      body: { step: 'package-assembly', message: 'No package assembled.' },
+    };
+  }
+
+  const first = pkg.lines[0];
+  const detail =
+    first === undefined
+      ? undefined
+      : packageInputs.detailsByLine.get(first.variantId);
+  const productProps = detail?.productProps ?? ['COMMON'];
+  const totalGoodsAmount = pkg.lines.reduce(
+    (total, line) => total + (Number(line.priceMinor) / 100) * line.quantity,
+    0,
+  );
+  const totalWeight = pkg.lines.reduce((total, line) => {
+    const lineDetail = packageInputs.detailsByLine.get(line.variantId);
+
+    return total + (lineDetail?.weight ?? 0) * line.quantity;
+  }, 0);
+  const totalVolume = pkg.lines.reduce((total, line) => {
+    const lineDetail = packageInputs.detailsByLine.get(line.variantId);
+
+    return total + (lineDetail?.volume ?? 0) * line.quantity;
+  }, 0);
+
+  const body = {
+    reqDTOS: [
+      {
+        srcAreaCode: pkg.originCountry,
+        destAreaCode: pkg.destinationCountry,
+        zip: input.address.postalCode,
+        recipientAddress: input.address.addressLine1,
+        recipientAddress1: input.address.addressLine1,
+        recipientAddress2: input.address.addressLine2,
+        city: input.address.city,
+        province: input.address.region,
+        recipientName: input.address.fullName,
+        phone: input.address.phone,
+        email: input.address.email,
+        productProp: productProps,
+        productTypes: ['0'],
+        platforms: ['Shopify'],
+        totalGoodsAmount: Number(totalGoodsAmount.toFixed(2)),
+        weight: Math.max(1, Math.round(totalWeight)),
+        wrapWeight: Math.max(1, Math.round(totalWeight)),
+        volume: Number(totalVolume.toFixed(2)),
+        skuList: pkg.lines.map(
+          (line) =>
+            packageInputs.detailsByLine.get(line.variantId)?.sku ??
+            line.sals3Sku,
+        ),
+        freightTrialSkuList: pkg.lines.map((line) => {
+          const lineDetail = packageInputs.detailsByLine.get(line.variantId);
+
+          return {
+            sku: lineDetail?.sku ?? line.sals3Sku,
+            vid: line.externalVariantId,
+            skuQuantity: line.quantity,
+            skuWeight: lineDetail?.weight,
+            skuVolume: lineDetail?.volume,
+            productPropList: lineDetail?.productProps ?? productProps,
+            productTypeList: ['0'],
+          };
+        }),
+      },
+    ],
+  };
+
+  try {
+    const response = await input.fetcher(
+      `${CJ_BASE_URL}/logistic/freightCalculateTip`,
+      {
+        method: 'POST',
+        headers: {
+          'CJ-Access-Token': input.token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      },
+    );
+    const responseBody: unknown = await response.json().catch((error) => ({
+      parseError: error instanceof Error ? error.message : String(error),
+    }));
+
+    return { status: response.status, body: responseBody };
+  } catch (error) {
+    return {
+      status: 0,
+      body: {
+        step: 'freight-calculate-request',
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
 }
