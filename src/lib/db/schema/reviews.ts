@@ -154,6 +154,25 @@ export const productReviews = pgTable(
 
     rating: smallint('rating').notNull(),
 
+    /**
+     * How the parcel arrived — speed and condition — scored 1-5, or `NULL`
+     * because the buyer did not answer.
+     *
+     * A separate score because it is a separate party's work. A buyer who waited
+     * three weeks for a good product rates the product one star, and the listing
+     * carries a courier's failure for as long as it exists. Split, the product
+     * average stays about the product, and a low delivery score beside a high
+     * product score tells the seller their shipping tier is wrong rather than
+     * their listing.
+     *
+     * **Nullable, and `NULL` is never counted as a zero.** A nought is a verdict
+     * and no verdict was given — the same reason an unreviewed product does not
+     * render "0.0 out of 5". Every read excludes it from the average rather than
+     * folding it in, which is why `readRatingSummaries` counts the two scores
+     * over different denominators.
+     */
+    deliveryRating: smallint('delivery_rating'),
+
     /** Optional. A rating with no words is a complete review. */
     body: text('body'),
 
@@ -218,6 +237,16 @@ export const productReviews = pgTable(
     check(
       'sals3_product_reviews_buyer_email_lowercase',
       sql`${table.buyerEmail} = lower(${table.buyerEmail})`,
+    ),
+
+    /**
+     * `is null or` rather than a plain range: the column's whole point is that
+     * "not answered" is a legal state, and a bare `between` would make the
+     * database reject every review whose buyer skipped the question.
+     */
+    check(
+      'sals3_product_reviews_delivery_rating_range',
+      sql`${table.deliveryRating} is null or ${table.deliveryRating} between 1 and 5`,
     ),
   ],
 );
@@ -300,6 +329,218 @@ export const productReviewReplies = pgTable(
     check(
       'sals3_product_review_replies_body_length',
       sql`char_length(${table.body}) between 1 and 1000`,
+    ),
+  ],
+);
+
+/**
+ * Why a buyer is asking a moderator to look at a review.
+ *
+ * A closed list rather than free text. Free text would be a second body on a
+ * public object, moderated by nobody and reachable by anyone signed in — and
+ * the moderator's actual question is "which rule is this said to break", which
+ * five words answer better than a paragraph.
+ */
+export const productReviewFlagReasonEnum = pgEnum(
+  'product_review_flag_reason',
+  [
+    /** About the seller, the courier, or nothing to do with the item. */
+    'OFF_TOPIC',
+    'OFFENSIVE',
+    'SPAM',
+    /** An address, a phone number, an order number — someone's or their own. */
+    'PERSONAL_INFORMATION',
+    /** Not an account of using the product at all. */
+    'NOT_A_REVIEW',
+  ],
+);
+
+/** What a moderator decided, or that nobody has yet. */
+export const productReviewFlagResolutionEnum = pgEnum(
+  'product_review_flag_resolution',
+  ['OPEN', 'HIDDEN', 'KEPT'],
+);
+
+/**
+ * A buyer asking a platform moderator to look at a review.
+ *
+ * ## A report is a request, never an action
+ *
+ * Nothing here changes what the storefront shows. Hiding a review is
+ * `productReviews.status = 'HIDDEN_BY_PLATFORM'`, written only by a holder of
+ * `review:moderate`, and both the storefront read and the aggregate already
+ * exclude that status. An automatic hide at some threshold would mean a
+ * competitor with four accounts can erase a rating, which turns this whole
+ * table from evidence into whatever the most motivated party wants it to say.
+ *
+ * ## The reporter is the abuse model
+ *
+ * `sals3_product_review_flags_reporter_key` does for reports what
+ * `sals3_product_reviews_line_key` does for reviews: one per person per review.
+ * Without it a single buyer files a hundred reports and the queue reads as
+ * consensus. With it, the number a moderator sees is a number of people.
+ *
+ * Signed-in only, for the same reason. An anonymous report costs nothing to
+ * make and nothing to repeat, and a queue full of those is a queue nobody
+ * reads — which is worse than no report button, because the button would then
+ * be a promise the platform is not keeping.
+ *
+ * ## `reporter_email` is moderator-only
+ *
+ * Same posture as `sals3_product_reviews.buyer_email`: authorisation data,
+ * never projected to the storefront and never to the seller. A seller who could
+ * see who reported a review of their own listing has a reason to contact them.
+ */
+export const productReviewFlags = pgTable(
+  'sals3_product_review_flags',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+
+    /**
+     * `restrict`, matching every other reference to a review: the report is
+     * evidence about a specific published thing, and deleting that thing would
+     * leave a moderation record about nothing.
+     */
+    reviewId: uuid('review_id')
+      .notNull()
+      .references(() => productReviews.id, { onDelete: 'restrict' }),
+
+    /** Lower-cased. Never read outside moderation — see the note above. */
+    reporterEmail: text('reporter_email').notNull(),
+
+    reason: productReviewFlagReasonEnum('reason').notNull(),
+
+    resolution: productReviewFlagResolutionEnum('resolution')
+      .notNull()
+      .default('OPEN'),
+
+    /**
+     * The Better Auth user id of the moderator who decided. Deliberately not a
+     * foreign key to `auth_users`, the same reasoning `productReviewReplies`
+     * gives: `ON DELETE RESTRICT` on an actor column means an account that has
+     * ever acted can never be removed, and a moderation record must outlive the
+     * staff account that wrote it.
+     */
+    resolvedByUserId: text('resolved_by_user_id'),
+
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    /** One report per person per review. The abuse model, in one index. */
+    uniqueIndex('sals3_product_review_flags_reporter_key').on(
+      table.reviewId,
+      table.reporterEmail,
+    ),
+
+    /** The moderation queue: open first, oldest first. */
+    index('sals3_product_review_flags_queue_idx').on(
+      table.resolution,
+      table.createdAt,
+    ),
+
+    /** Counting the reports on one review, and resolving them together. */
+    index('sals3_product_review_flags_review_idx').on(table.reviewId),
+
+    check(
+      'sals3_product_review_flags_reporter_email_lowercase',
+      sql`${table.reporterEmail} = lower(${table.reporterEmail})`,
+    ),
+
+    /**
+     * The two halves of a decision, kept from drifting apart by the database
+     * rather than by every writer remembering. A resolved flag with no date, and
+     * an open flag carrying one, are both rows nobody can audit.
+     */
+    check(
+      'sals3_product_review_flags_resolution_stamped',
+      sql`(${table.resolution} = 'OPEN') = (${table.resolvedAt} is null)`,
+    ),
+  ],
+);
+
+/**
+ * Photos a buyer attached to their review.
+ *
+ * ## A table, not a `jsonb` column on the review
+ *
+ * `position` needs a unique index to make the order a fact rather than an
+ * array's accident, and a moderator has to be able to remove one photo without
+ * rewriting the review row holding the rest. An array in a column can do
+ * neither.
+ *
+ * ## Only an address lives here
+ *
+ * The bytes are in Cloudflare R2, written through the same
+ * `prepareUploadedImage` pipeline every seller upload goes through — magic-byte
+ * check, dimension ceiling, re-encode to WebP — so a stored photo is an image
+ * this server produced rather than a file a buyer named. `checksum` is of the
+ * stored bytes, not the submitted ones, for the same reason
+ * `product_media_sources` checksums after re-encoding: a duplicate has to be
+ * judged on what is actually kept.
+ *
+ * ## Four
+ *
+ * Bounded by a `CHECK` on `position` as well as by the writer. An unbounded
+ * upload path with no ceiling is the kind of thing only ever discovered from a
+ * bill, and unlike the seller's gallery this one is reachable by every buyer
+ * with a delivered order.
+ */
+export const productReviewPhotos = pgTable(
+  'sals3_product_review_photos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+
+    reviewId: uuid('review_id')
+      .notNull()
+      .references(() => productReviews.id, { onDelete: 'restrict' }),
+
+    /**
+     * The public R2 read address, validated against the configured base by
+     * `r2PublicImageUrl` before it is written and again where it is read. A row
+     * here pointing anywhere else would mean something other than the upload
+     * path wrote it.
+     */
+    imageUrl: text('image_url').notNull(),
+
+    /** sha256 of the stored WebP, not of what the buyer submitted. */
+    checksum: text('checksum').notNull(),
+
+    byteSize: integer('byte_size').notNull(),
+    widthPixels: integer('width_pixels').notNull(),
+    heightPixels: integer('height_pixels').notNull(),
+
+    /** 0-3. The order the buyer chose, and the order every reader renders. */
+    position: smallint('position').notNull(),
+
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('sals3_product_review_photos_position_key').on(
+      table.reviewId,
+      table.position,
+    ),
+
+    index('sals3_product_review_photos_review_idx').on(table.reviewId),
+
+    check(
+      'sals3_product_review_photos_position_range',
+      sql`${table.position} between 0 and 3`,
+    ),
+
+    check(
+      'sals3_product_review_photos_dimensions_positive',
+      sql`${table.widthPixels} > 0 and ${table.heightPixels} > 0`,
+    ),
+
+    check(
+      'sals3_product_review_photos_byte_size_positive',
+      sql`${table.byteSize} > 0`,
     ),
   ],
 );

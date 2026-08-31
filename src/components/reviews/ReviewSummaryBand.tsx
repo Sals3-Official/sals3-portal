@@ -60,6 +60,37 @@ export default function ReviewSummaryBand({
             ? 'Nobody has reviewed your items yet.'
             : `From ${summary.count} ${summary.count === 1 ? 'review' : 'reviews'}.`}
         </span>
+
+        {/*
+          The delivery average, under the product average and visibly apart from
+          it. This is the number answering "is my shipping tier wrong?", and it
+          only means that while it stays out of the figure above.
+
+          Hidden entirely when nobody answered — not "0.0", and not "—" beside
+          the word Delivery. A seller reading "Delivery 0.0" would act on a
+          courier catastrophe that has not happened, and this is exactly the
+          number they would act on by moving to a dearer tier.
+
+          It states its own denominator, because it is not the one above: a
+          seller can carry forty reviews and six delivery scores.
+        */}
+        {summary.delivery === null ? null : (
+          <div className="mt-1 flex flex-col gap-1 border-t border-border pt-3">
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-xs font-medium text-ink-subtle">
+                Delivery
+              </span>
+              <span className="ml-auto font-display text-lg leading-none font-semibold text-ink tabular-nums">
+                {summary.delivery.average.toFixed(1)}
+              </span>
+              <span className="text-xs font-medium text-ink-faint">/ 5</span>
+            </div>
+            <span className="text-[0.6875rem] leading-snug text-ink-faint">
+              From {summary.delivery.count} of {summary.count} who answered.
+              Speed and condition, not your listing.
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_18.75rem]">

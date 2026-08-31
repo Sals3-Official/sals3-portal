@@ -39,6 +39,20 @@ import {
  * `lib/rate-limit.ts` documents: the real ceiling on a scaled-out host is
  * `instances x capacity`. The durable guard underneath is
  * `sals3_product_reviews_line_key`, which no amount of concurrency gets past.
+ *
+ * ## Photos are not posted here
+ *
+ * A review may carry up to four, and they arrive **one per request** at
+ * `POST /reviews/[id]/photos` after this returns an id. Not folded into this
+ * body: a serverless request body is capped at 4.5 MB on the deployed platform
+ * and four 5 MB photos plus the multipart envelope is several times that — a
+ * ceiling that rejects the request before any code here runs, so no validation
+ * of ours could produce a message a buyer could act on.
+ *
+ * The ordering that follows from that is review-first, photos-after. It means a
+ * failure partway through leaves a real review carrying fewer photos than the
+ * buyer chose; the sibling route's own note explains why that beats the
+ * alternatives.
  */
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';

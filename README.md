@@ -1976,6 +1976,61 @@ response proves all three exist afterwards.
   holding the rest. Four per review, enforced by a `CHECK` as well as by the
   writer.
 
+**The ledger row arrives a deployment later.** The DDL shipped alone, so there
+was no `drizzle/0035_icy_risque.sql` for a `__drizzle_migrations` row to point
+at — a row naming a file that does not exist is worse than no row. The file
+arrives with the schema change that reads the column, and so does
+`markMigration0035Applied`. Run the workflow a **second time** after that
+deploys: its DDL is a no-op by then (every statement reports itself skipped),
+and the run exists to record the ledger row.
+
+### Delivery rating, flags and photos — the feature (2026-08-31)
+
+**Two averages, two denominators.** `readRatingSummaries` counts the delivery
+score with `count(delivery_rating)`, not `count(*)`: a product can carry forty
+reviews and six delivery scores, and the delivery average is six's average. It
+answers `null` when nobody has scored a delivery — never `{average: 0}`, because
+a seller reading "Delivery 0.0" would act on a courier catastrophe that has not
+happened, and this is precisely the number they would act on by paying for a
+dearer tier.
+
+**Photos arrive one per request, after the review exists.** `POST
+/api/storefront/reviews` returns an id, then `POST /reviews/[id]/photos` carries
+one file each. Not folded into the submit body: the deployed platform caps a
+serverless request body at 4.5 MB, and four photos at the repository's 5 MB
+per-file ceiling is several times that — the platform rejects the request before
+any code runs, so no validation of ours could produce a message a buyer can act
+on. The ordering means a failure partway through leaves a real review carrying
+two of its four photos, which is visible and honest; the alternatives are a
+staging area with a sweeper, or a failed submission that has already spent
+storage.
+
+Photos go through `prepareUploadedImage`, the same magic-byte check, dimension
+ceiling and WebP re-encode every seller upload uses. That matters more for a
+buyer than for a seller: what lands in the bucket is an image this server
+produced, not the file an anonymous member of the public named.
+
+**Reporting writes a request and nothing else.** `flagReview` never touches
+`productReviews.status` and no count of reports triggers anything. Hiding is
+`decideOnReportedReview`, behind `review:moderate`, and it writes the status and
+closes the reports in one transaction — a hidden review whose reports stay open
+returns to the queue forever, and a closed report over a still-published review
+is a decision nobody can find. `keep` closes the reports and changes nothing
+else, because a decision that leaves no trace is indistinguishable from an
+unread queue.
+
+**The moderation queue lives at `/reviews/reported`, in this repository.**
+ADR-014 puts platform moderation in the Admin Portal, and that repository is
+sign-in and shell only — a queue placed there today is a queue nobody can open,
+and a report button with nothing behind it is a promise the platform is not
+keeping. The ADR's substance is that a **seller** must never be able to hide
+criticism of their own listing, and that is enforced by `review:moderate`, which
+only `admin` and `catalogue_reviewer` hold. When the Admin Portal grows real
+capabilities the page moves; the permission boundary does not change when it
+does. The queue is deliberately **not** tenant-scoped — a platform moderator
+works across sellers — and it is ordered oldest-first so volume cannot jump the
+line.
+
 ## Description: simple text or a designed layout
 
 The Description section offers two editors and the seller picks with a toggle.

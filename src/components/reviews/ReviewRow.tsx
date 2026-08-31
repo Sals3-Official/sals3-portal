@@ -73,6 +73,36 @@ export default function ReviewRow({
             {DATE_FORMAT.format(new Date(review.createdAt))}
           </span>
         </div>
+        {/*
+          Delivery beside the product score, never folded into it. A buyer who
+          waited three weeks for a good item scores the delivery low and the
+          product high, and this row is where a seller learns their shipping
+          tier is wrong rather than their listing.
+
+          Both are absent rather than rendered empty when there is nothing to
+          say. A dash in a column of numbers still reads as a score of some
+          kind, and "0 photos" is a line of type that earns nothing.
+        */}
+        {review.deliveryRating === null && review.photoCount === 0 ? null : (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {review.deliveryRating === null ? null : (
+              <span className="inline-flex items-center gap-1.5 text-xs text-ink-subtle">
+                Delivery
+                <span className="font-semibold text-ink tabular-nums">
+                  {review.deliveryRating} / 5
+                </span>
+              </span>
+            )}
+            {review.photoCount === 0 ? null : (
+              <span className="text-xs text-ink-subtle">
+                <span className="font-semibold text-ink tabular-nums">
+                  {review.photoCount}
+                </span>{' '}
+                {review.photoCount === 1 ? 'photo' : 'photos'}
+              </span>
+            )}
+          </div>
+        )}
         <p className="max-w-[62ch] text-[0.8125rem] leading-relaxed text-ink-muted">
           {review.body ?? (
             <span className="text-ink-faint italic">

@@ -5,7 +5,11 @@ import {
   sals3OrderLines,
   sals3Orders,
 } from '@/lib/db/schema/orders';
-import { productReviewReplies, productReviews } from '@/lib/db/schema/reviews';
+import {
+  productReviewPhotos,
+  productReviewReplies,
+  productReviews,
+} from '@/lib/db/schema/reviews';
 import { supplierConnections } from '@/lib/db/schema/supplier-connections';
 import {
   LOW_RATING_CEILING,
@@ -36,6 +40,13 @@ import {
 export type SellerReviewRow = {
   id: string;
   rating: ReviewRating;
+  /**
+   * How this buyer scored the delivery, or `null` because they did not answer.
+   * Shown apart from the product score for the reason the column exists: a low
+   * delivery score beside a high product score tells the seller their shipping
+   * tier is wrong rather than their listing.
+   */
+  deliveryRating: ReviewRating | null;
   body: string | null;
   displayName: string | null;
   createdAt: string;
@@ -43,6 +54,8 @@ export type SellerReviewRow = {
   productTitle: string;
   variantLabel: string | null;
   imageUrl: string | null;
+  /** How many photos the buyer attached. The images themselves are not read here. */
+  photoCount: number;
   orderNumber: string;
   reply: { body: string; version: number; createdAt: string } | null;
 };
@@ -113,6 +126,7 @@ function baseQuery(executor: DbExecutor) {
     .select({
       id: productReviews.id,
       rating: productReviews.rating,
+      deliveryRating: productReviews.deliveryRating,
       body: productReviews.body,
       displayName: productReviews.displayName,
       createdAt: productReviews.createdAt,
@@ -121,6 +135,18 @@ function baseQuery(executor: DbExecutor) {
       variantLabel: sals3OrderLines.variantLabel,
       imageUrl: sals3OrderLines.imageUrl,
       orderNumber: sals3Orders.orderNumber,
+      /*
+        A count, not the photos. This screen is a list a seller scans; the
+        pictures belong on the storefront where a buyer is deciding. Counted by
+        a correlated subquery rather than a join, because joining a one-to-many
+        would multiply the review row by its photo count and make `LIMIT` bound
+        photos instead of reviews — the same trap `listPublicReviewsBySlug`
+        avoids with a second statement.
+      */
+      photoCount: sql<number>`(
+        select count(*)::int from ${productReviewPhotos}
+        where ${productReviewPhotos.reviewId} = ${productReviews.id}
+      )`,
       replyBody: productReviewReplies.body,
       replyVersion: productReviewReplies.replyVersion,
       replyCreatedAt: productReviewReplies.createdAt,
@@ -175,6 +201,10 @@ export async function listSellerReviews(
     rows: rows.map((row) => ({
       id: row.id,
       rating: row.rating as ReviewRating,
+      deliveryRating:
+        row.deliveryRating === null
+          ? null
+          : (row.deliveryRating as ReviewRating),
       body: row.body,
       displayName: row.displayName,
       createdAt: row.createdAt.toISOString(),
@@ -182,6 +212,7 @@ export async function listSellerReviews(
       productTitle: row.productTitle,
       variantLabel: row.variantLabel,
       imageUrl: row.imageUrl,
+      photoCount: row.photoCount,
       orderNumber: row.orderNumber,
       reply:
         row.replyBody === null ||
@@ -214,6 +245,10 @@ export async function readSellerReviewSummary(
       .select({
         rating: productReviews.rating,
         total: sql<number>`count(*)::int`,
+        // NULLs skipped by both aggregates, so a buyer who scored the item and
+        // skipped the delivery contributes to neither side of the fraction.
+        deliverySum: sql<number>`coalesce(sum(${productReviews.deliveryRating}), 0)::int`,
+        deliveryCount: sql<number>`count(${productReviews.deliveryRating})::int`,
       })
       .from(productReviews)
       .where(
@@ -274,11 +309,33 @@ export async function readSellerReviewSummary(
     0,
   );
 
+  const deliverySum = buckets.reduce(
+    (total, bucket) => total + bucket.deliverySum,
+    0,
+  );
+  const deliveryCount = buckets.reduce(
+    (total, bucket) => total + bucket.deliveryCount,
+    0,
+  );
+
   return {
     average:
       reviewCount === 0 ? 0 : Math.round((weighted / reviewCount) * 10) / 10,
     count: reviewCount,
     breakdown,
+    /*
+      `null` rather than a zero, the same rule the storefront summary follows.
+      A seller looking at "Delivery 0.0" would read a courier catastrophe where
+      the truth is that nobody has answered the question yet — and this is the
+      number they would act on by changing shipping tier.
+    */
+    delivery:
+      deliveryCount === 0
+        ? null
+        : {
+            average: Math.round((deliverySum / deliveryCount) * 10) / 10,
+            count: deliveryCount,
+          },
     needsReply: unanswered.reduce((total, bucket) => total + bucket.total, 0),
     lowUnanswered: unanswered
       .filter((bucket) => bucket.rating <= LOW_RATING_CEILING)

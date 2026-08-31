@@ -1,11 +1,17 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import getDb, { type DbExecutor } from '@/lib/db/client';
 import { products } from '@/lib/db/schema/product-catalog';
 import { sals3OrderLines } from '@/lib/db/schema/orders';
-import { productReviewReplies, productReviews } from '@/lib/db/schema/reviews';
 import {
+  productReviewPhotos,
+  productReviewReplies,
+  productReviews,
+} from '@/lib/db/schema/reviews';
+import {
+  MAX_REVIEW_PHOTOS,
   type PublicReview,
   type RatingSummary,
+  type ReviewPhoto,
   type ReviewRating,
   type ReviewRefusal,
   type SubmitReviewInput,
@@ -41,7 +47,31 @@ export type SubmitReviewResult =
  * wide: a buyer tapping "Post review" twice on a slow connection.
  */
 export async function submitReview(
-  input: SubmitReviewInput & { buyerEmail: string },
+  input: SubmitReviewInput & {
+    buyerEmail: string;
+    /**
+     * Photos **already** processed and stored in R2 by the caller, in the order
+     * the buyer chose.
+     *
+     * Taken as finished rows rather than as files because this function must
+     * not know about object storage: the bytes are validated, re-encoded and
+     * uploaded by the route before eligibility is even in question, and by the
+     * time we are here the only remaining question is which review id they hang
+     * off. It also keeps the failure modes apart — a rejected image is a
+     * different answer to the buyer than an ineligible line.
+     *
+     * Trimmed to `MAX_REVIEW_PHOTOS` rather than trusted: the column's own
+     * `CHECK` would refuse a fifth anyway, and refusing it here means the whole
+     * review is not lost to a caller that miscounted.
+     */
+    photos?: {
+      imageUrl: string;
+      checksum: string;
+      byteSize: number;
+      width: number;
+      height: number;
+    }[];
+  },
   executor: DbExecutor = getDb(),
 ): Promise<SubmitReviewResult> {
   const eligibility = await resolveReviewableLine(
@@ -52,6 +82,7 @@ export async function submitReview(
   if (!eligibility.ok) return { ok: false, reason: eligibility.reason };
 
   const { line } = eligibility;
+  const photos = (input.photos ?? []).slice(0, MAX_REVIEW_PHOTOS);
 
   try {
     const inserted = await executor
@@ -74,6 +105,11 @@ export async function submitReview(
             ? maskDisplayName(line.buyerName)
             : null,
         rating: input.rating,
+        // `?? null`, never `?? 0`: an unanswered delivery question has to reach
+        // the column as NULL, because every read excludes NULL from the average
+        // and would fold a zero into it. The column's CHECK refuses a zero too,
+        // so a default here would fail the insert rather than merely mislead.
+        deliveryRating: input.deliveryRating ?? null,
         body: input.body === undefined || input.body === '' ? null : input.body,
         deliveredAt: line.deliveredAt,
       })
@@ -83,6 +119,29 @@ export async function submitReview(
 
     if (reviewId === undefined) return { ok: false, reason: 'failed' };
 
+    if (photos.length > 0) {
+      // A second statement rather than a transaction wrapping both, and the
+      // reason is the unique index above. `sals3_product_reviews_line_key` is
+      // what makes a double-submitted form one review; putting both inserts in
+      // a transaction here would mean this function opening one whether or not
+      // its caller already has, and `DbExecutor` deliberately makes "which
+      // connection is this on?" the caller's decision. A review whose photo
+      // insert fails is a review with no photos — visibly incomplete to the
+      // buyer, who can say so — where a swallowed transaction would be a lost
+      // review with no explanation.
+      await executor.insert(productReviewPhotos).values(
+        photos.map((photo, position) => ({
+          reviewId,
+          imageUrl: photo.imageUrl,
+          checksum: photo.checksum,
+          byteSize: photo.byteSize,
+          widthPixels: photo.width,
+          heightPixels: photo.height,
+          position,
+        })),
+      );
+    }
+
     return { ok: true, reviewId };
   } catch (error) {
     if (isUniqueViolation(error)) {
@@ -91,6 +150,50 @@ export async function submitReview(
 
     throw error;
   }
+}
+
+/**
+ * Photos for a page of reviews, keyed by review id.
+ *
+ * A second statement rather than a join, because a join to a one-to-many
+ * multiplies the review row by its photo count and the `LIMIT` below would then
+ * bound *photos* instead of reviews — a product whose newest four reviews carry
+ * four pictures each would silently render sixteen rows' worth of one. One
+ * extra indexed query for a whole page is not an N+1; a `LIMIT` that means
+ * something different depending on the data is a bug that only shows up in
+ * production.
+ */
+async function readPhotosFor(
+  reviewIds: string[],
+  executor: DbExecutor,
+): Promise<Map<string, ReviewPhoto[]>> {
+  if (reviewIds.length === 0) return new Map();
+
+  const rows = await executor
+    .select({
+      reviewId: productReviewPhotos.reviewId,
+      url: productReviewPhotos.imageUrl,
+      width: productReviewPhotos.widthPixels,
+      height: productReviewPhotos.heightPixels,
+    })
+    .from(productReviewPhotos)
+    .where(inArray(productReviewPhotos.reviewId, reviewIds))
+    // The buyer's own order, and the order every reader renders.
+    .orderBy(
+      asc(productReviewPhotos.reviewId),
+      asc(productReviewPhotos.position),
+    );
+
+  const byReview = new Map<string, ReviewPhoto[]>();
+
+  rows.forEach((row) => {
+    const existing = byReview.get(row.reviewId) ?? [];
+
+    existing.push({ url: row.url, width: row.width, height: row.height });
+    byReview.set(row.reviewId, existing);
+  });
+
+  return byReview;
 }
 
 /**
@@ -113,6 +216,7 @@ export async function listPublicReviewsBySlug(
     .select({
       id: productReviews.id,
       rating: productReviews.rating,
+      deliveryRating: productReviews.deliveryRating,
       body: productReviews.body,
       displayName: productReviews.displayName,
       variantLabel: sals3OrderLines.variantLabel,
@@ -137,12 +241,20 @@ export async function listPublicReviewsBySlug(
     .orderBy(desc(productReviews.createdAt))
     .limit(MAX_PUBLIC_REVIEWS);
 
+  const photos = await readPhotosFor(
+    rows.map((row) => row.id),
+    executor,
+  );
+
   return rows.map((row) => ({
     id: row.id,
     rating: row.rating as ReviewRating,
+    deliveryRating:
+      row.deliveryRating === null ? null : (row.deliveryRating as ReviewRating),
     body: row.body,
     displayName: row.displayName,
     variantLabel: row.variantLabel,
+    photos: photos.get(row.id) ?? [],
     createdAt: row.createdAt.toISOString(),
     reply:
       row.replyBody === null || row.replyCreatedAt === null
@@ -156,6 +268,19 @@ export async function listPublicReviewsBySlug(
  *
  * One statement for a whole page of cards rather than one per card — the
  * N+1 rule in the code rules, and the reason this takes a list.
+ *
+ * ## The delivery score rides the same statement, over a different denominator
+ *
+ * `count(delivery_rating)` rather than `count(*)`: Postgres's aggregate skips
+ * NULLs, which is exactly the behaviour required. A product can carry forty
+ * reviews and six delivery scores, and the delivery average must be six's
+ * average — not six divided by forty, and never zero because thirty-four people
+ * declined to answer. The two numbers are counted apart because they are about
+ * two different parties' work, which is the whole reason the column exists.
+ *
+ * `sum(...)` and `count(...)` are folded per rating bucket here and reduced
+ * below rather than asked for as a second `GROUP BY`, so this is still one
+ * round trip for a page of cards.
  */
 export async function readRatingSummaries(
   productIds: string[],
@@ -168,6 +293,10 @@ export async function readRatingSummaries(
       productId: productReviews.productId,
       rating: productReviews.rating,
       total: sql<number>`count(*)::int`,
+      // NULLs skipped by both, which is the point: an unanswered delivery
+      // question contributes to neither the sum nor the divisor.
+      deliverySum: sql<number>`coalesce(sum(${productReviews.deliveryRating}), 0)::int`,
+      deliveryCount: sql<number>`count(${productReviews.deliveryRating})::int`,
     })
     .from(productReviews)
     .where(
@@ -179,6 +308,7 @@ export async function readRatingSummaries(
     .groupBy(productReviews.productId, productReviews.rating);
 
   const breakdowns = new Map<string, RatingSummary['breakdown']>();
+  const deliveries = new Map<string, { sum: number; count: number }>();
 
   rows.forEach((row) => {
     const breakdown =
@@ -194,6 +324,12 @@ export async function readRatingSummaries(
     if (index >= 0 && index < 5) breakdown[index] = row.total;
 
     breakdowns.set(row.productId, breakdown);
+
+    const delivery = deliveries.get(row.productId) ?? { sum: 0, count: 0 };
+
+    delivery.sum += row.deliverySum;
+    delivery.count += row.deliveryCount;
+    deliveries.set(row.productId, delivery);
   });
 
   return new Map(
@@ -203,6 +339,7 @@ export async function readRatingSummaries(
         (total, bar, index) => total + bar * (index + 1),
         0,
       );
+      const delivery = deliveries.get(productId) ?? { sum: 0, count: 0 };
 
       return [
         productId,
@@ -214,6 +351,17 @@ export async function readRatingSummaries(
           average: count === 0 ? 0 : Math.round((weighted / count) * 10) / 10,
           count,
           breakdown,
+          // `null`, not `{ average: 0, count: 0 }`. Nobody answered is a
+          // different fact from everybody answered badly, and a reader handed a
+          // zero has no way to tell them apart.
+          delivery:
+            delivery.count === 0
+              ? null
+              : {
+                  average:
+                    Math.round((delivery.sum / delivery.count) * 10) / 10,
+                  count: delivery.count,
+                },
         },
       ];
     }),
