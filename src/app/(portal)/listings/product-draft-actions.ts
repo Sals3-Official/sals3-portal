@@ -6,9 +6,6 @@ import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
-import captureCandidateEvidence, {
-  type CaptureEvidenceResult,
-} from '@/modules/catalog/candidates/capture-evidence';
 import {
   bulkCreateProductDraftsInputSchema,
   createProductDraftInputSchema,
@@ -20,6 +17,10 @@ import {
   type ProductDraftFailureReason,
 } from '@/modules/catalog/products/contracts';
 import createProductDraftFromCandidate from '@/modules/catalog/products/create-draft';
+import {
+  captureEvidenceBeforeDraft,
+  createCjEvidenceAdapter,
+} from '@/modules/catalog/products/create-draft-evidence';
 import discardProductDraft from '@/modules/catalog/products/discard-draft';
 import saveProductDraft from '@/modules/catalog/products/save-draft';
 import type { PortalPermission } from '@/lib/auth/permissions';
@@ -104,55 +105,6 @@ async function authorize(
     sellerAccountId: session.sellerId,
     actorId: session.userId,
   };
-}
-
-type DraftCaptureFailure = Extract<ProductDraftActionResult, { ok: false }>;
-
-async function createCjEvidenceAdapter() {
-  const [
-    { default: CjSupplierAdapter },
-    { default: CjTokenManager },
-    { default: PostgresSupplierSecretStore },
-  ] = await Promise.all([
-    import('@/modules/suppliers/providers/cj/cj-adapter'),
-    import('@/modules/suppliers/providers/cj/cj-auth'),
-    import('@/lib/secrets/postgres-supplier-secret-store'),
-  ]);
-  const secretStore = new PostgresSupplierSecretStore();
-
-  return new CjSupplierAdapter(secretStore, new CjTokenManager(secretStore));
-}
-
-function mapCaptureFailure(
-  outcome: Extract<CaptureEvidenceResult, { ok: false }>,
-): DraftCaptureFailure {
-  if (outcome.reason === 'rate_limited') {
-    return { ok: false, reason: 'rate_limited' };
-  }
-
-  if (outcome.reason === 'not_found') {
-    return { ok: false, reason: 'not_found' };
-  }
-
-  return { ok: false, reason: outcome.reason };
-}
-
-async function captureEvidenceBeforeDraft(input: {
-  candidateId: string;
-  sellerAccountId: string;
-  actorId: string;
-  adapter: Awaited<ReturnType<typeof createCjEvidenceAdapter>>;
-}): Promise<DraftCaptureFailure | null> {
-  const outcome = await captureCandidateEvidence(
-    { adapter: input.adapter },
-    {
-      candidateId: input.candidateId,
-      sellerAccountId: input.sellerAccountId,
-      actorId: input.actorId,
-    },
-  );
-
-  return outcome.ok ? null : mapCaptureFailure(outcome);
 }
 
 /**

@@ -1,19 +1,19 @@
 'use server';
 
-import { updateTag } from 'next/cache';
-import { after } from 'next/server';
 import { z } from 'zod';
 import { PermissionError } from '@/lib/auth/permissions';
 import { requirePermission } from '@/lib/auth/session';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import { checkRateLimit } from '@/lib/rate-limit';
-import { STOREFRONT_CATALOG_TAG } from '@/lib/storefront/catalog-cache';
 import storefrontOrigin from '@/lib/storefront/origin';
 import publishProduct, {
   unpublishProduct,
   type PublishRefusal,
 } from '@/modules/catalog/products/publish';
-import revalidateListingViews from './revalidate-listing-views';
+import {
+  mirrorSupplierMediaAfterResponse,
+  revalidateAfterPublicationChange,
+} from '@/modules/catalog/products/publish-side-effects';
 
 /**
  * The protected boundary for making a product visible to buyers.
@@ -143,68 +143,6 @@ async function authorize(
     sellerAccountId: session.sellerId,
     actorId: session.userId,
   };
-}
-
-/**
- * Invalidating the storefront cache is what makes a publish visible now rather
- * than up to 30 seconds later.
- *
- * `updateTag`, not `revalidateTag`: Next's own docs reserve the former for
- * immediate expiration inside a Server Action, which is exactly this case — a
- * seller who pauses a mispriced product must not keep seeing it live. Called
- * outside the domain module's transaction on purpose: announcing a change that
- * could still roll back would publish a state that never committed.
- */
-function revalidateAfterPublicationChange(): void {
-  updateTag(STOREFRONT_CATALOG_TAG);
-  revalidateListingViews();
-}
-
-/**
- * Take a durable copy of a newly published product's supplier photos, after the
- * response has gone out.
- *
- * ADR-007's `Media locking` requires an accepted order to keep showing the media
- * it was accepted with, and a CJ CDN address does not guarantee that: CJ may
- * replace or delete the file behind its own URL. Publication is the moment that
- * matters, because from here the product is orderable.
- *
- * `after()` rather than an `await`: this reads up to a dozen files off CJ's CDN,
- * and a slow CDN must not turn a successful publish into a timeout. Best-effort
- * rather than a publish gate for the same reason — a listing that is otherwise
- * ready should not become unpublishable because a CDN blinked. Whatever is not
- * copied here stays on the `Products Backfill Media Copies` sweeper's list, and
- * until a copy exists every read path falls back to the supplier address exactly
- * as it did before: the old behaviour, not a new failure.
- *
- * Only on publish. Pausing or delisting shares
- * `revalidateAfterPublicationChange` but has nothing to copy.
- */
-function mirrorSupplierMediaAfterResponse(productId: string): void {
-  after(async () => {
-    try {
-      const { default: mirrorSupplierMediaForProduct } =
-        await import('@/modules/catalog/products/mirror-supplier-media');
-      const outcome = await mirrorSupplierMediaForProduct({ productId });
-
-      if (outcome.failures.length > 0) {
-        // eslint-disable-next-line no-console
-        console.warn('[portal] supplier media not fully mirrored on publish', {
-          productId,
-          mirrored: outcome.mirrored,
-          failures: outcome.failures.length,
-        });
-      }
-    } catch (error) {
-      // The listing published and the sweeper still owns the copy, so this is
-      // logged rather than surfaced — but never swallowed silently.
-      // eslint-disable-next-line no-console
-      console.error('[portal] supplier media mirror failed after publish', {
-        productId,
-        error: error instanceof Error ? error.message : 'unknown',
-      });
-    }
-  });
 }
 
 export async function publishProductAction(
