@@ -39,6 +39,126 @@ export function isProductEditorApiAuthorized(
   return timingSafeEqual(expected, provided);
 }
 
+/**
+ * The header a session-authenticated caller must send, and the reason this
+ * whole second credential exists.
+ *
+ * Server Actions get CSRF protection from Next.js itself, which verifies the
+ * request origin before an action runs. A Route Handler gets none of that:
+ * a cookie is attached by the browser to ANY cross-site POST, so a
+ * cookie-authenticated route with no origin check is a CSRF hole that lets
+ * any page on the internet write to a logged-in seller's catalogue.
+ *
+ * Two guards, either of which is sufficient, both required:
+ *
+ * - **This custom header.** A cross-site HTML form cannot set one, and a
+ *   cross-origin `fetch` that sets one triggers a CORS preflight this app
+ *   never answers permissively - so the browser refuses the request before
+ *   it arrives. A non-browser client (the automation's Python/HTTP calls)
+ *   sets it trivially.
+ * - **`Sec-Fetch-Site`.** Browsers send this on their own and it cannot be
+ *   forged by page script. `cross-site` and `same-site` are refused;
+ *   `same-origin` and `none` (a typed URL) pass, and an absent header - a
+ *   non-browser client - passes because no browser omits it.
+ */
+export const EDITOR_API_CLIENT_HEADER = 'x-sals3-editor-api';
+
+function isNotCrossSite(secFetchSite: string | null): boolean {
+  if (secFetchSite === null) return true;
+
+  return secFetchSite === 'same-origin' || secFetchSite === 'none';
+}
+
+/**
+ * Who is calling an internal product-editor route, and on whose authority.
+ *
+ * `secret` is the deployment-wide credential: it carries no tenant of its
+ * own, so a route resolves identity from the resource it was handed (see
+ * `resolveProductActor`).
+ *
+ * `session` is a real logged-in seller's cookie - the same credential the
+ * browser editor's Server Actions use, which is why this needs no
+ * environment variable to work in a deployment that has none. It carries
+ * its OWN tenant, and a route MUST use it rather than the resource's:
+ * resolving the resource's actor here would let any logged-in seller write
+ * to another tenant's product by naming its id. `resolveApiActor` is the
+ * single place that decision is made, so no individual route can get it
+ * wrong.
+ */
+export type EditorApiCaller =
+  | { via: 'secret' }
+  | { via: 'session'; sellerAccountId: string; actorId: string };
+
+/**
+ * Authorize a request by secret first, then by session cookie.
+ *
+ * The session path enforces exactly the gates every editorial Server Action
+ * enforces, in the same order, and nothing more permissive:
+ * a Better Auth session that is email-verified and 2FA-enrolled (the two
+ * `getSession` itself redirects on), the `product:edit` permission for the
+ * session's `PortalRole`, and ADR-006's `DROPSHIPPER` business-model rule.
+ * A caller who passes all of them has precisely the authority their own
+ * browser tab already has - no elevation, and no new trust boundary.
+ *
+ * Returns `null` for "not authorized", with no distinction between a bad
+ * secret, a missing cookie, a failed CSRF guard and an insufficient role -
+ * the same reason every other refusal here is undifferentiated.
+ */
+export async function authorizeEditorApiRequest(request: {
+  headers: { get(name: string): string | null };
+}): Promise<EditorApiCaller | null> {
+  if (isProductEditorApiAuthorized(request.headers.get('authorization'))) {
+    return { via: 'secret' };
+  }
+
+  if (request.headers.get(EDITOR_API_CLIENT_HEADER) === null) return null;
+  if (!isNotCrossSite(request.headers.get('sec-fetch-site'))) return null;
+
+  const { getRawAuthSession } = await import('@/lib/auth/session');
+  const data = await getRawAuthSession();
+
+  if (data === null) return null;
+
+  const user = data.user as {
+    id: string;
+    emailVerified?: boolean;
+    portalRole?: unknown;
+    twoFactorEnabled?: boolean;
+  };
+
+  // The same two conditions `getSession` redirects to `/login` and
+  // `/setup-2fa` for. A route handler cannot redirect a non-browser client,
+  // so they are refusals here rather than navigations.
+  if (user.emailVerified !== true) return null;
+  if (user.twoFactorEnabled !== true) return null;
+
+  const [{ can, PORTAL_ROLES }, { default: readSellerAccountForIdentity }] =
+    await Promise.all([
+      import('@/lib/auth/permissions'),
+      import('@/lib/auth/seller-account'),
+    ]);
+
+  const role =
+    PORTAL_ROLES.find((allowed) => allowed === user.portalRole) ?? 'viewer';
+
+  if (!can(role, 'product:edit')) return null;
+
+  const sellerAccount = await readSellerAccountForIdentity(user.id);
+
+  if (sellerAccount === null) return null;
+  if (sellerAccount.accountState !== 'ACTIVE') return null;
+  if (sellerAccount.verificationState !== 'VERIFIED') return null;
+  // ADR-006: a supplier-backed catalogue record is a Dropshipper capability,
+  // the same check every editorial Server Action makes.
+  if (sellerAccount.businessModel !== 'DROPSHIPPER') return null;
+
+  return {
+    via: 'session',
+    sellerAccountId: sellerAccount.id,
+    actorId: user.id,
+  };
+}
+
 export type ProductActor = {
   sellerAccountId: string;
   actorId: string;
@@ -87,6 +207,36 @@ export async function resolveProductActor(
   return {
     sellerAccountId: product.stewardSellerAccountId,
     actorId: sellerAccount.identityId,
+    productVersion: product.version,
+  };
+}
+
+/**
+ * The actor a route should write as, given who is calling.
+ *
+ * The whole point of this function is that the choice is made ONCE. A
+ * `session` caller writes as themselves and never as the product's own
+ * steward - using the resource's actor for a session caller would be a
+ * cross-tenant write, and it is the single mistake this API could make that
+ * a domain function would not catch, because the domain function only ever
+ * checks that the `sellerAccountId` it was handed matches the product.
+ *
+ * `productVersion` still comes from the row either way: it is a
+ * compare-and-set token, not an authority.
+ */
+export async function resolveApiActor(
+  caller: EditorApiCaller,
+  productId: string,
+): Promise<ProductActor | null> {
+  if (caller.via === 'secret') return resolveProductActor(productId);
+
+  const product = await findProductById(getDb(), productId);
+
+  if (product === null) return null;
+
+  return {
+    sellerAccountId: caller.sellerAccountId,
+    actorId: caller.actorId,
     productVersion: product.version,
   };
 }
@@ -189,4 +339,26 @@ export async function resolveCandidateActor(
   if (row === undefined) return null;
 
   return { sellerAccountId: row.sellerAccountId, actorId: row.identityId };
+}
+
+/**
+ * The candidate-scoped counterpart to `resolveApiActor`, for the two
+ * draft-creation routes that carry no `productId` yet.
+ *
+ * A `session` caller writes as themselves; `createProductDraftFromCandidate`
+ * and `captureCandidateEvidence` then refuse a candidate that is not theirs
+ * (`findCandidateSourceForSeller` folds the tenant into the same predicate
+ * that finds the row), so a wrong candidate id costs a refusal rather than a
+ * cross-tenant draft or a CJ-point spend against someone else's connection.
+ */
+export async function resolveApiCandidateActor(
+  caller: EditorApiCaller,
+  candidateId: string,
+): Promise<CandidateActor | null> {
+  if (caller.via === 'secret') return resolveCandidateActor(candidateId);
+
+  return {
+    sellerAccountId: caller.sellerAccountId,
+    actorId: caller.actorId,
+  };
 }

@@ -14,8 +14,8 @@ import {
 } from '@/modules/catalog/products/create-draft-evidence';
 import createProductDraftFromCandidate from '@/modules/catalog/products/create-draft';
 import {
-  isProductEditorApiAuthorized,
-  resolveCandidateActor,
+  authorizeEditorApiRequest,
+  resolveApiCandidateActor,
 } from '@/modules/catalog/products/editor-api-auth';
 
 /**
@@ -55,7 +55,9 @@ const bodySchema = z
   .strict();
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  if (!isProductEditorApiAuthorized(request.headers.get('authorization'))) {
+  const caller = await authorizeEditorApiRequest(request);
+
+  if (caller === null) {
     return NextResponse.json(
       { ok: false, reason: 'unauthorized' },
       { status: 401, headers: NO_STORE },
@@ -89,7 +91,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // eslint-disable-next-line no-restricted-syntax -- sequential ownership checks before any CJ spend, matching the write loop below.
   for (const item of body.requests) {
     // eslint-disable-next-line no-await-in-loop
-    const actor = await resolveCandidateActor(item.candidateId);
+    const actor = await resolveApiCandidateActor(caller, item.candidateId);
 
     if (actor === null) {
       return NextResponse.json(
