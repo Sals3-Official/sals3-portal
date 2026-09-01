@@ -82,7 +82,35 @@ export async function GET(
         ok: true,
         productId,
         productVersion: actor.productVersion,
-        snapshot,
+        /**
+         * The fixture itself, NOT the `{ fixture, variantGuidance }` wrapper
+         * `findProductEditorFixtureForSeller` returns.
+         *
+         * The first cut served the wrapper, and it answered `200 ok:true`
+         * with a `productVersion` while every field a caller wanted read as
+         * absent - `productName: null`, `0` attributes, `0` variants, `0`
+         * media - because they were one level down. Nothing failed; the
+         * route simply served a shape no caller expected. Unwrapped here so
+         * the contract is the fixture and no client has to know about the
+         * wrapper.
+         */
+        snapshot: snapshot.fixture,
+        /** Live pricing guidance per variant, beside the fixture. */
+        variantGuidance: snapshot.variantGuidance,
+        /**
+         * The media rows that can actually be WRITTEN to, and the reason
+         * this is served separately.
+         *
+         * `snapshot.media` and `snapshot.supplierMedia` are display
+         * projections, and `editorSupplierMedia` falls back to a synthetic
+         * id - `${productId}-supplier-media-N` - for any supplier photo with
+         * no provenance row behind it. That id looks exactly like a real
+         * one and is not: passing it to `/variant-media` or
+         * `/media/reorder` names nothing. Every entry here carries a real
+         * `product_media_sources.id`, so a caller composing a write reads
+         * this list and never those.
+         */
+        assignableMedia: snapshot.fixture.assignableMedia ?? [],
       },
       { headers: NO_STORE },
     );
