@@ -39,6 +39,16 @@ const SHARES_A_MODULE: Record<string, string> = {
   // human dispatches, the module for the thing it copies. Renaming either to
   // satisfy a test would be the test deciding the vocabulary.
   'backfill-media-copies': 'backfill-supplier-media-copies',
+  // This route's main work is a top-level, static import of
+  // `decideProductSals3Category` from `decide-category.ts` - this rule's
+  // regex only ever sees dynamic `import(...)` calls, and never reaches a
+  // static one, so it has nothing to check there and cannot mis-detect it.
+  // The one dynamic import in the file is `price-draft-offers` - a
+  // best-effort side effect this route deliberately mirrors from
+  // `category-mapping-actions.ts` (re-pricing a draft once its category is
+  // known), never the route's own primary operation, so it is correctly a
+  // different module rather than a wiring mistake this rule should catch.
+  category: 'price-draft-offers',
 };
 
 /**
