@@ -52,6 +52,16 @@ export default function SingleSelectControl({
   const showingCustomInput =
     allowCustomValue &&
     (isCustomValue || (current !== '' && !allowedValues.includes(current)));
+  /**
+   * In custom mode there is no `allowedValues` entry to map through
+   * `getDisplayLabel` - the seller's raw typed text is shown as-is, same as
+   * the `Input` right below it.
+   */
+  let triggerLabel = placeholder;
+
+  if (current !== '') {
+    triggerLabel = showingCustomInput ? current : getDisplayLabel(current);
+  }
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -83,14 +93,15 @@ export default function SingleSelectControl({
             function is supplied to format it, and a `children` function
             (once given) is what takes over the empty/placeholder case too -
             see `SelectValue.d.ts`.
+            Renders `triggerLabel`, computed from `current`/`showingCustomInput`,
+            instead of the function's own `value` argument - which, while a
+            custom value is showing, is the Select's own *controlled* value,
+            permanently the literal `__custom__` token, so the "Other" list
+            item stays highlighted. Rendering that argument verbatim was the
+            bug: the trigger showed the sentinel string itself instead of
+            what was typed.
           */}
-          <SelectValue>
-            {(value: unknown) =>
-              typeof value === 'string' && value !== ''
-                ? getDisplayLabel(value)
-                : placeholder
-            }
-          </SelectValue>
+          <SelectValue>{() => triggerLabel}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           {allowedValues.map((value) => (

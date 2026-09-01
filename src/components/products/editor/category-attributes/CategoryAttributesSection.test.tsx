@@ -335,6 +335,63 @@ describe('CategoryAttributesSection', () => {
     });
   });
 
+  /**
+   * Regression: the trigger's `SelectValue` used to render its own render
+   * function's `value` argument verbatim - which, while a custom value is
+   * showing, is the Select's *controlled* value, permanently the literal
+   * `__custom__` sentinel (so the "Other" list item stays highlighted). The
+   * seller's actually-typed text lived only in `field.values`, never in what
+   * the trigger displayed. This never lost data - a save round-trip really
+   * did persist the typed text (confirmed against the live product this was
+   * first reported against) - but every load after the first rendered the
+   * raw sentinel string back at the seller instead of what they typed,
+   * indistinguishable from actual data loss.
+   */
+  describe('custom value display', () => {
+    it('shows the previously typed custom value on load, not the __custom__ sentinel', () => {
+      render(
+        <CategoryAttributesSection
+          fields={[
+            field({
+              attributeName: 'Pants Type',
+              inputControlType: 'SINGLE_SELECT_DROPDOWN',
+              allowedValues: ['Jeans', 'Chinos'],
+              allowCustomValue: true,
+              values: ['Corduroy Pants'],
+              isCustomValue: true,
+            }),
+          ]}
+          controlsVersion="sals3-attribute-controls-v1"
+          onFieldChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText('Corduroy Pants')).toBeInTheDocument();
+      expect(screen.queryByText('__custom__')).not.toBeInTheDocument();
+    });
+
+    it('shows the typed text in the trigger as the seller types it, not the sentinel', () => {
+      render(
+        <CategoryAttributesSection
+          fields={[
+            field({
+              attributeName: 'Pants Type',
+              inputControlType: 'SINGLE_SELECT_DROPDOWN',
+              allowedValues: ['Jeans', 'Chinos'],
+              allowCustomValue: true,
+              values: [''],
+              isCustomValue: true,
+            }),
+          ]}
+          controlsVersion="sals3-attribute-controls-v1"
+          onFieldChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByText('__custom__')).not.toBeInTheDocument();
+    });
+  });
+
   it('renders a text input for TEXT_INPUT and reports a typed value', () => {
     const onFieldChange = vi.fn();
 
