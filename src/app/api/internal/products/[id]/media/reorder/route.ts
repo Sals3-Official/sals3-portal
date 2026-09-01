@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { isDatabaseConfigured } from '@/lib/db/client';
 import revalidateListingViews from '@/app/(portal)/listings/revalidate-listing-views';
 import {
-  isProductEditorApiAuthorized,
-  resolveProductActor,
+  authorizeEditorApiRequest,
+  resolveApiActor,
 } from '@/modules/catalog/products/editor-api-auth';
 import reorderProductMedia from '@/modules/catalog/products/reorder-product-media';
 
@@ -31,7 +31,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  if (!isProductEditorApiAuthorized(request.headers.get('authorization'))) {
+  const caller = await authorizeEditorApiRequest(request);
+
+  if (caller === null) {
     return NextResponse.json(
       { ok: false, reason: 'unauthorized' },
       { status: 401, headers: NO_STORE },
@@ -59,7 +61,7 @@ export async function POST(
     );
   }
 
-  const actor = await resolveProductActor(productId);
+  const actor = await resolveApiActor(caller, productId);
   if (actor === null) {
     return NextResponse.json(
       { ok: false, reason: 'not_found' },

@@ -4,8 +4,8 @@ import { isDatabaseConfigured } from '@/lib/db/client';
 import revalidateListingViews from '@/app/(portal)/listings/revalidate-listing-views';
 import { descriptionDocumentSchema } from '@/modules/catalog/products/description-document';
 import {
-  isProductEditorApiAuthorized,
-  resolveProductActor,
+  authorizeEditorApiRequest,
+  resolveApiActor,
   resolveProductRevision,
 } from '@/modules/catalog/products/editor-api-auth';
 import saveDescriptionDocument from '@/modules/catalog/products/save-description-document';
@@ -40,7 +40,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  if (!isProductEditorApiAuthorized(request.headers.get('authorization'))) {
+  const caller = await authorizeEditorApiRequest(request);
+
+  if (caller === null) {
     return NextResponse.json(
       { ok: false, reason: 'unauthorized' },
       { status: 401, headers: NO_STORE },
@@ -68,7 +70,7 @@ export async function POST(
     );
   }
 
-  const actor = await resolveProductActor(productId);
+  const actor = await resolveApiActor(caller, productId);
   if (actor === null) {
     return NextResponse.json(
       { ok: false, reason: 'not_found' },
