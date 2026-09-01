@@ -4,8 +4,8 @@ import { isDatabaseConfigured } from '@/lib/db/client';
 import uniqueViolationConstraint from '@/lib/db/constraint-errors';
 import { MANUAL_MAPPING_MAX_VARIANTS } from '@/lib/seller-center/product-editor/manual-mapping-assist';
 import {
-  isProductEditorApiAuthorized,
-  resolveProductActor,
+  authorizeEditorApiRequest,
+  resolveApiActor,
 } from '@/modules/catalog/products/editor-api-auth';
 import { revalidateAfterPublicationChangeFromRouteHandler } from '@/modules/catalog/products/publish-side-effects';
 import saveManualOptionMapping from '@/modules/catalog/products/save-manual-option-mapping';
@@ -54,7 +54,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  if (!isProductEditorApiAuthorized(request.headers.get('authorization'))) {
+  const caller = await authorizeEditorApiRequest(request);
+
+  if (caller === null) {
     return NextResponse.json(
       { ok: false, reason: 'unauthorized' },
       { status: 401, headers: NO_STORE },
@@ -82,7 +84,7 @@ export async function POST(
     );
   }
 
-  const actor = await resolveProductActor(productId);
+  const actor = await resolveApiActor(caller, productId);
   if (actor === null) {
     return NextResponse.json(
       { ok: false, reason: 'not_found' },
