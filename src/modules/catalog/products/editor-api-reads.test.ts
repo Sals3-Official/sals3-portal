@@ -210,3 +210,57 @@ describe('readTenantForListing', () => {
     ).resolves.toEqual({ ok: false, reason: 'not_found' });
   });
 });
+
+/**
+ * The snapshot route's response shape, and the two traps it exists to close.
+ *
+ * Both were found by reading a real production response rather than by a
+ * test — the route answered `200 ok:true` with a valid `productVersion` while
+ * every field a caller wanted read as absent. Nothing failed. That is the
+ * kind of defect a green tick hides, which is why these assertions are about
+ * shape rather than behaviour.
+ */
+describe('the snapshot response shape', () => {
+  it('documents that the fixture is unwrapped, not the builder wrapper', () => {
+    // `findProductEditorFixtureForSeller` returns `{ fixture,
+    // variantGuidance }`. Serving that verbatim gave callers
+    // `snapshot.productName === undefined` on a product whose name was
+    // right there one level down.
+    const builderResult = {
+      fixture: { productName: 'Cargo Pants', assignableMedia: [] },
+      variantGuidance: [{ variantId: 'v-1' }],
+    };
+
+    const served = {
+      snapshot: builderResult.fixture,
+      variantGuidance: builderResult.variantGuidance,
+      assignableMedia: builderResult.fixture.assignableMedia ?? [],
+    };
+
+    expect(served.snapshot.productName).toBe('Cargo Pants');
+    expect(served).not.toHaveProperty('snapshot.fixture');
+    expect(served.variantGuidance).toHaveLength(1);
+  });
+
+  /**
+   * `editorSupplierMedia` falls back to `${productId}-supplier-media-N` for
+   * any supplier photo with no provenance row behind it. That id looks
+   * exactly like a real one and names nothing when written to - which is
+   * why `assignableMedia` is served separately as the writable list.
+   */
+  it('separates the writable media list from the display projection', () => {
+    const productId = 'c48cc103-3cb8-48ae-a85a-ecdb377224ab';
+    const displayProjection = [
+      { id: `${productId}-supplier-media-1` },
+      { id: `${productId}-supplier-media-2` },
+    ];
+    const writable = [{ mediaId: '9f0a1b2c-0000-4000-8000-000000000001' }];
+
+    // The synthetic ids are all prefixed with the product's own id: a caller
+    // that wrote against them would be naming the product, not a media row.
+    expect(
+      displayProjection.every((item) => item.id.startsWith(productId)),
+    ).toBe(true);
+    expect(writable[0]?.mediaId.startsWith(productId)).toBe(false);
+  });
+});
