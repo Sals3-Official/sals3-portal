@@ -159,6 +159,50 @@ export async function authorizeEditorApiRequest(request: {
   };
 }
 
+/**
+ * The tenant a *read* is scoped to.
+ *
+ * A session caller carries one. A **secret caller does not**: the secret is
+ * deployment-wide, so on a write it borrows the tenant of the resource it
+ * was handed (`resolveApiActor`) - but a catalogue listing or a candidate
+ * listing names no resource, so there is nothing to borrow. Returning "all
+ * tenants" would turn a deployment secret into a cross-tenant read, and
+ * picking the only seller account that happens to exist today would be a
+ * rule that silently changes meaning the day a second one is created.
+ *
+ * So it is refused, with the reason said out loud. A secret caller that
+ * genuinely needs a listing can pass `?sellerAccountId=` and be checked
+ * against a real row - `readTenantForListing` does that - which is an
+ * explicit choice rather than an implicit default.
+ */
+export async function readTenantForListing(
+  caller: EditorApiCaller,
+  requestedSellerAccountId: string | null,
+): Promise<
+  { ok: true; sellerAccountId: string } | { ok: false; reason: string }
+> {
+  if (caller.via === 'session') {
+    return { ok: true, sellerAccountId: caller.sellerAccountId };
+  }
+
+  if (requestedSellerAccountId === null) {
+    return {
+      ok: false,
+      reason: 'seller_account_required',
+    };
+  }
+
+  const [row] = await getDb()
+    .select({ id: sellerAccounts.id })
+    .from(sellerAccounts)
+    .where(eq(sellerAccounts.id, requestedSellerAccountId))
+    .limit(1);
+
+  if (row === undefined) return { ok: false, reason: 'not_found' };
+
+  return { ok: true, sellerAccountId: row.id };
+}
+
 export type ProductActor = {
   sellerAccountId: string;
   actorId: string;
