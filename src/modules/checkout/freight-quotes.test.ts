@@ -222,6 +222,14 @@ function successFreightResponse(destination: QuoteCountry) {
   };
 }
 
+type FreightResponseFactory = (attempt: number) => unknown;
+
+function isFreightResponseFactory(
+  value: unknown,
+): value is FreightResponseFactory {
+  return typeof value === 'function';
+}
+
 async function quoteForCountry(
   country: QuoteCountry,
   rowSets: OfferRow[][],
@@ -229,6 +237,7 @@ async function quoteForCountry(
   supportsFreeStandardShipping = false,
 ) {
   const freightBodies: unknown[] = [];
+  let freightAttempt = 0;
   const fetcher = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -245,7 +254,12 @@ async function quoteForCountry(
         typeof init?.body === 'string' ? JSON.parse(init.body) : init?.body,
       );
 
-      return Response.json(freightResponse);
+      const response = isFreightResponseFactory(freightResponse)
+        ? freightResponse(freightAttempt)
+        : freightResponse;
+      freightAttempt += 1;
+
+      return Response.json(response);
     },
   );
   const { executor } = executorReturningSequence(rowSets);
@@ -402,6 +416,35 @@ describe('quoteCheckoutFreight', () => {
         }),
       ],
     });
+  });
+
+  it('retries an invalid CJ freight response once and uses the successful response', async () => {
+    const { result, freightBodies } = await quoteForCountry(
+      'AU',
+      [[offerRow()]],
+      (attempt: number) =>
+        attempt === 0 ? { code: 500 } : successFreightResponse('AU'),
+    );
+
+    expect(result.quotes[0]).toMatchObject({
+      destinationCountry: 'AU',
+      cjLogisticName: 'CJPacket AU',
+      amountMinor: 1234,
+    });
+    expect(freightBodies).toHaveLength(2);
+    expect(freightBodies[1]).toEqual(freightBodies[0]);
+  });
+
+  it('throws after two invalid CJ freight responses', async () => {
+    const invalidFreightResponse = vi.fn(() => ({ code: 500 }));
+
+    await expect(
+      quoteForCountry('AU', [[offerRow()]], invalidFreightResponse),
+    ).rejects.toMatchObject({
+      name: 'CjApiError',
+      reason: 'unexpected-response',
+    });
+    expect(invalidFreightResponse).toHaveBeenCalledTimes(2);
   });
 
   it.each([

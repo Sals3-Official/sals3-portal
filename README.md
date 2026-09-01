@@ -150,6 +150,11 @@ rows into at most three distinct services: cheapest Standard, midpoint-ranked
 Express, and fastest Expedited. Ecommerce always renders the three tier cards;
 tiers without a real service are disabled rather than fabricated.
 
+For each package, Portal retries the identical CJ freight request once when CJ
+returns HTTP 200 with an invalid or unsuccessful response body. HTTP 429,
+network failures, and other non-2xx responses are not retried here. Two invalid
+responses still fail the quote closed.
+
 Portal also owns free-Standard eligibility from the same authoritative cart
 read: PH at US$12, AU at US$25, and FJ at US$55 of product subtotal. It applies
 the benefit only after tier classification, so Express and Expedited keep their
