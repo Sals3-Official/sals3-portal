@@ -1,8 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import planSizeChartAppend, {
-  chartCoverageProblems,
-} from './append-size-chart-plan';
+import planSizeChartAppend, { chartCoverage } from './append-size-chart-plan';
 import type { DescriptionBlock } from './description-document';
 
 /**
@@ -37,9 +35,9 @@ const INPUT = {
   rows: ROWS,
 };
 
-describe('chartCoverageProblems', () => {
-  it('reports missing and extra sizes separately - they call for different next steps', () => {
-    const problems = chartCoverageProblems(
+describe('chartCoverage', () => {
+  it('reports missing and extra sizes separately - one warns, the other refuses', () => {
+    const coverage = chartCoverage(
       [
         ['M', '70'],
         ['4XL', '98'],
@@ -47,14 +45,14 @@ describe('chartCoverageProblems', () => {
       ['M', 'L'],
     );
 
-    expect(problems).toEqual([
-      'sizes on sale with no chart row: L',
-      'chart rows for sizes nobody can buy: 4XL',
-    ]);
+    expect(coverage).toEqual({ missing: ['L'], extra: ['4XL'] });
   });
 
   it('XXL and 2XL cover each other - the chart keeps CJ’s spelling, the picker the Portal’s', () => {
-    expect(chartCoverageProblems([['XXL', '80']], ['2XL'])).toEqual([]);
+    expect(chartCoverage([['XXL', '80']], ['2XL'])).toEqual({
+      missing: [],
+      extra: [],
+    });
   });
 });
 
@@ -81,13 +79,30 @@ describe('planSizeChartAppend', () => {
     expect(plan).toMatchObject({ ok: false, reason: 'no_description' });
   });
 
-  it('refuses a chart that does not cover the picker', () => {
+  it('a size on sale with no row WARNS but still appends - refusing the whole chart spared no one (owner decision 2026-09-02)', () => {
     const plan = planSizeChartAppend({
       ...INPUT,
       selling: ['M', 'L', 'XL', '2XL'],
     });
 
+    expect(plan).toMatchObject({
+      ok: true,
+      outcome: 'append',
+      warnings: ['sizes on sale with no chart row: 2XL'],
+    });
+  });
+
+  it('a row for a size nobody can buy still REFUSES - that row is a false statement', () => {
+    const plan = planSizeChartAppend({
+      ...INPUT,
+      rows: [...ROWS, ['4XL', '98', '110']],
+    });
+
     expect(plan).toMatchObject({ ok: false, reason: 'coverage' });
+
+    if (!plan.ok) {
+      expect(plan.detail[0]).toContain('4XL');
+    }
   });
 
   it('the same chart already present is already_done, not a duplicate', () => {
