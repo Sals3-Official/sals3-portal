@@ -8,6 +8,7 @@ import {
   resolveApiActor,
   resolveProductRevision,
 } from '@/modules/catalog/products/editor-api-auth';
+import guardDescriptionCopy from '@/modules/catalog/products/guard-description-copy';
 import saveDescriptionDocument from '@/modules/catalog/products/save-description-document';
 
 /**
@@ -78,6 +79,30 @@ export async function POST(
     );
   }
 
+  // The copy rules, before anything is stored. `descriptionDocumentSchema`
+  // above checked the document's SHAPE; this checks what the words do (lead
+  // paragraph, supplier citations, logistics, size claims vs the picker) -
+  // rules that ran in the automation client until 2026-09-02 and now cannot
+  // be skipped by skipping the client. Warnings ride along on success;
+  // problems refuse with the whole list, because a writer fixing copy wants
+  // all of it at once.
+  const verdict = await guardDescriptionCopy(
+    productId,
+    body.descriptionDocument.blocks,
+  );
+
+  if (verdict.problems.length > 0) {
+    return NextResponse.json(
+      {
+        ok: false,
+        reason: 'copy_refused',
+        detail: verdict.problems,
+        warnings: verdict.warnings,
+      },
+      { status: 422, headers: NO_STORE },
+    );
+  }
+
   let { revisionId, expectedRevisionVersion } = body;
 
   if (revisionId === undefined || expectedRevisionVersion === undefined) {
@@ -119,6 +144,7 @@ export async function POST(
         revisionVersion: result.revisionVersion,
         contentChecksum: result.contentChecksum,
         forked: result.forked,
+        warnings: verdict.warnings,
       },
       { headers: NO_STORE },
     );

@@ -8,6 +8,7 @@ import {
   resolveApiActor,
   resolveProductRevision,
 } from '@/modules/catalog/products/editor-api-auth';
+import guardDescriptionCopy from '@/modules/catalog/products/guard-description-copy';
 import saveProductDraft from '@/modules/catalog/products/save-draft';
 
 /**
@@ -91,6 +92,26 @@ export async function POST(
     );
   }
 
+  // Same copy rules `description/route.ts` enforces, because this route
+  // writes the same document - a guard on one write path and not the other
+  // is the "right rule, never called" defect this project keeps re-finding.
+  const verdict = await guardDescriptionCopy(
+    productId,
+    body.descriptionDocument.blocks,
+  );
+
+  if (verdict.problems.length > 0) {
+    return NextResponse.json(
+      {
+        ok: false,
+        reason: 'copy_refused',
+        detail: verdict.problems,
+        warnings: verdict.warnings,
+      },
+      { status: 422, headers: NO_STORE },
+    );
+  }
+
   let { revisionId, expectedRevisionVersion } = body;
 
   if (revisionId === undefined || expectedRevisionVersion === undefined) {
@@ -135,6 +156,7 @@ export async function POST(
         revisionId: outcome.revisionId,
         revisionVersion: outcome.revisionVersion,
         forked: outcome.forked,
+        warnings: verdict.warnings,
       },
       { headers: NO_STORE },
     );
