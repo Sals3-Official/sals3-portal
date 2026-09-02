@@ -117,6 +117,7 @@ export async function POST(
         revisionId: result.revisionId,
         revisionVersion: result.revisionVersion,
         sizesOnSale: result.sizesOnSale,
+        warnings: result.warnings,
       },
       { headers: NO_STORE },
     );

@@ -55,6 +55,8 @@ export type AppendSizeChartResult =
       revisionId: string;
       revisionVersion: number;
       sizesOnSale: string[];
+      /** Sizes on sale the chart has no row for - a gap, reported. */
+      warnings: string[];
     };
 
 export default async function appendSizeChart(input: {
@@ -121,6 +123,7 @@ export default async function appendSizeChart(input: {
       revisionId: revision.id,
       revisionVersion: revision.version,
       sizesOnSale: selling,
+      warnings: plan.warnings,
     };
   }
 
@@ -163,5 +166,6 @@ export default async function appendSizeChart(input: {
     revisionId: result.revisionId,
     revisionVersion: result.revisionVersion,
     sizesOnSale: selling,
+    warnings: plan.warnings,
   };
 }
